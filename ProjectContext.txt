@@ -1,0 +1,125 @@
+# Acumon Intelligence Website — Project Context
+
+## Project Summary
+Full-stack web portal for Acumon Intelligence at www.acumonintelligence.com
+Provides authentication, subscription management, and routing to AI product tools.
+
+## Repository
+https://github.com/Stuartjohnsonsca/AcumonIntelligence.git
+
+## Project Location
+c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\Tools\Website\acumon-website\
+
+## Tech Stack
+- Next.js 14 (App Router)
+- TypeScript
+- Tailwind CSS + shadcn/ui (custom build, components in /components/ui/)
+- NextAuth.js v5 (beta.25) — Credentials provider, JWT sessions
+- Prisma ORM + Supabase PostgreSQL
+- Nodemailer (Office 365 SMTP, agents@acumon.com)
+- Stripe (placeholder, not yet live)
+
+## Hosting
+- Vercel (connected to GitHub, auto-deploy on push)
+- Domain: www.acumonintelligence.com (GoDaddy DNS → Vercel)
+- Wildcard: *.acumonintelligence.com for product subdomains
+
+## Database
+- Supabase project: imiuiqvyaybakfhjgmpt
+- URL: https://imiuiqvyaybakfhjgmpt.supabase.co
+- Pooler: aws-1-eu-north-1.pooler.supabase.com:6543
+
+## Key Files
+- /lib/auth.ts — NextAuth configuration (credentials + 2FA)
+- /lib/db.ts — Prisma client singleton
+- /lib/email.ts — Nodemailer email functions (OTP, reset, welcome)
+- /lib/permissions.ts — Role checking helpers
+- /lib/products.ts — Product list + URL prefix constants
+- /lib/utils.ts — cn(), formatCurrency(), formatDate(), generateOTP()
+- /prisma/schema.prisma — Full DB schema
+- /prisma/seed.ts — Seeds initial firm, user (Stuart Thomson ST001), and 10 products
+- /middleware.ts — Auth guard for /my-account routes
+- /components/Navbar.tsx — Main navigation (logo, dropdowns, login/logout)
+- /components/AuthProvider.tsx — NextAuth SessionProvider wrapper
+- /components/my-account/ — MyAccountClient, UsersTab, ClientsTab, SubscriptionsTab
+- /components/admin/ — AdminClient, ProductsAdmin, FirmsAdmin
+
+## Page Routes
+- / — Home (hero + features)
+- /about — About page
+- /login — Email + password login
+- /login/2fa — OTP verification (6-digit code)
+- /login/reset — Forgot password
+- /login/reset/verify — Set new password (token from email link)
+- /product-access?prefix=X — Auth + subscription check before redirect to subdomain
+- /access-denied?prefix=X — No access page with buy option
+- /subscribe — Purchase subscriptions (Stripe placeholder)
+- /my-account — Tabbed portal (Users/Clients/Subscriptions based on role)
+- /my-account/admin — Super Admin panel (Products + Firms)
+
+## API Routes
+- POST /api/auth/get-user-id — Returns user ID by email (2FA step)
+- POST /api/auth/resend-2fa — Resend OTP code
+- POST /api/auth/forgot-password — Send password reset email
+- POST /api/auth/reset-password — Reset password with token
+- GET/POST /api/users — List/create users (Firm Admin+)
+- DELETE/PATCH /api/users/[id] — Delete/update user
+- GET/POST /api/clients — List/create clients
+- DELETE/PATCH /api/clients/[id] — Delete/update client
+- GET/POST /api/subscriptions — List/create subscriptions
+- GET /api/products — List all products
+- PATCH /api/products/[id] — Update product (Super Admin only)
+- POST /api/products/[id]/price-change — Schedule price change
+- GET/POST /api/firms — List/create firms (Super Admin only)
+- DELETE/GET /api/firms/[id] — Delete/get firm details
+
+## Auth Flow
+1. User enters email + password on /login
+2. If valid: 6-digit OTP sent to registered email via agents@acumon.com
+3. User enters OTP on /login/2fa
+4. twoFactorVerified=true set on JWT session
+5. Password min length: 8 characters
+
+## Role Hierarchy (highest to lowest)
+1. Super Admin (isSuperAdmin=true) — system-wide, all rights + admin panel
+2. Firm Admin (isFirmAdmin=true) — manage users + subscriptions for firm
+3. Portfolio Owner (isPortfolioOwner=true) — manage clients, assign subscriptions
+4. User — access tools for assigned clients with active subscriptions
+
+## Products (10 total)
+Statutory Audit: DateExtraction, DocSummary, PortfolioExtraction, FSChecker, Sampling
+Internal Audit (Assurance menu): Governance, CyberResiliance, TalentRisk, ESGSustainability, Diversity
+
+Product subdomain pattern: {urlPrefix.toLowerCase()}.acumonintelligence.com
+
+## Initial Users
+- Stuart Thomson | ST001 | Johnsons Financial Management
+- Email: stuart.thomson@johnsonsfinancial.co.uk
+- Roles: Super Admin + Firm Admin + Portfolio Owner
+- 2FA method: email
+
+## Email Config
+- From: agents@acumon.com
+- SMTP: smtp.office365.com:587 (STARTTLS)
+- Requires SMTP AUTH enabled on the mailbox in M365 Admin Centre
+
+## Environment Variables Required
+DATABASE_URL, DIRECT_URL, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
+NEXTAUTH_SECRET, NEXTAUTH_URL
+EMAIL_FROM, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
+STRIPE_SECRET_KEY, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+
+## Setup Commands (run in /acumon-website/)
+npm install
+npx prisma db push
+npm run db:seed
+npm run dev
+
+## Outstanding Tasks
+- Set SMTP_PASSWORD in .env.local once Exchange password is known
+- Replace [YOUR-DB-PASSWORD] in DATABASE_URL and DIRECT_URL
+- Set all env vars in Vercel project settings
+- Enable SMTP AUTH on agents@acumon.com in Microsoft 365 Admin Centre
+- Configure Stripe when ready for live payments
+- Add Acumon Intelligence logo SVG/PNG as /public/logo.svg
+- Build individual product subdomain apps (external to this project)
