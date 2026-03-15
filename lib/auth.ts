@@ -17,6 +17,29 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
+        // Temporary test login — remove before go-live
+        if (credentials.email === 'test' && credentials.password === 'test') {
+          const user = await prisma.user.findUnique({
+            where: { email: 'stuart@acumon.com' },
+            include: { firm: true },
+          });
+          if (user) {
+            return {
+              id: user.id,
+              email: user.email,
+              name: user.name,
+              twoFactorVerified: true,
+              twoFactorPending: false,
+              isSuperAdmin: user.isSuperAdmin,
+              isFirmAdmin: user.isFirmAdmin,
+              isPortfolioOwner: user.isPortfolioOwner,
+              firmId: user.firmId,
+              firmName: user.firm.name,
+              displayId: user.displayId,
+            };
+          }
+        }
+
         const user = await prisma.user.findUnique({
           where: { email: credentials.email as string },
           include: { firm: true },
