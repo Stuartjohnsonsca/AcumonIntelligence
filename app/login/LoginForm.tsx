@@ -27,8 +27,8 @@ export default function LoginForm() {
     setLoading(true);
     setError('');
 
-    if (password.length < 4) {
-      setError('Password must be at least 4 characters.');
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
       setLoading(false);
       return;
     }
@@ -78,7 +78,7 @@ export default function LoginForm() {
               )}
               <div className="space-y-2">
                 <Label htmlFor="email">Email address</Label>
-                <Input id="email" type="text" placeholder="you@example.com" value={email}
+                <Input id="email" type="email" placeholder="you@example.com" value={email}
                   onChange={(e) => setEmail(e.target.value)} required autoComplete="email" className="h-11" />
               </div>
               <div className="space-y-2">
@@ -89,7 +89,7 @@ export default function LoginForm() {
                 <div className="relative">
                   <Input id="password" type={showPassword ? 'text' : 'password'} placeholder="Min. 8 characters"
                     value={password} onChange={(e) => setPassword(e.target.value)} required
-                    autoComplete="current-password" className="h-11 pr-10" />
+                    autoComplete="current-password" className="h-11 pr-10" minLength={8} />
                   <button type="button" onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

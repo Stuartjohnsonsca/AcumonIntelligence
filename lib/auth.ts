@@ -18,7 +18,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (!credentials?.email || !credentials?.password) return null;
 
         // Temporary test login — remove before go-live
-        if (credentials.email === 'test' && credentials.password === 'test') {
+        if (credentials.email === 'stuart@acumon.com' && credentials.password === 'testtest') {
           const user = await prisma.user.findUnique({
             where: { email: 'stuart@acumon.com' },
             include: { firm: true },
