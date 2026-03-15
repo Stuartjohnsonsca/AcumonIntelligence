@@ -3,12 +3,12 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
 interface Props {
-  searchParams: { prefix?: string };
+  searchParams: Promise<{ prefix?: string }>;
 }
 
 export default async function ProductAccessPage({ searchParams }: Props) {
   const session = await auth();
-  const prefix = searchParams.prefix;
+  const { prefix } = await searchParams;
 
   if (!prefix) redirect('/');
 

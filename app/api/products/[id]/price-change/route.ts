@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const session = await auth();
   if (!session?.user?.isSuperAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
@@ -10,7 +11,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
   const priceChange = await prisma.priceChange.create({
     data: {
-      productId: params.id,
+      productId: id,
       effectiveDate: new Date(effectiveDate),
       price1: parseFloat(price1),
       price5: parseFloat(price5),
