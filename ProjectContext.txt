@@ -11,7 +11,7 @@ https://github.com/Stuartjohnsonsca/AcumonIntelligence.git
 c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\Tools\Website\acumon-website\
 
 ## Tech Stack
-- Next.js 14 (App Router)
+- Next.js 15.2.3 (App Router)
 - TypeScript
 - Tailwind CSS + shadcn/ui (custom build, components in /components/ui/)
 - NextAuth.js v5 (beta.25) — Credentials provider, JWT sessions
@@ -115,11 +115,16 @@ npx prisma db push
 npm run db:seed
 npm run dev
 
+## Deployment Notes
+- vercel.json added to root — explicitly sets framework: nextjs, buildCommand includes prisma generate
+- All pages using useSearchParams() wrapped in Suspense (Next.js 15 requirement)
+- Nodemailer types declared in types/nodemailer.d.ts
+- Build verified locally: `npm run build` passes with 0 errors, 23 pages generated
+- GitHub repo: all app files are at root of repo (not in a subfolder) — Vercel Root Directory should be left empty (default)
+
 ## Outstanding Tasks
-- Set SMTP_PASSWORD in .env.local once Exchange password is known
-- Replace [YOUR-DB-PASSWORD] in DATABASE_URL and DIRECT_URL
-- Set all env vars in Vercel project settings
+- Set SMTP_PASSWORD in Vercel env vars once Exchange password is known
+- Set all env vars in Vercel project settings (DATABASE_URL, DIRECT_URL, NEXTAUTH_SECRET, etc.)
 - Enable SMTP AUTH on agents@acumon.com in Microsoft 365 Admin Centre
 - Configure Stripe when ready for live payments
-- Add Acumon Intelligence logo SVG/PNG as /public/logo.svg
 - Build individual product subdomain apps (external to this project)
