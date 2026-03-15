@@ -28,11 +28,18 @@ export default function LoginForm() {
     setError('');
 
     try {
-      const result = await signIn('credentials', {
+      // Add timeout to prevent infinite hang
+      const signInPromise = signIn('credentials', {
         email,
         password,
         redirect: false,
       });
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Sign in timed out')), 15000)
+      );
+
+      const result = await Promise.race([signInPromise, timeoutPromise]) as Awaited<ReturnType<typeof signIn>>;
 
       if (result?.error || !result?.ok) {
         setError('Invalid email or password. Please try again.');
@@ -40,10 +47,11 @@ export default function LoginForm() {
         return;
       }
 
-      // Successful sign-in — redirect to my-account (middleware will enforce 2FA if needed)
+      // Successful sign-in — redirect to my-account
       router.push(redirect ? `/product-access?prefix=${redirect}` : callbackUrl);
-    } catch {
-      setError('An error occurred. Please try again.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'An error occurred';
+      setError(`Sign in failed: ${message}. Please try again.`);
       setLoading(false);
     }
   }
