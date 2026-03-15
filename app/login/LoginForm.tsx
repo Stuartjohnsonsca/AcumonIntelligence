@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signIn } from 'next-auth/react';
+import { signIn, getSession } from 'next-auth/react';
 import Link from 'next/link';
 import { Eye, EyeOff, LogIn, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -43,10 +43,19 @@ export default function LoginForm() {
       if (result?.error) {
         setError('Invalid email or password. Please try again.');
       } else {
-        const params = new URLSearchParams({ email });
-        if (redirect) params.set('redirect', redirect);
-        else params.set('callbackUrl', callbackUrl);
-        router.push(`/login/2fa?${params.toString()}`);
+        // Check if 2FA was bypassed — session will have twoFactorVerified=true already
+        const session = await getSession();
+        if (session?.user?.twoFactorVerified) {
+          // Skip 2FA step, go straight to destination
+          if (redirect) router.push(`/product-access?prefix=${redirect}`);
+          else router.push(callbackUrl);
+        } else {
+          // Normal flow — go to 2FA page
+          const params = new URLSearchParams({ email });
+          if (redirect) params.set('redirect', redirect);
+          else params.set('callbackUrl', callbackUrl);
+          router.push(`/login/2fa?${params.toString()}`);
+        }
       }
     } catch {
       setError('An error occurred. Please try again.');
