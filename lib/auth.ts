@@ -30,16 +30,29 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const isValid = await bcrypt.compare(credentials.password as string, user.passwordHash);
         if (!isValid) return null;
 
+        // 2FA bypass mode — set DISABLE_2FA=true in env to skip email verification temporarily
+        if (process.env.DISABLE_2FA === 'true') {
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            twoFactorVerified: true,
+            twoFactorPending: false,
+            isSuperAdmin: user.isSuperAdmin,
+            isFirmAdmin: user.isFirmAdmin,
+            isPortfolioOwner: user.isPortfolioOwner,
+            firmId: user.firmId,
+            firmName: user.firm.name,
+            displayId: user.displayId,
+          };
+        }
+
         // Generate and send 2FA code
         const code = generateOTP();
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
         await prisma.twoFactorCode.create({
-          data: {
-            userId: user.id,
-            code,
-            expiresAt,
-          },
+          data: { userId: user.id, code, expiresAt },
         });
 
         await sendTwoFactorCode(user.email, user.name, code);
