@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { useState } from 'react';
 import { Menu, X, ChevronDown, LogIn, LogOut, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { STATUTORY_AUDIT_PRODUCTS, ASSURANCE_PRODUCTS, getProductUrl } from '@/lib/products';
+import { STATUTORY_AUDIT_PRODUCTS, ASSURANCE_PRODUCTS } from '@/lib/products';
 import { cn } from '@/lib/utils';
 
 export function Navbar() {
@@ -33,16 +34,16 @@ export function Navbar() {
           {/* Logo */}
           <Link
             href="/"
-            className="flex items-center space-x-2 flex-shrink-0"
+            className="flex items-center flex-shrink-0"
           >
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-700 to-blue-500 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">AI</span>
-              </div>
-              <span className="font-bold text-xl text-slate-900 hidden sm:block">
-                Acumon <span className="text-blue-600">Intelligence</span>
-              </span>
-            </div>
+            <Image
+              src="/logo-dark.svg"
+              alt="Acumon Intelligence"
+              width={160}
+              height={51}
+              className="h-9 w-auto"
+              priority
+            />
           </Link>
 
           {/* Desktop Nav */}
