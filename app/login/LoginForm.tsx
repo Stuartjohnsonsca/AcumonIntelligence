@@ -40,20 +40,8 @@ export default function LoginForm() {
         return;
       }
 
-      // Fetch session to check if 2FA is already verified (bypass mode)
-      const sessionRes = await fetch('/api/auth/session');
-      const session = await sessionRes.json();
-
-      if (session?.user?.twoFactorVerified) {
-        // 2FA bypassed — go straight to destination
-        router.push(redirect ? `/product-access?prefix=${redirect}` : callbackUrl);
-      } else {
-        // Normal flow — go to 2FA verification page
-        const params = new URLSearchParams({ email });
-        if (redirect) params.set('redirect', redirect);
-        else params.set('callbackUrl', callbackUrl);
-        router.push(`/login/2fa?${params.toString()}`);
-      }
+      // Successful sign-in — redirect to my-account (middleware will enforce 2FA if needed)
+      router.push(redirect ? `/product-access?prefix=${redirect}` : callbackUrl);
     } catch {
       setError('An error occurred. Please try again.');
       setLoading(false);
