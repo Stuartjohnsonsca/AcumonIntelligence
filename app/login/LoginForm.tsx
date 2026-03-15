@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signIn, getSession } from 'next-auth/react';
+import { signIn } from 'next-auth/react';
 import Link from 'next/link';
 import { Eye, EyeOff, LogIn, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -27,12 +27,6 @@ export default function LoginForm() {
     setLoading(true);
     setError('');
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      setLoading(false);
-      return;
-    }
-
     try {
       const result = await signIn('credentials', {
         email,
@@ -40,26 +34,28 @@ export default function LoginForm() {
         redirect: false,
       });
 
-      if (result?.error) {
+      if (result?.error || !result?.ok) {
         setError('Invalid email or password. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      // Fetch session to check if 2FA is already verified (bypass mode)
+      const sessionRes = await fetch('/api/auth/session');
+      const session = await sessionRes.json();
+
+      if (session?.user?.twoFactorVerified) {
+        // 2FA bypassed — go straight to destination
+        router.push(redirect ? `/product-access?prefix=${redirect}` : callbackUrl);
       } else {
-        // Check if 2FA was bypassed — session will have twoFactorVerified=true already
-        const session = await getSession();
-        if (session?.user?.twoFactorVerified) {
-          // Skip 2FA step, go straight to destination
-          if (redirect) router.push(`/product-access?prefix=${redirect}`);
-          else router.push(callbackUrl);
-        } else {
-          // Normal flow — go to 2FA page
-          const params = new URLSearchParams({ email });
-          if (redirect) params.set('redirect', redirect);
-          else params.set('callbackUrl', callbackUrl);
-          router.push(`/login/2fa?${params.toString()}`);
-        }
+        // Normal flow — go to 2FA verification page
+        const params = new URLSearchParams({ email });
+        if (redirect) params.set('redirect', redirect);
+        else params.set('callbackUrl', callbackUrl);
+        router.push(`/login/2fa?${params.toString()}`);
       }
     } catch {
       setError('An error occurred. Please try again.');
-    } finally {
       setLoading(false);
     }
   }
@@ -78,7 +74,7 @@ export default function LoginForm() {
         <Card className="shadow-xl border-0">
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">Welcome back</CardTitle>
-            <CardDescription>A verification code will be sent to your registered email</CardDescription>
+            <CardDescription>Enter your email and password to sign in</CardDescription>
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
@@ -87,8 +83,16 @@ export default function LoginForm() {
               )}
               <div className="space-y-2">
                 <Label htmlFor="email">Email address</Label>
-                <Input id="email" type="email" placeholder="you@example.com" value={email}
-                  onChange={(e) => setEmail(e.target.value)} required autoComplete="email" className="h-11" />
+                <Input
+                  id="email"
+                  type="text"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  autoComplete="email"
+                  className="h-11"
+                />
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -96,19 +100,36 @@ export default function LoginForm() {
                   <Link href="/login/reset" className="text-xs text-blue-600 hover:text-blue-700 hover:underline">Forgot password?</Link>
                 </div>
                 <div className="relative">
-                  <Input id="password" type={showPassword ? 'text' : 'password'} placeholder="Min. 8 characters"
-                    value={password} onChange={(e) => setPassword(e.target.value)} required
-                    autoComplete="current-password" className="h-11 pr-10" minLength={8} />
-                  <button type="button" onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    autoComplete="current-password"
+                    className="h-11 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
               </div>
             </CardContent>
             <CardFooter className="flex-col space-y-3">
-              <Button type="submit" className="w-full h-11 bg-blue-600 hover:bg-blue-700" disabled={loading}>
-                {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Signing in...</> : <><LogIn className="mr-2 h-4 w-4" />Sign In</>}
+              <Button
+                type="submit"
+                className="w-full h-11 bg-blue-600 hover:bg-blue-700"
+                disabled={loading}
+              >
+                {loading
+                  ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Signing in...</>
+                  : <><LogIn className="mr-2 h-4 w-4" />Sign In</>
+                }
               </Button>
             </CardFooter>
           </form>
