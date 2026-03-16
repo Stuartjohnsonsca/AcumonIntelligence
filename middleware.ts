@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
-const protectedRoutes = ['/my-account'];
+const protectedRoutes = ['/my-account', '/tools'];
 
 export async function middleware(req: NextRequest) {
   const { nextUrl } = req;
@@ -28,5 +28,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/my-account/:path*'],
+  matcher: ['/my-account/:path*', '/tools/:path*'],
 };

@@ -48,7 +48,22 @@ export default async function ProductAccessPage({ searchParams }: Props) {
   const isPrivileged = session.user.isSuperAdmin || session.user.isFirmAdmin;
 
   if (hasAccess || isPrivileged) {
-    // Redirect to the product subdomain
+    // Route to internal tool page instead of external subdomain
+    const internalRoutes: Record<string, string> = {
+      DateExtraction: '/tools/data-extraction',
+      DocSummary: '/tools/doc-summary',
+      PortfolioExtraction: '/tools/portfolio-extraction',
+      FSChecker: '/tools/fs-checker',
+      Sampling: '/tools/sampling',
+      Governance: '/tools/governance',
+      CyberResiliance: '/tools/cyber-resilience',
+      TalentRisk: '/tools/talent-risk',
+      ESGSustainability: '/tools/esg-sustainability',
+      Diversity: '/tools/diversity',
+    };
+    const internalPath = internalRoutes[prefix];
+    if (internalPath) redirect(internalPath);
+    // Fallback to subdomain for tools not yet built
     redirect(`https://${prefix.toLowerCase()}.acumonintelligence.com`);
   }
 

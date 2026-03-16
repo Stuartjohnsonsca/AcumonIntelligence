@@ -11,13 +11,17 @@ https://github.com/Stuartjohnsonsca/AcumonIntelligence.git
 c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\Tools\Website\acumon-website\
 
 ## Tech Stack
-- Next.js 15.2.3 (App Router)
+- Next.js 16.1.6 (App Router)
 - TypeScript
 - Tailwind CSS + shadcn/ui (custom build, components in /components/ui/)
 - NextAuth.js v5 (beta.25) — Credentials provider, JWT sessions
 - Prisma ORM + Supabase PostgreSQL
 - Nodemailer (Office 365 SMTP, agents@acumon.com)
 - Stripe (placeholder, not yet live)
+- **Google Gemini API** (gemini-2.0-flash) — AI document extraction engine
+- **Azure Blob Storage** (acumondataextractor) — temporary file staging for extraction
+- ExcelJS — Excel export generation
+- JSZip — Server-side ZIP extraction
 
 ## Hosting
 - Vercel (connected to GitHub, auto-deploy on push)
@@ -36,13 +40,16 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /lib/permissions.ts — Role checking helpers
 - /lib/products.ts — Product list + URL prefix constants
 - /lib/utils.ts — cn(), formatCurrency(), formatDate(), generateOTP()
+- /lib/azure-blob.ts — Azure Blob Storage helpers (upload, move, download)
+- /lib/gemini-extractor.ts — Gemini AI extraction + category inference
 - /prisma/schema.prisma — Full DB schema
 - /prisma/seed.ts — Seeds initial firm, user (Stuart Thomson ST001), and 10 products
-- /middleware.ts — Auth guard for /my-account routes
+- /middleware.ts — Auth guard for /my-account and /tools routes
 - /components/Navbar.tsx — Main navigation (logo, dropdowns, login/logout)
 - /components/AuthProvider.tsx — NextAuth SessionProvider wrapper
 - /components/my-account/ — MyAccountClient, UsersTab, ClientsTab, SubscriptionsTab
 - /components/admin/ — AdminClient, ProductsAdmin, FirmsAdmin
+- /components/tools/DataExtractionClient.tsx — Data Extraction tool UI (split screen)
 
 ## Page Routes
 - / — Home (hero + features)
@@ -51,11 +58,12 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /login/2fa — OTP verification (6-digit code)
 - /login/reset — Forgot password
 - /login/reset/verify — Set new password (token from email link)
-- /product-access?prefix=X — Auth + subscription check before redirect to subdomain
+- /product-access?prefix=X — Auth + subscription check, routes internally or to subdomain
 - /access-denied?prefix=X — No access page with buy option
 - /subscribe — Purchase subscriptions (Stripe placeholder)
 - /my-account — Tabbed portal (Users/Clients/Subscriptions based on role)
 - /my-account/admin — Super Admin panel (Products + Firms)
+- **/tools/data-extraction** — Financial Data Extraction tool (split screen, AI extraction)
 
 ## API Routes
 - POST /api/auth/get-user-id — Returns user ID by email (2FA step)
@@ -72,6 +80,10 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - POST /api/products/[id]/price-change — Schedule price change
 - GET/POST /api/firms — List/create firms (Super Admin only)
 - DELETE/GET /api/firms/[id] — Delete/get firm details
+- POST /api/extraction/upload — Upload files (PDF/images/ZIP) for extraction job
+- POST /api/extraction/process — Run Gemini AI extraction on uploaded files
+- GET /api/extraction/process?jobId=X — Retrieve job results
+- GET /api/extraction/export?jobId=X — Download Excel file with 3-tab report
 
 ## Auth Flow
 1. User enters email + password on /login
@@ -108,6 +120,12 @@ DATABASE_URL, DIRECT_URL, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KE
 NEXTAUTH_SECRET, NEXTAUTH_URL
 EMAIL_FROM, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
 STRIPE_SECRET_KEY, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+GEMINI_API_KEY — Google AI API key for document extraction
+AZURE_STORAGE_CONNECTION_STRING — Azure Blob Storage connection string (acumondataextractor)
+AZURE_STORAGE_CONTAINER_INBOX=upload-inbox
+AZURE_STORAGE_CONTAINER_PROCESSING=processing
+AZURE_STORAGE_CONTAINER_PROCESSED=processed
+DISABLE_2FA=true — Bypass 2FA for development (remove for production)
 
 ## Setup Commands (run in /acumon-website/)
 npm install
@@ -122,9 +140,17 @@ npm run dev
 - Build verified locally: `npm run build` passes with 0 errors, 23 pages generated
 - GitHub repo: all app files are at root of repo (not in a subfolder) — Vercel Root Directory should be left empty (default)
 
+## DB Tables (Data Extraction)
+- extraction_jobs — one per extraction session (links client + user)
+- extraction_files — individual files in a job (tracks blob path, zip status, extraction status)
+- extracted_records — one per extracted document (all financial fields as columns)
+- account_category_learning — per-client AI learning for description→category mapping
+
 ## Outstanding Tasks
+- Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
 - Set SMTP_PASSWORD in Vercel env vars once Exchange password is known
-- Set all env vars in Vercel project settings (DATABASE_URL, DIRECT_URL, NEXTAUTH_SECRET, etc.)
 - Enable SMTP AUTH on agents@acumon.com in Microsoft 365 Admin Centre
 - Configure Stripe when ready for live payments
-- Build individual product subdomain apps (external to this project)
+- Implement Xero OAuth2 for accounting system connection
+- Implement "Send by Email" feature on extraction results
+- Add remaining tool pages (DocSummary, FSChecker etc.) at /tools/*

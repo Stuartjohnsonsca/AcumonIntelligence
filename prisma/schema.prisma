@@ -43,6 +43,7 @@ model User {
   twoFactorCodes        TwoFactorCode[]
   clientAssignments     UserClientAssignment[]
   purchasedSubscriptions Subscription[]
+  extractionJobs        ExtractionJob[]
 
   @@map("users")
 }
@@ -98,6 +99,7 @@ model Client {
   apiKeys           ClientApiKey[]
   subscriptions     Subscription[]
   userAssignments   UserClientAssignment[]
+  extractionJobs    ExtractionJob[]
 
   @@map("clients")
 }
@@ -179,3 +181,86 @@ model PasswordResetToken {
 
   @@map("password_reset_tokens")
 }
+
+// ─── Data Extraction Tool ────────────────────────────────────────────────────
+
+model ExtractionJob {
+  id              String   @id @default(uuid())
+  clientId        String   @map("client_id")
+  userId          String   @map("user_id")
+  status          String   @default("pending") // pending | processing | complete | failed
+  accountingSystem String? @map("accounting_system")
+  orgName         String?  @map("org_name")
+  extractedAt     DateTime? @map("extracted_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  client    Client              @relation(fields: [clientId], references: [id])
+  user      User                @relation(fields: [userId], references: [id])
+  files     ExtractionFile[]
+  records   ExtractedRecord[]
+
+  @@map("extraction_jobs")
+}
+
+model ExtractionFile {
+  id            String   @id @default(uuid())
+  jobId         String   @map("job_id")
+  originalName  String   @map("original_name")
+  storagePath   String   @map("storage_path")
+  containerName String   @map("container_name")
+  fileSize      Int?     @map("file_size")
+  mimeType      String?  @map("mime_type")
+  wasZipped     Boolean  @default(false) @map("was_zipped")
+  zipSourceName String?  @map("zip_source_name")
+  status        String   @default("uploaded") // uploaded | processing | extracted | failed
+  errorMessage  String?  @map("error_message")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  job      ExtractionJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  records  ExtractedRecord[]
+
+  @@map("extraction_files")
+}
+
+model ExtractedRecord {
+  id              String   @id @default(uuid())
+  jobId           String   @map("job_id")
+  fileId          String   @map("file_id")
+  referenceId     String   @map("reference_id") // short system-generated ref e.g. DOC-001
+  purchaserName   String?  @map("purchaser_name")
+  purchaserTaxId  String?  @map("purchaser_tax_id")
+  purchaserCountry String? @map("purchaser_country")
+  sellerName      String?  @map("seller_name")
+  sellerTaxId     String?  @map("seller_tax_id")
+  sellerCountry   String?  @map("seller_country")
+  documentRef     String?  @map("document_ref")
+  documentDate    String?  @map("document_date")
+  dueDate         String?  @map("due_date")
+  netTotal        Float?   @map("net_total")
+  dutyTotal       Float?   @map("duty_total")
+  taxTotal        Float?   @map("tax_total")
+  grossTotal      Float?   @map("gross_total")
+  lineItems       Json?    @map("line_items") // array of {description, quantity, productId, net, tax, duty}
+  accountCategory String?  @map("account_category")
+  rawExtraction   Json?    @map("raw_extraction")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  job  ExtractionJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  file ExtractionFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@map("extracted_records")
+}
+
+model AccountCategoryLearning {
+  id          String   @id @default(uuid())
+  clientId    String   @map("client_id")
+  description String   // the description text pattern
+  category    String   // the assigned category
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([clientId, description])
+  @@map("account_category_learning")
+}
+
