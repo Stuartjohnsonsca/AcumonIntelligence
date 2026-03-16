@@ -72,7 +72,7 @@ export async function extractDocumentFromBase64(
   mimeType: string,
   fileName: string
 ): Promise<ExtractedDocument> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   const result = await model.generateContent([
     {
@@ -125,7 +125,7 @@ export async function categoriseDescription(
   description: string,
   existingCategories: { description: string; category: string }[]
 ): Promise<string> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   const context = existingCategories.length > 0
     ? `Previously categorised items for this client:\n${existingCategories.slice(0, 20).map(c => `"${c.description}" → ${c.category}`).join('\n')}\n\n`

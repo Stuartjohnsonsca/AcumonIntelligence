@@ -18,7 +18,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - Prisma ORM + Supabase PostgreSQL
 - Nodemailer (Office 365 SMTP, agents@acumon.com)
 - Stripe (placeholder, not yet live)
-- **Google Gemini API** (gemini-2.0-flash) — AI document extraction engine
+- **Google Gemini API** (gemini-2.5-flash) — AI document extraction engine
 - **Azure Blob Storage** (acumondataextractor) — temporary file staging for extraction
 - ExcelJS — Excel export generation
 - JSZip — Server-side ZIP extraction
@@ -139,6 +139,14 @@ npm run dev
 - Nodemailer types declared in types/nodemailer.d.ts
 - Build verified locally: `npm run build` passes with 0 errors, 23 pages generated
 - GitHub repo: all app files are at root of repo (not in a subfolder) — Vercel Root Directory should be left empty (default)
+
+## Auth Architecture — Page-Level Checks Only (No Proxy Protection)
+- proxy.ts exists but has an empty matcher — it does NOT protect any routes
+- ALL auth checks happen server-side in page.tsx files using auth() + redirect('/login')
+- This is required because edge proxy/middleware cannot read session cookies during cross-site OAuth redirect chains (Microsoft Entra ID → callback → protected page)
+- DO NOT add routes back to proxy.ts matcher — it breaks MSAL login flow
+- Default NextAuth cookie config is used (do NOT override with custom cookie names/SameSite)
+- Protected pages: /my-account, /my-account/admin, /tools/data-extraction all check auth() themselves
 
 ## DB Tables (Data Extraction)
 - extraction_jobs — one per extraction session (links client + user)
