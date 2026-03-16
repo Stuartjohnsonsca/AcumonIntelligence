@@ -81,8 +81,10 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - GET/POST /api/firms — List/create firms (Super Admin only)
 - DELETE/GET /api/firms/[id] — Delete/get firm details
 - POST /api/extraction/upload — Upload files (PDF/images/ZIP) for extraction job
-- POST /api/extraction/process — Run Gemini AI extraction on uploaded files
-- GET /api/extraction/process?jobId=X — Retrieve job results
+- POST /api/extraction/process — Fire-and-forget orchestrator: splits files into adaptive batches, fires parallel batch workers, returns immediately
+- GET /api/extraction/process?jobId=X — Retrieve full job results (records + files)
+- POST /api/extraction/process-batch — Internal batch worker: processes a list of file IDs concurrently via Promise.allSettled (secured by NEXTAUTH_SECRET)
+- GET /api/extraction/status?jobId=X — Lightweight progress endpoint: returns extracted/failed/total counts for client-side polling
 - GET /api/extraction/export?jobId=X — Download Excel file with 3-tab report
 
 ## Auth Flow
@@ -149,10 +151,28 @@ npm run dev
 - Protected pages: /my-account, /my-account/admin, /tools/data-extraction all check auth() themselves
 
 ## DB Tables (Data Extraction)
-- extraction_jobs — one per extraction session (links client + user)
+- extraction_jobs — one per extraction session (links client + user); includes total_files, processed_count, failed_count counters for live progress
 - extraction_files — individual files in a job (tracks blob path, zip status, extraction status)
 - extracted_records — one per extracted document (all financial fields as columns)
 - account_category_learning — per-client AI learning for description→category mapping
+
+## Parallel Extraction Pipeline Architecture
+- Files are uploaded via POST /api/extraction/upload (stores in Azure inbox, creates ExtractionFile rows)
+- POST /api/extraction/process acts as a fire-and-forget orchestrator:
+  1. Calculates adaptive batch size: ≤5 files → all at once; ≤20 → 5/batch; ≤100 → 10/batch; ≤300 → 15/batch; >300 → 25/batch
+  2. Fires N parallel fetch() calls to POST /api/extraction/process-batch (does NOT await them)
+  3. Returns immediately with {jobId, status: "processing", totalFiles, batchCount, batchSize}
+- Each batch worker (process-batch) runs in its own serverless function:
+  - Processes all file IDs concurrently via Promise.allSettled (individual failures never kill sibling files)
+  - Moves blobs: inbox → processing → processed
+  - Calls Gemini AI for extraction, saves ExtractedRecord + category learning
+  - Atomically increments processedCount/failedCount on ExtractionJob
+  - When final batch completes, marks job as "complete"
+- Client-side polls GET /api/extraction/status?jobId=X every 1.5s
+  - Returns {total, extracted, failed, complete} from the ExtractionJob counters
+  - UI shows an animated progress bar with green (success) and red (failed) segments
+  - When complete=true, polling stops and full results are fetched
+- Navigation-safe: once orchestrator fires batches, processing continues server-side regardless of whether user stays on the page
 
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars

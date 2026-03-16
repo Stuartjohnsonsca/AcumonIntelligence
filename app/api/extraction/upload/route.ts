@@ -90,6 +90,11 @@ export async function POST(req: Request) {
       }
     }
 
+    await prisma.extractionJob.update({
+      where: { id: job.id },
+      data: { totalFiles: uploadedFiles.length },
+    });
+
     return NextResponse.json({
       jobId: job.id,
       filesUploaded: uploadedFiles.length,

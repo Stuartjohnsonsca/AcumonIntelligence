@@ -1,0 +1,157 @@
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import { getBlobAsBase64, moveToProcessing, moveToProcessed, CONTAINERS } from '@/lib/azure-blob';
+import { extractDocumentFromBase64, categoriseDescription, generateReferenceId } from '@/lib/gemini-extractor';
+
+interface BatchRequest {
+  jobId: string;
+  fileIds: string[];
+  startIndex: number;
+  clientId: string;
+  internalSecret: string;
+}
+
+export async function POST(req: Request) {
+  const body: BatchRequest = await req.json();
+  const { jobId, fileIds, startIndex, clientId, internalSecret } = body;
+
+  if (internalSecret !== process.env.NEXTAUTH_SECRET) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const existingCategories = await prisma.accountCategoryLearning.findMany({
+    where: { clientId },
+    select: { description: true, category: true },
+  });
+
+  const files = await prisma.extractionFile.findMany({
+    where: { id: { in: fileIds } },
+  });
+
+  async function processFile(file: typeof files[0], refIndex: number) {
+    try {
+      await moveToProcessing(file.storagePath);
+      await prisma.extractionFile.update({
+        where: { id: file.id },
+        data: { status: 'processing', containerName: CONTAINERS.PROCESSING },
+      });
+
+      const base64 = await getBlobAsBase64(file.storagePath, CONTAINERS.PROCESSING);
+      const extracted = await extractDocumentFromBase64(
+        base64,
+        file.mimeType || 'application/pdf',
+        file.originalName,
+      );
+
+      let accountCategory = extracted.accountCategory;
+      if (!accountCategory && extracted.lineItems.length > 0) {
+        const desc = extracted.lineItems[0].description;
+        accountCategory = await categoriseDescription(desc, existingCategories);
+      }
+
+      const referenceId = generateReferenceId(refIndex);
+
+      await prisma.extractedRecord.create({
+        data: {
+          jobId,
+          fileId: file.id,
+          referenceId,
+          purchaserName: extracted.purchaserName,
+          purchaserTaxId: extracted.purchaserTaxId,
+          purchaserCountry: extracted.purchaserCountry,
+          sellerName: extracted.sellerName,
+          sellerTaxId: extracted.sellerTaxId,
+          sellerCountry: extracted.sellerCountry,
+          documentRef: extracted.documentRef,
+          documentDate: extracted.documentDate,
+          dueDate: extracted.dueDate,
+          netTotal: extracted.netTotal,
+          dutyTotal: extracted.dutyTotal,
+          taxTotal: extracted.taxTotal,
+          grossTotal: extracted.grossTotal,
+          lineItems: extracted.lineItems as object[],
+          accountCategory,
+          rawExtraction: extracted as object,
+        },
+      });
+
+      if (accountCategory && extracted.lineItems.length > 0) {
+        for (const item of extracted.lineItems.slice(0, 3)) {
+          if (item.description) {
+            await prisma.accountCategoryLearning.upsert({
+              where: {
+                clientId_description: {
+                  clientId,
+                  description: item.description.substring(0, 200),
+                },
+              },
+              create: {
+                clientId,
+                description: item.description.substring(0, 200),
+                category: accountCategory,
+              },
+              update: { category: accountCategory },
+            });
+          }
+        }
+      }
+
+      await moveToProcessed(file.storagePath);
+      await prisma.extractionFile.update({
+        where: { id: file.id },
+        data: { status: 'extracted', containerName: CONTAINERS.PROCESSED },
+      });
+
+      return { fileId: file.id, status: 'extracted' as const };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      await prisma.extractionFile.update({
+        where: { id: file.id },
+        data: { status: 'failed', errorMessage },
+      });
+      return { fileId: file.id, status: 'failed' as const, error: errorMessage };
+    }
+  }
+
+  const results = await Promise.allSettled(
+    files.map((file, i) => processFile(file, startIndex + i)),
+  );
+
+  let batchExtracted = 0;
+  let batchFailed = 0;
+
+  for (const r of results) {
+    const val = r.status === 'fulfilled' ? r.value : { status: 'failed' as const };
+    if (val.status === 'extracted') batchExtracted++;
+    else batchFailed++;
+  }
+
+  await prisma.extractionJob.update({
+    where: { id: jobId },
+    data: {
+      processedCount: { increment: batchExtracted },
+      failedCount: { increment: batchFailed },
+    },
+  });
+
+  const job = await prisma.extractionJob.findUnique({
+    where: { id: jobId },
+    select: { totalFiles: true, processedCount: true, failedCount: true },
+  });
+
+  if (job && (job.processedCount + job.failedCount) >= job.totalFiles) {
+    await prisma.extractionJob.update({
+      where: { id: jobId },
+      data: {
+        status: job.processedCount > 0 ? 'complete' : 'failed',
+        extractedAt: new Date(),
+      },
+    });
+  }
+
+  return NextResponse.json({
+    batchExtracted,
+    batchFailed,
+    results: results.map(r => r.status === 'fulfilled' ? r.value : { status: 'failed' }),
+  });
+}

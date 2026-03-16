@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -94,6 +94,15 @@ export function DataExtractionClient({
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [error, setError] = useState('');
 
+  // Progress tracking
+  const [progress, setProgress] = useState<{
+    total: number;
+    extracted: number;
+    failed: number;
+    complete: boolean;
+  } | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredAssigned = assignedClients.filter(c =>
@@ -121,10 +130,43 @@ export function DataExtractionClient({
     setUploadedFiles(prev => prev.filter((_, i) => i !== index));
   }, []);
 
+  function startPolling(jobId: string) {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/extraction/status?jobId=${jobId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setProgress({ total: data.total, extracted: data.extracted, failed: data.failed, complete: data.complete });
+
+        if (data.complete) {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          pollingRef.current = null;
+
+          const jobRes = await fetch(`/api/extraction/process?jobId=${jobId}`);
+          const jobData = await jobRes.json();
+          setJobResult(jobData);
+          setProcessing(false);
+        }
+      } catch {
+        // Polling failure is non-fatal; next tick will retry
+      }
+    }, 1500);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
   async function handleUploadAndProcess() {
     if (!selectedClient || !uploadedFiles.length) return;
     setUploading(true);
     setError('');
+    setProgress(null);
+    setJobResult(null);
 
     try {
       const formData = new FormData();
@@ -148,11 +190,8 @@ export function DataExtractionClient({
       const processData = await processRes.json();
       if (!processRes.ok) throw new Error(processData.error || 'Processing failed');
 
-      // Fetch full job result
-      const jobRes = await fetch(`/api/extraction/process?jobId=${uploadData.jobId}`);
-      const jobData = await jobRes.json();
-      setJobResult(jobData);
-      setProcessing(false);
+      setProgress({ total: processData.totalFiles, extracted: 0, failed: 0, complete: false });
+      startPolling(uploadData.jobId);
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -372,13 +411,59 @@ export function DataExtractionClient({
               </div>
             )}
 
+            {/* Progress bar during processing */}
+            {processing && progress && progress.total > 0 && (
+              <div className="space-y-3 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium text-slate-700 flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                    Extracting with AI...
+                  </span>
+                  <span className="text-slate-500 font-mono text-xs">
+                    {progress.extracted + progress.failed} / {progress.total}
+                  </span>
+                </div>
+
+                <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden flex">
+                  {progress.extracted > 0 && (
+                    <div
+                      className="h-full bg-green-500 transition-all duration-500 ease-out"
+                      style={{ width: `${(progress.extracted / progress.total) * 100}%` }}
+                    />
+                  )}
+                  {progress.failed > 0 && (
+                    <div
+                      className="h-full bg-red-500 transition-all duration-500 ease-out"
+                      style={{ width: `${(progress.failed / progress.total) * 100}%` }}
+                    />
+                  )}
+                </div>
+
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1 text-green-700">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    {progress.extracted} extracted
+                  </span>
+                  {progress.failed > 0 && (
+                    <span className="flex items-center gap-1 text-red-600">
+                      <XCircle className="h-3.5 w-3.5" />
+                      {progress.failed} failed
+                    </span>
+                  )}
+                  <span className="text-slate-400 ml-auto">
+                    {Math.round(((progress.extracted + progress.failed) / progress.total) * 100)}%
+                  </span>
+                </div>
+              </div>
+            )}
+
             <Button
               className="w-full bg-blue-600 hover:bg-blue-700"
               disabled={!uploadedFiles.length || uploading || processing}
               onClick={handleUploadAndProcess}
             >
               {uploading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Uploading...</>
-                : processing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Extracting with AI...</>
+                : processing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processing...</>
                   : <><RefreshCw className="mr-2 h-4 w-4" />Upload & Extract</>}
             </Button>
           </div>
