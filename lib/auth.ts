@@ -11,7 +11,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     MicrosoftEntraID({
       clientId: process.env.AZURE_AD_CLIENT_ID!,
       clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
-      issuer: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID!}/v2.0`,
+      issuer: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID!}`,
+      authorization: {
+        params: {
+          scope: 'openid profile email',
+        },
+      },
     }),
     Credentials({
       id: 'credentials',
@@ -237,4 +242,5 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     maxAge: 8 * 60 * 60, // 8 hours
   },
   secret: process.env.NEXTAUTH_SECRET,
+  trustHost: true,
 });
