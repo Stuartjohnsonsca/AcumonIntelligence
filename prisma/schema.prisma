@@ -192,6 +192,7 @@ model ExtractionJob {
   totalFiles      Int      @default(0) @map("total_files")
   processedCount  Int      @default(0) @map("processed_count")
   failedCount     Int      @default(0) @map("failed_count")
+  duplicateCount  Int      @default(0) @map("duplicate_count")
   accountingSystem String? @map("accounting_system")
   orgName         String?  @map("org_name")
   extractedAt     DateTime? @map("extracted_at")
@@ -216,12 +217,16 @@ model ExtractionFile {
   mimeType      String?  @map("mime_type")
   wasZipped     Boolean  @default(false) @map("was_zipped")
   zipSourceName String?  @map("zip_source_name")
-  status        String   @default("uploaded") // uploaded | processing | extracted | failed
+  status        String   @default("uploaded") // uploaded | processing | extracted | failed | duplicate
   errorMessage  String?  @map("error_message")
+  fileHash      String?  @map("file_hash")
+  duplicateOfId String?  @map("duplicate_of_id")
   createdAt     DateTime @default(now()) @map("created_at")
 
-  job      ExtractionJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  records  ExtractedRecord[]
+  job          ExtractionJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  records      ExtractedRecord[]
+  duplicateOf  ExtractionFile?   @relation("FileDuplicates", fields: [duplicateOfId], references: [id])
+  duplicates   ExtractionFile[]  @relation("FileDuplicates")
 
   @@map("extraction_files")
 }

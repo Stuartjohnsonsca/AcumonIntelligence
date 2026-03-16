@@ -26,11 +26,28 @@ export async function uploadToInbox(
   return blobName;
 }
 
+async function awaitCopyCompletion(
+  destClient: ReturnType<ContainerClient['getBlockBlobClient']>,
+  maxWaitMs = 30000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const props = await destClient.getProperties();
+    const status = props.copyStatus;
+    if (status === 'success') return;
+    if (status === 'failed' || status === 'aborted') {
+      throw new Error(`Blob copy ${status}: ${props.copyStatusDescription || 'unknown'}`);
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+  throw new Error('Blob copy timed out');
+}
+
 export async function moveToProcessing(blobName: string): Promise<void> {
   const source = getContainerClient(CONTAINER_INBOX).getBlockBlobClient(blobName);
   const dest = getContainerClient(CONTAINER_PROCESSING).getBlockBlobClient(blobName);
-  const sourceUrl = source.url;
-  await dest.beginCopyFromURL(sourceUrl);
+  await dest.beginCopyFromURL(source.url);
+  await awaitCopyCompletion(dest);
   await source.delete();
 }
 
@@ -39,6 +56,7 @@ export async function moveToProcessed(blobName: string, fromProcessing = true): 
   const source = getContainerClient(sourceContainer).getBlockBlobClient(blobName);
   const dest = getContainerClient(CONTAINER_PROCESSED).getBlockBlobClient(blobName);
   await dest.beginCopyFromURL(source.url);
+  await awaitCopyCompletion(dest);
   await source.delete();
 }
 

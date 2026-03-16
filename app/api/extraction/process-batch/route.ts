@@ -3,6 +3,31 @@ import { prisma } from '@/lib/db';
 import { getBlobAsBase64, moveToProcessing, moveToProcessed, CONTAINERS } from '@/lib/azure-blob';
 import { extractDocumentFromBase64, categoriseDescription, generateReferenceId } from '@/lib/gemini-extractor';
 
+const MAX_CONCURRENT = 2;
+
+async function runWithConcurrencyLimit<T>(
+  tasks: (() => Promise<T>)[],
+  limit: number,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const idx = nextIndex++;
+      try {
+        results[idx] = { status: 'fulfilled', value: await tasks[idx]() };
+      } catch (reason) {
+        results[idx] = { status: 'rejected', reason };
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 interface BatchRequest {
   jobId: string;
   fileIds: string[];
@@ -113,9 +138,8 @@ export async function POST(req: Request) {
     }
   }
 
-  const results = await Promise.allSettled(
-    files.map((file, i) => processFile(file, startIndex + i)),
-  );
+  const tasks = files.map((file, i) => () => processFile(file, startIndex + i));
+  const results = await runWithConcurrencyLimit(tasks, MAX_CONCURRENT);
 
   let batchExtracted = 0;
   let batchFailed = 0;

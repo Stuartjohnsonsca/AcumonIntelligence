@@ -19,6 +19,7 @@ export async function GET(req: Request) {
       totalFiles: true,
       processedCount: true,
       failedCount: true,
+      duplicateCount: true,
     },
   });
 
@@ -31,6 +32,7 @@ export async function GET(req: Request) {
     total: job.totalFiles,
     extracted: job.processedCount,
     failed: job.failedCount,
+    duplicated: job.duplicateCount,
     complete,
   });
 }

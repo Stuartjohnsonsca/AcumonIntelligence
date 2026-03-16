@@ -2,6 +2,39 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
+const MAX_RETRIES = 3;
+const BACKOFF_MS = [2000, 4000, 8000];
+
+function isTransientError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return msg.includes('429') || msg.includes('rate') || msg.includes('quota')
+      || msg.includes('500') || msg.includes('503') || msg.includes('unavailable')
+      || msg.includes('resource exhausted') || msg.includes('timeout')
+      || msg.includes('econnreset') || msg.includes('fetch failed');
+  }
+  return false;
+}
+
+async function retryWithBackoff<T>(fn: () => Promise<T>, context: string): Promise<T> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (!isTransientError(err) && attempt === 0) {
+        throw new Error(`[${context}] Non-transient error: ${lastError.message}`);
+      }
+      if (attempt < MAX_RETRIES - 1) {
+        console.warn(`[${context}] Attempt ${attempt + 1} failed: ${lastError.message}. Retrying in ${BACKOFF_MS[attempt]}ms...`);
+        await new Promise(r => setTimeout(r, BACKOFF_MS[attempt]));
+      }
+    }
+  }
+  throw new Error(`[${context}] Failed after ${MAX_RETRIES} attempts: ${lastError?.message}`);
+}
+
 export interface LineItem {
   description: string;
   quantity: number | null;
@@ -74,15 +107,18 @@ export async function extractDocumentFromBase64(
 ): Promise<ExtractedDocument> {
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-  const result = await model.generateContent([
-    {
-      inlineData: {
-        data: base64Data,
-        mimeType: mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf',
+  const result = await retryWithBackoff(
+    () => model.generateContent([
+      {
+        inlineData: {
+          data: base64Data,
+          mimeType: mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf',
+        },
       },
-    },
-    `File name: ${fileName}\n\n${EXTRACTION_PROMPT}`,
-  ]);
+      `File name: ${fileName}\n\n${EXTRACTION_PROMPT}`,
+    ]),
+    `extract:${fileName}`,
+  );
 
   const text = result.response.text();
 
@@ -131,8 +167,11 @@ export async function categoriseDescription(
     ? `Previously categorised items for this client:\n${existingCategories.slice(0, 20).map(c => `"${c.description}" → ${c.category}`).join('\n')}\n\n`
     : '';
 
-  const result = await model.generateContent(
-    `${context}What accounting category does this description belong to? Reply with ONLY the category name (2-4 words max, e.g. "Professional Fees", "Insurance", "IT Services", "Travel & Subsistence").\n\nDescription: "${description}"`
+  const result = await retryWithBackoff(
+    () => model.generateContent(
+      `${context}What accounting category does this description belong to? Reply with ONLY the category name (2-4 words max, e.g. "Professional Fees", "Insurance", "IT Services", "Travel & Subsistence").\n\nDescription: "${description}"`
+    ),
+    `categorise:${description.substring(0, 40)}`,
   );
 
   return result.response.text().trim().replace(/^["']|["']$/g, '');

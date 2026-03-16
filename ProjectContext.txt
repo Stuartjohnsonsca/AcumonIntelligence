@@ -152,27 +152,35 @@ npm run dev
 
 ## DB Tables (Data Extraction)
 - extraction_jobs — one per extraction session (links client + user); includes total_files, processed_count, failed_count counters for live progress
-- extraction_files — individual files in a job (tracks blob path, zip status, extraction status)
+- extraction_files — individual files in a job (tracks blob path, zip status, extraction status, file_hash, duplicate_of_id)
 - extracted_records — one per extracted document (all financial fields as columns)
 - account_category_learning — per-client AI learning for description→category mapping
 
 ## Parallel Extraction Pipeline Architecture
 - Files are uploaded via POST /api/extraction/upload (stores in Azure inbox, creates ExtractionFile rows)
+  - SHA-256 hash computed per file; duplicates detected within the same job and marked as status='duplicate' (not uploaded to blob)
+  - totalFiles on ExtractionJob counts only unique files; duplicateCount tracks skipped duplicates
 - POST /api/extraction/process acts as a fire-and-forget orchestrator:
   1. Calculates adaptive batch size: ≤5 files → all at once; ≤20 → 5/batch; ≤100 → 10/batch; ≤300 → 15/batch; >300 → 25/batch
   2. Fires N parallel fetch() calls to POST /api/extraction/process-batch (does NOT await them)
   3. Returns immediately with {jobId, status: "processing", totalFiles, batchCount, batchSize}
 - Each batch worker (process-batch) runs in its own serverless function:
-  - Processes all file IDs concurrently via Promise.allSettled (individual failures never kill sibling files)
-  - Moves blobs: inbox → processing → processed
+  - Processes files with concurrency limit of 2 per batch (semaphore pattern, not all-at-once)
+  - Moves blobs: inbox → processing → processed (with copy-completion await before delete)
   - Calls Gemini AI for extraction, saves ExtractedRecord + category learning
   - Atomically increments processedCount/failedCount on ExtractionJob
   - When final batch completes, marks job as "complete"
+- Gemini API calls have retry with exponential backoff (3 attempts, 2s/4s/8s delays)
+  - Transient errors (429 rate limit, 500/503, timeouts) are retried; non-transient errors fail immediately
+  - Error messages are stored on ExtractionFile.errorMessage for diagnostics
+- Azure blob moves await copy completion before deleting source (prevents race conditions)
 - Client-side polls GET /api/extraction/status?jobId=X every 1.5s
-  - Returns {total, extracted, failed, complete} from the ExtractionJob counters
-  - UI shows an animated progress bar with green (success) and red (failed) segments
+  - Returns {total, extracted, failed, duplicated, complete} from the ExtractionJob counters
+  - UI shows an animated progress bar with green (success), red (failed) segments, and duplicate count
+  - Failed files show their error messages in the Extraction Details tab for diagnostics
   - When complete=true, polling stops and full results are fetched
 - Navigation-safe: once orchestrator fires batches, processing continues server-side regardless of whether user stays on the page
+- File status categories: uploaded, processing, extracted, failed, duplicate
 
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars

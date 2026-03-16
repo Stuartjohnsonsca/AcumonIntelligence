@@ -99,6 +99,7 @@ export function DataExtractionClient({
     total: number;
     extracted: number;
     failed: number;
+    duplicated: number;
     complete: boolean;
   } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -138,7 +139,7 @@ export function DataExtractionClient({
         const res = await fetch(`/api/extraction/status?jobId=${jobId}`);
         if (!res.ok) return;
         const data = await res.json();
-        setProgress({ total: data.total, extracted: data.extracted, failed: data.failed, complete: data.complete });
+        setProgress({ total: data.total, extracted: data.extracted, failed: data.failed, duplicated: data.duplicated || 0, complete: data.complete });
 
         if (data.complete) {
           if (pollingRef.current) clearInterval(pollingRef.current);
@@ -190,7 +191,7 @@ export function DataExtractionClient({
       const processData = await processRes.json();
       if (!processRes.ok) throw new Error(processData.error || 'Processing failed');
 
-      setProgress({ total: processData.totalFiles, extracted: 0, failed: 0, complete: false });
+      setProgress({ total: processData.totalFiles, extracted: 0, failed: 0, duplicated: uploadData.duplicatesSkipped || 0, complete: false });
       startPolling(uploadData.jobId);
 
     } catch (err) {
@@ -420,7 +421,7 @@ export function DataExtractionClient({
                     Extracting with AI...
                   </span>
                   <span className="text-slate-500 font-mono text-xs">
-                    {progress.extracted + progress.failed} / {progress.total}
+                    {progress.extracted + progress.failed} / {progress.total} unique files
                   </span>
                 </div>
 
@@ -439,7 +440,7 @@ export function DataExtractionClient({
                   )}
                 </div>
 
-                <div className="flex items-center gap-4 text-xs">
+                <div className="flex items-center gap-4 text-xs flex-wrap">
                   <span className="flex items-center gap-1 text-green-700">
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     {progress.extracted} extracted
@@ -448,6 +449,12 @@ export function DataExtractionClient({
                     <span className="flex items-center gap-1 text-red-600">
                       <XCircle className="h-3.5 w-3.5" />
                       {progress.failed} failed
+                    </span>
+                  )}
+                  {progress.duplicated > 0 && (
+                    <span className="flex items-center gap-1 text-slate-500">
+                      <AlertCircle className="h-3.5 w-3.5" />
+                      {progress.duplicated} duplicates skipped
                     </span>
                   )}
                   <span className="text-slate-400 ml-auto">
@@ -580,39 +587,75 @@ export function DataExtractionClient({
                   ))}
                 </div>
 
-                <div className="bg-slate-50 rounded-lg p-4 text-sm text-slate-600 leading-relaxed border border-slate-200">
-                  <p className="font-medium text-slate-800 mb-2">Extraction Summary</p>
-                  <p>
-                    This extraction was performed by <strong>{jobResult.user.name}</strong> on{' '}
-                    <strong>{jobResult.extractedAt ? new Date(jobResult.extractedAt).toLocaleString('en-GB') : 'N/A'}</strong> for
-                    client <strong>{jobResult.client.clientName}</strong>. A total of <strong>{jobResult.files.length}</strong> document(s)
-                    were submitted for processing. Of these, <strong>{jobResult.files.filter(f => f.status === 'extracted').length}</strong> were
-                    successfully extracted using the Acumon Intelligence AI extraction engine. The extraction identified financial data
-                    including supplier details, document references, dates, and monetary totals. All data has been stored securely.
-                    This process was conducted for the purpose of audit and assurance work and results should be reviewed by a qualified
-                    professional before reliance.
-                  </p>
-                </div>
-
-                <div>
-                  <p className="font-medium text-slate-800 mb-3">Files Processed</p>
-                  <div className="divide-y border rounded-lg">
-                    {jobResult.files.map(file => (
-                      <div key={file.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                        <div className="flex items-center gap-2">
-                          {file.status === 'extracted'
-                            ? <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                            : <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />}
-                          <span className="text-slate-700">{file.originalName}</span>
-                        </div>
-                        <Badge variant={file.status === 'extracted' ? 'default' : 'secondary'}
-                          className={file.status === 'extracted' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}>
-                          {file.status === 'extracted' ? 'Extracted' : 'Failed'}
-                        </Badge>
+                {(() => {
+                  const extractedFiles = jobResult.files.filter(f => f.status === 'extracted');
+                  const failedFiles = jobResult.files.filter(f => f.status === 'failed');
+                  const duplicateFiles = jobResult.files.filter(f => f.status === 'duplicate');
+                  const uniqueFiles = jobResult.files.filter(f => f.status !== 'duplicate');
+                  return (
+                    <>
+                      <div className="bg-slate-50 rounded-lg p-4 text-sm text-slate-600 leading-relaxed border border-slate-200">
+                        <p className="font-medium text-slate-800 mb-2">Extraction Summary</p>
+                        <p>
+                          This extraction was performed by <strong>{jobResult.user.name}</strong> on{' '}
+                          <strong>{jobResult.extractedAt ? new Date(jobResult.extractedAt).toLocaleString('en-GB') : 'N/A'}</strong> for
+                          client <strong>{jobResult.client.clientName}</strong>. A total of <strong>{jobResult.files.length}</strong> document(s)
+                          were submitted. Of these, <strong>{duplicateFiles.length}</strong> were identified as duplicates and skipped.
+                          Of the <strong>{uniqueFiles.length}</strong> unique files, <strong>{extractedFiles.length}</strong> were
+                          successfully extracted and <strong>{failedFiles.length}</strong> failed.
+                          The extraction used the Acumon Intelligence AI engine to identify financial data
+                          including supplier details, document references, dates, and monetary totals. All data has been stored securely.
+                          This process was conducted for the purpose of audit and assurance work and results should be reviewed by a qualified
+                          professional before reliance.
+                        </p>
                       </div>
-                    ))}
-                  </div>
-                </div>
+
+                      <div>
+                        <p className="font-medium text-slate-800 mb-3">Files Processed ({uniqueFiles.length} unique)</p>
+                        <div className="divide-y border rounded-lg">
+                          {uniqueFiles.map(file => (
+                            <div key={file.id} className="px-4 py-2.5 text-sm">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  {file.status === 'extracted'
+                                    ? <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                                    : <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />}
+                                  <span className="text-slate-700">{file.originalName}</span>
+                                </div>
+                                <Badge variant={file.status === 'extracted' ? 'default' : 'secondary'}
+                                  className={file.status === 'extracted' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}>
+                                  {file.status === 'extracted' ? 'Extracted' : 'Failed'}
+                                </Badge>
+                              </div>
+                              {file.status === 'failed' && file.errorMessage && (
+                                <div className="mt-1.5 ml-6 text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2.5 py-1.5 font-mono break-all">
+                                  {file.errorMessage}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {duplicateFiles.length > 0 && (
+                        <div>
+                          <p className="font-medium text-slate-800 mb-3">Duplicates Skipped ({duplicateFiles.length})</p>
+                          <div className="divide-y border border-slate-200 rounded-lg bg-slate-50">
+                            {duplicateFiles.map(file => (
+                              <div key={file.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+                                <div className="flex items-center gap-2">
+                                  <AlertCircle className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                                  <span className="text-slate-500">{file.originalName}</span>
+                                </div>
+                                <Badge variant="secondary" className="bg-slate-200 text-slate-600">Duplicate</Badge>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 
