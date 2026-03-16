@@ -20,6 +20,7 @@ export default function LoginForm() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [msalLoading, setMsalLoading] = useState(false);
   const [error, setError] = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
@@ -28,7 +29,6 @@ export default function LoginForm() {
     setError('');
 
     try {
-      // Add timeout to prevent infinite hang
       const signInPromise = signIn('credentials', {
         email,
         password,
@@ -47,13 +47,20 @@ export default function LoginForm() {
         return;
       }
 
-      // Successful sign-in — redirect to my-account
       router.push(redirect ? `/product-access?prefix=${redirect}` : callbackUrl);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'An error occurred';
       setError(`Sign in failed: ${message}. Please try again.`);
       setLoading(false);
     }
+  }
+
+  async function handleMicrosoftSignIn() {
+    setMsalLoading(true);
+    setError('');
+    await signIn('microsoft-entra-id', {
+      callbackUrl: redirect ? `/product-access?prefix=${redirect}` : callbackUrl,
+    });
   }
 
   return (
@@ -70,10 +77,41 @@ export default function LoginForm() {
         <Card className="shadow-xl border-0">
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">Welcome back</CardTitle>
-            <CardDescription>Enter your email and password to sign in</CardDescription>
+            <CardDescription>Sign in with your email or Microsoft account</CardDescription>
           </CardHeader>
+          <CardContent className="pb-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full h-11 border-slate-300 hover:bg-slate-50 flex items-center justify-center gap-3"
+              onClick={handleMicrosoftSignIn}
+              disabled={msalLoading || loading}
+            >
+              {msalLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21">
+                  <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+                  <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+                  <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+                  <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+                </svg>
+              )}
+              <span className="text-sm font-medium text-slate-700">Sign in with Microsoft</span>
+            </Button>
+
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-slate-200" />
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="bg-white px-3 text-slate-400">or sign in with email</span>
+              </div>
+            </div>
+          </CardContent>
+
           <form onSubmit={handleSubmit}>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 pt-0">
               {error && (
                 <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>
               )}
@@ -120,7 +158,7 @@ export default function LoginForm() {
               <Button
                 type="submit"
                 className="w-full h-11 bg-blue-600 hover:bg-blue-700"
-                disabled={loading}
+                disabled={loading || msalLoading}
               >
                 {loading
                   ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Signing in...</>

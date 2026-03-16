@@ -1,5 +1,6 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
+import MicrosoftEntraID from 'next-auth/providers/microsoft-entra-id';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import { generateOTP } from '@/lib/utils';
@@ -7,6 +8,11 @@ import { sendTwoFactorCode } from '@/lib/email';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
+    MicrosoftEntraID({
+      clientId: process.env.AZURE_AD_CLIENT_ID!,
+      clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
+      issuer: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID!}/v2.0`,
+    }),
     Credentials({
       id: 'credentials',
       name: 'credentials',
@@ -144,7 +150,55 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, account, profile }) {
+      // Microsoft Entra ID sign-in — look up or create user in our DB
+      if (account?.provider === 'microsoft-entra-id' && profile?.email) {
+        const email = profile.email as string;
+        let dbUser = await prisma.user.findUnique({
+          where: { email },
+          include: { firm: true },
+        });
+
+        // Auto-create user if they exist in Azure AD but not yet in our DB
+        // (Super Admin can pre-register them, or we create a pending account)
+        if (!dbUser) {
+          // Find a firm to attach them to — default to the first firm or leave firmId null
+          // Super Admin will need to assign them to a firm afterwards
+          token.msalPendingSetup = true;
+          token.email = email;
+          token.name = (profile.name as string) || email;
+          token.twoFactorVerified = true; // Microsoft auth counts as verified
+          token.twoFactorPending = false;
+          token.isSuperAdmin = false;
+          token.isFirmAdmin = false;
+          token.isPortfolioOwner = false;
+          token.firmId = null;
+          token.firmName = null;
+          token.displayId = null;
+          return token;
+        }
+
+        if (!dbUser.isActive) {
+          token.error = 'AccountDisabled';
+          return token;
+        }
+
+        token.id = dbUser.id;
+        token.email = dbUser.email;
+        token.name = dbUser.name;
+        token.twoFactorVerified = true; // Microsoft auth skips 2FA
+        token.twoFactorPending = false;
+        token.isSuperAdmin = dbUser.isSuperAdmin;
+        token.isFirmAdmin = dbUser.isFirmAdmin;
+        token.isPortfolioOwner = dbUser.isPortfolioOwner;
+        token.firmId = dbUser.firmId;
+        token.firmName = dbUser.firm.name;
+        token.displayId = dbUser.displayId;
+        token.msalPendingSetup = false;
+        return token;
+      }
+
+      // Credentials sign-in
       if (user) {
         token.id = user.id;
         token.isSuperAdmin = (user as any).isSuperAdmin;
@@ -169,6 +223,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         session.user.displayId = token.displayId as string;
         session.user.twoFactorPending = token.twoFactorPending as boolean;
         session.user.twoFactorVerified = token.twoFactorVerified as boolean;
+        (session.user as any).msalPendingSetup = token.msalPendingSetup ?? false;
       }
       return session;
     },

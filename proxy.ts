@@ -4,7 +4,7 @@ import { getToken } from 'next-auth/jwt';
 
 const protectedRoutes = ['/my-account', '/tools'];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { nextUrl } = req;
 
   const token = await getToken({
