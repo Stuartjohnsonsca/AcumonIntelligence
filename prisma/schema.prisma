@@ -104,6 +104,7 @@ model Client {
   userAssignments        UserClientAssignment[]
   extractionJobs         ExtractionJob[]
   accountingConnections  AccountingConnection[]
+  xeroAuthRequests       XeroAuthRequest[]
 
   @@map("clients")
 }
@@ -199,6 +200,26 @@ model AccessRequest {
   createdAt     DateTime  @default(now()) @map("created_at")
 
   @@map("access_requests")
+}
+
+// ─── Xero Delegated Auth Requests ───────────────────────────────────────────
+
+model XeroAuthRequest {
+  id           String    @id @default(uuid())
+  clientId     String    @map("client_id")
+  requestedBy  String    @map("requested_by")
+  recipientEmail String  @map("recipient_email")
+  recipientName  String? @map("recipient_name")
+  token        String    @unique
+  codeVerifier String?   @map("code_verifier")
+  status       String    @default("pending") // pending | authorised | expired
+  respondedAt  DateTime? @map("responded_at")
+  expiresAt    DateTime  @map("expires_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@map("xero_auth_requests")
 }
 
 // ─── Accounting System Connections ───────────────────────────────────────────

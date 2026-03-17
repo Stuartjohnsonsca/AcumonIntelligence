@@ -128,6 +128,51 @@ export async function sendExtractionExpiryReminder(
   });
 }
 
+export async function sendXeroAccessRequestEmail(
+  recipientEmail: string,
+  recipientName: string,
+  clientName: string,
+  auditorName: string,
+  authoriseUrl: string,
+): Promise<void> {
+  await transporter.sendMail({
+    from: `"Acumon Intelligence" <${process.env.EMAIL_FROM || 'agents@acumon.com'}>`,
+    to: recipientEmail,
+    subject: `Xero access request for ${clientName} — Acumon Intelligence`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); padding: 30px; border-radius: 8px 8px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 24px;">Acumon Intelligence</h1>
+        </div>
+        <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
+          <p style="color: #374151; font-size: 16px;">Hello ${recipientName},</p>
+          <p style="color: #374151; font-size: 16px;">
+            <strong>${auditorName}</strong> has requested read-only access to the <strong>${clientName}</strong> Xero account
+            for the purpose of conducting audit and assurance work.
+          </p>
+          <p style="color: #374151; font-size: 16px;">
+            If you approve, please click the button below. You will be asked to sign in to Xero and authorise the connection.
+            Access will be <strong>read-only</strong> and will automatically expire after <strong>30 days</strong>.
+          </p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${authoriseUrl}" style="background: #13b5ea; color: white; padding: 14px 36px; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600;">Authorise Xero Access</a>
+          </div>
+          <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 16px; margin: 20px 0;">
+            <p style="color: #92400e; font-size: 14px; margin: 0;">
+              <strong>What this grants:</strong> Read-only access to transactions, account codes, and contacts in your Xero organisation.
+              No changes will be made to your data. The connection will be automatically removed after 30 days.
+            </p>
+          </div>
+          <p style="color: #6b7280; font-size: 14px;">This link expires in 7 days. If you did not expect this request, please ignore this email.</p>
+          <p style="color: #6b7280; font-size: 12px; margin-top: 20px;">
+            Acumon Intelligence · <a href="https://www.acumonintelligence.com" style="color: #2563eb;">www.acumonintelligence.com</a>
+          </p>
+        </div>
+      </div>
+    `,
+  });
+}
+
 export async function sendWelcomeEmail(email: string, name: string, loginUrl: string): Promise<void> {
   await transporter.sendMail({
     from: `"Acumon Intelligence" <${process.env.EMAIL_FROM || 'agents@acumon.com'}>`,

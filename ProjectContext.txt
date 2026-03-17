@@ -228,6 +228,19 @@ npm run dev
   - Tokens auto-refresh on expiry; connection expires after 30 days
   - Scopes: offline_access, openid, profile, email, accounting.transactions.read, accounting.settings.read, accounting.contacts.read
 
+## Xero Delegated Access Flow
+- Auditors do NOT log into Xero themselves — they request access from the client via email
+- Flow: Auditor clicks "Collate data from Xero" → system checks if connected → if not, sends email to client contact
+- **POST /api/accounting/xero/request-access** — Creates a XeroAuthRequest with a unique token (7-day expiry), sends branded email to client contact
+- **GET /api/accounting/xero/request-access?clientId=X** — Returns latest request status for polling
+- **Public page /xero-authorise/[token]** — Client clicks email link, sees branded page explaining what access is being granted (read-only, 30-day expiry), clicks "Connect to Xero"
+- **GET /api/accounting/xero/client-connect?token=X** — Validates the delegated token, stores PKCE code_verifier in DB (not cookie — client is not authenticated), redirects to Xero OAuth
+- **Xero callback** updated to handle both authenticated (direct) and delegated (token-based) flows:
+  - Delegated: PKCE verifier retrieved from XeroAuthRequest DB record, no session auth required
+  - On success: stores encrypted tokens, marks XeroAuthRequest as 'authorised', redirects client to confirmation page
+- **XeroAuthRequest model** tracks: clientId, requestedBy, recipientEmail, token (unique), codeVerifier, status (pending/authorised/expired), expiresAt
+- UI shows pending request status with "Check Status" button; once authorised, shows green confirmation
+
 ## Xero Security Compliance
 - **OAuth 2.0 + PKCE (S256)**: code_verifier generated per session, stored in httpOnly cookie, sent during token exchange
 - **State validation**: OAuth state with nonce stored in httpOnly cookie, validated on callback to prevent CSRF

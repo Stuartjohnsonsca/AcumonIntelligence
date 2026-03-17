@@ -258,6 +258,14 @@ export function DataExtractionClient({
   const [xeroCategory, setXeroCategory] = useState('');
   const [xeroError, setXeroError] = useState('');
 
+  // Xero delegated access request state
+  const [xeroRequestSending, setXeroRequestSending] = useState(false);
+  const [xeroRequestStatus, setXeroRequestStatus] = useState<{
+    status: string;
+    recipientEmail: string;
+    createdAt: string;
+  } | null>(null);
+
   // Progress tracking
   const [progress, setProgress] = useState<{
     total: number;
@@ -989,7 +997,7 @@ export function DataExtractionClient({
         setXeroSelectedCodes(new Set());
         setXeroShowModal(true);
       } else {
-        window.location.href = `/api/accounting/xero/connect?clientId=${selectedClient.id}`;
+        await handleRequestXeroAccess();
       }
     } catch (err) {
       setXeroError(err instanceof Error ? err.message : 'Failed to check Xero connection');
@@ -997,6 +1005,51 @@ export function DataExtractionClient({
       setXeroLoading(false);
     }
   }
+
+  async function handleRequestXeroAccess() {
+    if (!selectedClient) return;
+    setXeroRequestSending(true);
+    setXeroError('');
+    try {
+      const res = await fetch('/api/accounting/xero/request-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: selectedClient.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send request');
+      setXeroRequestStatus({
+        status: 'pending',
+        recipientEmail: selectedClient.contactEmail || '',
+        createdAt: new Date().toISOString(),
+      });
+      setXeroError('');
+    } catch (err) {
+      setXeroError(err instanceof Error ? err.message : 'Failed to send Xero access request');
+    } finally {
+      setXeroRequestSending(false);
+    }
+  }
+
+  async function checkXeroRequestStatus() {
+    if (!selectedClient) return;
+    try {
+      const res = await fetch(`/api/accounting/xero/request-access?clientId=${selectedClient.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.request) {
+          setXeroRequestStatus(data.request);
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  useEffect(() => {
+    if (selectedClient) {
+      checkXeroRequestStatus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClient]);
 
   function toggleXeroCode(code: string) {
     setXeroSelectedCodes(prev => {
@@ -1300,14 +1353,47 @@ export function DataExtractionClient({
                 <Button className="w-full justify-start" variant="outline" onClick={() => leftSpreadsheetRef.current?.click()}>
                   <Upload className="h-4 w-4 mr-2" />Upload Spreadsheet (.xlsx / .csv)
                 </Button>
-                <Button className="w-full justify-start" variant="outline" onClick={handleXeroButtonClick} disabled={xeroLoading}>
-                  {xeroLoading
-                    ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Connecting...</>
+                <Button className="w-full justify-start" variant="outline" onClick={handleXeroButtonClick}
+                  disabled={xeroLoading || xeroRequestSending}>
+                  {xeroLoading || xeroRequestSending
+                    ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />{xeroRequestSending ? 'Sending request...' : 'Connecting...'}</>
                     : <><Link2 className="h-4 w-4 mr-2" />Collate data from {selectedClient.software || 'Accounting System'}</>}
                 </Button>
                 <Button className="w-full justify-start" variant="outline" onClick={handleLoadBlankSpreadsheet}>
                   <Table className="h-4 w-4 mr-2" />Load Blank Spreadsheet (paste data)
                 </Button>
+                {xeroRequestStatus && xeroRequestStatus.status === 'pending' && (
+                  <div className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Mail className="h-4 w-4 flex-shrink-0" />
+                      <span className="font-medium">Xero access request sent</span>
+                    </div>
+                    <p className="text-xs text-blue-600 ml-6">
+                      An email has been sent to <strong>{xeroRequestStatus.recipientEmail}</strong> asking them to authorise
+                      read-only Xero access. The link expires in 7 days.
+                    </p>
+                    <div className="mt-2 ml-6">
+                      <Button size="sm" variant="outline" className="text-xs h-7" onClick={async () => {
+                        await checkXeroRequestStatus();
+                        const statusRes = await fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`);
+                        const statusData = await statusRes.json();
+                        if (statusData.connected) {
+                          setXeroConnected(true);
+                          setXeroOrgName(statusData.orgName);
+                          setXeroError('');
+                        }
+                      }}>
+                        <RefreshCw className="h-3 w-3 mr-1" />Check Status
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {xeroRequestStatus && xeroRequestStatus.status === 'authorised' && !xeroConnected && (
+                  <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                    <span>Xero access has been authorised. Click &quot;Collate data&quot; above to fetch transactions.</span>
+                  </div>
+                )}
                 {xeroError && (
                   <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
                     <AlertCircle className="h-4 w-4 flex-shrink-0" />{xeroError}
