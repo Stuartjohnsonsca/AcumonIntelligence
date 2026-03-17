@@ -1,26 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
-import { getAccounts, getTransactions } from '@/lib/xero';
-import crypto from 'crypto';
+import { getTransactions } from '@/lib/xero';
+import { prisma } from '@/lib/db';
+import { verifyClientAccess } from '@/lib/client-access';
 
 export const maxDuration = 120;
-
-interface TaskResult {
-  status: 'running' | 'completed' | 'error';
-  data?: unknown;
-  error?: string;
-  userId: string;
-  createdAt: number;
-}
-
-const taskStore = new Map<string, TaskResult>();
-
-setInterval(() => {
-  const cutoff = Date.now() - 4 * 60 * 60 * 1000;
-  for (const [id, task] of taskStore) {
-    if (task.createdAt < cutoff) taskStore.delete(id);
-  }
-}, 5 * 60 * 1000);
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -35,12 +19,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'clientId, dateFrom, dateTo required' }, { status: 400 });
   }
 
-  const taskId = crypto.randomBytes(16).toString('hex');
-  const userId = session.user.email || session.user.id || 'unknown';
+  const access = await verifyClientAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, clientId);
+  if (!access.allowed) {
+    return NextResponse.json({ error: access.reason || 'Forbidden' }, { status: 403 });
+  }
 
-  taskStore.set(taskId, { status: 'running', userId, createdAt: Date.now() });
+  const task = await prisma.backgroundTask.create({
+    data: {
+      userId: session.user.id,
+      clientId,
+      type: 'xero-fetch',
+      status: 'running',
+    },
+  });
 
-  (async () => {
+  after(async () => {
     try {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
       const transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
@@ -58,6 +51,10 @@ export async function POST(req: Request) {
         const isManualJournal = txn.Type === 'MANUAL_JOURNAL' || txn.Type === 'ManualJournal';
         if (excludeManualJournals && isManualJournal) continue;
 
+        const txnId = txn.InvoiceID || txn.BankTransactionID || '';
+        const txnType = txn.InvoiceID ? 'Invoice' : 'BankTransaction';
+        const hasAttachments = txn.HasAttachments ?? false;
+
         if (txn.LineItems && txn.LineItems.length > 0) {
           for (const li of txn.LineItems) {
             rows.push({
@@ -72,6 +69,9 @@ export async function POST(req: Request) {
               subtotal: txn.SubTotal,
               tax: txn.TotalTax,
               total: txn.Total,
+              transactionId: txnId,
+              transactionType: txnType,
+              hasAttachments,
             });
           }
         } else {
@@ -87,27 +87,32 @@ export async function POST(req: Request) {
             subtotal: txn.SubTotal,
             tax: txn.TotalTax,
             total: txn.Total,
+            transactionId: txnId,
+            transactionType: txnType,
+            hasAttachments,
           });
         }
       }
 
-      taskStore.set(taskId, {
-        status: 'completed',
-        data: { rows, count: rows.length },
-        userId,
-        createdAt: Date.now(),
+      await prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: {
+          status: 'completed',
+          result: { rows, count: rows.length },
+        },
       });
     } catch (err) {
-      taskStore.set(taskId, {
-        status: 'error',
-        error: err instanceof Error ? err.message : 'Unknown error',
-        userId,
-        createdAt: Date.now(),
+      await prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: {
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Unknown error',
+        },
       });
     }
-  })();
+  });
 
-  return NextResponse.json({ taskId });
+  return NextResponse.json({ taskId: task.id });
 }
 
 export async function GET(req: Request) {
@@ -123,19 +128,21 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'taskId required' }, { status: 400 });
   }
 
-  const task = taskStore.get(taskId);
+  const task = await prisma.backgroundTask.findUnique({
+    where: { id: taskId },
+  });
+
   if (!task) {
     return NextResponse.json({ error: 'Task not found' }, { status: 404 });
   }
 
-  const userId = session.user.email || session.user.id || 'unknown';
-  if (task.userId !== userId) {
+  if (task.userId !== session.user.id && !session.user.isSuperAdmin) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   return NextResponse.json({
     status: task.status,
-    data: task.status === 'completed' ? task.data : undefined,
+    data: task.status === 'completed' ? task.result : undefined,
     error: task.error,
   });
 }

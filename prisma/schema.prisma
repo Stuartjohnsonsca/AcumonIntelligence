@@ -12,10 +12,11 @@ datasource db {
 }
 
 model Firm {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id         String   @id @default(uuid())
+  name       String
+  dataRegion String   @default("uk") @map("data_region") // uk | eu | us | ap — determines where data is processed and stored
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
   users   User[]
   clients Client[]
@@ -338,5 +339,24 @@ model AccountCategoryLearning {
 
   @@unique([clientId, description])
   @@map("account_category_learning")
+}
+
+// ─── Background Tasks (replaces in-memory task stores) ──────────────────────
+
+model BackgroundTask {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  clientId  String?  @map("client_id")
+  type      String   // 'xero-fetch' | 'xero-attachments'
+  status    String   @default("running") // running | completed | error
+  progress  Json?    // { phase, current, total }
+  result    Json?    // task-specific result data
+  error     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@index([createdAt])
+  @@map("background_tasks")
 }
 

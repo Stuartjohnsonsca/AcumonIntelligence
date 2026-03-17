@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { verifyJobAccess } from '@/lib/client-access';
 
 function getBaseUrl(): string {
   if (process.env.NEXTAUTH_URL) return process.env.NEXTAUTH_URL;
@@ -30,6 +31,11 @@ export async function POST(req: Request) {
 
   const { jobId } = await req.json();
   if (!jobId) return NextResponse.json({ error: 'jobId required' }, { status: 400 });
+
+  const jobAccess = await verifyJobAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, jobId);
+  if (!jobAccess.allowed) {
+    return NextResponse.json({ error: jobAccess.reason || 'Forbidden' }, { status: 403 });
+  }
 
   const job = await prisma.extractionJob.findUnique({
     where: { id: jobId },
@@ -61,7 +67,7 @@ export async function POST(req: Request) {
 
   const baseUrl = getBaseUrl();
 
-  (async () => {
+  after(async () => {
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
       const startIndex = i * batchSize + 1;
@@ -84,7 +90,7 @@ export async function POST(req: Request) {
         await sleep(BATCH_STAGGER_MS);
       }
     }
-  })();
+  });
 
   return NextResponse.json({
     jobId,
@@ -105,6 +111,11 @@ export async function GET(req: Request) {
   const jobId = searchParams.get('jobId');
 
   if (!jobId) return NextResponse.json({ error: 'jobId required' }, { status: 400 });
+
+  const jobAccess = await verifyJobAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, jobId);
+  if (!jobAccess.allowed) {
+    return NextResponse.json({ error: jobAccess.reason || 'Forbidden' }, { status: 403 });
+  }
 
   const job = await prisma.extractionJob.findUnique({
     where: { id: jobId },

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { getAccounts, getTransactions } from '@/lib/xero';
+import { verifyClientAccess } from '@/lib/client-access';
 
 export const maxDuration = 120;
 
@@ -16,6 +17,11 @@ export async function GET(req: Request) {
 
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required' }, { status: 400 });
+  }
+
+  const access = await verifyClientAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, clientId);
+  if (!access.allowed) {
+    return NextResponse.json({ error: access.reason || 'Forbidden' }, { status: 403 });
   }
 
   try {
@@ -58,6 +64,9 @@ export async function GET(req: Request) {
         subtotal: txn.SubTotal,
         tax: txn.TotalTax,
         total: txn.Total,
+        transactionId: txn.InvoiceID || txn.BankTransactionID || '',
+        transactionType: txn.InvoiceID ? 'Invoice' as const : 'BankTransaction' as const,
+        hasAttachments: txn.HasAttachments ?? false,
         lineItems: txn.LineItems?.map(li => ({
           description: li.Description,
           quantity: li.Quantity,

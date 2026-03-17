@@ -7,7 +7,8 @@ export async function GET(req: Request) {
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
-  const firmId = searchParams.get('firmId') || session.user.firmId;
+  const requestedFirmId = searchParams.get('firmId');
+  const firmId = session.user.isSuperAdmin && requestedFirmId ? requestedFirmId : session.user.firmId;
   const includeInactive = searchParams.get('includeInactive') === 'true';
 
   const clients = await prisma.client.findMany({

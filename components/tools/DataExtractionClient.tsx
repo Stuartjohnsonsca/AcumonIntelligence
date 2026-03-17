@@ -246,6 +246,12 @@ export function DataExtractionClient({
   const [rowMatches, setRowMatches] = useState<Map<number, RowMatch>>(new Map());
   const [unmatchedRecords, setUnmatchedRecords] = useState<ExtractedRecord[]>([]);
 
+  // Transaction metadata for Xero attachment extraction
+  const [txnMetadata, setTxnMetadata] = useState<{ id: string; type: string; hasAttachments: boolean }[]>([]);
+  const [extractingAttachments, setExtractingAttachments] = useState(false);
+  const [attachmentProgress, setAttachmentProgress] = useState<{ phase: string; current: number; total: number } | null>(null);
+  const [noDocsTxnIds, setNoDocsTxnIds] = useState<Set<string>>(new Set());
+
   // FX rate cache
   const fxCache = useRef<Map<string, { rate: number; source: string }>>(new Map());
 
@@ -1081,8 +1087,9 @@ export function DataExtractionClient({
   function loadXeroResultIntoSpreadsheet(data: { rows: Array<Record<string, unknown>> }) {
     const cols = ['Date', 'Reference', 'Contact', 'Type', 'Description', 'Account Code', 'Net', 'Tax', 'Total'];
     const rows: SpreadsheetRow[] = [];
+    const meta: { id: string; type: string; hasAttachments: boolean }[] = [];
     for (const txn of data.rows) {
-      const t = txn as { date?: string; reference?: string; contact?: string; type?: string; description?: string; accountCode?: string; lineAmount?: number | null; taxAmount?: number | null; subtotal?: number; tax?: number; total?: number };
+      const t = txn as { date?: string; reference?: string; contact?: string; type?: string; description?: string; accountCode?: string; lineAmount?: number | null; taxAmount?: number | null; subtotal?: number; tax?: number; total?: number; transactionId?: string; transactionType?: string; hasAttachments?: boolean };
       rows.push({
         'Date': parseXeroDate(t.date),
         'Reference': t.reference || '',
@@ -1094,12 +1101,19 @@ export function DataExtractionClient({
         'Tax': t.taxAmount != null ? String(t.taxAmount) : String(t.tax ?? ''),
         'Total': t.lineAmount != null && t.taxAmount != null ? String(t.lineAmount + t.taxAmount) : String(t.total ?? ''),
       });
+      meta.push({
+        id: t.transactionId || '',
+        type: t.transactionType || 'Invoice',
+        hasAttachments: t.hasAttachments ?? false,
+      });
     }
     setLeftPanelColumns(cols);
     setLeftPanelData(rows);
+    setTxnMetadata(meta);
     setLeftPanelFileName(`Xero - ${xeroOrgName || 'Data'}`);
     setLeftPanelFromAccounting(true);
     setLeftPanelMode('spreadsheet');
+    setNoDocsTxnIds(new Set());
   }
 
   async function handleXeroFetchData() {
@@ -1180,6 +1194,108 @@ export function DataExtractionClient({
         error: err instanceof Error ? err.message : 'Failed to start fetch',
         completedAt: Date.now(),
       });
+    }
+  }
+
+  // ─── Extract Xero attachments ───────────────────────────────────────────
+
+  async function handleExtractXeroAttachments() {
+    if (!selectedClient || txnMetadata.length === 0) return;
+    setExtractingAttachments(true);
+    setAttachmentProgress(null);
+    setError('');
+
+    const uniqueTxns = new Map<string, { id: string; type: string; hasAttachments: boolean }>();
+    for (const m of txnMetadata) {
+      if (m.id && !uniqueTxns.has(m.id)) uniqueTxns.set(m.id, m);
+    }
+
+    const taskId = `xero-attach-${selectedClient.id}-${Date.now()}`;
+    addTask({
+      id: taskId,
+      clientName: selectedClient.clientName,
+      activity: `Extracting documents from ${selectedClient.software || 'Xero'}`,
+      status: 'running',
+    });
+
+    try {
+      const startRes = await fetch('/api/accounting/xero/fetch-attachments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: selectedClient.id,
+          transactions: Array.from(uniqueTxns.values()),
+        }),
+      });
+      const startData = await startRes.json();
+      if (!startRes.ok) throw new Error(startData.error || 'Failed to start attachment extraction');
+
+      const serverTaskId = startData.taskId;
+      const clientIdAtStart = selectedClient.id;
+
+      const poll = async () => {
+        const maxPolls = 200;
+        for (let i = 0; i < maxPolls; i++) {
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const statusRes = await fetch(`/api/accounting/xero/fetch-attachments?taskId=${serverTaskId}`);
+            const statusData = await statusRes.json();
+
+            if (statusData.progress) {
+              setAttachmentProgress(statusData.progress);
+            }
+
+            if (statusData.status === 'completed') {
+              updateTask(taskId, { status: 'completed', completedAt: Date.now() });
+              setExtractingAttachments(false);
+              setAttachmentProgress(null);
+
+              if (statusData.data?.noDocsTxnIds) {
+                setNoDocsTxnIds(new Set(statusData.data.noDocsTxnIds));
+              }
+
+              if (statusData.data?.jobId && selectedClient?.id === clientIdAtStart) {
+                const jobRes = await fetch(`/api/extraction/process?jobId=${statusData.data.jobId}`);
+                if (jobRes.ok) {
+                  const jobData = await jobRes.json();
+                  setJobResult(prev => {
+                    if (!prev) return jobData;
+                    return {
+                      ...prev,
+                      files: [...prev.files, ...(jobData.files || [])],
+                      records: [...prev.records, ...(jobData.records || [])],
+                    };
+                  });
+                  setCurrentJobId(statusData.data.jobId);
+                }
+              }
+              return;
+            }
+
+            if (statusData.status === 'error') {
+              updateTask(taskId, { status: 'error', error: statusData.error, completedAt: Date.now() });
+              setExtractingAttachments(false);
+              setAttachmentProgress(null);
+              setError(statusData.error || 'Attachment extraction failed');
+              return;
+            }
+          } catch { /* network blip, keep polling */ }
+        }
+        updateTask(taskId, { status: 'error', error: 'Timed out', completedAt: Date.now() });
+        setExtractingAttachments(false);
+        setAttachmentProgress(null);
+      };
+
+      poll();
+    } catch (err) {
+      updateTask(taskId, {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Failed',
+        completedAt: Date.now(),
+      });
+      setExtractingAttachments(false);
+      setAttachmentProgress(null);
+      setError(err instanceof Error ? err.message : 'Failed to extract attachments');
     }
   }
 
@@ -1322,7 +1438,8 @@ export function DataExtractionClient({
               setJobResult(null); setUploadedFiles([]); setCurrentJobId(null);
               setRowMatches(new Map()); setUnmatchedRecords([]); setSampledRows(new Set());
               setSelectedRows(new Set()); setLeftPanelData([]); setLeftPanelColumns([]);
-              setLeftPanelMode(null); setLeftPanelFileName(null); setLeftPanelFromAccounting(false);
+              setLeftPanelMode('idle'); setLeftPanelFileName(null); setLeftPanelFromAccounting(false);
+              setTxnMetadata([]); setNoDocsTxnIds(new Set());
               loadPreviousJobs(selectedClient.id);
             }}>
               <Plus className="h-4 w-4 mr-1" />New Session
@@ -1608,11 +1725,15 @@ export function DataExtractionClient({
                           <td className="bg-slate-100 w-4 border-x border-slate-200"></td>
 
                           {/* Uploaded Documents columns — read-only */}
-                          {uploadedDocColumns.map(col => {
-                            const cellBg = match && isUncertain ? 'bg-orange-50' : '';
+                          {uploadedDocColumns.map((col, colIdx) => {
+                            const txnMeta = txnMetadata[ri];
+                            const hasNoDoc = txnMeta && noDocsTxnIds.has(txnMeta.id);
+                            const cellBg = match && isUncertain ? 'bg-orange-50' : hasNoDoc && !match ? 'bg-red-50' : '';
                             return (
                               <td key={`ud-${col}`} className={`px-1.5 py-0.5 whitespace-nowrap border-r border-slate-50 ${cellBg}`}>
-                                {match ? renderDocCellValue(match, col) : <span className="text-slate-200">—</span>}
+                                {match ? renderDocCellValue(match, col)
+                                  : hasNoDoc && colIdx === 0 ? <span className="text-[9px] text-red-400 font-medium">No docs</span>
+                                  : <span className="text-slate-200">—</span>}
                               </td>
                             );
                           })}
@@ -1744,6 +1865,32 @@ export function DataExtractionClient({
               <div className={`text-sm font-bold mt-2 pt-2 border-t border-slate-200 ${auditSummary.conclusion.color}`}>
                 Conclusion: {auditSummary.conclusion.text}
               </div>
+            </div>
+          )}
+
+          {/* Extract from accounting system */}
+          {leftPanelFromAccounting && selectedClient.software && txnMetadata.length > 0 && (
+            <div className="px-4 pt-4 pb-0">
+              <Button
+                className="w-full bg-green-600 hover:bg-green-700 text-xs h-9"
+                disabled={extractingAttachments || uploading || processing}
+                onClick={handleExtractXeroAttachments}
+              >
+                {extractingAttachments ? (
+                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    {attachmentProgress
+                      ? `${attachmentProgress.phase === 'downloading' ? 'Downloading' : 'Extracting'}... ${attachmentProgress.current}/${attachmentProgress.total}`
+                      : 'Extracting...'}</>
+                ) : (
+                  <><Database className="mr-1.5 h-3.5 w-3.5" />Extract Documents from {selectedClient.software}</>
+                )}
+              </Button>
+              {txnMetadata.length > 0 && (
+                <p className="text-[10px] text-slate-500 mt-1.5 text-center">
+                  {txnMetadata.filter((m, i, a) => a.findIndex(x => x.id === m.id) === i).filter(m => m.hasAttachments).length} of{' '}
+                  {txnMetadata.filter((m, i, a) => a.findIndex(x => x.id === m.id) === i).length} transactions have attachments
+                </p>
+              )}
             </div>
           )}
 

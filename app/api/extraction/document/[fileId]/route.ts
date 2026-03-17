@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { verifyClientAccess } from '@/lib/client-access';
 import { generateSasUrl, CONTAINERS } from '@/lib/azure-blob';
 
 export async function GET(
@@ -35,7 +36,8 @@ export async function GET(
     return NextResponse.json({ error: 'Document has expired and is no longer available' }, { status: 410 });
   }
 
-  if (!session.user.isSuperAdmin && file.job.client.firmId !== session.user.firmId) {
+  const access = await verifyClientAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, file.job.clientId);
+  if (!access.allowed) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

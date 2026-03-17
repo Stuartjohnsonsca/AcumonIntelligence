@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { verifyClientAccess } from '@/lib/client-access';
 import { sendXeroAccessRequestEmail } from '@/lib/email';
 import crypto from 'crypto';
 
@@ -40,8 +41,9 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!session.user.isSuperAdmin && client.firmId !== session.user.firmId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const access = await verifyClientAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, clientId);
+    if (!access.allowed) {
+      return NextResponse.json({ error: access.reason || 'Forbidden' }, { status: 403 });
     }
 
     const pending = await prisma.xeroAuthRequest.findFirst({
@@ -129,6 +131,11 @@ export async function GET(req: Request) {
   const clientId = searchParams.get('clientId');
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required' }, { status: 400 });
+  }
+
+  const access = await verifyClientAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, clientId);
+  if (!access.allowed) {
+    return NextResponse.json({ error: access.reason || 'Forbidden' }, { status: 403 });
   }
 
   const latest = await prisma.xeroAuthRequest.findFirst({

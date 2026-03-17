@@ -22,7 +22,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - **Azure Blob Storage** (acumondataextractor) — temporary file staging for extraction + SAS URL generation for secure browser access
 - **pdf-lib** — server-side PDF annotation (coloured bounding boxes on extracted documents)
 - **pdfjs-dist** — client-side PDF rendering in DocumentViewer component
-- **Xero OAuth2 API** — accounting system integration (read-only transactions, chart of accounts)
+- **Xero OAuth2 API** — accounting system integration (read-only transactions, chart of accounts, attachment download)
 - ExcelJS — Excel export generation (server-side + client-side spreadsheet parsing)
 - JSZip — Server-side ZIP extraction
 
@@ -46,7 +46,9 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /lib/azure-blob.ts — Azure Blob Storage helpers (upload, move, download)
 - /lib/gemini-extractor.ts — Gemini AI extraction + category inference (5 retries, dynamic backoff with server-hint parsing, jitter)
 - /lib/xero.ts — Xero OAuth2 helpers (authorize, token exchange/refresh, AES-256-GCM encryption, API wrappers)
-- /prisma/schema.prisma — Full DB schema
+- /lib/client-access.ts — Client data isolation helpers (verifyClientAccess, verifyJobAccess)
+- /lib/regions.ts — Region configuration for data residency (uk, eu, us, ap infrastructure mappings)
+- /prisma/schema.prisma — Full DB schema (includes BackgroundTask model, Firm.dataRegion)
 - /prisma/seed.ts — Seeds initial firm, user (Stuart Thomson ST001), and 10 products
 - /middleware.ts — Auth guard for /my-account and /tools routes
 - /components/Navbar.tsx — Main navigation (logo, dropdowns, login/logout)
@@ -98,6 +100,8 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - GET /api/accounting/xero/data?clientId=X&type=accounts|transactions — Fetches chart of accounts or filtered transactions from Xero
 - GET /api/extraction/document/[fileId] — Returns SAS URL for secure temporary access to processed document (15-minute expiry)
 - POST /api/extraction/[jobId]/export — Generates a zip file with annotated PDFs, offline HTML viewers, and Excel report
+- POST /api/accounting/xero/fetch-attachments — Background task: downloads attachments from Xero transactions, uploads to Azure Blob, runs Gemini extraction; returns taskId immediately
+- GET /api/accounting/xero/fetch-attachments?taskId=X — Polls attachment extraction task status (progress phase/counts, or final results including noDocsTxnIds)
 - GET /api/cron/cleanup-xero — Daily cron (02:00 UTC): revokes expired Xero connections and deletes tokens from DB (secured by CRON_SECRET)
 - GET /api/fx-rate?from=X&to=Y&date=D — FX rate lookup (frankfurter.app primary, open.er-api.com fallback)
 - GET /api/cron/cleanup-extraction — Daily cron (03:00 UTC): sends 40-day/81-day reminders, deletes expired documents at 121 days
@@ -189,6 +193,7 @@ npm run dev
 - extracted_records — one per extracted document (all financial fields as columns + field_locations JSON for bounding box coordinates)
 - account_category_learning — per-client AI learning for description→category mapping
 - accounting_connections — stores encrypted Xero OAuth2 tokens per client (unique on [clientId, system]); auto-refreshes; 30-day expiry
+- background_tasks — DB-backed task state for serverless-safe background processing (replaces in-memory Maps); cleaned by daily cron
 
 ## Parallel Extraction Pipeline Architecture
 - Files are uploaded via POST /api/extraction/upload (stores in Azure inbox, creates ExtractionFile rows)
@@ -230,7 +235,7 @@ npm run dev
   - If connected: shows modal with chart of accounts multi-select + date range picker; fetches transactions and populates left panel grid
   - Xero OAuth2 flow with PKCE: redirect → Xero login → callback → state validation → token exchange with code_verifier → encrypted storage (AES-256-GCM) in accounting_connections table
   - Tokens auto-refresh on expiry; connection expires after 30 days
-  - Scopes: offline_access, openid, profile, email, accounting.invoices.read, accounting.payments.read, accounting.banktransactions.read, accounting.manualjournals.read, accounting.settings.read, accounting.contacts.read (granular scopes required for apps created after 2 March 2026)
+  - Scopes: offline_access, openid, profile, email, accounting.invoices.read, accounting.payments.read, accounting.banktransactions.read, accounting.manualjournals.read, accounting.settings.read, accounting.contacts.read, accounting.attachments.read (granular scopes required for apps created after 2 March 2026)
 
 ## Xero Delegated Access Flow
 - Auditors do NOT log into Xero themselves — they request access from the client via email
@@ -254,7 +259,7 @@ npm run dev
 - **30-day auto-deletion**: Connections expire 30 days after authentication
   - Daily cron job (GET /api/cron/cleanup-xero at 02:00 UTC) revokes Xero connection via DELETE /connections/{tenantId} then deletes the DB row
   - Vercel Cron configured in vercel.json, authenticated via CRON_SECRET Bearer token
-- **Read-only scopes**: Only accounting.invoices.read, accounting.payments.read, accounting.banktransactions.read, accounting.manualjournals.read, accounting.settings.read, accounting.contacts.read
+- **Read-only scopes**: accounting.invoices.read, accounting.payments.read, accounting.banktransactions.read, accounting.manualjournals.read, accounting.settings.read, accounting.contacts.read, accounting.attachments.read
 - **No token exposure**: All Xero tokens are server-side only, never sent to the client
 
 ## Xero Integration Setup (User Actions Required)
@@ -320,6 +325,21 @@ npm run dev
 - UI shows warning banner when documents are within 30 days of expiry
 - Expired jobs display "Documents expired" message instead of viewer/export options
 
+## Xero Attachment Extraction
+- **"Extract Documents from [System]" button** in the right panel (above Upload Documents), visible when left panel contains accounting system data
+- Fetches all attachments (PDFs, images) from the Xero invoices and bank transactions already loaded in the left panel
+- Downloads attachments via Xero Attachments API: GET /{Invoices|BankTransactions}/{ID}/Attachments (list), then GET .../Attachments/{FileName} (binary download)
+- Feeds downloaded files into the existing extraction pipeline (Azure Blob → Gemini AI → DB)
+- Uses the existing background task system with status dots in the navbar
+- Runs as a background task via POST /api/accounting/xero/fetch-attachments
+- Rate-limited: 1.2s delay between Xero API calls, with retry on 429 responses
+- Transaction metadata (transactionId, transactionType, hasAttachments) now included in Xero fetch response rows
+- After extraction completes, triggers automatic matching (runAuditMatch) against left-panel accounting rows
+- **Gap highlighting**: Transactions without attachments (hasAttachments=false) display "No docs" in muted red in the first Uploaded Documents column, with a light red background across those cells
+- New Xero library functions: getAttachmentsList(), downloadAttachment() in lib/xero.ts
+- New API route: POST/GET /api/accounting/xero/fetch-attachments — background task for downloading and extracting Xero attachments
+- **Important**: Adding accounting.attachments.read scope means existing Xero connections must be re-authorized
+
 ## Background Task System
 - **BackgroundTaskProvider**: React context wrapping the app, manages task state (running/completed/error)
 - **Status dots in Navbar**: Appear to the right of the Acumon logo, one dot per active/recent task
@@ -327,8 +347,61 @@ npm run dev
   - Green solid dot = completed (auto-removed after 3 hours)
   - Red solid dot = error
   - Hover shows client name, activity description, and status
-- **Background Xero fetch**: POST to /api/accounting/xero/fetch-background starts the fetch, returns a taskId. Client polls GET with taskId for status/results. Server stores results in memory (cleaned up after 4 hours).
+- **DB-backed task state**: Background tasks (Xero fetch, attachment extraction) use the `background_tasks` DB table instead of in-memory Maps. This ensures task state survives serverless instance recycling.
+  - BackgroundTask model: id, userId, clientId, type ('xero-fetch' | 'xero-attachments'), status ('running' | 'completed' | 'error'), progress (JSON), result (JSON), error, timestamps
+  - Indexed on (userId, status) and (createdAt) for efficient queries
+- **`after()` from `next/server`**: All fire-and-forget background work uses Next.js `after()` instead of bare async IIFEs. This guarantees the serverless function stays alive until the background work completes.
+  - Used in: fetch-background, fetch-attachments, and extraction process routes
+- **Cleanup**: Daily cron at 02:00 UTC cleans up completed/error tasks older than 24 hours, and stuck 'running' tasks older than 2 hours
 - User can navigate away and continue working while background tasks run
+
+## Client Data Isolation
+- **Shared helper**: `lib/client-access.ts` provides `verifyClientAccess(user, clientId)` and `verifyJobAccess(user, jobId)`
+  - SuperAdmins can access any client
+  - Other users must be in the same firm AND have a UserClientAssignment for the client
+- **All extraction routes** (upload, process, status, export, document, jobs) enforce client access checks via `verifyClientAccess` or `verifyJobAccess`
+- **All Xero routes** (data, status, connect, fetch-background, fetch-attachments, request-access) enforce client access checks
+- **Clients API**:
+  - GET /api/clients — firmId parameter only honoured for SuperAdmins; non-SuperAdmins always see their own firm's clients
+  - PATCH/DELETE /api/clients/[id] — firm check ensures users can only modify clients in their own firm
+  - GET /api/clients/[id]/assignments — firm check added
+  - DELETE /api/clients/[id]/assignments — firm check added
+- **Background tasks**: GET handlers verify task.userId matches the requesting user (or SuperAdmin)
+- **Extraction jobs list**: `verifyClientAccess` check added before querying jobs for a client
+
+## Data Residency & Geo-Locking
+- **Current policy**: All data must be processed and stored within the UK
+- **Future**: International expansion will enable per-firm regional data residency
+- **Region config**: `lib/regions.ts` defines infrastructure mappings for each supported region (uk, eu, us, ap)
+- **Firm.dataRegion**: Each firm has a `dataRegion` field (default: 'uk') that determines which regional infrastructure is used
+
+### Current Infrastructure Geo Status
+| Service | Current Region | UK Compliant? | Action Required |
+|---------|---------------|---------------|-----------------|
+| Vercel Functions | `lhr1` (London) | Yes | Requires Vercel Pro plan |
+| Supabase PostgreSQL | `eu-north-1` (Stockholm) | **No** | Migrate to eu-west-2 (London) |
+| Azure Blob Storage | Verify in Azure Portal | **Check** | Verify `acumondataextractor` is in UK South |
+| Azure Communication Services | `.uk.communication.azure.com` | Yes | Already UK |
+| Google Gemini API | US (global endpoint) | **No** | Migrate to Vertex AI with europe-west2 (London) |
+| Xero API | Global (Xero-hosted) | N/A | Third-party API, data in transit only |
+
+### Required Infrastructure Migrations
+1. **Supabase → London region**: Create new Supabase project in eu-west-2 (London), migrate schema + data, update DATABASE_URL/DIRECT_URL
+2. **Gemini → Vertex AI**: Switch from `@google/generative-ai` SDK (US endpoint) to `@google/genai` SDK with Vertex AI:
+   - Create Google Cloud project with Vertex AI API enabled
+   - Configure europe-west2 (London) as the processing location
+   - Replace API key auth with Google Cloud service account credentials
+   - Update `lib/gemini-extractor.ts` to use `GoogleGenAI({ vertexai: true, project: '...', location: 'europe-west2' })`
+   - Data residency guaranteed: ML processing occurs within the specified region
+3. **Azure Blob Storage**: Verify region in Azure Portal. If not UK South, create new storage account in UK South and migrate containers
+4. **Vercel Pro plan**: Required for lhr1 (London) function region. Free plan defaults to iad1 (US)
+
+### Multi-Region Architecture (Future)
+- Each new region requires: Supabase project + Azure Storage account + Vertex AI location config
+- Firm's `dataRegion` field drives which infrastructure endpoints are used
+- Vercel Enterprise supports unlimited function regions for multi-region deployment
+- Region config in `lib/regions.ts` maps each region to its infrastructure endpoints
+- Cross-region data access is blocked by the client isolation layer (verifyClientAccess)
 
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
@@ -337,3 +410,7 @@ npm run dev
 - Configure Stripe when ready for live payments
 - Add XERO_CLIENT_ID, XERO_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, CRON_SECRET to Vercel env vars
 - Implement "Send by Email" feature on extraction results
+- **[GEO-LOCK CRITICAL]** Migrate Supabase to eu-west-2 (London) — currently in Stockholm
+- **[GEO-LOCK CRITICAL]** Migrate Gemini to Vertex AI with europe-west2 (London) — currently US endpoint
+- **[GEO-LOCK CHECK]** Verify Azure Blob Storage region for acumondataextractor — must be UK South
+- **[GEO-LOCK]** Upgrade Vercel to Pro plan to enable lhr1 (London) function region

@@ -17,6 +17,7 @@ const SCOPES = [
   'accounting.manualjournals.read',
   'accounting.settings.read',
   'accounting.contacts.read',
+  'accounting.attachments.read',
 ].join(' ');
 
 // ─── PKCE ────────────────────────────────────────────────────────────────────
@@ -220,6 +221,7 @@ export async function getAccounts(clientId: string): Promise<XeroAccount[]> {
 export interface XeroTransaction {
   BankTransactionID?: string;
   InvoiceID?: string;
+  HasAttachments?: boolean;
   Type: string;
   Date: string;
   Reference?: string;
@@ -288,6 +290,54 @@ export async function revokeConnection(accessToken: string, tenantId: string): P
   } catch (err) {
     console.warn('Xero revoke failed (best-effort):', err instanceof Error ? err.message : err);
   }
+}
+
+// ─── Attachments ──────────────────────────────────────────────────────────────
+
+export interface XeroAttachment {
+  AttachmentID: string;
+  FileName: string;
+  MimeType: string;
+  ContentLength: number;
+  Url: string;
+}
+
+export async function getAttachmentsList(
+  clientId: string,
+  endpoint: 'Invoices' | 'BankTransactions',
+  transactionId: string,
+): Promise<XeroAttachment[]> {
+  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+  const url = `${XERO_API_BASE}/${endpoint}/${transactionId}/Attachments`;
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'Xero-Tenant-Id': tenantId,
+    Accept: 'application/json',
+  };
+  const res = await xeroFetchWithRetry(url, headers);
+  if (!res.ok) throw new Error(`Xero attachments list failed (${res.status}) for ${endpoint}/${transactionId}`);
+  const data = await res.json();
+  return data.Attachments ?? [];
+}
+
+export async function downloadAttachment(
+  clientId: string,
+  endpoint: 'Invoices' | 'BankTransactions',
+  transactionId: string,
+  fileName: string,
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+  const url = `${XERO_API_BASE}/${endpoint}/${transactionId}/Attachments/${encodeURIComponent(fileName)}`;
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'Xero-Tenant-Id': tenantId,
+    Accept: 'application/octet-stream',
+  };
+  const res = await xeroFetchWithRetry(url, headers);
+  if (!res.ok) throw new Error(`Xero attachment download failed (${res.status}) for ${fileName}`);
+  const arrayBuffer = await res.arrayBuffer();
+  const mimeType = res.headers.get('content-type') || 'application/octet-stream';
+  return { buffer: Buffer.from(arrayBuffer), mimeType };
 }
 
 async function xeroFetchWithRetry(

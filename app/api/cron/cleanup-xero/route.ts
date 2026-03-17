@@ -34,11 +34,22 @@ export async function GET(req: Request) {
     await prisma.accountingConnection.delete({ where: { id: conn.id } });
   }
 
-  console.log(`[cron/cleanup-xero] Purged ${expired.length} expired connections, revoked ${revokedCount} from Xero`);
+  const staleBefore = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const staleTaskResult = await prisma.backgroundTask.deleteMany({
+    where: {
+      OR: [
+        { status: { in: ['completed', 'error'] }, updatedAt: { lt: staleBefore } },
+        { status: 'running', updatedAt: { lt: new Date(Date.now() - 2 * 60 * 60 * 1000) } },
+      ],
+    },
+  });
+
+  console.log(`[cron/cleanup] Purged ${expired.length} expired Xero connections, revoked ${revokedCount}. Cleaned ${staleTaskResult.count} background tasks.`);
 
   return NextResponse.json({
     purged: expired.length,
     revoked: revokedCount,
+    backgroundTasksCleaned: staleTaskResult.count,
     timestamp: new Date().toISOString(),
   });
 }

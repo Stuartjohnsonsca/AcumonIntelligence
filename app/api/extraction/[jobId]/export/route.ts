@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { verifyJobAccess } from '@/lib/client-access';
 import { downloadBlob, CONTAINERS } from '@/lib/azure-blob';
 import JSZip from 'jszip';
 import ExcelJS from 'exceljs';
@@ -39,6 +40,11 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
   }
 
+  const jobAccess = await verifyJobAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, jobId);
+  if (!jobAccess.allowed) {
+    return NextResponse.json({ error: jobAccess.reason || 'Forbidden' }, { status: 403 });
+  }
+
   const job = await prisma.extractionJob.findUnique({
     where: { id: jobId },
     include: {
@@ -50,13 +56,6 @@ export async function POST(
   });
 
   if (!job) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
-
-  if (!session.user.isSuperAdmin) {
-    const client = await prisma.client.findUnique({ where: { id: job.clientId }, select: { firmId: true } });
-    if (client?.firmId !== session.user.firmId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-  }
 
   const zip = new JSZip();
   const docsFolder = zip.folder('documents')!;

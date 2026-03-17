@@ -2,11 +2,20 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
-// GET /api/clients/[id]/assignments — list users assigned to a client
+async function verifyClientFirm(user: { firmId: string; isSuperAdmin?: boolean }, clientId: string) {
+  if (user.isSuperAdmin) return true;
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { firmId: true } });
+  return client?.firmId === user.firmId;
+}
+
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+
+  if (!(await verifyClientFirm(session.user as { firmId: string; isSuperAdmin?: boolean }, id))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const assignments = await prisma.userClientAssignment.findMany({
     where: { clientId: id },
@@ -16,7 +25,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   return NextResponse.json(assignments.map((a) => a.user));
 }
 
-// POST /api/clients/[id]/assignments — assign a user to this client
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: clientId } = await params;
   const session = await auth();
@@ -27,13 +35,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { userId } = await req.json();
 
-  // Verify the client belongs to the user's firm (unless super admin)
   if (!session.user.isSuperAdmin) {
     const client = await prisma.client.findUnique({ where: { id: clientId } });
     if (!client || client.firmId !== session.user.firmId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
-    // Verify the user belongs to the same firm
     const targetUser = await prisma.user.findUnique({ where: { id: userId } });
     if (!targetUser || targetUser.firmId !== session.user.firmId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -49,12 +55,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({ ok: true });
 }
 
-// DELETE /api/clients/[id]/assignments — remove a user from this client
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: clientId } = await params;
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
   if (!session.user.isSuperAdmin && !session.user.isFirmAdmin && !session.user.isPortfolioOwner) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  if (!(await verifyClientFirm(session.user as { firmId: string; isSuperAdmin?: boolean }, clientId))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { uploadToInbox, generateBlobName, CONTAINERS } from '@/lib/azure-blob';
 import { getMimeType, isSupportedForExtraction } from '@/lib/gemini-extractor';
+import { verifyClientAccess } from '@/lib/client-access';
 import JSZip from 'jszip';
 import { createHash } from 'crypto';
 
@@ -23,6 +24,11 @@ export async function POST(req: Request) {
 
     if (!clientId) return NextResponse.json({ error: 'clientId required' }, { status: 400 });
     if (!files.length) return NextResponse.json({ error: 'No files provided' }, { status: 400 });
+
+    const access = await verifyClientAccess(session.user as { id: string; firmId: string; isSuperAdmin?: boolean }, clientId);
+    if (!access.allowed) {
+      return NextResponse.json({ error: access.reason || 'Forbidden' }, { status: 403 });
+    }
 
     const expiresAt = new Date(Date.now() + 121 * 24 * 60 * 60 * 1000);
     const job = await prisma.extractionJob.create({
