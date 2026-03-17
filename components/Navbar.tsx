@@ -56,10 +56,12 @@ export function Navbar() {
             </Link>
 
             {/* Statutory Audit Dropdown */}
-            <div className="relative">
+            <div
+              className="relative"
+              onMouseEnter={() => setAuditOpen(true)}
+              onMouseLeave={() => setAuditOpen(false)}
+            >
               <button
-                onMouseEnter={() => setAuditOpen(true)}
-                onMouseLeave={() => setAuditOpen(false)}
                 onClick={() => setAuditOpen(!auditOpen)}
                 className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
               >
@@ -67,29 +69,29 @@ export function Navbar() {
                 <ChevronDown className={cn('h-4 w-4 transition-transform', auditOpen && 'rotate-180')} />
               </button>
               {auditOpen && (
-                <div
-                  onMouseEnter={() => setAuditOpen(true)}
-                  onMouseLeave={() => setAuditOpen(false)}
-                  className="absolute top-full left-0 mt-1 w-64 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50"
-                >
-                  {STATUTORY_AUDIT_PRODUCTS.map((product) => (
-                    <button
-                      key={product.urlPrefix}
-                      onClick={() => { setAuditOpen(false); handleProductClick(product.urlPrefix); }}
-                      className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                    >
-                      {product.navLabel}
-                    </button>
-                  ))}
+                <div className="absolute top-full left-0 pt-1 w-64 z-50">
+                  <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                    {STATUTORY_AUDIT_PRODUCTS.map((product) => (
+                      <button
+                        key={product.urlPrefix}
+                        onClick={() => { setAuditOpen(false); handleProductClick(product.urlPrefix); }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      >
+                        {product.navLabel}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
 
             {/* Assurance Dropdown */}
-            <div className="relative">
+            <div
+              className="relative"
+              onMouseEnter={() => setAssuranceOpen(true)}
+              onMouseLeave={() => setAssuranceOpen(false)}
+            >
               <button
-                onMouseEnter={() => setAssuranceOpen(true)}
-                onMouseLeave={() => setAssuranceOpen(false)}
                 onClick={() => setAssuranceOpen(!assuranceOpen)}
                 className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
               >
@@ -97,20 +99,18 @@ export function Navbar() {
                 <ChevronDown className={cn('h-4 w-4 transition-transform', assuranceOpen && 'rotate-180')} />
               </button>
               {assuranceOpen && (
-                <div
-                  onMouseEnter={() => setAssuranceOpen(true)}
-                  onMouseLeave={() => setAssuranceOpen(false)}
-                  className="absolute top-full left-0 mt-1 w-64 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50"
-                >
-                  {ASSURANCE_PRODUCTS.map((product) => (
-                    <button
-                      key={product.urlPrefix}
-                      onClick={() => { setAssuranceOpen(false); handleProductClick(product.urlPrefix); }}
-                      className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                    >
-                      {product.navLabel}
-                    </button>
-                  ))}
+                <div className="absolute top-full left-0 pt-1 w-64 z-50">
+                  <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                    {ASSURANCE_PRODUCTS.map((product) => (
+                      <button
+                        key={product.urlPrefix}
+                        onClick={() => { setAssuranceOpen(false); handleProductClick(product.urlPrefix); }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      >
+                        {product.navLabel}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
