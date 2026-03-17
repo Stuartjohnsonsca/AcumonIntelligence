@@ -77,6 +77,7 @@ export function buildAuthorizeUrl(
     state,
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
+    prompt: 'login',
   });
   if (loginHint) {
     params.set('login_hint', loginHint);

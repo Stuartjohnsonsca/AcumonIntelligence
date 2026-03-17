@@ -5,3 +5,8 @@ node_modules/
 out/
 *.log
 .DS_Store
+check-db.mjs
+debug-xero.mjs
+expire-all.mjs
+test-xero-template.mjs
+expire-pending.mjs
