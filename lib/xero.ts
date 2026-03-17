@@ -16,6 +16,17 @@ const SCOPES = [
   'accounting.contacts.read',
 ].join(' ');
 
+// ─── PKCE ────────────────────────────────────────────────────────────────────
+
+export function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto
+    .createHash('sha256')
+    .update(codeVerifier)
+    .digest('base64url');
+  return { codeVerifier, codeChallenge };
+}
+
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
@@ -48,13 +59,20 @@ export function decrypt(ciphertext: string): string {
   return decipher.update(data) + decipher.final('utf8');
 }
 
-export function buildAuthorizeUrl(clientId: string, redirectUri: string, state: string): string {
+export function buildAuthorizeUrl(
+  clientId: string,
+  redirectUri: string,
+  state: string,
+  codeChallenge: string,
+): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: clientId,
     redirect_uri: redirectUri,
     scope: SCOPES,
     state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
   });
   return `${XERO_AUTH_URL}?${params.toString()}`;
 }
@@ -70,6 +88,7 @@ interface TokenResponse {
 export async function exchangeCodeForTokens(
   code: string,
   redirectUri: string,
+  codeVerifier: string,
 ): Promise<TokenResponse> {
   const clientId = process.env.XERO_CLIENT_ID!;
   const clientSecret = process.env.XERO_CLIENT_SECRET!;
@@ -84,6 +103,7 @@ export async function exchangeCodeForTokens(
       grant_type: 'authorization_code',
       code,
       redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
     }),
   });
 
@@ -244,6 +264,20 @@ export async function getTransactions(
   return allTxns.filter(txn =>
     txn.LineItems?.some((li: { AccountCode: string }) => codeSet.has(li.AccountCode)),
   );
+}
+
+export async function revokeConnection(accessToken: string, tenantId: string): Promise<void> {
+  try {
+    const res = await fetch(`${XERO_CONNECTIONS_URL}/${tenantId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok && res.status !== 404) {
+      console.warn(`Xero revoke returned ${res.status} for tenant ${tenantId}`);
+    }
+  } catch (err) {
+    console.warn('Xero revoke failed (best-effort):', err instanceof Error ? err.message : err);
+  }
 }
 
 async function fetchPaginated(

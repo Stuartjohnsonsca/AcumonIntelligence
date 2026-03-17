@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { exchangeCodeForTokens, getConnectedTenants, encrypt } from '@/lib/xero';
@@ -14,15 +15,37 @@ export async function GET(req: Request) {
   const stateParam = url.searchParams.get('state');
   const error = url.searchParams.get('error');
 
+  const cookieStore = await cookies();
+
+  const clearOAuthCookies = (response: NextResponse) => {
+    response.cookies.delete('xero_oauth_state');
+    response.cookies.delete('xero_pkce_verifier');
+    return response;
+  };
+
   if (error) {
-    return NextResponse.redirect(
-      new URL(`/tools/data-extraction?xeroError=${encodeURIComponent(error)}`, req.url),
+    return clearOAuthCookies(
+      NextResponse.redirect(new URL(`/tools/data-extraction?xeroError=${encodeURIComponent(error)}`, req.url)),
     );
   }
 
   if (!code || !stateParam) {
-    return NextResponse.redirect(
-      new URL('/tools/data-extraction?xeroError=missing_params', req.url),
+    return clearOAuthCookies(
+      NextResponse.redirect(new URL('/tools/data-extraction?xeroError=missing_params', req.url)),
+    );
+  }
+
+  const savedState = cookieStore.get('xero_oauth_state')?.value;
+  if (!savedState || savedState !== stateParam) {
+    return clearOAuthCookies(
+      NextResponse.redirect(new URL('/tools/data-extraction?xeroError=state_mismatch', req.url)),
+    );
+  }
+
+  const codeVerifier = cookieStore.get('xero_pkce_verifier')?.value;
+  if (!codeVerifier) {
+    return clearOAuthCookies(
+      NextResponse.redirect(new URL('/tools/data-extraction?xeroError=missing_pkce', req.url)),
     );
   }
 
@@ -32,8 +55,8 @@ export async function GET(req: Request) {
     const parsed = JSON.parse(stateJson);
     clientId = parsed.clientId;
   } catch {
-    return NextResponse.redirect(
-      new URL('/tools/data-extraction?xeroError=invalid_state', req.url),
+    return clearOAuthCookies(
+      NextResponse.redirect(new URL('/tools/data-extraction?xeroError=invalid_state', req.url)),
     );
   }
 
@@ -41,13 +64,13 @@ export async function GET(req: Request) {
     || `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/accounting/xero/callback`;
 
   try {
-    const tokens = await exchangeCodeForTokens(code, redirectUri);
+    const tokens = await exchangeCodeForTokens(code, redirectUri, codeVerifier);
     const tenants = await getConnectedTenants(tokens.access_token);
     const tenant = tenants[0];
 
     if (!tenant) {
-      return NextResponse.redirect(
-        new URL('/tools/data-extraction?xeroError=no_organisation', req.url),
+      return clearOAuthCookies(
+        NextResponse.redirect(new URL('/tools/data-extraction?xeroError=no_organisation', req.url)),
       );
     }
 
@@ -83,14 +106,14 @@ export async function GET(req: Request) {
       data: { software: 'Xero' },
     });
 
-    return NextResponse.redirect(
-      new URL(`/tools/data-extraction?xeroConnected=true&clientId=${clientId}`, req.url),
+    return clearOAuthCookies(
+      NextResponse.redirect(new URL(`/tools/data-extraction?xeroConnected=true&clientId=${clientId}`, req.url)),
     );
   } catch (err) {
     console.error('Xero callback error:', err);
     const msg = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.redirect(
-      new URL(`/tools/data-extraction?xeroError=${encodeURIComponent(msg)}`, req.url),
+    return clearOAuthCookies(
+      NextResponse.redirect(new URL(`/tools/data-extraction?xeroError=${encodeURIComponent(msg)}`, req.url)),
     );
   }
 }

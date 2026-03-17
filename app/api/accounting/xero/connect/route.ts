@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { buildAuthorizeUrl } from '@/lib/xero';
+import { buildAuthorizeUrl, generatePKCE } from '@/lib/xero';
 import crypto from 'crypto';
 
 export async function GET(req: Request) {
@@ -27,18 +27,23 @@ export async function GET(req: Request) {
     clientId,
     nonce: crypto.randomBytes(16).toString('hex'),
   });
-
   const stateEncoded = Buffer.from(state).toString('base64url');
-  const url = buildAuthorizeUrl(xeroClientId, redirectUri, stateEncoded);
+
+  const { codeVerifier, codeChallenge } = generatePKCE();
+  const url = buildAuthorizeUrl(xeroClientId, redirectUri, stateEncoded, codeChallenge);
 
   const response = NextResponse.redirect(url);
-  response.cookies.set('xero_oauth_state', stateEncoded, {
+
+  const cookieOpts = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    sameSite: 'lax' as const,
     maxAge: 600,
     path: '/',
-  });
+  };
+
+  response.cookies.set('xero_oauth_state', stateEncoded, cookieOpts);
+  response.cookies.set('xero_pkce_verifier', codeVerifier, cookieOpts);
 
   return response;
 }

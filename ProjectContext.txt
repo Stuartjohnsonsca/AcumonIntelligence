@@ -88,10 +88,11 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - POST /api/extraction/process-batch — Internal batch worker: processes a list of file IDs concurrently via Promise.allSettled (secured by NEXTAUTH_SECRET)
 - GET /api/extraction/status?jobId=X — Lightweight progress endpoint: returns extracted/failed/total counts for client-side polling
 - GET /api/extraction/export?jobId=X — Download Excel file with 3-tab report
-- GET /api/accounting/xero/connect?clientId=X — Initiates Xero OAuth2 flow (redirects to Xero login)
-- GET /api/accounting/xero/callback — OAuth2 callback: exchanges code for tokens, stores encrypted in DB, redirects to data extraction page
+- GET /api/accounting/xero/connect?clientId=X — Initiates Xero OAuth2 + PKCE flow (redirects to Xero login)
+- GET /api/accounting/xero/callback — OAuth2 callback: validates state cookie, exchanges code with PKCE verifier, stores encrypted tokens, clears cookies
 - GET /api/accounting/xero/status?clientId=X — Checks if client has a valid (non-expired) Xero connection
 - GET /api/accounting/xero/data?clientId=X&type=accounts|transactions — Fetches chart of accounts or filtered transactions from Xero
+- GET /api/cron/cleanup-xero — Daily cron (02:00 UTC): revokes expired Xero connections and deletes tokens from DB (secured by CRON_SECRET)
 
 ## Auth Flow
 1. User enters email + password on /login, or clicks "Sign in with Microsoft"
@@ -215,24 +216,33 @@ npm run dev
 - **Collate from Xero**: Checks if client has a valid Xero connection via GET /api/accounting/xero/status
   - If not connected: redirects to GET /api/accounting/xero/connect to initiate OAuth2 flow
   - If connected: shows modal with chart of accounts multi-select + date range picker; fetches transactions and populates left panel grid
-  - Xero OAuth2 flow: redirect → Xero login → callback → token exchange → encrypted storage (AES-256-GCM) in accounting_connections table
+  - Xero OAuth2 flow with PKCE: redirect → Xero login → callback → state validation → token exchange with code_verifier → encrypted storage (AES-256-GCM) in accounting_connections table
   - Tokens auto-refresh on expiry; connection expires after 30 days
   - Scopes: offline_access, openid, profile, email, accounting.transactions.read, accounting.settings.read, accounting.contacts.read
 
+## Xero Security Compliance
+- **OAuth 2.0 + PKCE (S256)**: code_verifier generated per session, stored in httpOnly cookie, sent during token exchange
+- **State validation**: OAuth state with nonce stored in httpOnly cookie, validated on callback to prevent CSRF
+- **Token encryption**: AES-256-GCM (exceeds Xero's AES-128 minimum) with per-encryption random IV
+- **TLS 1.2+**: Enforced by Vercel (all endpoints HTTPS)
+- **302 redirects**: Auth flow uses redirects, never returns tokens in response bodies
+- **30-day auto-deletion**: Connections expire 30 days after authentication
+  - Daily cron job (GET /api/cron/cleanup-xero at 02:00 UTC) revokes Xero connection via DELETE /connections/{tenantId} then deletes the DB row
+  - Vercel Cron configured in vercel.json, authenticated via CRON_SECRET Bearer token
+- **Read-only scopes**: Only accounting.transactions.read, accounting.settings.read, accounting.contacts.read
+- **No token exposure**: All Xero tokens are server-side only, never sent to the client
+
 ## Xero Integration Setup (User Actions Required)
-1. Register app at developer.xero.com
+1. Register app at developer.xero.com (DONE — Client ID: 4EBB7AAE...)
 2. Set redirect URI: https://acumon-intelligence.vercel.app/api/accounting/xero/callback
-3. Add XERO_CLIENT_ID, XERO_CLIENT_SECRET to Vercel env vars
-4. Generate TOKEN_ENCRYPTION_KEY: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-5. Add TOKEN_ENCRYPTION_KEY to Vercel env vars
-6. Run prisma db push after schema update (adds accounting_connections table)
+3. Add XERO_CLIENT_ID, XERO_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, CRON_SECRET to Vercel env vars
+4. Run prisma db push after schema update (DONE — accounting_connections table created)
 
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
 - Set SMTP_PASSWORD in Vercel env vars once Exchange password is known
 - Enable SMTP AUTH on agents@acumon.com in Microsoft 365 Admin Centre
 - Configure Stripe when ready for live payments
-- Complete Xero developer app registration (user has API details pending)
-- Upgrade Gemini to paid plan and update GEMINI_API_KEY
+- Add XERO_CLIENT_ID, XERO_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, CRON_SECRET to Vercel env vars
 - Implement "Send by Email" feature on extraction results
 - Add remaining tool pages (DocSummary, FSChecker etc.) at /tools/*

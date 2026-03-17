@@ -2,5 +2,11 @@
   "framework": "nextjs",
   "buildCommand": "next build",
   "installCommand": "npm install",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "crons": [
+    {
+      "path": "/api/cron/cleanup-xero",
+      "schedule": "0 2 * * *"
+    }
+  ]
 }
