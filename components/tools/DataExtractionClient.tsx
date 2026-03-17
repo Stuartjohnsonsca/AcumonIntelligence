@@ -1318,6 +1318,15 @@ export function DataExtractionClient({
             </div>
           </div>
           <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => {
+              setJobResult(null); setUploadedFiles([]); setCurrentJobId(null);
+              setRowMatches(new Map()); setUnmatchedRecords([]); setSampledRows(new Set());
+              setSelectedRows(new Set()); setLeftPanelData([]); setLeftPanelColumns([]);
+              setLeftPanelMode(null); setLeftPanelFileName(null); setLeftPanelFromAccounting(false);
+              loadPreviousJobs(selectedClient.id);
+            }}>
+              <Plus className="h-4 w-4 mr-1" />New Session
+            </Button>
             {jobResult && (
               <>
                 <Button size="sm" variant="outline" onClick={handleExportExcel}>
