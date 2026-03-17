@@ -238,6 +238,24 @@ npm run dev
 3. Add XERO_CLIENT_ID, XERO_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, CRON_SECRET to Vercel env vars
 4. Run prisma db push after schema update (DONE — accounting_connections table created)
 
+## Client Portfolio Manager & Access Requests
+- Each client has an optional `portfolioManagerId` field (FK to users table) — the user with Portfolio Owner rights who manages access
+- Portfolio Manager dropdown appears in the Clients tab (My Account) when adding/editing clients — only shows users with `isPortfolioOwner=true`
+- Accounting System field is a dropdown (currently "Xero" or blank) instead of free text
+- **Request Access flow**: When a user clicks "Request Access" on the Data Extraction client selection screen:
+  1. POST /api/clients/[id]/request-access — creates an AccessRequest record with a unique token (expires 7 days)
+  2. Sends an email to the client's Portfolio Manager with an "Approve Access" button link
+  3. GET /api/clients/[id]/approve-access?token=... — Portfolio Manager clicks the link, which creates a UserClientAssignment and marks the request as approved
+  4. Returns a branded HTML confirmation page
+- AccessRequest model tracks status: pending | approved | rejected | expired
+- Duplicate pending requests are prevented (409 response)
+- If no Portfolio Manager is assigned to the client, the user sees a helpful error message
+
+## Tool Landing Pages
+- All 10 products in the nav dropdowns now route to internal pages at /tools/*
+- Data Extraction is the only fully built tool; the other 9 show a "Coming Soon" landing page
+- Each page requires authentication (server-side auth() check with redirect to login)
+
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
 - Set SMTP_PASSWORD in Vercel env vars once Exchange password is known
@@ -245,4 +263,3 @@ npm run dev
 - Configure Stripe when ready for live payments
 - Add XERO_CLIENT_ID, XERO_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, CRON_SECRET to Vercel env vars
 - Implement "Send by Email" feature on extraction results
-- Add remaining tool pages (DocSummary, FSChecker etc.) at /tools/*

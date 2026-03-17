@@ -60,6 +60,36 @@ export async function sendPasswordResetEmail(email: string, name: string, resetU
   });
 }
 
+export async function sendAccessRequestEmail(
+  managerEmail: string,
+  managerName: string,
+  requesterName: string,
+  clientName: string,
+  approveUrl: string,
+): Promise<void> {
+  await transporter.sendMail({
+    from: `"Acumon Intelligence" <${process.env.EMAIL_FROM || 'agents@acumon.com'}>`,
+    to: managerEmail,
+    subject: `Access request: ${requesterName} → ${clientName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); padding: 30px; border-radius: 8px 8px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 24px;">Acumon Intelligence</h1>
+        </div>
+        <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
+          <p style="color: #374151; font-size: 16px;">Hello ${managerName},</p>
+          <p style="color: #374151; font-size: 16px;"><strong>${requesterName}</strong> has requested access to client <strong>${clientName}</strong>.</p>
+          <p style="color: #374151; font-size: 16px;">Click the button below to approve this request:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${approveUrl}" style="background: #16a34a; color: white; padding: 12px 30px; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600;">Approve Access</a>
+          </div>
+          <p style="color: #6b7280; font-size: 14px;">This link expires in 7 days. If you do not wish to grant access, simply ignore this email.</p>
+        </div>
+      </div>
+    `,
+  });
+}
+
 export async function sendWelcomeEmail(email: string, name: string, loginUrl: string): Promise<void> {
   await transporter.sendMail({
     from: `"Acumon Intelligence" <${process.env.EMAIL_FROM || 'agents@acumon.com'}>`,

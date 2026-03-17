@@ -100,6 +100,8 @@ export function DataExtractionClient({
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showUnassigned, setShowUnassigned] = useState(false);
+  const [requestingAccess, setRequestingAccess] = useState<string | null>(null);
+  const [requestMessage, setRequestMessage] = useState<{ id: string; text: string; ok: boolean } | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('document-details');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
@@ -147,6 +149,24 @@ export function DataExtractionClient({
   const filteredUnassigned = unassignedClients.filter(c =>
     c.clientName.toLowerCase().includes(clientSearch.toLowerCase())
   );
+
+  async function handleRequestAccess(clientId: string) {
+    setRequestingAccess(clientId);
+    setRequestMessage(null);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/request-access`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setRequestMessage({ id: clientId, text: data.message || 'Request sent!', ok: true });
+      } else {
+        setRequestMessage({ id: clientId, text: data.error || 'Failed to send request.', ok: false });
+      }
+    } catch {
+      setRequestMessage({ id: clientId, text: 'Network error. Please try again.', ok: false });
+    } finally {
+      setRequestingAccess(null);
+    }
+  }
 
   function toggleRowExpand(id: string) {
     setExpandedRows(prev => {
@@ -561,8 +581,24 @@ export function DataExtractionClient({
                   <div>
                     <div className="font-medium text-slate-700">{c.clientName}</div>
                     <div className="text-sm text-slate-400">{c.software}</div>
+                    {requestMessage?.id === c.id && (
+                      <p className={`text-xs mt-1 ${requestMessage.ok ? 'text-green-600' : 'text-red-600'}`}>
+                        {requestMessage.text}
+                      </p>
+                    )}
                   </div>
-                  <Button size="sm" variant="outline">Request Access</Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={requestingAccess === c.id}
+                    onClick={() => handleRequestAccess(c.id)}
+                  >
+                    {requestingAccess === c.id ? (
+                      <><Loader2 className="h-3 w-3 animate-spin mr-1" />Sending...</>
+                    ) : (
+                      'Request Access'
+                    )}
+                  </Button>
                 </div>
               ))}
             </div>

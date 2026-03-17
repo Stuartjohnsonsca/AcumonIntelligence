@@ -17,7 +17,8 @@ export async function GET(req: Request) {
     },
     include: {
       _count: { select: { subscriptions: true, userAssignments: true } },
-      userAssignments: { include: { user: { select: { id: true, name: true, displayId: true } } } },
+      userAssignments: { include: { user: { select: { id: true, name: true, displayId: true, email: true } } } },
+      portfolioManager: { select: { id: true, name: true, email: true } },
     },
     orderBy: { clientName: 'asc' },
   });
@@ -53,12 +54,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ created: created.length });
   }
 
-  // Single client
-  const { clientName, software, contactName, contactEmail } = body;
+  const { clientName, software, contactName, contactEmail, portfolioManagerId } = body;
   if (!clientName) return NextResponse.json({ error: 'clientName is required' }, { status: 400 });
 
   const client = await prisma.client.create({
-    data: { clientName, software: software || null, contactName: contactName || null, contactEmail: contactEmail || null, firmId: targetFirmId },
+    data: {
+      clientName,
+      software: software || null,
+      contactName: contactName || null,
+      contactEmail: contactEmail || null,
+      portfolioManagerId: portfolioManagerId || null,
+      firmId: targetFirmId,
+    },
   });
 
   return NextResponse.json({ id: client.id });

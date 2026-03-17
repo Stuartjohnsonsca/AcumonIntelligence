@@ -14,8 +14,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const body = await req.json();
 
-  // Restrict which fields can be updated via PATCH
-  const allowed = ['clientName', 'software', 'contactName', 'contactEmail', 'isActive'];
+  const allowed = ['clientName', 'software', 'contactName', 'contactEmail', 'isActive', 'portfolioManagerId'];
   const data: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) data[key] = body[key];

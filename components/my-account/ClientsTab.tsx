@@ -18,12 +18,20 @@ interface AssignedUser {
   email: string;
 }
 
+interface PortfolioManagerInfo {
+  id: string;
+  name: string;
+  email: string;
+}
+
 interface Client {
   id: string;
   clientName: string;
   software: string | null;
   contactName: string | null;
   contactEmail: string | null;
+  portfolioManagerId: string | null;
+  portfolioManager: PortfolioManagerInfo | null;
   isActive: boolean;
   createdAt: string;
   _count: { subscriptions: number; userAssignments: number };
@@ -35,13 +43,16 @@ interface FirmUser {
   name: string;
   displayId: string;
   email: string;
+  isPortfolioOwner?: boolean;
 }
+
+const ACCOUNTING_SYSTEMS = ['', 'Xero'] as const;
 
 type SortKey = 'clientName' | 'software' | 'contactName' | 'contactEmail' | 'isActive';
 type SortDir = 'asc' | 'desc';
 type ViewMode = 'list' | 'add-manual' | 'add-csv' | 'assign';
 
-const EMPTY_FORM = { clientName: '', software: '', contactName: '', contactEmail: '' };
+const EMPTY_FORM = { clientName: '', software: '', contactName: '', contactEmail: '', portfolioManagerId: '' };
 
 interface Props {
   firmId: string;
@@ -134,7 +145,13 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
   // ── Inline edit ────────────────────────────────────────────────────────────
   function startEdit(c: Client) {
     setEditingId(c.id);
-    setEditForm({ clientName: c.clientName, software: c.software || '', contactName: c.contactName || '', contactEmail: c.contactEmail || '' });
+    setEditForm({
+      clientName: c.clientName,
+      software: c.software || '',
+      contactName: c.contactName || '',
+      contactEmail: c.contactEmail || '',
+      portfolioManagerId: c.portfolioManagerId || '',
+    });
   }
 
   async function saveEdit(id: string) {
@@ -162,10 +179,18 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
   async function handleAddManual(e: React.FormEvent) {
     e.preventDefault();
     setAddSaving(true);
+    const payload = {
+      clientName: addForm.clientName,
+      software: addForm.software || null,
+      contactName: addForm.contactName || null,
+      contactEmail: addForm.contactEmail || null,
+      portfolioManagerId: addForm.portfolioManagerId || null,
+      firmId,
+    };
     await fetch('/api/clients', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...addForm, firmId }),
+      body: JSON.stringify(payload),
     });
     setAddForm(EMPTY_FORM);
     setViewMode('list');
@@ -226,6 +251,8 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
   }
 
   // ── Assign users ───────────────────────────────────────────────────────────
+  const portfolioOwners = firmUsers.filter((u) => u.isPortfolioOwner);
+
   const assignClient = clients.find((c) => c.id === assignClientId);
   const assignedUserIds = new Set(assignClient?.userAssignments.map((a) => a.user.id) || []);
 
@@ -319,8 +346,17 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                 <Input value={addForm.clientName} onChange={(e) => setAddForm({ ...addForm, clientName: e.target.value })} required />
               </div>
               <div className="space-y-1.5">
-                <Label>Software</Label>
-                <Input value={addForm.software} onChange={(e) => setAddForm({ ...addForm, software: e.target.value })} placeholder="e.g. Xero, Sage, QuickBooks" />
+                <Label>Accounting System</Label>
+                <select
+                  value={addForm.software}
+                  onChange={(e) => setAddForm({ ...addForm, software: e.target.value })}
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">— None —</option>
+                  {ACCOUNTING_SYSTEMS.filter(Boolean).map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1.5">
                 <Label>Contact Name</Label>
@@ -329,6 +365,19 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
               <div className="space-y-1.5">
                 <Label>Contact Email</Label>
                 <Input type="email" value={addForm.contactEmail} onChange={(e) => setAddForm({ ...addForm, contactEmail: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Portfolio Manager</Label>
+                <select
+                  value={addForm.portfolioManagerId}
+                  onChange={(e) => setAddForm({ ...addForm, portfolioManagerId: e.target.value })}
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">— None —</option>
+                  {portfolioOwners.map((u) => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+                  ))}
+                </select>
               </div>
               <div className="sm:col-span-2 flex gap-2">
                 <Button type="submit" disabled={addSaving} className="bg-blue-600 hover:bg-blue-700">
@@ -482,9 +531,12 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
                     <SortableHeader k="clientName" label="Client Name" />
-                    <SortableHeader k="software" label="Software" />
+                    <SortableHeader k="software" label="Accounting System" />
                     <SortableHeader k="contactName" label="Contact Name" />
                     <SortableHeader k="contactEmail" label="Contact Email" />
+                    <th className="px-3 py-2 text-left">
+                      <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Portfolio Manager</span>
+                    </th>
                     <SortableHeader k="isActive" label="Status" />
                     <th className="px-3 py-2 text-left">
                       <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Assigned Users</span>
@@ -501,13 +553,34 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                             <Input value={editForm.clientName} onChange={(e) => setEditForm({ ...editForm, clientName: e.target.value })} className="h-8 text-sm" />
                           </td>
                           <td className="px-3 py-2">
-                            <Input value={editForm.software} onChange={(e) => setEditForm({ ...editForm, software: e.target.value })} className="h-8 text-sm" placeholder="e.g. Xero" />
+                            <select
+                              value={editForm.software}
+                              onChange={(e) => setEditForm({ ...editForm, software: e.target.value })}
+                              className="h-8 w-full border border-slate-300 rounded-md px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            >
+                              <option value="">— None —</option>
+                              {ACCOUNTING_SYSTEMS.filter(Boolean).map((s) => (
+                                <option key={s} value={s}>{s}</option>
+                              ))}
+                            </select>
                           </td>
                           <td className="px-3 py-2">
                             <Input value={editForm.contactName} onChange={(e) => setEditForm({ ...editForm, contactName: e.target.value })} className="h-8 text-sm" />
                           </td>
                           <td className="px-3 py-2">
                             <Input value={editForm.contactEmail} onChange={(e) => setEditForm({ ...editForm, contactEmail: e.target.value })} className="h-8 text-sm" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <select
+                              value={editForm.portfolioManagerId}
+                              onChange={(e) => setEditForm({ ...editForm, portfolioManagerId: e.target.value })}
+                              className="h-8 w-full border border-slate-300 rounded-md px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            >
+                              <option value="">— None —</option>
+                              {portfolioOwners.map((u) => (
+                                <option key={u.id} value={u.id}>{u.name}</option>
+                              ))}
+                            </select>
                           </td>
                           <td className="px-3 py-2">
                             <Badge variant={c.isActive ? 'default' : 'secondary'} className={c.isActive ? 'bg-green-100 text-green-700 hover:bg-green-100' : ''}>
@@ -532,6 +605,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                           <td className="px-3 py-3 text-slate-500">{c.software || '—'}</td>
                           <td className="px-3 py-3 text-slate-500">{c.contactName || '—'}</td>
                           <td className="px-3 py-3 text-slate-500">{c.contactEmail || '—'}</td>
+                          <td className="px-3 py-3 text-slate-500">{c.portfolioManager?.name || '—'}</td>
                           <td className="px-3 py-3">
                             <button onClick={() => canManage && toggleActive(c)} title={canManage ? 'Click to toggle status' : undefined}>
                               <Badge
