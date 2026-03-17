@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   const mode = searchParams.get('mode') || 'simple';
 
   const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING || '';
-  const senderAddress = process.env.EMAIL_FROM || 'DoNotReply@9a3b0f92-2a07-4b75-98c6-3e9cecf2c5c4.azurecomm.net';
+  const senderAddress = process.env.EMAIL_FROM || 'DoNotReply@acumonintelligence.com';
 
   if (!connectionString) {
     return NextResponse.json({ error: 'AZURE_COMMUNICATION_CONNECTION_STRING not set' }, { status: 500 });

@@ -1,7 +1,7 @@
 import { EmailClient } from '@azure/communication-email';
 
 const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING || '';
-const senderAddress = process.env.EMAIL_FROM || 'DoNotReply@9a3b0f92-2a07-4b75-98c6-3e9cecf2c5c4.azurecomm.net';
+const senderAddress = process.env.EMAIL_FROM || 'DoNotReply@acumonintelligence.com';
 
 async function sendEmail(to: string, subject: string, html: string): Promise<{ messageId?: string }> {
   if (!connectionString) {
