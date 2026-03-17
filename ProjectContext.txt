@@ -18,9 +18,10 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - Prisma ORM + Supabase PostgreSQL
 - Nodemailer (Office 365 SMTP, agents@acumon.com)
 - Stripe (placeholder, not yet live)
-- **Google Gemini API** (gemini-2.5-flash) — AI document extraction engine
+- **Google Gemini API** (gemini-2.5-flash) — AI document extraction engine (paid tier, dynamic rate-limit handling)
 - **Azure Blob Storage** (acumondataextractor) — temporary file staging for extraction
-- ExcelJS — Excel export generation
+- **Xero OAuth2 API** — accounting system integration (read-only transactions, chart of accounts)
+- ExcelJS — Excel export generation (server-side + client-side spreadsheet parsing)
 - JSZip — Server-side ZIP extraction
 
 ## Hosting
@@ -41,7 +42,8 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /lib/products.ts — Product list + URL prefix constants
 - /lib/utils.ts — cn(), formatCurrency(), formatDate(), generateOTP()
 - /lib/azure-blob.ts — Azure Blob Storage helpers (upload, move, download)
-- /lib/gemini-extractor.ts — Gemini AI extraction + category inference
+- /lib/gemini-extractor.ts — Gemini AI extraction + category inference (5 retries, dynamic backoff with server-hint parsing, jitter)
+- /lib/xero.ts — Xero OAuth2 helpers (authorize, token exchange/refresh, AES-256-GCM encryption, API wrappers)
 - /prisma/schema.prisma — Full DB schema
 - /prisma/seed.ts — Seeds initial firm, user (Stuart Thomson ST001), and 10 products
 - /middleware.ts — Auth guard for /my-account and /tools routes
@@ -60,7 +62,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /login/reset/verify — Set new password (token from email link)
 - /product-access?prefix=X — Auth + subscription check, routes internally or to subdomain
 - /access-denied?prefix=X — No access page with buy option
-- /subscribe — Purchase subscriptions (Stripe placeholder)
+- /subscribe — Shopping basket for subscriptions (multi-product, prices from DB, Stripe placeholder)
 - /my-account — Tabbed portal (Users/Clients/Subscriptions based on role)
 - /my-account/admin — Super Admin panel (Products + Firms)
 - **/tools/data-extraction** — Financial Data Extraction tool (split screen, AI extraction)
@@ -86,13 +88,18 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - POST /api/extraction/process-batch — Internal batch worker: processes a list of file IDs concurrently via Promise.allSettled (secured by NEXTAUTH_SECRET)
 - GET /api/extraction/status?jobId=X — Lightweight progress endpoint: returns extracted/failed/total counts for client-side polling
 - GET /api/extraction/export?jobId=X — Download Excel file with 3-tab report
+- GET /api/accounting/xero/connect?clientId=X — Initiates Xero OAuth2 flow (redirects to Xero login)
+- GET /api/accounting/xero/callback — OAuth2 callback: exchanges code for tokens, stores encrypted in DB, redirects to data extraction page
+- GET /api/accounting/xero/status?clientId=X — Checks if client has a valid (non-expired) Xero connection
+- GET /api/accounting/xero/data?clientId=X&type=accounts|transactions — Fetches chart of accounts or filtered transactions from Xero
 
 ## Auth Flow
-1. User enters email + password on /login
-2. If valid: 6-digit OTP sent to registered email via agents@acumon.com
-3. User enters OTP on /login/2fa
-4. twoFactorVerified=true set on JWT session
-5. Password min length: 8 characters
+1. User enters email + password on /login, or clicks "Sign in with Microsoft"
+2. Credentials: 6-digit OTP sent to registered email → /login/2fa → twoFactorVerified=true
+3. Microsoft Entra ID: multi-tenant (common endpoint) — any Microsoft work/school account can sign in
+   - If user exists in DB: full session with roles (2FA auto-verified)
+   - If user not in DB: msalPendingSetup=true, needs Super Admin to assign firm
+4. Password min length: 8 characters
 
 ## Role Hierarchy (highest to lowest)
 1. Super Admin (isSuperAdmin=true) — system-wide, all rights + admin panel
@@ -128,6 +135,11 @@ AZURE_STORAGE_CONTAINER_INBOX=upload-inbox
 AZURE_STORAGE_CONTAINER_PROCESSING=processing
 AZURE_STORAGE_CONTAINER_PROCESSED=processed
 DISABLE_2FA=true — Bypass 2FA for development (remove for production)
+XERO_CLIENT_ID — Xero OAuth2 app client ID (from developer.xero.com)
+XERO_CLIENT_SECRET — Xero OAuth2 app client secret
+XERO_REDIRECT_URI — OAuth callback URL (default: {NEXTAUTH_URL}/api/accounting/xero/callback)
+TOKEN_ENCRYPTION_KEY — 64-char hex string (32 bytes) for AES-256-GCM encryption of stored Xero tokens
+GEMINI_MAX_CONCURRENT — Max concurrent Gemini API calls per batch worker (default: 3)
 
 ## Setup Commands (run in /acumon-website/)
 npm install
@@ -149,12 +161,22 @@ npm run dev
 - DO NOT add routes back to proxy.ts matcher — it breaks MSAL login flow
 - Default NextAuth cookie config is used (do NOT override with custom cookie names/SameSite)
 - Protected pages: /my-account, /my-account/admin, /tools/data-extraction all check auth() themselves
+- Microsoft Entra ID uses multi-tenant 'common' endpoints (NOT tenant-specific) so external users can sign in
+- Azure AD app registration must be set to "Accounts in any organizational directory (Multitenant)" in the Azure Portal
+
+## Shopping Basket (Subscribe Page)
+- /subscribe fetches product list + prices from GET /api/products (DB-driven, not hardcoded)
+- Multi-product basket: users can add multiple products with different quantities (1, 5, 10, 20)
+- Basket sidebar shows all items, per-item subtotals, and a grand total
+- Checkout currently shows an order confirmation placeholder (Stripe integration to be added later)
+- Pre-fill supported via ?prefix=X query parameter (e.g. from access-denied page)
 
 ## DB Tables (Data Extraction)
 - extraction_jobs — one per extraction session (links client + user); includes total_files, processed_count, failed_count counters for live progress
 - extraction_files — individual files in a job (tracks blob path, zip status, extraction status, file_hash, duplicate_of_id)
 - extracted_records — one per extracted document (all financial fields as columns)
 - account_category_learning — per-client AI learning for description→category mapping
+- accounting_connections — stores encrypted Xero OAuth2 tokens per client (unique on [clientId, system]); auto-refreshes; 30-day expiry
 
 ## Parallel Extraction Pipeline Architecture
 - Files are uploaded via POST /api/extraction/upload (stores in Azure inbox, creates ExtractionFile rows)
@@ -170,9 +192,14 @@ npm run dev
   - Calls Gemini AI for extraction, saves ExtractedRecord + category learning
   - Atomically increments processedCount/failedCount on ExtractionJob
   - When final batch completes, marks job as "complete"
-- Gemini API calls have retry with exponential backoff (3 attempts, 2s/4s/8s delays)
+- Gemini API calls have dynamic retry with exponential backoff (5 attempts, server-hint-aware delays)
+  - Parses 'retry in Xs' from Gemini 429 response body and uses that as the delay (min 2s, max 60s)
+  - Falls back to exponential backoff (2s, 4s, 8s, 16s) when no server hint is present
+  - Adds 0-25% random jitter to prevent thundering herd across concurrent batches
   - Transient errors (429 rate limit, 500/503, timeouts) are retried; non-transient errors fail immediately
   - Error messages are stored on ExtractionFile.errorMessage for diagnostics
+- Batch workers use adaptive inter-request delay: starts at 200ms, doubles on 429 errors, decays on success (min 100ms, max 15s)
+- Batch orchestrator staggers batch launches by 500ms to spread initial load
 - Azure blob moves await copy completion before deleting source (prevents race conditions)
 - Client-side polls GET /api/extraction/status?jobId=X every 1.5s
   - Returns {total, extracted, failed, duplicated, complete} from the ExtractionJob counters
@@ -182,11 +209,30 @@ npm run dev
 - Navigation-safe: once orchestrator fires batches, processing continues server-side regardless of whether user stays on the page
 - File status categories: uploaded, processing, extracted, failed, duplicate
 
+## Data Extraction — Left Panel Features
+- **Upload Spreadsheet**: Opens file picker for a single .xlsx or .csv file; parsed client-side (ExcelJS for xlsx, native for CSV) and displayed in an editable spreadsheet grid on the left panel
+- **Load Blank Spreadsheet**: Creates an empty editable grid with standard accounting columns (Date, Reference, Contact, Description, Account Code, Net, Tax, Gross); supports clipboard paste for bulk data entry; user can add more rows
+- **Collate from Xero**: Checks if client has a valid Xero connection via GET /api/accounting/xero/status
+  - If not connected: redirects to GET /api/accounting/xero/connect to initiate OAuth2 flow
+  - If connected: shows modal with chart of accounts multi-select + date range picker; fetches transactions and populates left panel grid
+  - Xero OAuth2 flow: redirect → Xero login → callback → token exchange → encrypted storage (AES-256-GCM) in accounting_connections table
+  - Tokens auto-refresh on expiry; connection expires after 30 days
+  - Scopes: offline_access, openid, profile, email, accounting.transactions.read, accounting.settings.read, accounting.contacts.read
+
+## Xero Integration Setup (User Actions Required)
+1. Register app at developer.xero.com
+2. Set redirect URI: https://acumon-intelligence.vercel.app/api/accounting/xero/callback
+3. Add XERO_CLIENT_ID, XERO_CLIENT_SECRET to Vercel env vars
+4. Generate TOKEN_ENCRYPTION_KEY: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+5. Add TOKEN_ENCRYPTION_KEY to Vercel env vars
+6. Run prisma db push after schema update (adds accounting_connections table)
+
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
 - Set SMTP_PASSWORD in Vercel env vars once Exchange password is known
 - Enable SMTP AUTH on agents@acumon.com in Microsoft 365 Admin Centre
 - Configure Stripe when ready for live payments
-- Implement Xero OAuth2 for accounting system connection
+- Complete Xero developer app registration (user has API details pending)
+- Upgrade Gemini to paid plan and update GEMINI_API_KEY
 - Implement "Send by Email" feature on extraction results
 - Add remaining tool pages (DocSummary, FSChecker etc.) at /tools/*

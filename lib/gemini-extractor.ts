@@ -2,8 +2,9 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-const MAX_RETRIES = 3;
-const BACKOFF_MS = [2000, 4000, 8000];
+const MAX_RETRIES = 5;
+const BASE_BACKOFF_MS = 2000;
+const MAX_BACKOFF_MS = 60000;
 
 function isTransientError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -14,6 +15,19 @@ function isTransientError(err: unknown): boolean {
       || msg.includes('econnreset') || msg.includes('fetch failed');
   }
   return false;
+}
+
+function parseRetryDelay(errorMessage: string): number | null {
+  const match = errorMessage.match(/retry\s+(?:in\s+)?(\d+(?:\.\d+)?)\s*s/i);
+  if (match) return Math.ceil(parseFloat(match[1]) * 1000);
+  const msMatch = errorMessage.match(/retry\s+(?:in\s+)?(\d+)\s*ms/i);
+  if (msMatch) return parseInt(msMatch[1], 10);
+  return null;
+}
+
+function addJitter(delayMs: number): number {
+  const jitter = delayMs * (Math.random() * 0.25);
+  return Math.round(delayMs + jitter);
 }
 
 async function retryWithBackoff<T>(fn: () => Promise<T>, context: string): Promise<T> {
@@ -27,8 +41,17 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, context: string): Promi
         throw new Error(`[${context}] Non-transient error: ${lastError.message}`);
       }
       if (attempt < MAX_RETRIES - 1) {
-        console.warn(`[${context}] Attempt ${attempt + 1} failed: ${lastError.message}. Retrying in ${BACKOFF_MS[attempt]}ms...`);
-        await new Promise(r => setTimeout(r, BACKOFF_MS[attempt]));
+        const serverDelay = parseRetryDelay(lastError.message);
+        const exponentialDelay = BASE_BACKOFF_MS * Math.pow(2, attempt);
+        const rawDelay = serverDelay ?? exponentialDelay;
+        const clampedDelay = Math.min(Math.max(rawDelay, BASE_BACKOFF_MS), MAX_BACKOFF_MS);
+        const finalDelay = addJitter(clampedDelay);
+
+        console.warn(
+          `[${context}] Attempt ${attempt + 1} failed: ${lastError.message}. ` +
+          `Retrying in ${finalDelay}ms (server hint: ${serverDelay ?? 'none'})...`,
+        );
+        await new Promise(r => setTimeout(r, finalDelay));
       }
     }
   }

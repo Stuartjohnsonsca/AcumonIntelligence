@@ -3,9 +3,14 @@ import { prisma } from '@/lib/db';
 import { getBlobAsBase64, moveToProcessing, moveToProcessed, CONTAINERS } from '@/lib/azure-blob';
 import { extractDocumentFromBase64, categoriseDescription, generateReferenceId } from '@/lib/gemini-extractor';
 
-const MAX_CONCURRENT = 2;
+const MAX_CONCURRENT = parseInt(process.env.GEMINI_MAX_CONCURRENT || '3', 10);
+const INITIAL_DELAY_MS = 200;
+const MIN_DELAY_MS = 100;
+const MAX_DELAY_MS = 15000;
 
-async function runWithConcurrencyLimit<T>(
+let adaptiveDelayMs = INITIAL_DELAY_MS;
+
+async function runWithAdaptiveConcurrency<T>(
   tasks: (() => Promise<T>)[],
   limit: number,
 ): Promise<PromiseSettledResult<T>[]> {
@@ -15,10 +20,19 @@ async function runWithConcurrencyLimit<T>(
   async function worker() {
     while (nextIndex < tasks.length) {
       const idx = nextIndex++;
+      const delay = adaptiveDelayMs;
+      if (delay > 0 && idx > 0) {
+        await new Promise(r => setTimeout(r, delay));
+      }
       try {
         results[idx] = { status: 'fulfilled', value: await tasks[idx]() };
+        adaptiveDelayMs = Math.max(MIN_DELAY_MS, Math.round(adaptiveDelayMs * 0.85));
       } catch (reason) {
         results[idx] = { status: 'rejected', reason };
+        const msg = reason instanceof Error ? reason.message : '';
+        if (msg.includes('429') || msg.includes('quota') || msg.includes('rate')) {
+          adaptiveDelayMs = Math.min(MAX_DELAY_MS, adaptiveDelayMs * 2);
+        }
       }
     }
   }
@@ -139,7 +153,7 @@ export async function POST(req: Request) {
   }
 
   const tasks = files.map((file, i) => () => processFile(file, startIndex + i));
-  const results = await runWithConcurrencyLimit(tasks, MAX_CONCURRENT);
+  const results = await runWithAdaptiveConcurrency(tasks, MAX_CONCURRENT);
 
   let batchExtracted = 0;
   let batchFailed = 0;

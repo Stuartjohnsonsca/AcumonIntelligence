@@ -2,13 +2,12 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Upload, FileText, Loader2, Download, ChevronDown, ChevronRight,
   CheckCircle2, XCircle, AlertCircle, Search, UserPlus, Plus,
-  Database, RefreshCw, Mail
+  Database, RefreshCw, Mail, X, Table, Link2, Calendar
 } from 'lucide-react';
 
 interface Client {
@@ -66,6 +65,24 @@ interface JobResult {
 }
 
 type ActiveTab = 'document-details' | 'extraction-details' | 'summary-totals';
+type LeftPanelMode = 'idle' | 'spreadsheet' | 'blank';
+
+interface SpreadsheetRow {
+  [key: string]: string;
+}
+
+const ACCOUNTING_COLUMNS = [
+  'Date', 'Reference', 'Contact', 'Description', 'Account Code',
+  'Net', 'Tax', 'Gross',
+];
+
+interface XeroAccount {
+  AccountID: string;
+  Code: string;
+  Name: string;
+  Type: string;
+  Status: string;
+}
 
 interface Props {
   userId: string;
@@ -93,6 +110,24 @@ export function DataExtractionClient({
   const [jobResult, setJobResult] = useState<JobResult | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [error, setError] = useState('');
+
+  // Left panel state
+  const [leftPanelMode, setLeftPanelMode] = useState<LeftPanelMode>('idle');
+  const [leftPanelData, setLeftPanelData] = useState<SpreadsheetRow[]>([]);
+  const [leftPanelColumns, setLeftPanelColumns] = useState<string[]>(ACCOUNTING_COLUMNS);
+  const [leftPanelFileName, setLeftPanelFileName] = useState<string | null>(null);
+  const leftSpreadsheetRef = useRef<HTMLInputElement>(null);
+
+  // Xero connection state
+  const [xeroConnected, setXeroConnected] = useState(false);
+  const [xeroOrgName, setXeroOrgName] = useState<string | null>(null);
+  const [xeroShowModal, setXeroShowModal] = useState(false);
+  const [xeroAccounts, setXeroAccounts] = useState<XeroAccount[]>([]);
+  const [xeroSelectedCodes, setXeroSelectedCodes] = useState<Set<string>>(new Set());
+  const [xeroDateFrom, setXeroDateFrom] = useState('');
+  const [xeroDateTo, setXeroDateTo] = useState('');
+  const [xeroLoading, setXeroLoading] = useState(false);
+  const [xeroError, setXeroError] = useState('');
 
   // Progress tracking
   const [progress, setProgress] = useState<{
@@ -211,6 +246,227 @@ export function DataExtractionClient({
     a.download = `extraction-${currentJobId.substring(0, 8)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  // ─── Left panel handlers ────────────────────────────────────────────
+
+  async function handleUploadSpreadsheet(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLeftPanelFileName(file.name);
+
+    if (file.name.endsWith('.csv')) {
+      const text = await file.text();
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length === 0) return;
+      const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+      setLeftPanelColumns(headers);
+      const rows = lines.slice(1).map(line => {
+        const vals = line.split(',').map(v => v.replace(/^"|"$/g, '').trim());
+        const row: SpreadsheetRow = {};
+        headers.forEach((h, i) => { row[h] = vals[i] || ''; });
+        return row;
+      });
+      setLeftPanelData(rows);
+      setLeftPanelMode('spreadsheet');
+    } else {
+      try {
+        const ExcelJS = await import('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        const buffer = await file.arrayBuffer();
+        await workbook.xlsx.load(buffer);
+        const sheet = workbook.worksheets[0];
+        if (!sheet) return;
+
+        const headers: string[] = [];
+        sheet.getRow(1).eachCell((cell, colNum) => {
+          headers[colNum - 1] = String(cell.value || `Column ${colNum}`);
+        });
+        setLeftPanelColumns(headers);
+
+        const rows: SpreadsheetRow[] = [];
+        sheet.eachRow((row, rowNum) => {
+          if (rowNum === 1) return;
+          const r: SpreadsheetRow = {};
+          headers.forEach((h, i) => {
+            const cell = row.getCell(i + 1);
+            r[h] = cell.value != null ? String(cell.value) : '';
+          });
+          rows.push(r);
+        });
+        setLeftPanelData(rows);
+        setLeftPanelMode('spreadsheet');
+      } catch (err) {
+        setError(`Failed to parse spreadsheet: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    }
+
+    if (leftSpreadsheetRef.current) leftSpreadsheetRef.current.value = '';
+  }
+
+  function handleLoadBlankSpreadsheet() {
+    setLeftPanelColumns(ACCOUNTING_COLUMNS);
+    const emptyRows: SpreadsheetRow[] = Array.from({ length: 20 }, () => {
+      const row: SpreadsheetRow = {};
+      ACCOUNTING_COLUMNS.forEach(c => { row[c] = ''; });
+      return row;
+    });
+    setLeftPanelData(emptyRows);
+    setLeftPanelFileName(null);
+    setLeftPanelMode('blank');
+  }
+
+  function handleCellEdit(rowIdx: number, col: string, value: string) {
+    setLeftPanelData(prev => {
+      const updated = [...prev];
+      updated[rowIdx] = { ...updated[rowIdx], [col]: value };
+      return updated;
+    });
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTableElement>) {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text) return;
+
+    const activeEl = document.activeElement;
+    if (!activeEl || !(activeEl instanceof HTMLInputElement)) return;
+    const rowIdx = parseInt(activeEl.dataset.row || '-1', 10);
+    const colIdx = parseInt(activeEl.dataset.col || '-1', 10);
+    if (rowIdx < 0 || colIdx < 0) return;
+
+    e.preventDefault();
+
+    const pastedRows = text.split('\n').map(l => l.split('\t'));
+    setLeftPanelData(prev => {
+      const updated = [...prev];
+      for (let r = 0; r < pastedRows.length; r++) {
+        const targetRow = rowIdx + r;
+        if (targetRow >= updated.length) {
+          const newRow: SpreadsheetRow = {};
+          leftPanelColumns.forEach(c => { newRow[c] = ''; });
+          updated.push(newRow);
+        }
+        for (let c = 0; c < pastedRows[r].length; c++) {
+          const targetCol = colIdx + c;
+          if (targetCol < leftPanelColumns.length) {
+            updated[targetRow] = { ...updated[targetRow], [leftPanelColumns[targetCol]]: pastedRows[r][c].trim() };
+          }
+        }
+      }
+      return updated;
+    });
+  }
+
+  async function handleXeroButtonClick() {
+    if (!selectedClient) return;
+
+    setXeroLoading(true);
+    setXeroError('');
+
+    try {
+      const statusRes = await fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`);
+      const statusData = await statusRes.json();
+
+      if (statusData.connected) {
+        setXeroConnected(true);
+        setXeroOrgName(statusData.orgName);
+
+        const accRes = await fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`);
+        const accData = await accRes.json();
+        if (accData.accounts) {
+          setXeroAccounts(accData.accounts);
+        }
+
+        setXeroShowModal(true);
+      } else {
+        window.location.href = `/api/accounting/xero/connect?clientId=${selectedClient.id}`;
+      }
+    } catch (err) {
+      setXeroError(err instanceof Error ? err.message : 'Failed to check Xero connection');
+    } finally {
+      setXeroLoading(false);
+    }
+  }
+
+  function toggleXeroCode(code: string) {
+    setXeroSelectedCodes(prev => {
+      const next = new Set(prev);
+      next.has(code) ? next.delete(code) : next.add(code);
+      return next;
+    });
+  }
+
+  async function handleXeroFetchData() {
+    if (!selectedClient) return;
+    if (!xeroDateFrom || !xeroDateTo) {
+      setXeroError('Please select both from and to dates');
+      return;
+    }
+
+    setXeroLoading(true);
+    setXeroError('');
+
+    try {
+      const codes = Array.from(xeroSelectedCodes).join(',');
+      const params = new URLSearchParams({
+        clientId: selectedClient.id,
+        type: 'transactions',
+        accountCodes: codes,
+        dateFrom: xeroDateFrom,
+        dateTo: xeroDateTo,
+      });
+
+      const res = await fetch(`/api/accounting/xero/data?${params}`);
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch Xero data');
+
+      const cols = ['Date', 'Reference', 'Contact', 'Type', 'Description', 'Account Code', 'Net', 'Tax', 'Total'];
+      const rows: SpreadsheetRow[] = [];
+
+      for (const txn of data.rows) {
+        if (txn.lineItems && txn.lineItems.length > 0) {
+          for (const li of txn.lineItems) {
+            rows.push({
+              'Date': txn.date ? new Date(txn.date).toLocaleDateString('en-GB') : '',
+              'Reference': txn.reference || '',
+              'Contact': txn.contact || '',
+              'Type': txn.type || '',
+              'Description': li.description || '',
+              'Account Code': li.accountCode || '',
+              'Net': li.lineAmount != null ? String(li.lineAmount) : '',
+              'Tax': li.taxAmount != null ? String(li.taxAmount) : '',
+              'Total': li.lineAmount != null && li.taxAmount != null
+                ? String(li.lineAmount + li.taxAmount)
+                : '',
+            });
+          }
+        } else {
+          rows.push({
+            'Date': txn.date ? new Date(txn.date).toLocaleDateString('en-GB') : '',
+            'Reference': txn.reference || '',
+            'Contact': txn.contact || '',
+            'Type': txn.type || '',
+            'Description': '',
+            'Account Code': '',
+            'Net': String(txn.subtotal ?? ''),
+            'Tax': String(txn.tax ?? ''),
+            'Total': String(txn.total ?? ''),
+          });
+        }
+      }
+
+      setLeftPanelColumns(cols);
+      setLeftPanelData(rows);
+      setLeftPanelFileName(`Xero - ${xeroOrgName || 'Data'}`);
+      setLeftPanelMode('spreadsheet');
+      setXeroShowModal(false);
+    } catch (err) {
+      setXeroError(err instanceof Error ? err.message : 'Failed to fetch data from Xero');
+    } finally {
+      setXeroLoading(false);
+    }
   }
 
   const formatCurrency = (v: number | null) =>
@@ -340,26 +596,180 @@ export function DataExtractionClient({
         {/* LEFT: Accounting System */}
         <div className="w-1/2 border-r border-slate-200 bg-white flex flex-col">
           <div className="px-6 py-4 border-b border-slate-100">
-            <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
-              <Database className="h-5 w-5 text-blue-500" />
-              {selectedClient.software || 'Accounting System'}
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">Load comparison data from accounting system or upload a file</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                  <Database className="h-5 w-5 text-blue-500" />
+                  {selectedClient.software || 'Accounting System'}
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  {leftPanelMode !== 'idle'
+                    ? `${leftPanelData.length} rows loaded${leftPanelFileName ? ` — ${leftPanelFileName}` : ''}`
+                    : 'Load comparison data from accounting system or upload a file'}
+                </p>
+              </div>
+              {leftPanelMode !== 'idle' && (
+                <Button size="sm" variant="ghost" onClick={() => { setLeftPanelMode('idle'); setLeftPanelData([]); setLeftPanelFileName(null); }}>
+                  <X className="h-4 w-4 mr-1" />Clear
+                </Button>
+              )}
+            </div>
           </div>
-          <div className="p-6 space-y-3 flex-1 overflow-y-auto">
-            <Button className="w-full justify-start" variant="outline">
-              <Upload className="h-4 w-4 mr-2" />Upload Spreadsheet (.xlsx / .csv)
-            </Button>
-            <Button className="w-full justify-start" variant="outline" disabled={!selectedClient.software}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Collate data from {selectedClient.software || 'Accounting System'}
-              {!selectedClient.software && <span className="ml-2 text-xs text-slate-400">(not connected)</span>}
-            </Button>
-            <Button className="w-full justify-start" variant="outline">
-              <FileText className="h-4 w-4 mr-2" />Load Blank Spreadsheet (paste data)
-            </Button>
-          </div>
+
+          {leftPanelMode === 'idle' ? (
+            <div className="p-6 space-y-3 flex-1 overflow-y-auto">
+              <input
+                ref={leftSpreadsheetRef}
+                type="file"
+                accept=".xlsx,.csv"
+                className="hidden"
+                onChange={handleUploadSpreadsheet}
+              />
+              <Button className="w-full justify-start" variant="outline"
+                onClick={() => leftSpreadsheetRef.current?.click()}>
+                <Upload className="h-4 w-4 mr-2" />Upload Spreadsheet (.xlsx / .csv)
+              </Button>
+              <Button className="w-full justify-start" variant="outline"
+                onClick={handleXeroButtonClick}
+                disabled={xeroLoading}>
+                {xeroLoading
+                  ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Connecting...</>
+                  : <><Link2 className="h-4 w-4 mr-2" />
+                    Collate data from {selectedClient.software || 'Accounting System'}
+                    {!selectedClient.software && <span className="ml-2 text-xs text-slate-400">(will connect)</span>}
+                  </>}
+              </Button>
+              <Button className="w-full justify-start" variant="outline"
+                onClick={handleLoadBlankSpreadsheet}>
+                <Table className="h-4 w-4 mr-2" />Load Blank Spreadsheet (paste data)
+              </Button>
+
+              {xeroError && (
+                <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0" />{xeroError}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-xs border-collapse" onPaste={handlePaste}>
+                <thead className="bg-slate-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-1 py-1.5 text-center text-slate-400 font-normal w-8">#</th>
+                    {leftPanelColumns.map(col => (
+                      <th key={col} className="px-2 py-1.5 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200">
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {leftPanelData.map((row, ri) => (
+                    <tr key={ri} className="border-b border-slate-100 hover:bg-blue-50/30">
+                      <td className="px-1 py-0.5 text-center text-slate-300 text-[10px]">{ri + 1}</td>
+                      {leftPanelColumns.map((col, ci) => (
+                        <td key={col} className="px-0 py-0">
+                          <input
+                            type="text"
+                            value={row[col] || ''}
+                            onChange={e => handleCellEdit(ri, col, e.target.value)}
+                            data-row={ri}
+                            data-col={ci}
+                            className="w-full px-2 py-1 text-xs bg-transparent border-0 focus:bg-white focus:ring-1 focus:ring-blue-300 outline-none"
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {leftPanelMode === 'blank' && (
+                <div className="p-3 border-t border-slate-100">
+                  <Button size="sm" variant="outline" onClick={() => {
+                    const newRow: SpreadsheetRow = {};
+                    leftPanelColumns.forEach(c => { newRow[c] = ''; });
+                    setLeftPanelData(prev => [...prev, ...Array.from({ length: 10 }, () => ({ ...newRow }))]);
+                  }}>
+                    <Plus className="h-3 w-3 mr-1" />Add 10 rows
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Xero Fetch Modal */}
+        {xeroShowModal && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-slate-800">Fetch from Xero</h3>
+                  {xeroOrgName && <p className="text-sm text-slate-500">{xeroOrgName}</p>}
+                </div>
+                <button onClick={() => setXeroShowModal(false)} className="text-slate-400 hover:text-slate-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-6 space-y-4 overflow-y-auto flex-1">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm font-medium text-slate-700 mb-1 block">
+                      <Calendar className="h-3.5 w-3.5 inline mr-1" />Date From
+                    </label>
+                    <Input type="date" value={xeroDateFrom} onChange={e => setXeroDateFrom(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700 mb-1 block">
+                      <Calendar className="h-3.5 w-3.5 inline mr-1" />Date To
+                    </label>
+                    <Input type="date" value={xeroDateTo} onChange={e => setXeroDateTo(e.target.value)} />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-2 block">
+                    Account Codes (optional — leave blank for all)
+                  </label>
+                  {xeroAccounts.length > 0 ? (
+                    <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+                      {xeroAccounts.filter(a => a.Status === 'ACTIVE').map(acc => (
+                        <label key={acc.AccountID}
+                          className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+                          <input
+                            type="checkbox"
+                            checked={xeroSelectedCodes.has(acc.Code)}
+                            onChange={() => toggleXeroCode(acc.Code)}
+                            className="rounded border-slate-300"
+                          />
+                          <span className="font-mono text-slate-600 w-12">{acc.Code}</span>
+                          <span className="text-slate-800 truncate">{acc.Name}</span>
+                          <span className="text-slate-400 text-xs ml-auto">{acc.Type}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-400">Loading accounts...</p>
+                  )}
+                </div>
+
+                {xeroError && (
+                  <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+                    {xeroError}
+                  </div>
+                )}
+              </div>
+              <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setXeroShowModal(false)}>Cancel</Button>
+                <Button onClick={handleXeroFetchData} disabled={xeroLoading}>
+                  {xeroLoading
+                    ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Fetching...</>
+                    : <><RefreshCw className="h-4 w-4 mr-2" />Fetch Transactions</>}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* RIGHT: Documents */}
         <div className="w-1/2 bg-white flex flex-col">

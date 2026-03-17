@@ -8,12 +8,18 @@ function getBaseUrl(): string {
   return 'http://localhost:3000';
 }
 
+const BATCH_STAGGER_MS = 500;
+
 function calculateBatchSize(fileCount: number): number {
   if (fileCount <= 5) return fileCount;
-  if (fileCount <= 20) return 5;
-  if (fileCount <= 100) return 10;
-  if (fileCount <= 300) return 15;
-  return 25;
+  if (fileCount <= 20) return 4;
+  if (fileCount <= 100) return 8;
+  if (fileCount <= 300) return 12;
+  return 20;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 export async function POST(req: Request) {
@@ -55,24 +61,30 @@ export async function POST(req: Request) {
 
   const baseUrl = getBaseUrl();
 
-  for (let i = 0; i < batches.length; i++) {
-    const batch = batches[i];
-    const startIndex = i * batchSize + 1;
+  (async () => {
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      const startIndex = i * batchSize + 1;
 
-    fetch(`${baseUrl}/api/extraction/process-batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jobId,
-        fileIds: batch.map(f => f.id),
-        startIndex,
-        clientId: job.clientId,
-        internalSecret: process.env.NEXTAUTH_SECRET,
-      }),
-    }).catch(err => {
-      console.error(`Batch ${i + 1} fire failed:`, err);
-    });
-  }
+      fetch(`${baseUrl}/api/extraction/process-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          fileIds: batch.map(f => f.id),
+          startIndex,
+          clientId: job.clientId,
+          internalSecret: process.env.NEXTAUTH_SECRET,
+        }),
+      }).catch(err => {
+        console.error(`Batch ${i + 1} fire failed:`, err);
+      });
+
+      if (i < batches.length - 1) {
+        await sleep(BATCH_STAGGER_MS);
+      }
+    }
+  })();
 
   return NextResponse.json({
     jobId,

@@ -11,16 +11,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     MicrosoftEntraID({
       clientId: process.env.AZURE_AD_CLIENT_ID!,
       clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
-      issuer: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID}/v2.0`,
+      issuer: 'https://login.microsoftonline.com/common/v2.0',
       authorization: {
-        url: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID}/oauth2/v2.0/authorize`,
+        url: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
         params: {
           scope: 'openid profile email',
         },
       },
-      token: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID}/oauth2/v2.0/token`,
+      token: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
       userinfo: 'https://graph.microsoft.com/oidc/userinfo',
-      jwks_endpoint: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID}/discovery/v2.0/keys`,
+      jwks_endpoint: 'https://login.microsoftonline.com/common/discovery/v2.0/keys',
     }),
     Credentials({
       id: 'credentials',

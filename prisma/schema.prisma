@@ -95,11 +95,12 @@ model Client {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  firm              Firm                   @relation(fields: [firmId], references: [id])
-  apiKeys           ClientApiKey[]
-  subscriptions     Subscription[]
-  userAssignments   UserClientAssignment[]
-  extractionJobs    ExtractionJob[]
+  firm                   Firm                    @relation(fields: [firmId], references: [id])
+  apiKeys                ClientApiKey[]
+  subscriptions          Subscription[]
+  userAssignments        UserClientAssignment[]
+  extractionJobs         ExtractionJob[]
+  accountingConnections  AccountingConnection[]
 
   @@map("clients")
 }
@@ -180,6 +181,29 @@ model PasswordResetToken {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("password_reset_tokens")
+}
+
+// ─── Accounting System Connections ───────────────────────────────────────────
+
+model AccountingConnection {
+  id              String   @id @default(uuid())
+  clientId        String   @map("client_id")
+  system          String   // "xero" | "sage" | "quickbooks"
+  accessToken     String   @map("access_token")
+  refreshToken    String   @map("refresh_token")
+  tokenExpiresAt  DateTime @map("token_expires_at")
+  tenantId        String?  @map("tenant_id")
+  orgName         String?  @map("org_name")
+  connectedBy     String   @map("connected_by")
+  connectedAt     DateTime @default(now()) @map("connected_at")
+  expiresAt       DateTime @map("expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, system])
+  @@map("accounting_connections")
 }
 
 // ─── Data Extraction Tool ────────────────────────────────────────────────────
