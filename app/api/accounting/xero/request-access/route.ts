@@ -51,10 +51,20 @@ export async function POST(req: Request) {
     });
 
     if (pending) {
-      return NextResponse.json(
-        { error: 'An access request is already pending for this client. Please wait for the client to authorise.' },
-        { status: 409 },
-      );
+      const ageMs = Date.now() - new Date(pending.createdAt).getTime();
+      const isStale = ageMs > 10 * 60 * 1000;
+
+      if (pending.recipientEmail !== client.contactEmail || isStale) {
+        await prisma.xeroAuthRequest.update({
+          where: { id: pending.id },
+          data: { status: 'expired' },
+        });
+      } else {
+        return NextResponse.json(
+          { error: `An access request was just sent to ${pending.recipientEmail}. Please wait a few minutes for the client to authorise, or update the client contact email to send a new request.` },
+          { status: 409 },
+        );
+      }
     }
 
     const token = crypto.randomBytes(32).toString('base64url');
@@ -120,6 +130,7 @@ export async function GET(req: Request) {
     where: { clientId },
     orderBy: { createdAt: 'desc' },
     select: {
+      id: true,
       status: true,
       recipientEmail: true,
       createdAt: true,
@@ -128,5 +139,20 @@ export async function GET(req: Request) {
     },
   });
 
-  return NextResponse.json({ request: latest });
+  if (latest && latest.status === 'pending') {
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+      select: { contactEmail: true },
+    });
+
+    if (client?.contactEmail && client.contactEmail !== latest.recipientEmail) {
+      await prisma.xeroAuthRequest.update({
+        where: { id: latest.id },
+        data: { status: 'expired' },
+      });
+      return NextResponse.json({ request: null });
+    }
+  }
+
+  return NextResponse.json({ request: latest ? { status: latest.status, recipientEmail: latest.recipientEmail, createdAt: latest.createdAt, expiresAt: latest.expiresAt, respondedAt: latest.respondedAt } : null });
 }

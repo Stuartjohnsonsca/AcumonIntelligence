@@ -1042,9 +1042,15 @@ export function DataExtractionClient({
       const res = await fetch(`/api/accounting/xero/request-access?clientId=${selectedClient.id}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.request) {
-          setXeroRequestStatus(data.request);
+        const req = data.request;
+        if (req && req.status === 'pending') {
+          const ageMs = Date.now() - new Date(req.createdAt).getTime();
+          if (ageMs > 10 * 60 * 1000) {
+            setXeroRequestStatus(null);
+            return;
+          }
         }
+        setXeroRequestStatus(req || null);
       }
     } catch { /* non-fatal */ }
   }
@@ -1364,6 +1370,11 @@ export function DataExtractionClient({
                     ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />{xeroRequestSending ? 'Sending request...' : 'Connecting...'}</>
                     : <><Link2 className="h-4 w-4 mr-2" />Collate data from {selectedClient.software || 'Accounting System'}</>}
                 </Button>
+                {selectedClient.software && selectedClient.contactEmail && !xeroConnected && (
+                  <p className="text-xs text-gray-500 -mt-2 ml-1">
+                    Access request will be sent to <strong>{selectedClient.contactEmail}</strong>
+                  </p>
+                )}
                 <Button className="w-full justify-start" variant="outline" onClick={handleLoadBlankSpreadsheet}>
                   <Table className="h-4 w-4 mr-2" />Load Blank Spreadsheet (paste data)
                 </Button>
