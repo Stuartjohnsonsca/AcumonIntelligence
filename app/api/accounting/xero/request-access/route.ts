@@ -52,7 +52,7 @@ export async function POST(req: Request) {
 
     if (pending) {
       const ageMs = Date.now() - new Date(pending.createdAt).getTime();
-      const isStale = ageMs > 10 * 60 * 1000;
+      const isStale = true;
 
       if (pending.recipientEmail !== client.contactEmail || isStale) {
         await prisma.xeroAuthRequest.update({

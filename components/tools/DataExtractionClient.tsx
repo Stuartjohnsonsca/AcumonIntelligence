@@ -1045,11 +1045,8 @@ export function DataExtractionClient({
         const data = await res.json();
         const req = data.request;
         if (req && req.status === 'pending') {
-          const ageMs = Date.now() - new Date(req.createdAt).getTime();
-          if (ageMs > 10 * 60 * 1000) {
-            setXeroRequestStatus(null);
-            return;
-          }
+          setXeroRequestStatus(null);
+          return;
         }
         setXeroRequestStatus(req || null);
       }
