@@ -7,9 +7,29 @@ import { Input } from '@/components/ui/input';
 import {
   Upload, FileText, Loader2, Download, ChevronDown, ChevronRight,
   CheckCircle2, XCircle, AlertCircle, Search, UserPlus, Plus,
-  Database, RefreshCw, Mail, X, Table, Link2, Calendar, Eye
+  Database, RefreshCw, Mail, X, Table, Link2, Calendar, Eye,
+  History, ArrowLeftRight
 } from 'lucide-react';
 import { DocumentViewer } from '@/components/tools/DocumentViewer';
+
+interface PreviousJob {
+  id: string;
+  status: string;
+  totalFiles: number;
+  processedCount: number;
+  failedCount: number;
+  createdAt: string;
+  extractedAt: string | null;
+  expiresAt: string | null;
+}
+
+interface ComparisonResult {
+  matchedExtracted: Set<string>;
+  matchedLeftRows: Set<number>;
+  unmatchedExtracted: string[];
+  unmatchedLeftRows: number[];
+  totalMatched: number;
+}
 
 interface Client {
   id: string;
@@ -129,6 +149,14 @@ export function DataExtractionClient({
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [exportingZip, setExportingZip] = useState(false);
+
+  // Previous sessions state
+  const [previousJobs, setPreviousJobs] = useState<PreviousJob[]>([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [loadingSession, setLoadingSession] = useState<string | null>(null);
+
+  // Comparison state
+  const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
 
   // Left panel state
   const [leftPanelMode, setLeftPanelMode] = useState<LeftPanelMode>('idle');
@@ -331,6 +359,138 @@ export function DataExtractionClient({
     } finally {
       setExportingZip(false);
     }
+  }
+
+  // ─── Previous sessions ────────────────────────────────────────────
+
+  async function loadPreviousJobs(clientId: string) {
+    setLoadingJobs(true);
+    try {
+      const res = await fetch(`/api/extraction/jobs?clientId=${clientId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPreviousJobs(data);
+      }
+    } catch { /* non-fatal */ }
+    finally { setLoadingJobs(false); }
+  }
+
+  async function loadSession(jobId: string) {
+    setLoadingSession(jobId);
+    try {
+      const res = await fetch(`/api/extraction/process?jobId=${jobId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setJobResult(data);
+        setCurrentJobId(jobId);
+        setComparisonResult(null);
+      }
+    } catch { /* non-fatal */ }
+    finally { setLoadingSession(null); }
+  }
+
+  useEffect(() => {
+    if (selectedClient) {
+      loadPreviousJobs(selectedClient.id);
+    }
+  }, [selectedClient]);
+
+  // ─── Comparison logic ────────────────────────────────────────────
+
+  function parseNumber(val: string | undefined): number | null {
+    if (!val) return null;
+    const cleaned = val.replace(/[£$€,\s]/g, '');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  }
+
+  function normalizeDate(dateStr: string | null | undefined): string | null {
+    if (!dateStr) return null;
+    const cleaned = dateStr.trim();
+    const isoMatch = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return isoMatch[0];
+    const ukMatch = cleaned.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})/);
+    if (ukMatch) {
+      const y = ukMatch[3].length === 2 ? '20' + ukMatch[3] : ukMatch[3];
+      return `${y}-${ukMatch[2].padStart(2, '0')}-${ukMatch[1].padStart(2, '0')}`;
+    }
+    return null;
+  }
+
+  function runComparison() {
+    if (!jobResult || leftPanelData.length === 0) return;
+
+    const matchedExtracted = new Set<string>();
+    const matchedLeftRows = new Set<number>();
+
+    const grossColName = leftPanelColumns.find(c => c.toLowerCase().includes('gross'));
+    const netColName = leftPanelColumns.find(c => c.toLowerCase().includes('net'));
+    const dateColName = leftPanelColumns.find(c => c.toLowerCase().includes('date'));
+    const refColName = leftPanelColumns.find(c =>
+      c.toLowerCase().includes('ref') || c.toLowerCase().includes('reference') || c.toLowerCase().includes('invoice')
+    );
+
+    const usedLeftRows = new Set<number>();
+
+    for (const record of jobResult.records) {
+      let bestRowIdx = -1;
+      let bestScore = 0;
+
+      for (let ri = 0; ri < leftPanelData.length; ri++) {
+        if (usedLeftRows.has(ri)) continue;
+        const row = leftPanelData[ri];
+        let score = 0;
+
+        if (grossColName && record.grossTotal != null) {
+          const leftGross = parseNumber(row[grossColName]);
+          if (leftGross != null && Math.abs(leftGross - record.grossTotal) < 0.02) score += 3;
+        }
+        if (netColName && record.netTotal != null) {
+          const leftNet = parseNumber(row[netColName]);
+          if (leftNet != null && Math.abs(leftNet - record.netTotal) < 0.02) score += 2;
+        }
+        if (dateColName && record.documentDate) {
+          const leftDate = normalizeDate(row[dateColName]);
+          const recordDate = normalizeDate(record.documentDate);
+          if (leftDate && recordDate && leftDate === recordDate) score += 2;
+        }
+        if (refColName && record.documentRef) {
+          const leftRef = (row[refColName] || '').trim().toLowerCase();
+          const docRef = record.documentRef.trim().toLowerCase();
+          if (leftRef && docRef && (leftRef.includes(docRef) || docRef.includes(leftRef))) score += 2;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestRowIdx = ri;
+        }
+      }
+
+      if (bestScore >= 3 && bestRowIdx >= 0) {
+        matchedExtracted.add(record.id);
+        matchedLeftRows.add(bestRowIdx);
+        usedLeftRows.add(bestRowIdx);
+      }
+    }
+
+    const nonEmptyLeftRows = leftPanelData
+      .map((row, i) => ({ row, i }))
+      .filter(({ row }) => Object.values(row).some(v => v && v.trim()));
+
+    const unmatchedExtracted = jobResult.records
+      .filter(r => !matchedExtracted.has(r.id))
+      .map(r => r.id);
+    const unmatchedLeftRows = nonEmptyLeftRows
+      .filter(({ i }) => !matchedLeftRows.has(i))
+      .map(({ i }) => i);
+
+    setComparisonResult({
+      matchedExtracted,
+      matchedLeftRows,
+      unmatchedExtracted,
+      unmatchedLeftRows,
+      totalMatched: matchedExtracted.size,
+    });
   }
 
   // ─── Left panel handlers ────────────────────────────────────────────
@@ -850,9 +1010,16 @@ export function DataExtractionClient({
                   </tr>
                 </thead>
                 <tbody>
-                  {leftPanelData.map((row, ri) => (
-                    <tr key={ri} className="border-b border-slate-100 hover:bg-blue-50/30">
-                      <td className="px-1 py-0.5 text-center text-slate-300 text-[10px]">{ri + 1}</td>
+                  {leftPanelData.map((row, ri) => {
+                    const isMatched = comparisonResult?.matchedLeftRows.has(ri);
+                    const isUnmatched = comparisonResult && !isMatched && Object.values(row).some(v => v && v.trim());
+                    const rowBg = isMatched ? 'bg-green-50' : isUnmatched ? 'bg-amber-50' : '';
+                    return (
+                    <tr key={ri} className={`border-b border-slate-100 hover:bg-blue-50/30 ${rowBg}`}>
+                      <td className="px-1 py-0.5 text-center text-slate-300 text-[10px]">
+                        {isMatched && <CheckCircle2 className="h-2.5 w-2.5 text-green-500 inline mr-0.5" />}
+                        {ri + 1}
+                      </td>
                       {leftPanelColumns.map((col, ci) => (
                         <td key={col} className="px-0 py-0">
                           <input
@@ -866,7 +1033,8 @@ export function DataExtractionClient({
                         </td>
                       ))}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
               <div className="p-3 border-t border-slate-100 flex items-center gap-3">
@@ -1097,6 +1265,60 @@ export function DataExtractionClient({
                 </Button>
               )}
             </div>
+
+            {/* Previous sessions */}
+            {previousJobs.length > 0 && (
+              <div className="border-t border-slate-100 pt-4 mt-4">
+                <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2 mb-3">
+                  <History className="h-4 w-4 text-slate-400" />
+                  Previous Sessions
+                </h3>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {previousJobs.map(job => {
+                    const isActive = currentJobId === job.id;
+                    const isExpired = job.status === 'expired';
+                    const dateStr = job.extractedAt
+                      ? new Date(job.extractedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                      : new Date(job.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    return (
+                      <button
+                        key={job.id}
+                        onClick={() => !isActive && loadSession(job.id)}
+                        disabled={!!loadingSession}
+                        className={`w-full text-left p-3 rounded-lg border text-sm transition-colors ${
+                          isActive
+                            ? 'border-blue-300 bg-blue-50'
+                            : isExpired
+                              ? 'border-slate-200 bg-slate-50 opacity-60'
+                              : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-700">
+                            {dateStr}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {isExpired && <Badge variant="secondary" className="text-[10px]">Expired</Badge>}
+                            {isActive && <Badge className="text-[10px] bg-blue-600">Active</Badge>}
+                            {loadingSession === job.id && <Loader2 className="h-3 w-3 animate-spin" />}
+                          </div>
+                        </div>
+                        <div className="flex gap-3 mt-1 text-xs text-slate-500">
+                          <span>{job.processedCount} extracted</span>
+                          {job.failedCount > 0 && <span className="text-red-500">{job.failedCount} failed</span>}
+                          <span>{job.totalFiles} files</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {loadingJobs && (
+              <div className="flex items-center gap-2 text-sm text-slate-400 mt-2">
+                <Loader2 className="h-3 w-3 animate-spin" />Loading sessions...
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1155,6 +1377,13 @@ export function DataExtractionClient({
               </button>
             ))}
             <div className="ml-auto flex gap-2 py-2">
+              {leftPanelData.length > 0 && (
+                <Button size="sm" variant={comparisonResult ? 'default' : 'outline'}
+                  onClick={() => comparisonResult ? setComparisonResult(null) : runComparison()}>
+                  <ArrowLeftRight className="h-3 w-3 mr-1" />
+                  {comparisonResult ? 'Clear Comparison' : 'Compare'}
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={handleExportExcel}>
                 <Download className="h-3 w-3 mr-1" />Export Excel
               </Button>
@@ -1164,6 +1393,30 @@ export function DataExtractionClient({
               </Button>
             </div>
           </div>
+
+          {/* Comparison summary */}
+          {comparisonResult && (
+            <div className="bg-blue-50 border-b border-blue-200 px-6 py-2 flex items-center gap-4 text-sm">
+              <ArrowLeftRight className="h-4 w-4 text-blue-600" />
+              <span className="font-medium text-blue-800">Comparison Results:</span>
+              <span className="text-green-700">
+                <CheckCircle2 className="h-3.5 w-3.5 inline mr-0.5" />
+                {comparisonResult.totalMatched} matched
+              </span>
+              {comparisonResult.unmatchedExtracted.length > 0 && (
+                <span className="text-amber-700">
+                  <AlertCircle className="h-3.5 w-3.5 inline mr-0.5" />
+                  {comparisonResult.unmatchedExtracted.length} extracted not in accounting
+                </span>
+              )}
+              {comparisonResult.unmatchedLeftRows.length > 0 && (
+                <span className="text-amber-700">
+                  <AlertCircle className="h-3.5 w-3.5 inline mr-0.5" />
+                  {comparisonResult.unmatchedLeftRows.length} accounting not matched
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Tab content */}
           <div className="max-h-[50vh] overflow-y-auto">
@@ -1181,7 +1434,12 @@ export function DataExtractionClient({
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {jobResult.records.map(record => {
-                      const isMatch = !!(record.grossTotal && record.documentDate && record.sellerName);
+                      const isCompared = !!comparisonResult;
+                      const isMatchedToLeft = comparisonResult?.matchedExtracted.has(record.id);
+                      const isComplete = !!(record.grossTotal && record.documentDate && record.sellerName);
+                      const rowHighlight = isCompared
+                        ? (isMatchedToLeft ? 'bg-green-50' : 'bg-amber-50')
+                        : (isComplete ? 'bg-green-50' : '');
                       const expanded = expandedRows.has(record.id);
                       const hasLocations = record.fieldLocations && Object.keys(record.fieldLocations).length > 0;
                       const fieldCell = (value: string | number | null, fieldName: string, format?: (v: number | null) => string) => {
@@ -1200,9 +1458,14 @@ export function DataExtractionClient({
                       };
                       return (
                         <>
-                          <tr key={record.id} className={`hover:bg-slate-50 ${isMatch ? 'bg-green-50' : ''}`}>
+                          <tr key={record.id} className={`hover:bg-slate-50 ${rowHighlight}`}>
                             <td className="px-3 py-2 font-mono font-medium">
                               <div className="flex items-center gap-1">
+                                {isCompared && (
+                                  isMatchedToLeft
+                                    ? <span title="Matched to accounting data"><CheckCircle2 className="h-3 w-3 text-green-500" /></span>
+                                    : <span title="No match found"><AlertCircle className="h-3 w-3 text-amber-500" /></span>
+                                )}
                                 {hasLocations && (
                                   <button onClick={() => openDocumentViewer(record, null)}
                                     className="text-blue-500 hover:text-blue-700" title="View document">
