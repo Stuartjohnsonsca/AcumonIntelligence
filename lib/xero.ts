@@ -67,6 +67,7 @@ export function buildAuthorizeUrl(
   redirectUri: string,
   state: string,
   codeChallenge: string,
+  loginHint?: string,
 ): string {
   const params = new URLSearchParams({
     response_type: 'code',
@@ -77,6 +78,9 @@ export function buildAuthorizeUrl(
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
   });
+  if (loginHint) {
+    params.set('login_hint', loginHint);
+  }
   return `${XERO_AUTH_URL}?${params.toString()}`;
 }
 

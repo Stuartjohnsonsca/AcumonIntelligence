@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import XeroConnectForm from '@/components/XeroConnectForm';
 
 interface Props {
   params: Promise<{ token: string }>;
@@ -71,8 +71,6 @@ export default async function XeroAuthorisePage({ params }: Props) {
     );
   }
 
-  const connectUrl = `/api/accounting/xero/client-connect?token=${encodeURIComponent(token)}`;
-
   return (
     <PageShell>
       <div className="text-center">
@@ -98,16 +96,7 @@ export default async function XeroAuthorisePage({ params }: Props) {
           </ul>
         </div>
 
-        <a
-          href={connectUrl}
-          className="inline-flex items-center gap-2 bg-[#13b5ea] hover:bg-[#0d9bc7] text-white font-semibold py-3 px-8 rounded-lg text-lg transition-colors shadow-lg"
-        >
-          Connect to Xero
-        </a>
-
-        <p className="text-xs text-slate-400 mt-4">
-          You will be redirected to Xero to sign in and authorise the connection.
-        </p>
+        <XeroConnectForm token={token} recipientEmail={request.recipientEmail} />
       </div>
     </PageShell>
   );

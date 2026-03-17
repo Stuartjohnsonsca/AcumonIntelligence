@@ -32,6 +32,8 @@ export async function GET(req: Request) {
   });
   const stateEncoded = Buffer.from(state).toString('base64url');
 
+  const loginHint = searchParams.get('login_hint') || undefined;
+
   const { codeVerifier, codeChallenge } = generatePKCE();
 
   await prisma.xeroAuthRequest.update({
@@ -39,7 +41,7 @@ export async function GET(req: Request) {
     data: { codeVerifier },
   });
 
-  const url = buildAuthorizeUrl(xeroClientId, redirectUri, stateEncoded, codeChallenge);
+  const url = buildAuthorizeUrl(xeroClientId, redirectUri, stateEncoded, codeChallenge, loginHint);
 
   const response = NextResponse.redirect(url);
 
