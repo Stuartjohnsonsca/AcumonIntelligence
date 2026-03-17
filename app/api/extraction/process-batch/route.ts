@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getBlobAsBase64, moveToProcessing, moveToProcessed, CONTAINERS } from '@/lib/azure-blob';
-import { extractDocumentFromBase64, categoriseDescription, generateReferenceId } from '@/lib/gemini-extractor';
+import { extractDocumentFromBase64, categoriseDescription } from '@/lib/gemini-extractor';
 
 const MAX_CONCURRENT = parseInt(process.env.GEMINI_MAX_CONCURRENT || '3', 10);
 const INITIAL_DELAY_MS = 200;
@@ -97,7 +97,7 @@ export async function POST(req: Request) {
         accountCategory = await categoriseDescription(desc, existingCategories);
       }
 
-      const referenceId = generateReferenceId(refIndex);
+      const referenceId = file.originalName.replace(/\.[^.]+$/, '');
 
       await prisma.extractedRecord.create({
         data: {
