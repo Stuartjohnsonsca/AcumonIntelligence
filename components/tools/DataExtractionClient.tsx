@@ -1362,7 +1362,7 @@ export function DataExtractionClient({
                   disabled={xeroLoading || xeroRequestSending}>
                   {xeroLoading || xeroRequestSending
                     ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />{xeroRequestSending ? 'Sending request...' : 'Connecting...'}</>
-                    : <><Link2 className="h-4 w-4 mr-2" />Collate data from {selectedClient.software || 'Accounting System'}</>}
+                    : <><Link2 className="h-4 w-4 mr-2" />{xeroConnected ? 'Fetch from' : 'Connect to'} {selectedClient.software || 'Accounting System'}</>}
                 </Button>
                 {selectedClient.software && selectedClient.contactEmail && !xeroConnected && (
                   <p className="text-xs text-gray-500 -mt-2 ml-1">
@@ -1404,7 +1404,7 @@ export function DataExtractionClient({
                 {xeroRequestStatus && xeroRequestStatus.status === 'authorised' && !xeroConnected && (
                   <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-                    <span>Xero access has been authorised. Click &quot;Collate data&quot; above to fetch transactions.</span>
+                    <span>Xero access has been authorised. Click &quot;Fetch from Xero&quot; above to fetch transactions.</span>
                   </div>
                 )}
                 {xeroError && (
