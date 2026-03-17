@@ -1016,7 +1016,12 @@ export function DataExtractionClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientId: selectedClient.id }),
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Server error (${res.status}). Please check the server logs.`);
+      }
       if (!res.ok) throw new Error(data.error || 'Failed to send request');
       setXeroRequestStatus({
         status: 'pending',

@@ -5,86 +5,103 @@ import { sendXeroAccessRequestEmail } from '@/lib/email';
 import crypto from 'crypto';
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user?.twoFactorVerified) {
-    return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
-  }
+  try {
+    const session = await auth();
+    if (!session?.user?.twoFactorVerified) {
+      return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+    }
 
-  const body = await req.json();
-  const { clientId } = body;
-  if (!clientId) {
-    return NextResponse.json({ error: 'clientId required' }, { status: 400 });
-  }
+    const body = await req.json();
+    const { clientId } = body;
+    if (!clientId) {
+      return NextResponse.json({ error: 'clientId required' }, { status: 400 });
+    }
 
-  const client = await prisma.client.findUnique({
-    where: { id: clientId },
-    select: {
-      clientName: true,
-      contactName: true,
-      contactEmail: true,
-      firmId: true,
-    },
-  });
+    const client = await prisma.client.findUnique({
+      where: { id: clientId },
+      select: {
+        clientName: true,
+        contactName: true,
+        contactEmail: true,
+        firmId: true,
+      },
+    });
 
-  if (!client) {
-    return NextResponse.json({ error: 'Client not found' }, { status: 404 });
-  }
+    if (!client) {
+      return NextResponse.json({ error: 'Client not found' }, { status: 404 });
+    }
 
-  if (!client.contactEmail) {
+    if (!client.contactEmail) {
+      return NextResponse.json(
+        { error: 'No contact email set for this client. Please add a contact email in the Clients tab.' },
+        { status: 400 },
+      );
+    }
+
+    if (!session.user.isSuperAdmin && client.firmId !== session.user.firmId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const pending = await prisma.xeroAuthRequest.findFirst({
+      where: {
+        clientId,
+        status: 'pending',
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (pending) {
+      return NextResponse.json(
+        { error: 'An access request is already pending for this client. Please wait for the client to authorise.' },
+        { status: 409 },
+      );
+    }
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await prisma.xeroAuthRequest.create({
+      data: {
+        clientId,
+        requestedBy: session.user.email || session.user.name || 'Unknown',
+        recipientEmail: client.contactEmail,
+        recipientName: client.contactName,
+        token,
+        expiresAt,
+      },
+    });
+
+    const baseUrl = process.env.NEXTAUTH_URL || 'https://www.acumonintelligence.com';
+    const authoriseUrl = `${baseUrl}/xero-authorise/${token}`;
+
+    try {
+      await sendXeroAccessRequestEmail(
+        client.contactEmail,
+        client.contactName || 'Client',
+        client.clientName,
+        session.user.name || session.user.email || 'Your auditor',
+        authoriseUrl,
+      );
+    } catch (emailErr) {
+      console.error('Failed to send Xero access request email:', emailErr);
+      await prisma.xeroAuthRequest.deleteMany({ where: { token } });
+      return NextResponse.json(
+        { error: `Failed to send email to ${client.contactEmail}. Please check the SMTP configuration and the client contact email address.` },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      message: `Access request sent to ${client.contactEmail}`,
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (err) {
+    console.error('Xero request-access error:', err);
     return NextResponse.json(
-      { error: 'No contact email set for this client. Please add a contact email in the Clients tab.' },
-      { status: 400 },
+      { error: err instanceof Error ? err.message : 'An unexpected error occurred' },
+      { status: 500 },
     );
   }
-
-  if (!session.user.isSuperAdmin && client.firmId !== session.user.firmId) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  const pending = await prisma.xeroAuthRequest.findFirst({
-    where: {
-      clientId,
-      status: 'pending',
-      expiresAt: { gt: new Date() },
-    },
-  });
-
-  if (pending) {
-    return NextResponse.json(
-      { error: 'An access request is already pending for this client. Please wait for the client to authorise.' },
-      { status: 409 },
-    );
-  }
-
-  const token = crypto.randomBytes(32).toString('base64url');
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-  await prisma.xeroAuthRequest.create({
-    data: {
-      clientId,
-      requestedBy: session.user.email || session.user.name || 'Unknown',
-      recipientEmail: client.contactEmail,
-      recipientName: client.contactName,
-      token,
-      expiresAt,
-    },
-  });
-
-  const baseUrl = process.env.NEXTAUTH_URL || 'https://www.acumonintelligence.com';
-  const authoriseUrl = `${baseUrl}/xero-authorise/${token}`;
-
-  await sendXeroAccessRequestEmail(
-    client.contactEmail,
-    client.contactName || 'Client',
-    client.clientName,
-    session.user.name || session.user.email || 'Your auditor',
-    authoriseUrl,
-  );
-
-  return NextResponse.json({
-    message: `Access request sent to ${client.contactEmail}`,
-    expiresAt: expiresAt.toISOString(),
-  });
 }
 
 export async function GET(req: Request) {
