@@ -307,7 +307,7 @@ export function DataExtractionClient({
 
   function handleLoadBlankSpreadsheet() {
     setLeftPanelColumns(ACCOUNTING_COLUMNS);
-    const emptyRows: SpreadsheetRow[] = Array.from({ length: 20 }, () => {
+    const emptyRows: SpreadsheetRow[] = Array.from({ length: 50 }, () => {
       const row: SpreadsheetRow = {};
       ACCOUNTING_COLUMNS.forEach(c => { row[c] = ''; });
       return row;
@@ -317,10 +317,29 @@ export function DataExtractionClient({
     setLeftPanelMode('blank');
   }
 
+  function addEmptyRows(count: number) {
+    setLeftPanelData(prev => {
+      const newRows: SpreadsheetRow[] = Array.from({ length: count }, () => {
+        const row: SpreadsheetRow = {};
+        leftPanelColumns.forEach(c => { row[c] = ''; });
+        return row;
+      });
+      return [...prev, ...newRows];
+    });
+  }
+
   function handleCellEdit(rowIdx: number, col: string, value: string) {
     setLeftPanelData(prev => {
       const updated = [...prev];
       updated[rowIdx] = { ...updated[rowIdx], [col]: value };
+      if (rowIdx >= updated.length - 3 && value) {
+        const newRows: SpreadsheetRow[] = Array.from({ length: 50 }, () => {
+          const row: SpreadsheetRow = {};
+          leftPanelColumns.forEach(c => { row[c] = ''; });
+          return row;
+        });
+        return [...updated, ...newRows];
+      }
       return updated;
     });
   }
@@ -683,17 +702,12 @@ export function DataExtractionClient({
                   ))}
                 </tbody>
               </table>
-              {leftPanelMode === 'blank' && (
-                <div className="p-3 border-t border-slate-100">
-                  <Button size="sm" variant="outline" onClick={() => {
-                    const newRow: SpreadsheetRow = {};
-                    leftPanelColumns.forEach(c => { newRow[c] = ''; });
-                    setLeftPanelData(prev => [...prev, ...Array.from({ length: 10 }, () => ({ ...newRow }))]);
-                  }}>
-                    <Plus className="h-3 w-3 mr-1" />Add 10 rows
-                  </Button>
-                </div>
-              )}
+              <div className="p-3 border-t border-slate-100 flex items-center gap-3">
+                <Button size="sm" variant="outline" onClick={() => addEmptyRows(100)}>
+                  <Plus className="h-3 w-3 mr-1" />Add 100 rows
+                </Button>
+                <span className="text-xs text-slate-400">{leftPanelData.length} rows total</span>
+              </div>
             </div>
           )}
         </div>
@@ -874,15 +888,28 @@ export function DataExtractionClient({
               </div>
             )}
 
-            <Button
-              className="w-full bg-blue-600 hover:bg-blue-700"
-              disabled={!uploadedFiles.length || uploading || processing}
-              onClick={handleUploadAndProcess}
-            >
-              {uploading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Uploading...</>
-                : processing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processing...</>
-                  : <><RefreshCw className="mr-2 h-4 w-4" />Upload & Extract</>}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1 bg-blue-600 hover:bg-blue-700"
+                disabled={!uploadedFiles.length || uploading || processing}
+                onClick={handleUploadAndProcess}
+              >
+                {uploading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Uploading...</>
+                  : processing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processing...</>
+                    : <><RefreshCw className="mr-2 h-4 w-4" />Upload & Extract</>}
+              </Button>
+              {selectedClient.software && (
+                <Button
+                  className="flex-1"
+                  variant="outline"
+                  disabled={uploading || processing}
+                  onClick={handleXeroButtonClick}
+                >
+                  <Database className="mr-2 h-4 w-4" />
+                  Extract from {selectedClient.software}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>
