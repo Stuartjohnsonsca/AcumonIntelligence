@@ -58,10 +58,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const existingCategories = await prisma.accountCategoryLearning.findMany({
-    where: { clientId },
-    select: { description: true, category: true },
-  });
+  const [existingCategories, client] = await Promise.all([
+    prisma.accountCategoryLearning.findMany({
+      where: { clientId },
+      select: { description: true, category: true },
+    }),
+    prisma.client.findUnique({
+      where: { id: clientId },
+      select: { clientName: true },
+    }),
+  ]);
+
+  const clientName = client?.clientName;
 
   const files = await prisma.extractionFile.findMany({
     where: { id: { in: fileIds } },
@@ -80,6 +88,7 @@ export async function POST(req: Request) {
         base64,
         file.mimeType || 'application/pdf',
         file.originalName,
+        clientName,
       );
 
       let accountCategory = extracted.accountCategory;

@@ -93,8 +93,19 @@ export interface ExtractedDocument {
   pageCount: number;
 }
 
-const EXTRACTION_PROMPT = `You are a financial document extraction specialist. Extract all available financial data from this document AND locate where each field appears on the document.
+function buildExtractionPrompt(clientName?: string): string {
+  const clientContext = clientName
+    ? `\nIMPORTANT CONTEXT: These documents belong to the client "${clientName}". This client is the entity whose records are being audited. Use this to correctly determine purchaser vs seller:
+- If "${clientName}" (or a close match) appears on the document, determine their role from the document type:
+  - On a RECEIVED invoice/bill (from a supplier TO the client): "${clientName}" is the PURCHASER, the supplier is the SELLER
+  - On an ISSUED invoice (from the client TO a customer): "${clientName}" is the SELLER, the customer is the PURCHASER
+  - On a receipt, bank statement, or statement of account: use the same logic based on who is paying/receiving
+- Be CONSISTENT: "${clientName}" should appear in the same role (purchaser or seller) across all documents of the same type in this batch
+- If the document does not clearly indicate direction, default to "${clientName}" as the PURCHASER (most common in audit bundles — suppliers sending invoices to the client)\n`
+    : '';
 
+  return `You are a financial document extraction specialist. Extract all available financial data from this document AND locate where each field appears on the document.
+${clientContext}
 Return ONLY valid JSON with this exact structure (use null for missing fields):
 {
   "purchaserName": "string or null",
@@ -133,15 +144,19 @@ Rules:
 - Dates in YYYY-MM-DD format
 - If this is not a financial document, return all nulls with confidence 0
 - accountCategory should be your best interpretation based on the document content
+- purchaserName is the entity RECEIVING goods/services (the buyer). sellerName is the entity PROVIDING goods/services (the vendor/supplier). On a standard invoice, the company at the top issuing the invoice is the SELLER, and the "Bill To" / "Invoice To" entity is the PURCHASER.
 - fieldLocations: for EVERY non-null extracted field, provide a bounding box showing where that value appears on the document. Coordinates are normalized 0-1000 (top-left origin). Keys must match field names exactly: purchaserName, purchaserTaxId, purchaserCountry, sellerName, sellerTaxId, sellerCountry, documentRef, documentDate, dueDate, netTotal, dutyTotal, taxTotal, grossTotal. For line items use keys like "lineItems[0].description", "lineItems[0].net", etc.
 - pageCount: the total number of pages in this document (1 for single images)`;
+}
 
 export async function extractDocumentFromBase64(
   base64Data: string,
   mimeType: string,
-  fileName: string
+  fileName: string,
+  clientName?: string,
 ): Promise<ExtractedDocument> {
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const prompt = buildExtractionPrompt(clientName);
 
   const result = await retryWithBackoff(
     () => model.generateContent([
@@ -151,7 +166,7 @@ export async function extractDocumentFromBase64(
           mimeType: mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf',
         },
       },
-      `File name: ${fileName}\n\n${EXTRACTION_PROMPT}`,
+      `File name: ${fileName}\n\n${prompt}`,
     ]),
     `extract:${fileName}`,
   );
