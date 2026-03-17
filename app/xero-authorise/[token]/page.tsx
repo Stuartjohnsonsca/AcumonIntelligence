@@ -43,7 +43,7 @@ export default async function XeroAuthorisePage({ params }: Props) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <h2 className="text-xl font-bold text-slate-800 mb-2">Already Authorised</h2>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">Authorised</h2>
           <p className="text-slate-500">
             Xero access for <strong>{request.client.clientName}</strong> has already been authorised.
             The connection is active and will expire automatically after 30 days.
