@@ -75,6 +75,7 @@ interface ExtractionFile {
   originalName: string;
   status: string;
   errorMessage: string | null;
+  duplicateOfId: string | null;
 }
 
 interface JobResult {
@@ -1388,6 +1389,9 @@ export function DataExtractionClient({
                       An email has been sent to <strong>{xeroRequestStatus.recipientEmail}</strong> asking them to authorise
                       read-only Xero access. The link expires in 7 days.
                     </p>
+                    <p className="text-[10px] text-blue-400 ml-6 mt-1">
+                      Sent: {new Date(xeroRequestStatus.createdAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
                     <div className="mt-2 ml-6">
                       <Button size="sm" variant="outline" className="text-xs h-7" onClick={async () => {
                         await checkXeroRequestStatus();
@@ -1769,21 +1773,45 @@ export function DataExtractionClient({
                     {jobResult.files.filter(f => f.status === 'failed').length > 0 && (
                       <p className="text-red-500">{jobResult.files.filter(f => f.status === 'failed').length} failed</p>
                     )}
+                    {jobResult.files.filter(f => f.status === 'duplicate').length > 0 && (
+                      <p className="text-slate-400">{jobResult.files.filter(f => f.status === 'duplicate').length} duplicates skipped</p>
+                    )}
                   </div>
                 </details>
                 <details className="text-[10px]">
                   <summary className="text-xs font-semibold text-slate-600 cursor-pointer">Files ({jobResult.files.filter(f => f.status !== 'duplicate').length})</summary>
                   <div className="mt-2 max-h-32 overflow-y-auto space-y-1">
                     {jobResult.files.filter(f => f.status !== 'duplicate').map(file => (
-                      <div key={file.id} className="flex items-center gap-1 text-slate-600">
-                        {file.status === 'extracted'
-                          ? <CheckCircle2 className="h-3 w-3 text-green-500 flex-shrink-0" />
-                          : <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />}
-                        <span className="truncate">{file.originalName}</span>
+                      <div key={file.id} className="text-slate-600">
+                        <div className="flex items-center gap-1">
+                          {file.status === 'extracted'
+                            ? <CheckCircle2 className="h-3 w-3 text-green-500 flex-shrink-0" />
+                            : <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />}
+                          <span className="truncate">{file.originalName}</span>
+                        </div>
+                        {file.status === 'failed' && file.errorMessage && (
+                          <p className="ml-4 text-red-400 text-[9px] truncate" title={file.errorMessage}>{file.errorMessage}</p>
+                        )}
                       </div>
                     ))}
                   </div>
                 </details>
+                {jobResult.files.filter(f => f.status === 'duplicate').length > 0 && (
+                  <details className="text-[10px]">
+                    <summary className="text-xs font-semibold text-slate-600 cursor-pointer">Duplicates ({jobResult.files.filter(f => f.status === 'duplicate').length})</summary>
+                    <div className="mt-2 max-h-24 overflow-y-auto space-y-1">
+                      {jobResult.files.filter(f => f.status === 'duplicate').map(file => {
+                        const original = jobResult.files.find(o => o.id === file.duplicateOfId);
+                        return (
+                          <div key={file.id} className="text-slate-400 flex items-center gap-1">
+                            <span className="truncate">{file.originalName}</span>
+                            {original && <span className="text-[8px] flex-shrink-0">(= {original.originalName})</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
               </div>
             )}
 

@@ -81,7 +81,7 @@ export async function POST(req: Request) {
       },
     });
 
-    const baseUrl = process.env.NEXTAUTH_URL || 'https://www.acumonintelligence.com';
+    const baseUrl = process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app';
     const authoriseUrl = `${baseUrl}/xero-authorise/${token}`;
 
     try {

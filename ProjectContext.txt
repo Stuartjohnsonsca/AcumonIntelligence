@@ -216,7 +216,8 @@ npm run dev
 - Client-side polls GET /api/extraction/status?jobId=X every 1.5s
   - Returns {total, extracted, failed, duplicated, complete} from the ExtractionJob counters
   - UI shows an animated progress bar with green (success), red (failed) segments, and duplicate count
-  - Failed files show their error messages in the Extraction Details tab for diagnostics
+  - Failed files show their error messages inline in the Extraction Details > Files section for diagnostics
+  - Duplicates section lists skipped files with references to their originals
   - When complete=true, polling stops and full results are fetched
 - Navigation-safe: once orchestrator fires batches, processing continues server-side regardless of whether user stays on the page
 - File status categories: uploaded, processing, extracted, failed, duplicate
