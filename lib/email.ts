@@ -131,30 +131,29 @@ export async function sendXeroAccessRequestEmail(
 ): Promise<{ messageId?: string }> {
   return sendEmail(recipientEmail, `${clientName} — Accounting data access (Acumon Intelligence)`, `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-      <div style="padding: 20px 0;">
+      <div style="background: #1e3a5f; padding: 24px 30px; border-radius: 8px 8px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 22px;">Acumon Intelligence</h1>
+      </div>
+      <div style="background: #ffffff; padding: 30px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px;">
         <p style="color: #374151; font-size: 16px; margin: 0 0 16px 0;">Hello ${recipientName},</p>
         <p style="color: #374151; font-size: 16px; margin: 0 0 16px 0;">
-          ${auditorName} is conducting audit work for ${clientName} and has requested
-          temporary read-only access to your Xero accounting data via Acumon Intelligence.
+          ${auditorName} is conducting audit work for <strong>${clientName}</strong> and has requested
+          temporary read-only access to your Xero accounting data.
         </p>
-        <p style="color: #374151; font-size: 16px; margin: 0 0 16px 0;">
-          To review and approve this request, please visit the link below. You will be
-          directed to Xero's own sign-in page to confirm the connection.
+        <p style="color: #374151; font-size: 16px; margin: 0 0 24px 0;">
+          To approve this request, click the button below. You will be directed to Xero to
+          sign in and select the organisation you wish to connect.
         </p>
-        <p style="color: #374151; font-size: 16px; margin: 0 0 8px 0;">
-          <strong>Review request:</strong>
-        </p>
-        <p style="color: #2563eb; font-size: 14px; word-break: break-all; margin: 0 0 24px 0;">
-          <a href="${authoriseUrl}" style="color: #2563eb;">${authoriseUrl}</a>
-        </p>
-        <p style="color: #374151; font-size: 14px; margin: 0 0 8px 0;">Details:</p>
-        <ul style="color: #374151; font-size: 14px; margin: 0 0 16px 0; padding-left: 20px;">
-          <li>Access type: Read-only (no changes to your data)</li>
-          <li>Duration: Automatically removed after 30 days</li>
-          <li>Link valid for: 7 days</li>
-        </ul>
+        <div style="text-align: center; margin: 0 0 24px 0;">
+          <a href="${authoriseUrl}" style="display: inline-block; background: #1e3a5f; color: #ffffff; padding: 14px 40px; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600;">Review &amp; Approve Access</a>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; margin: 0 0 20px 0; font-size: 14px; color: #374151;">
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #f3f4f6;"><strong>Access type</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #f3f4f6;">Read-only (no changes to your data)</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #f3f4f6;"><strong>Duration</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #f3f4f6;">Automatically removed after 30 days</td></tr>
+          <tr><td style="padding: 8px 0;"><strong>Link valid for</strong></td><td style="padding: 8px 0;">7 days</td></tr>
+        </table>
         <p style="color: #6b7280; font-size: 13px; margin: 0 0 8px 0;">
-          If you did not expect this request or have questions, please contact ${auditorName} directly.
+          If you did not expect this request, please contact ${auditorName} directly.
         </p>
         <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
         <p style="color: #9ca3af; font-size: 12px; margin: 0;">
