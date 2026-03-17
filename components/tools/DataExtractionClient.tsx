@@ -1024,6 +1024,7 @@ export function DataExtractionClient({
         throw new Error(`Server error (${res.status}). Please check the server logs.`);
       }
       if (!res.ok) throw new Error(data.error || 'Failed to send request');
+      console.log('[Xero] Email send result:', data);
       setXeroRequestStatus({
         status: 'pending',
         recipientEmail: selectedClient.contactEmail || '',
@@ -1043,12 +1044,7 @@ export function DataExtractionClient({
       const res = await fetch(`/api/accounting/xero/request-access?clientId=${selectedClient.id}`);
       if (res.ok) {
         const data = await res.json();
-        const req = data.request;
-        if (req && req.status === 'pending') {
-          setXeroRequestStatus(null);
-          return;
-        }
-        setXeroRequestStatus(req || null);
+        setXeroRequestStatus(data.request || null);
       }
     } catch { /* non-fatal */ }
   }

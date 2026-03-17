@@ -230,7 +230,7 @@ npm run dev
   - If connected: shows modal with chart of accounts multi-select + date range picker; fetches transactions and populates left panel grid
   - Xero OAuth2 flow with PKCE: redirect → Xero login → callback → state validation → token exchange with code_verifier → encrypted storage (AES-256-GCM) in accounting_connections table
   - Tokens auto-refresh on expiry; connection expires after 30 days
-  - Scopes: offline_access, openid, profile, email, accounting.transactions.read, accounting.settings.read, accounting.contacts.read
+  - Scopes: offline_access, openid, profile, email, accounting.invoices.read, accounting.payments.read, accounting.banktransactions.read, accounting.manualjournals.read, accounting.settings.read, accounting.contacts.read (granular scopes required for apps created after 2 March 2026)
 
 ## Xero Delegated Access Flow
 - Auditors do NOT log into Xero themselves — they request access from the client via email
@@ -254,7 +254,7 @@ npm run dev
 - **30-day auto-deletion**: Connections expire 30 days after authentication
   - Daily cron job (GET /api/cron/cleanup-xero at 02:00 UTC) revokes Xero connection via DELETE /connections/{tenantId} then deletes the DB row
   - Vercel Cron configured in vercel.json, authenticated via CRON_SECRET Bearer token
-- **Read-only scopes**: Only accounting.transactions.read, accounting.settings.read, accounting.contacts.read
+- **Read-only scopes**: Only accounting.invoices.read, accounting.payments.read, accounting.banktransactions.read, accounting.manualjournals.read, accounting.settings.read, accounting.contacts.read
 - **No token exposure**: All Xero tokens are server-side only, never sent to the client
 
 ## Xero Integration Setup (User Actions Required)

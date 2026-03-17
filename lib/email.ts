@@ -3,10 +3,12 @@ import { EmailClient } from '@azure/communication-email';
 const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING || '';
 const senderAddress = process.env.EMAIL_FROM || 'DoNotReply@9a3b0f92-2a07-4b75-98c6-3e9cecf2c5c4.azurecomm.net';
 
-async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+async function sendEmail(to: string, subject: string, html: string): Promise<{ messageId?: string }> {
   if (!connectionString) {
     throw new Error('AZURE_COMMUNICATION_CONNECTION_STRING is not configured');
   }
+
+  console.log(`[Email] Sending to ${to}, subject: "${subject}", sender: ${senderAddress}`);
 
   const client = new EmailClient(connectionString);
   const poller = await client.beginSend({
@@ -16,9 +18,13 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
   });
 
   const result = await poller.pollUntilDone();
+  console.log(`[Email] Result: status=${result.status}, id=${result.id}, error=${result.error?.message || 'none'}`);
+
   if (result.status !== 'Succeeded') {
     throw new Error(`Email send failed with status: ${result.status} — ${result.error?.message || 'Unknown error'}`);
   }
+
+  return { messageId: result.id };
 }
 
 export async function sendTwoFactorCode(email: string, name: string, code: string): Promise<void> {
@@ -122,8 +128,8 @@ export async function sendXeroAccessRequestEmail(
   clientName: string,
   auditorName: string,
   authoriseUrl: string,
-): Promise<void> {
-  await sendEmail(recipientEmail, `Xero access request for ${clientName} — Acumon Intelligence`, `
+): Promise<{ messageId?: string }> {
+  return sendEmail(recipientEmail, `Xero access request for ${clientName} — Acumon Intelligence`, `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
       <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); padding: 30px; border-radius: 8px 8px 0 0;">
         <h1 style="color: white; margin: 0; font-size: 24px;">Acumon Intelligence</h1>

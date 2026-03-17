@@ -11,7 +11,10 @@ const SCOPES = [
   'openid',
   'profile',
   'email',
-  'accounting.transactions.read',
+  'accounting.invoices.read',
+  'accounting.payments.read',
+  'accounting.banktransactions.read',
+  'accounting.manualjournals.read',
   'accounting.settings.read',
   'accounting.contacts.read',
 ].join(' ');

@@ -4,6 +4,8 @@ import { prisma } from '@/lib/db';
 import { sendXeroAccessRequestEmail } from '@/lib/email';
 import crypto from 'crypto';
 
+export const maxDuration = 30;
+
 export async function POST(req: Request) {
   try {
     const session = await auth();
@@ -84,8 +86,9 @@ export async function POST(req: Request) {
     const baseUrl = process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app';
     const authoriseUrl = `${baseUrl}/xero-authorise/${token}`;
 
+    let emailResult;
     try {
-      await sendXeroAccessRequestEmail(
+      emailResult = await sendXeroAccessRequestEmail(
         client.contactEmail,
         client.contactName || 'Client',
         client.clientName,
@@ -96,7 +99,7 @@ export async function POST(req: Request) {
       console.error('Failed to send Xero access request email:', emailErr);
       await prisma.xeroAuthRequest.deleteMany({ where: { token } });
       return NextResponse.json(
-        { error: `Failed to send email to ${client.contactEmail}. Please check the SMTP configuration and the client contact email address.` },
+        { error: `Failed to send email to ${client.contactEmail}: ${emailErr instanceof Error ? emailErr.message : 'Unknown error'}` },
         { status: 500 },
       );
     }
@@ -104,6 +107,8 @@ export async function POST(req: Request) {
     return NextResponse.json({
       message: `Access request sent to ${client.contactEmail}`,
       expiresAt: expiresAt.toISOString(),
+      emailStatus: 'sent',
+      emailMessageId: emailResult?.messageId || null,
     });
   } catch (err) {
     console.error('Xero request-access error:', err);
