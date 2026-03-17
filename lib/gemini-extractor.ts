@@ -67,6 +67,11 @@ export interface LineItem {
   duty: number | null;
 }
 
+export interface FieldLocation {
+  page: number;
+  bbox: [number, number, number, number]; // [y_min, x_min, y_max, x_max] normalized 0-1000
+}
+
 export interface ExtractedDocument {
   purchaserName: string | null;
   purchaserTaxId: string | null;
@@ -84,9 +89,11 @@ export interface ExtractedDocument {
   lineItems: LineItem[];
   accountCategory: string | null;
   confidence: number; // 0-1
+  fieldLocations: Record<string, FieldLocation>;
+  pageCount: number;
 }
 
-const EXTRACTION_PROMPT = `You are a financial document extraction specialist. Extract all available financial data from this document.
+const EXTRACTION_PROMPT = `You are a financial document extraction specialist. Extract all available financial data from this document AND locate where each field appears on the document.
 
 Return ONLY valid JSON with this exact structure (use null for missing fields):
 {
@@ -114,14 +121,20 @@ Return ONLY valid JSON with this exact structure (use null for missing fields):
     }
   ],
   "accountCategory": "best-guess category (e.g. Insurance, Professional Fees, IT Services, Travel, etc.) or null",
-  "confidence": 0.0 to 1.0
+  "confidence": 0.0 to 1.0,
+  "pageCount": number (total pages in document, minimum 1),
+  "fieldLocations": {
+    "fieldName": { "page": 1, "bbox": [y_min, x_min, y_max, x_max] }
+  }
 }
 
 Rules:
 - All monetary values should be numbers without currency symbols
 - Dates in YYYY-MM-DD format
 - If this is not a financial document, return all nulls with confidence 0
-- accountCategory should be your best interpretation based on the document content`;
+- accountCategory should be your best interpretation based on the document content
+- fieldLocations: for EVERY non-null extracted field, provide a bounding box showing where that value appears on the document. Coordinates are normalized 0-1000 (top-left origin). Keys must match field names exactly: purchaserName, purchaserTaxId, purchaserCountry, sellerName, sellerTaxId, sellerCountry, documentRef, documentDate, dueDate, netTotal, dutyTotal, taxTotal, grossTotal. For line items use keys like "lineItems[0].description", "lineItems[0].net", etc.
+- pageCount: the total number of pages in this document (1 for single images)`;
 
 export async function extractDocumentFromBase64(
   base64Data: string,
@@ -151,6 +164,19 @@ export async function extractDocumentFromBase64(
 
   try {
     const parsed = JSON.parse(jsonText.trim());
+
+    const rawLocations = parsed.fieldLocations ?? {};
+    const fieldLocations: Record<string, FieldLocation> = {};
+    for (const [key, loc] of Object.entries(rawLocations)) {
+      const l = loc as { page?: number; bbox?: number[] };
+      if (l && Array.isArray(l.bbox) && l.bbox.length === 4) {
+        fieldLocations[key] = {
+          page: l.page ?? 1,
+          bbox: l.bbox as [number, number, number, number],
+        };
+      }
+    }
+
     return {
       purchaserName: parsed.purchaserName ?? null,
       purchaserTaxId: parsed.purchaserTaxId ?? null,
@@ -168,6 +194,8 @@ export async function extractDocumentFromBase64(
       lineItems: Array.isArray(parsed.lineItems) ? parsed.lineItems : [],
       accountCategory: parsed.accountCategory ?? null,
       confidence: parsed.confidence ?? 0.5,
+      fieldLocations,
+      pageCount: parsed.pageCount ?? 1,
     };
   } catch {
     return {
@@ -176,6 +204,7 @@ export async function extractDocumentFromBase64(
       documentRef: null, documentDate: null, dueDate: null,
       netTotal: null, dutyTotal: null, taxTotal: null, grossTotal: null,
       lineItems: [], accountCategory: null, confidence: 0,
+      fieldLocations: {}, pageCount: 1,
     };
   }
 }

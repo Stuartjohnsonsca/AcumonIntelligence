@@ -24,11 +24,13 @@ export async function POST(req: Request) {
     if (!clientId) return NextResponse.json({ error: 'clientId required' }, { status: 400 });
     if (!files.length) return NextResponse.json({ error: 'No files provided' }, { status: 400 });
 
+    const expiresAt = new Date(Date.now() + 121 * 24 * 60 * 60 * 1000);
     const job = await prisma.extractionJob.create({
       data: {
         clientId,
         userId: session.user.id,
         status: 'pending',
+        expiresAt,
       },
     });
 

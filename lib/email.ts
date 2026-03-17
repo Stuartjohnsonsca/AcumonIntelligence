@@ -90,6 +90,44 @@ export async function sendAccessRequestEmail(
   });
 }
 
+export async function sendExtractionExpiryReminder(
+  email: string,
+  name: string,
+  clientName: string,
+  daysRemaining: number,
+  downloadUrl: string,
+): Promise<void> {
+  const isFinal = daysRemaining <= 40;
+  const subject = isFinal
+    ? `Final reminder: Extraction data for ${clientName} expires in ${daysRemaining} days`
+    : `Reminder: Extraction data for ${clientName} will expire in ${daysRemaining} days`;
+
+  await transporter.sendMail({
+    from: `"Acumon Intelligence" <${process.env.EMAIL_FROM || 'agents@acumon.com'}>`,
+    to: email,
+    subject,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); padding: 30px; border-radius: 8px 8px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 24px;">Acumon Intelligence</h1>
+        </div>
+        <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
+          <p style="color: #374151; font-size: 16px;">Hello ${name},</p>
+          <p style="color: #374151; font-size: 16px;">
+            Your extraction data for <strong>${clientName}</strong> will be automatically deleted in <strong>${daysRemaining} days</strong>.
+          </p>
+          ${isFinal ? '<p style="color: #dc2626; font-size: 16px; font-weight: 600;">This is your final reminder. Please download your files before they are permanently deleted.</p>' : ''}
+          <p style="color: #374151; font-size: 16px;">Click below to download your files now:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${downloadUrl}" style="background: #2563eb; color: white; padding: 12px 30px; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600;">Download Files</a>
+          </div>
+          <p style="color: #6b7280; font-size: 14px;">Documents are retained for 121 days from extraction. After this period, all files will be permanently removed.</p>
+        </div>
+      </div>
+    `,
+  });
+}
+
 export async function sendWelcomeEmail(email: string, name: string, loginUrl: string): Promise<void> {
   await transporter.sendMail({
     from: `"Acumon Intelligence" <${process.env.EMAIL_FROM || 'agents@acumon.com'}>`,

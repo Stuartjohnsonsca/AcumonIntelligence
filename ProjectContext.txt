@@ -18,8 +18,10 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - Prisma ORM + Supabase PostgreSQL
 - Nodemailer (Office 365 SMTP, agents@acumon.com)
 - Stripe (placeholder, not yet live)
-- **Google Gemini API** (gemini-2.5-flash) — AI document extraction engine (paid tier, dynamic rate-limit handling)
-- **Azure Blob Storage** (acumondataextractor) — temporary file staging for extraction
+- **Google Gemini API** (gemini-2.5-flash) — AI document extraction engine (paid tier, dynamic rate-limit handling, bounding box extraction for field locations)
+- **Azure Blob Storage** (acumondataextractor) — temporary file staging for extraction + SAS URL generation for secure browser access
+- **pdf-lib** — server-side PDF annotation (coloured bounding boxes on extracted documents)
+- **pdfjs-dist** — client-side PDF rendering in DocumentViewer component
 - **Xero OAuth2 API** — accounting system integration (read-only transactions, chart of accounts)
 - ExcelJS — Excel export generation (server-side + client-side spreadsheet parsing)
 - JSZip — Server-side ZIP extraction
@@ -52,6 +54,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /components/my-account/ — MyAccountClient, UsersTab, ClientsTab, SubscriptionsTab
 - /components/admin/ — AdminClient, ProductsAdmin, FirmsAdmin
 - /components/tools/DataExtractionClient.tsx — Data Extraction tool UI (split screen)
+- /components/tools/DocumentViewer.tsx — Document viewer with PDF/image rendering and colour-coded field overlays
 
 ## Page Routes
 - / — Home (hero + features)
@@ -92,7 +95,10 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - GET /api/accounting/xero/callback — OAuth2 callback: validates state cookie, exchanges code with PKCE verifier, stores encrypted tokens, clears cookies
 - GET /api/accounting/xero/status?clientId=X — Checks if client has a valid (non-expired) Xero connection
 - GET /api/accounting/xero/data?clientId=X&type=accounts|transactions — Fetches chart of accounts or filtered transactions from Xero
+- GET /api/extraction/document/[fileId] — Returns SAS URL for secure temporary access to processed document (15-minute expiry)
+- POST /api/extraction/[jobId]/export — Generates a zip file with annotated PDFs, offline HTML viewers, and Excel report
 - GET /api/cron/cleanup-xero — Daily cron (02:00 UTC): revokes expired Xero connections and deletes tokens from DB (secured by CRON_SECRET)
+- GET /api/cron/cleanup-extraction — Daily cron (03:00 UTC): sends 40-day/81-day reminders, deletes expired documents at 121 days
 
 ## Auth Flow
 1. User enters email + password on /login, or clicks "Sign in with Microsoft"
@@ -173,9 +179,9 @@ npm run dev
 - Pre-fill supported via ?prefix=X query parameter (e.g. from access-denied page)
 
 ## DB Tables (Data Extraction)
-- extraction_jobs — one per extraction session (links client + user); includes total_files, processed_count, failed_count counters for live progress
-- extraction_files — individual files in a job (tracks blob path, zip status, extraction status, file_hash, duplicate_of_id)
-- extracted_records — one per extracted document (all financial fields as columns)
+- extraction_jobs — one per extraction session (links client + user); includes total_files, processed_count, failed_count counters for live progress; expires_at (121 days from creation), reminder_sent_at, final_reminder_sent_at for retention management
+- extraction_files — individual files in a job (tracks blob path, zip status, extraction status, file_hash, duplicate_of_id, page_count)
+- extracted_records — one per extracted document (all financial fields as columns + field_locations JSON for bounding box coordinates)
 - account_category_learning — per-client AI learning for description→category mapping
 - accounting_connections — stores encrypted Xero OAuth2 tokens per client (unique on [clientId, system]); auto-refreshes; 30-day expiry
 
@@ -255,6 +261,30 @@ npm run dev
 - All 10 products in the nav dropdowns now route to internal pages at /tools/*
 - Data Extraction is the only fully built tool; the other 9 show a "Coming Soon" landing page
 - Each page requires authentication (server-side auth() check with redirect to login)
+
+## Document Viewer & Annotations
+- Gemini extraction now requests bounding box coordinates (0-1000 normalized) for each extracted field alongside the values
+- Each field in the extraction results table is clickable — opens the DocumentViewer modal
+- **DocumentViewer** renders PDFs (via pdfjs-dist) or images with colour-coded overlays:
+  - Blue box: currently selected/active field
+  - Yellow boxes: other successfully extracted fields
+  - Red boxes: fields that failed to extract
+- Sidebar lists all fields with click-to-highlight navigation
+- Page navigation for multi-page PDFs, zoom controls
+- **Export Project** button generates a zip file containing:
+  - /documents/ — original source files
+  - /annotated/ — PDFs with embedded annotation rectangles (pdf-lib), images as-is
+  - /viewer/ — self-contained offline HTML files per document (embedded base64 data + overlay JS)
+  - extraction_report.xlsx — 3-sheet Excel report (Document Details, Summary, Line Items)
+
+## Document Retention Policy
+- Extraction jobs expire 121 days after creation (expires_at set on job creation)
+- **40-day reminder**: email sent to the job creator when extraction is 40 days old (81 days remaining)
+- **81-day reminder**: final reminder email sent at 81 days (40 days remaining)
+- **121-day expiry**: blobs deleted from Azure, files marked as 'expired', job status set to 'expired'
+- Daily cron job at 03:00 UTC (GET /api/cron/cleanup-extraction, secured by CRON_SECRET)
+- UI shows warning banner when documents are within 30 days of expiry
+- Expired jobs display "Documents expired" message instead of viewer/export options
 
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars

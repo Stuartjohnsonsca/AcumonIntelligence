@@ -7,8 +7,9 @@ import { Input } from '@/components/ui/input';
 import {
   Upload, FileText, Loader2, Download, ChevronDown, ChevronRight,
   CheckCircle2, XCircle, AlertCircle, Search, UserPlus, Plus,
-  Database, RefreshCw, Mail, X, Table, Link2, Calendar
+  Database, RefreshCw, Mail, X, Table, Link2, Calendar, Eye
 } from 'lucide-react';
+import { DocumentViewer } from '@/components/tools/DocumentViewer';
 
 interface Client {
   id: string;
@@ -27,8 +28,14 @@ interface LineItem {
   duty: number | null;
 }
 
+interface FieldLocation {
+  page: number;
+  bbox: [number, number, number, number];
+}
+
 interface ExtractedRecord {
   id: string;
+  fileId: string;
   referenceId: string;
   purchaserName: string | null;
   purchaserTaxId: string | null;
@@ -45,6 +52,7 @@ interface ExtractedRecord {
   grossTotal: number | null;
   lineItems: LineItem[];
   accountCategory: string | null;
+  fieldLocations: Record<string, FieldLocation> | null;
 }
 
 interface ExtractionFile {
@@ -62,6 +70,7 @@ interface JobResult {
   user: { name: string };
   extractedAt: string | null;
   status: string;
+  expiresAt: string | null;
 }
 
 type ActiveTab = 'document-details' | 'extraction-details' | 'summary-totals';
@@ -105,6 +114,13 @@ export function DataExtractionClient({
   const [activeTab, setActiveTab] = useState<ActiveTab>('document-details');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
+  // Document viewer state
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerFileId, setViewerFileId] = useState('');
+  const [viewerActiveField, setViewerActiveField] = useState<string | null>(null);
+  const [viewerFieldLocations, setViewerFieldLocations] = useState<Record<string, FieldLocation>>({});
+  const [viewerExtractedValues, setViewerExtractedValues] = useState<Record<string, unknown>>({});
+
   // Upload state
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -112,6 +128,7 @@ export function DataExtractionClient({
   const [jobResult, setJobResult] = useState<JobResult | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [exportingZip, setExportingZip] = useState(false);
 
   // Left panel state
   const [leftPanelMode, setLeftPanelMode] = useState<LeftPanelMode>('idle');
@@ -150,6 +167,30 @@ export function DataExtractionClient({
   const filteredUnassigned = unassignedClients.filter(c =>
     c.clientName.toLowerCase().includes(clientSearch.toLowerCase())
   );
+
+  function openDocumentViewer(record: ExtractedRecord, fieldName: string | null) {
+    if (!record.fileId) return;
+    const values: Record<string, unknown> = {
+      purchaserName: record.purchaserName,
+      purchaserTaxId: record.purchaserTaxId,
+      purchaserCountry: record.purchaserCountry,
+      sellerName: record.sellerName,
+      sellerTaxId: record.sellerTaxId,
+      sellerCountry: record.sellerCountry,
+      documentRef: record.documentRef,
+      documentDate: record.documentDate,
+      dueDate: record.dueDate,
+      netTotal: record.netTotal,
+      dutyTotal: record.dutyTotal,
+      taxTotal: record.taxTotal,
+      grossTotal: record.grossTotal,
+    };
+    setViewerFileId(record.fileId);
+    setViewerActiveField(fieldName);
+    setViewerFieldLocations(record.fieldLocations || {});
+    setViewerExtractedValues(values);
+    setViewerOpen(true);
+  }
 
   async function handleRequestAccess(clientId: string) {
     setRequestingAccess(clientId);
@@ -267,6 +308,29 @@ export function DataExtractionClient({
     a.download = `extraction-${currentJobId.substring(0, 8)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function handleExportZip() {
+    if (!currentJobId) return;
+    setExportingZip(true);
+    try {
+      const res = await fetch(`/api/extraction/${currentJobId}/export`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: 'Export failed' }));
+        throw new Error(data.error || 'Export failed');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `extraction_project_${currentJobId.substring(0, 8)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExportingZip(false);
+    }
   }
 
   // ─── Left panel handlers ────────────────────────────────────────────
@@ -691,6 +755,10 @@ export function DataExtractionClient({
               <Button size="sm" variant="outline" onClick={handleExportExcel}>
                 <Download className="h-4 w-4 mr-1" />Export Excel
               </Button>
+              <Button size="sm" variant="outline" onClick={handleExportZip} disabled={exportingZip}>
+                {exportingZip ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Download className="h-4 w-4 mr-1" />}
+                Export Project
+              </Button>
               <Button size="sm" variant="outline">
                 <Mail className="h-4 w-4 mr-1" />Send by Email
               </Button>
@@ -1036,6 +1104,37 @@ export function DataExtractionClient({
       {/* Results area — full width below split */}
       {jobResult && (
         <div className="border-t border-slate-200 bg-white flex-shrink-0">
+          {/* Expiry warning banner */}
+          {(() => {
+            if (jobResult.status === 'expired') {
+              return (
+                <div className="bg-red-50 border-b border-red-200 px-6 py-3 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-red-600" />
+                  <span className="text-red-800 text-sm font-medium">
+                    This extraction has expired. Documents are no longer available for download.
+                  </span>
+                </div>
+              );
+            }
+            if (jobResult.expiresAt) {
+              const daysLeft = Math.ceil((new Date(jobResult.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+              if (daysLeft <= 30) {
+                return (
+                  <div className={`${daysLeft <= 10 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'} border-b px-6 py-3 flex items-center gap-2`}>
+                    <AlertCircle className={`h-4 w-4 ${daysLeft <= 10 ? 'text-red-600' : 'text-amber-600'}`} />
+                    <span className={`${daysLeft <= 10 ? 'text-red-800' : 'text-amber-800'} text-sm font-medium`}>
+                      Documents expire in {daysLeft} day{daysLeft !== 1 ? 's' : ''}. Please export your project before expiry.
+                    </span>
+                    <Button size="sm" variant="outline" className="ml-auto" onClick={handleExportZip} disabled={exportingZip}>
+                      {exportingZip ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Download className="h-3 w-3 mr-1" />}
+                      Export Now
+                    </Button>
+                  </div>
+                );
+              }
+            }
+            return null;
+          })()}
           {/* Tab bar */}
           <div className="flex items-center gap-0 border-b border-slate-200 px-6">
             {([
@@ -1059,6 +1158,10 @@ export function DataExtractionClient({
               <Button size="sm" variant="outline" onClick={handleExportExcel}>
                 <Download className="h-3 w-3 mr-1" />Export Excel
               </Button>
+              <Button size="sm" variant="outline" onClick={handleExportZip} disabled={exportingZip}>
+                {exportingZip ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Download className="h-3 w-3 mr-1" />}
+                Export Project
+              </Button>
             </div>
           </div>
 
@@ -1080,18 +1183,43 @@ export function DataExtractionClient({
                     {jobResult.records.map(record => {
                       const isMatch = !!(record.grossTotal && record.documentDate && record.sellerName);
                       const expanded = expandedRows.has(record.id);
+                      const hasLocations = record.fieldLocations && Object.keys(record.fieldLocations).length > 0;
+                      const fieldCell = (value: string | number | null, fieldName: string, format?: (v: number | null) => string) => {
+                        const display = format && typeof value === 'number' ? format(value) : (value || '—');
+                        return hasLocations ? (
+                          <button
+                            onClick={() => openDocumentViewer(record, fieldName)}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer text-left"
+                            title="View in document"
+                          >
+                            {display}
+                          </button>
+                        ) : (
+                          <span>{display}</span>
+                        );
+                      };
                       return (
                         <>
                           <tr key={record.id} className={`hover:bg-slate-50 ${isMatch ? 'bg-green-50' : ''}`}>
-                            <td className="px-3 py-2 font-mono font-medium text-blue-700">{record.referenceId}</td>
-                            <td className="px-3 py-2 text-slate-600">{record.documentRef || '—'}</td>
-                            <td className="px-3 py-2 whitespace-nowrap">{record.documentDate || '—'}</td>
-                            <td className="px-3 py-2 whitespace-nowrap">{record.dueDate || '—'}</td>
-                            <td className="px-3 py-2 max-w-[140px] truncate">{record.sellerName || '—'}</td>
-                            <td className="px-3 py-2 max-w-[140px] truncate">{record.purchaserName || '—'}</td>
-                            <td className="px-3 py-2 text-right whitespace-nowrap">{formatCurrency(record.netTotal)}</td>
-                            <td className="px-3 py-2 text-right whitespace-nowrap">{formatCurrency(record.taxTotal)}</td>
-                            <td className="px-3 py-2 text-right font-medium whitespace-nowrap">{formatCurrency(record.grossTotal)}</td>
+                            <td className="px-3 py-2 font-mono font-medium">
+                              <div className="flex items-center gap-1">
+                                {hasLocations && (
+                                  <button onClick={() => openDocumentViewer(record, null)}
+                                    className="text-blue-500 hover:text-blue-700" title="View document">
+                                    <Eye className="h-3 w-3" />
+                                  </button>
+                                )}
+                                <span className="text-blue-700">{record.referenceId}</span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">{fieldCell(record.documentRef, 'documentRef')}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{fieldCell(record.documentDate, 'documentDate')}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{fieldCell(record.dueDate, 'dueDate')}</td>
+                            <td className="px-3 py-2 max-w-[140px] truncate">{fieldCell(record.sellerName, 'sellerName')}</td>
+                            <td className="px-3 py-2 max-w-[140px] truncate">{fieldCell(record.purchaserName, 'purchaserName')}</td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap">{fieldCell(record.netTotal, 'netTotal', formatCurrency)}</td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap">{fieldCell(record.taxTotal, 'taxTotal', formatCurrency)}</td>
+                            <td className="px-3 py-2 text-right font-medium whitespace-nowrap">{fieldCell(record.grossTotal, 'grossTotal', formatCurrency)}</td>
                             <td className="px-3 py-2">
                               <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs">
                                 {record.accountCategory || '—'}
@@ -1264,6 +1392,17 @@ export function DataExtractionClient({
             )}
           </div>
         </div>
+      )}
+
+      {/* Document Viewer Modal */}
+      {viewerOpen && viewerFileId && (
+        <DocumentViewer
+          fileId={viewerFileId}
+          activeField={viewerActiveField}
+          fieldLocations={viewerFieldLocations}
+          extractedValues={viewerExtractedValues}
+          onClose={() => setViewerOpen(false)}
+        />
       )}
     </div>
   );

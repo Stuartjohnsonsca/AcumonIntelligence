@@ -227,19 +227,22 @@ model AccountingConnection {
 // ─── Data Extraction Tool ────────────────────────────────────────────────────
 
 model ExtractionJob {
-  id              String   @id @default(uuid())
-  clientId        String   @map("client_id")
-  userId          String   @map("user_id")
-  status          String   @default("pending") // pending | processing | complete | failed
-  totalFiles      Int      @default(0) @map("total_files")
-  processedCount  Int      @default(0) @map("processed_count")
-  failedCount     Int      @default(0) @map("failed_count")
-  duplicateCount  Int      @default(0) @map("duplicate_count")
-  accountingSystem String? @map("accounting_system")
-  orgName         String?  @map("org_name")
-  extractedAt     DateTime? @map("extracted_at")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id                   String    @id @default(uuid())
+  clientId             String    @map("client_id")
+  userId               String    @map("user_id")
+  status               String    @default("pending") // pending | processing | complete | failed | expired
+  totalFiles           Int       @default(0) @map("total_files")
+  processedCount       Int       @default(0) @map("processed_count")
+  failedCount          Int       @default(0) @map("failed_count")
+  duplicateCount       Int       @default(0) @map("duplicate_count")
+  accountingSystem     String?   @map("accounting_system")
+  orgName              String?   @map("org_name")
+  extractedAt          DateTime? @map("extracted_at")
+  expiresAt            DateTime? @map("expires_at")
+  reminderSentAt       DateTime? @map("reminder_sent_at")
+  finalReminderSentAt  DateTime? @map("final_reminder_sent_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
   client    Client              @relation(fields: [clientId], references: [id])
   user      User                @relation(fields: [userId], references: [id])
@@ -259,10 +262,11 @@ model ExtractionFile {
   mimeType      String?  @map("mime_type")
   wasZipped     Boolean  @default(false) @map("was_zipped")
   zipSourceName String?  @map("zip_source_name")
-  status        String   @default("uploaded") // uploaded | processing | extracted | failed | duplicate
+  status        String   @default("uploaded") // uploaded | processing | extracted | failed | duplicate | expired
   errorMessage  String?  @map("error_message")
   fileHash      String?  @map("file_hash")
   duplicateOfId String?  @map("duplicate_of_id")
+  pageCount     Int?     @map("page_count")
   createdAt     DateTime @default(now()) @map("created_at")
 
   job          ExtractionJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
@@ -294,6 +298,7 @@ model ExtractedRecord {
   lineItems       Json?    @map("line_items") // array of {description, quantity, productId, net, tax, duty}
   accountCategory String?  @map("account_category")
   rawExtraction   Json?    @map("raw_extraction")
+  fieldLocations  Json?    @map("field_locations")
   createdAt       DateTime @default(now()) @map("created_at")
 
   job  ExtractionJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)

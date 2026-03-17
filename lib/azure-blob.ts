@@ -1,4 +1,11 @@
-import { BlobServiceClient, ContainerClient } from '@azure/storage-blob';
+import {
+  BlobServiceClient,
+  ContainerClient,
+  BlobSASPermissions,
+  generateBlobSASQueryParameters,
+  StorageSharedKeyCredential,
+  SASProtocol,
+} from '@azure/storage-blob';
 
 const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING!;
 const CONTAINER_INBOX = process.env.AZURE_STORAGE_CONTAINER_INBOX || 'upload-inbox';
@@ -86,3 +93,34 @@ export const CONTAINERS = {
   PROCESSING: CONTAINER_PROCESSING,
   PROCESSED: CONTAINER_PROCESSED,
 };
+
+export function generateSasUrl(
+  blobName: string,
+  containerName: string,
+  expiryMinutes = 15,
+): string {
+  const match = connectionString.match(/AccountName=([^;]+)/);
+  const keyMatch = connectionString.match(/AccountKey=([^;]+)/);
+  if (!match || !keyMatch) throw new Error('Cannot parse Azure connection string for SAS generation');
+
+  const accountName = match[1];
+  const accountKey = keyMatch[1];
+  const credential = new StorageSharedKeyCredential(accountName, accountKey);
+
+  const startsOn = new Date();
+  const expiresOn = new Date(startsOn.getTime() + expiryMinutes * 60 * 1000);
+
+  const sasToken = generateBlobSASQueryParameters(
+    {
+      containerName,
+      blobName,
+      permissions: BlobSASPermissions.parse('r'),
+      startsOn,
+      expiresOn,
+      protocol: SASProtocol.Https,
+    },
+    credential,
+  ).toString();
+
+  return `https://${accountName}.blob.core.windows.net/${containerName}/${blobName}?${sasToken}`;
+}

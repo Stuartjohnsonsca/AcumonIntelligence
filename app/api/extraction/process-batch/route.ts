@@ -111,7 +111,13 @@ export async function POST(req: Request) {
           lineItems: extracted.lineItems as object[],
           accountCategory,
           rawExtraction: extracted as object,
+          fieldLocations: extracted.fieldLocations as object,
         },
+      });
+
+      await prisma.extractionFile.update({
+        where: { id: file.id },
+        data: { pageCount: extracted.pageCount || 1 },
       });
 
       if (accountCategory && extracted.lineItems.length > 0) {

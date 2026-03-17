@@ -224,6 +224,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
           software: softwareIdx >= 0 ? cols[softwareIdx] || '' : '',
           contactName: contactNameIdx >= 0 ? cols[contactNameIdx] || '' : '',
           contactEmail: contactEmailIdx >= 0 ? cols[contactEmailIdx] || '' : '',
+          portfolioManagerId: '',
         };
       }).filter((r) => r.clientName);
 
