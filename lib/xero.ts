@@ -257,6 +257,8 @@ export async function getTransactions(
     whereClause,
   );
 
+  await new Promise(resolve => setTimeout(resolve, XERO_PAGE_DELAY_MS));
+
   const bankTxns = await fetchPaginated(
     `${XERO_API_BASE}/BankTransactions`,
     accessToken,
@@ -288,6 +290,32 @@ export async function revokeConnection(accessToken: string, tenantId: string): P
   }
 }
 
+async function xeroFetchWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  maxRetries = 5,
+): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, { headers });
+
+    if (res.status !== 429) return res;
+
+    if (attempt === maxRetries) return res;
+
+    const retryAfter = res.headers.get('Retry-After');
+    const waitMs = retryAfter
+      ? parseInt(retryAfter, 10) * 1000
+      : Math.min(1000 * Math.pow(2, attempt), 30000);
+
+    console.log(`[Xero] 429 rate-limited on ${url}, retry ${attempt + 1}/${maxRetries} after ${waitMs}ms`);
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+  }
+
+  throw new Error('Unreachable');
+}
+
+const XERO_PAGE_DELAY_MS = 1200;
+
 async function fetchPaginated(
   url: string,
   accessToken: string,
@@ -296,16 +324,19 @@ async function fetchPaginated(
 ): Promise<XeroTransaction[]> {
   const results: XeroTransaction[] = [];
   let page = 1;
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'Xero-Tenant-Id': tenantId,
+    Accept: 'application/json',
+  };
 
   while (true) {
+    if (page > 1) {
+      await new Promise(resolve => setTimeout(resolve, XERO_PAGE_DELAY_MS));
+    }
+
     const params = new URLSearchParams({ where, page: String(page) });
-    const res = await fetch(`${url}?${params}`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Xero-Tenant-Id': tenantId,
-        Accept: 'application/json',
-      },
-    });
+    const res = await xeroFetchWithRetry(`${url}?${params}`, headers);
 
     if (!res.ok) throw new Error(`Xero API fetch failed (${res.status}) for ${url}`);
     const data = await res.json();

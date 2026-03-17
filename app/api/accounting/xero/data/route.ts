@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { getAccounts, getTransactions } from '@/lib/xero';
 
+export const maxDuration = 120;
+
 export async function GET(req: Request) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
