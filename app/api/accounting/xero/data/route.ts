@@ -42,8 +42,16 @@ export async function GET(req: Request) {
         );
       }
 
+      function normaliseXeroDate(raw: string | undefined): string {
+        if (!raw) return '';
+        const msMatch = raw.match(/\/Date\((\d+)([+-]\d+)?\)\//);
+        if (msMatch) return new Date(parseInt(msMatch[1], 10)).toISOString();
+        const d = new Date(raw);
+        return isNaN(d.getTime()) ? raw : d.toISOString();
+      }
+
       const rows = transactions.map(txn => ({
-        date: txn.Date,
+        date: normaliseXeroDate(txn.Date),
         reference: txn.Reference || '',
         contact: txn.Contact?.Name || '',
         type: txn.Type,

@@ -1066,13 +1066,25 @@ export function DataExtractionClient({
     });
   }
 
+  function parseXeroDate(dateStr: string | undefined | null): string {
+    if (!dateStr) return '';
+    const msMatch = dateStr.match(/\/Date\((\d+)([+-]\d+)?\)\//);
+    if (msMatch) {
+      const d = new Date(parseInt(msMatch[1], 10));
+      if (!isNaN(d.getTime())) return d.toLocaleDateString('en-GB');
+    }
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d.toLocaleDateString('en-GB');
+    return dateStr;
+  }
+
   function loadXeroResultIntoSpreadsheet(data: { rows: Array<Record<string, unknown>> }) {
     const cols = ['Date', 'Reference', 'Contact', 'Type', 'Description', 'Account Code', 'Net', 'Tax', 'Total'];
     const rows: SpreadsheetRow[] = [];
     for (const txn of data.rows) {
       const t = txn as { date?: string; reference?: string; contact?: string; type?: string; description?: string; accountCode?: string; lineAmount?: number | null; taxAmount?: number | null; subtotal?: number; tax?: number; total?: number };
       rows.push({
-        'Date': t.date ? new Date(t.date).toLocaleDateString('en-GB') : '',
+        'Date': parseXeroDate(t.date),
         'Reference': t.reference || '',
         'Contact': t.contact || '',
         'Type': t.type || '',
@@ -1558,29 +1570,28 @@ export function DataExtractionClient({
                       const verification = match ? computeVerification(ri) : null;
                       const isUncertain = match?.confidence === 'uncertain';
 
-                      let rowBg = '';
-                      if (isSampled) rowBg = 'bg-blue-50';
-                      else if (isSelected) rowBg = 'bg-slate-100';
+                      const leftCellBg = isSampled ? 'bg-blue-50' : '';
+                      const rowSelectBg = !isSampled && isSelected ? 'bg-slate-100' : '';
 
                       return (
-                        <tr key={ri} className={`border-b border-slate-100 hover:bg-blue-50/20 ${rowBg}`}>
+                        <tr key={ri} className={`border-b border-slate-100 hover:bg-blue-50/20 ${rowSelectBg}`}>
                           {/* Checkbox */}
-                          <td className="px-1 py-0 text-center border-r border-slate-100">
+                          <td className={`px-1 py-0 text-center border-r border-slate-100 ${leftCellBg}`}>
                             <input type="checkbox" checked={isSelected} onChange={() => toggleRowSelect(ri)}
                               className="h-3 w-3 rounded border-slate-300 cursor-pointer" />
                           </td>
                           {/* Row number */}
-                          <td className="px-1 py-0 text-center text-slate-300 text-[10px] border-r border-slate-100">
+                          <td className={`px-1 py-0 text-center text-slate-300 text-[10px] border-r border-slate-100 ${leftCellBg}`}>
                             {isSampled && <span className="text-blue-500 font-bold mr-0.5">S</span>}
                             {ri + 1}
                           </td>
 
                           {/* Accounting columns — editable */}
                           {leftPanelColumns.map((col, ci) => (
-                            <td key={`ac-${col}`} className="px-0 py-0 border-r border-slate-50">
+                            <td key={`ac-${col}`} className={`px-0 py-0 border-r border-slate-50 ${leftCellBg}`}>
                               <input type="text" value={row[col] || ''} onChange={e => handleCellEdit(ri, col, e.target.value)}
                                 data-row={ri} data-col={ci}
-                                className="w-full px-1.5 py-0.5 text-[11px] bg-transparent border-0 focus:bg-white focus:ring-1 focus:ring-blue-300 outline-none" />
+                                className={`w-full px-1.5 py-0.5 text-[11px] border-0 focus:bg-white focus:ring-1 focus:ring-blue-300 outline-none ${isSampled ? 'bg-blue-50' : 'bg-transparent'}`} />
                             </td>
                           ))}
 

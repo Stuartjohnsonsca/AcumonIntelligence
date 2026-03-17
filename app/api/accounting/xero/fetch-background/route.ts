@@ -45,6 +45,14 @@ export async function POST(req: Request) {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
       const transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
 
+      function normaliseXeroDate(raw: string | undefined): string {
+        if (!raw) return '';
+        const msMatch = raw.match(/\/Date\((\d+)([+-]\d+)?\)\//);
+        if (msMatch) return new Date(parseInt(msMatch[1], 10)).toISOString();
+        const d = new Date(raw);
+        return isNaN(d.getTime()) ? raw : d.toISOString();
+      }
+
       const rows = [];
       for (const txn of transactions) {
         const isManualJournal = txn.Type === 'MANUAL_JOURNAL' || txn.Type === 'ManualJournal';
@@ -53,7 +61,7 @@ export async function POST(req: Request) {
         if (txn.LineItems && txn.LineItems.length > 0) {
           for (const li of txn.LineItems) {
             rows.push({
-              date: txn.Date,
+              date: normaliseXeroDate(txn.Date),
               reference: txn.Reference || '',
               contact: txn.Contact?.Name || '',
               type: txn.Type,
@@ -68,7 +76,7 @@ export async function POST(req: Request) {
           }
         } else {
           rows.push({
-            date: txn.Date,
+            date: normaliseXeroDate(txn.Date),
             reference: txn.Reference || '',
             contact: txn.Contact?.Name || '',
             type: txn.Type,
