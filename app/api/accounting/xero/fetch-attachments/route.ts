@@ -92,6 +92,8 @@ export async function POST(req: Request) {
       let downloaded = 0;
       let skipped = 0;
       let duplicateCount = 0;
+      let listFailures = 0;
+      let firstListError = '';
       const fileIds: string[] = [];
 
       for (const txn of withAttachments) {
@@ -102,7 +104,20 @@ export async function POST(req: Request) {
         try {
           attachments = await getAttachmentsList(clientId, endpoint, txn.id);
         } catch (err) {
-          console.error(`[XeroAttachments] Failed to list attachments for ${endpoint}/${txn.id}:`, err);
+          listFailures++;
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!firstListError) firstListError = msg;
+          console.error(`[XeroAttachments] Failed to list attachments for ${endpoint}/${txn.id}:`, msg);
+          if (msg.includes('403') || msg.includes('scope') || msg.includes('Forbidden')) {
+            await prisma.backgroundTask.update({
+              where: { id: task.id },
+              data: {
+                status: 'error',
+                error: 'Xero connection does not have permission to read attachments. Please disconnect and reconnect Xero to grant the required scope (accounting.attachments.read).',
+              },
+            });
+            return;
+          }
           continue;
         }
 
@@ -169,6 +184,17 @@ export async function POST(req: Request) {
             skipped++;
           }
         }
+      }
+
+      if (listFailures > 0 && totalAttachments === 0 && fileIds.length === 0) {
+        await prisma.backgroundTask.update({
+          where: { id: task.id },
+          data: {
+            status: 'error',
+            error: `Failed to list attachments for ${listFailures} transaction(s). ${firstListError.includes('403') ? 'The Xero connection may need to be re-authorised with the attachments scope.' : firstListError}`,
+          },
+        });
+        return;
       }
 
       const uniqueCount = fileIds.length;
