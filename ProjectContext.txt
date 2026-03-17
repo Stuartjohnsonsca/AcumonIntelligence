@@ -53,7 +53,8 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /components/AuthProvider.tsx — NextAuth SessionProvider wrapper
 - /components/my-account/ — MyAccountClient, UsersTab, ClientsTab, SubscriptionsTab
 - /components/admin/ — AdminClient, ProductsAdmin, FirmsAdmin
-- /components/tools/DataExtractionClient.tsx — Data Extraction tool UI (split screen)
+- /components/tools/DataExtractionClient.tsx — Data Extraction tool UI (75/25 audit working paper layout with unified spreadsheet, sampling, matching, verification, and summary)
+- /app/api/fx-rate/route.ts — FX rate lookup API endpoint
 - /components/tools/DocumentViewer.tsx — Document viewer with PDF/image rendering and colour-coded field overlays
 
 ## Page Routes
@@ -98,6 +99,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - GET /api/extraction/document/[fileId] — Returns SAS URL for secure temporary access to processed document (15-minute expiry)
 - POST /api/extraction/[jobId]/export — Generates a zip file with annotated PDFs, offline HTML viewers, and Excel report
 - GET /api/cron/cleanup-xero — Daily cron (02:00 UTC): revokes expired Xero connections and deletes tokens from DB (secured by CRON_SECRET)
+- GET /api/fx-rate?from=X&to=Y&date=D — FX rate lookup (frankfurter.app primary, open.er-api.com fallback)
 - GET /api/cron/cleanup-extraction — Daily cron (03:00 UTC): sends 40-day/81-day reminders, deletes expired documents at 121 days
 
 ## Auth Flow
@@ -261,6 +263,21 @@ npm run dev
 - All 10 products in the nav dropdowns now route to internal pages at /tools/*
 - Data Extraction is the only fully built tool; the other 9 show a "Coming Soon" landing page
 - Each page requires authentication (server-side auth() check with redirect to login)
+
+## Audit Working Paper (Data Extraction — Redesigned Layout)
+- Layout changed from 50/50 split to 75/25 split (left panel dominant, right panel compact)
+- **Audit Setup Bar** above panels: period date pickers (From/To), functional currency dropdown (ISO 4217), "Clearly Trivial" currency input
+- Left panel now contains a **unified spreadsheet** with three column groups separated by blank spacer columns:
+  1. **"From: [Accounting System]"** — editable accounting data (Date, Reference, Contact, etc.)
+  2. **"Uploaded Documents"** — read-only extracted data matched to accounting rows, with document viewer links. Dynamically adds "Line No"/"Line Total" columns when line items are present, and "FX Rate"/"Amount (FCY)" when foreign currency is detected
+  3. **"Audit Verification"** — computed columns: Amount diff (green if 0, red otherwise), Date diff in days, Period check (within/outside audit period), Consistency check (contact/description comparison)
+- **Matching**: automatic document-to-row matching via scoring algorithm (gross/net amount, date, reference). High-confidence matches shown normally; uncertain matches (score 3-4) highlighted with light orange background. Unmatched extracted records listed separately below the spreadsheet
+- **Sampling**: two buttons — "Make Selection Sample" (manual checkbox selection) and "Make Sample" (random N from population). Sampled rows have light blue background. Summary calculations only use sampled rows
+- **Audit Summary** (right panel top): Total Population Value, Sample Total, Sampled Error Total, Error %, Extrapolated Error, Conclusion (No Errors Found/No Material Error/Potential Error)
+- **Population Value**: auto-calculated from accounting system data (Xero total); prompted for manual entry if data loaded from spreadsheet/blank
+- **FX Rate API**: GET /api/fx-rate?from=X&to=Y&date=D — tries frankfurter.app (ECB data), falls back to open.er-api.com. Source displayed in tooltip
+- Right panel slimmed to: Audit Summary, compact upload drop zone, file list, Upload & Extract button, extraction details (collapsible), previous sessions
+- Full-width results area below split removed — all data now in unified left-panel spreadsheet
 
 ## Document Viewer & Annotations
 - Gemini extraction now requests bounding box coordinates (0-1000 normalized) for each extracted field alongside the values
