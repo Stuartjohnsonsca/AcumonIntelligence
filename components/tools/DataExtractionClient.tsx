@@ -129,6 +129,7 @@ export function DataExtractionClient({
   const [xeroDateFrom, setXeroDateFrom] = useState('');
   const [xeroDateTo, setXeroDateTo] = useState('');
   const [xeroLoading, setXeroLoading] = useState(false);
+  const [xeroCategory, setXeroCategory] = useState('');
   const [xeroError, setXeroError] = useState('');
 
   // Progress tracking
@@ -397,6 +398,63 @@ export function DataExtractionClient({
     });
   }
 
+  const XERO_CATEGORIES = [
+    { value: '', label: '— Select a category —' },
+    { value: 'sales', label: 'All Sales (excl. manual journals)' },
+    { value: 'direct_costs', label: 'All Direct Costs (excl. manual journals & staff costs)' },
+    { value: 'overheads', label: 'All Overheads (excl. manual journals & staff costs)' },
+    { value: 'stock', label: 'All Stock / Inventory Costs (excl. manual journals)' },
+    { value: 'fixed_assets', label: 'All Fixed Asset Purchases (excl. manual journals)' },
+  ];
+
+  const STAFF_COST_KEYWORDS = [
+    'wage', 'salary', 'salaries', 'payroll', 'paye', 'nic', 'national insurance',
+    'pension', 'employment tax', 'employer', 'staff cost', 'staff costs',
+  ];
+
+  function handleXeroCategoryChange(category: string) {
+    setXeroCategory(category);
+    if (!category) {
+      setXeroSelectedCodes(new Set());
+      return;
+    }
+
+    const active = xeroAccounts.filter(a => a.Status === 'ACTIVE');
+    let filtered: XeroAccount[] = [];
+
+    const isStaffAccount = (acc: XeroAccount) =>
+      STAFF_COST_KEYWORDS.some(kw => acc.Name.toLowerCase().includes(kw));
+
+    switch (category) {
+      case 'sales':
+        filtered = active.filter(a => a.Type === 'REVENUE' || a.Type === 'SALES');
+        break;
+      case 'direct_costs':
+        filtered = active.filter(a =>
+          (a.Type === 'DIRECTCOSTS' || a.Type === 'DIRECT COSTS') && !isStaffAccount(a)
+        );
+        break;
+      case 'overheads':
+        filtered = active.filter(a =>
+          (a.Type === 'OVERHEADS' || a.Type === 'OVERHEAD' || a.Type === 'EXPENSE') && !isStaffAccount(a)
+        );
+        break;
+      case 'stock':
+        filtered = active.filter(a =>
+          a.Type === 'INVENTORY' || a.Name.toLowerCase().includes('stock') || a.Name.toLowerCase().includes('inventory')
+        );
+        break;
+      case 'fixed_assets':
+        filtered = active.filter(a =>
+          a.Type === 'FIXED' || a.Type === 'NONCURRENT' ||
+          a.Name.toLowerCase().includes('fixed asset') || a.Name.toLowerCase().includes('capital')
+        );
+        break;
+    }
+
+    setXeroSelectedCodes(new Set(filtered.map(a => a.Code)));
+  }
+
   async function handleXeroButtonClick() {
     if (!selectedClient) return;
 
@@ -417,6 +475,8 @@ export function DataExtractionClient({
           setXeroAccounts(accData.accounts);
         }
 
+        setXeroCategory('');
+        setXeroSelectedCodes(new Set());
         setXeroShowModal(true);
       } else {
         window.location.href = `/api/accounting/xero/connect?clientId=${selectedClient.id}`;
@@ -455,6 +515,9 @@ export function DataExtractionClient({
         dateFrom: xeroDateFrom,
         dateTo: xeroDateTo,
       });
+      if (xeroCategory) {
+        params.set('excludeManualJournals', 'true');
+      }
 
       const res = await fetch(`/api/accounting/xero/data?${params}`);
       const data = await res.json();
@@ -779,7 +842,27 @@ export function DataExtractionClient({
 
                 <div>
                   <label className="text-sm font-medium text-slate-700 mb-2 block">
-                    Account Codes (optional — leave blank for all)
+                    Transaction Category
+                  </label>
+                  <select
+                    value={xeroCategory}
+                    onChange={(e) => handleXeroCategoryChange(e.target.value)}
+                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+                    {XERO_CATEGORIES.map(cat => (
+                      <option key={cat.value} value={cat.value}>{cat.label}</option>
+                    ))}
+                  </select>
+                  {xeroCategory && (
+                    <p className="text-xs text-slate-500 mt-1">
+                      Manual journals will be excluded. {xeroSelectedCodes.size} account code{xeroSelectedCodes.size !== 1 ? 's' : ''} selected.
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-2 block">
+                    Account Codes {xeroCategory ? '(auto-selected by category — adjust if needed)' : '(optional — leave blank for all)'}
                   </label>
                   {xeroAccounts.length > 0 ? (
                     <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">

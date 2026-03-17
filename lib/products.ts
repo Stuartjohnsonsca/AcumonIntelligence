@@ -30,6 +30,42 @@ export const PRODUCTS = [
     navLabel: 'Financial Statements Checker',
   },
   {
+    name: 'Bank Statement Subsequent Receipts Review',
+    category: 'Statutory Audit',
+    urlPrefix: 'BankReceipts',
+    navLabel: 'Bank Statement Subsequent Receipts Review',
+  },
+  {
+    name: 'Bank Statement Subsequent Payments Review',
+    category: 'Statutory Audit',
+    urlPrefix: 'BankPayments',
+    navLabel: 'Bank Statement Subsequent Payments Review',
+  },
+  {
+    name: 'Debtors Listing Verification',
+    category: 'Statutory Audit',
+    urlPrefix: 'DebtorsVerification',
+    navLabel: 'Debtors Listing Verification',
+  },
+  {
+    name: 'Creditors Listing Verification',
+    category: 'Statutory Audit',
+    urlPrefix: 'CreditorsVerification',
+    navLabel: 'Creditors Listing Verification',
+  },
+  {
+    name: 'Journals Testing',
+    category: 'Statutory Audit',
+    urlPrefix: 'JournalsTesting',
+    navLabel: 'Journals Testing',
+  },
+  {
+    name: 'Unusual Bank Transaction Review',
+    category: 'Statutory Audit',
+    urlPrefix: 'UnusualBankTxn',
+    navLabel: 'Unusual Bank Transaction Review',
+  },
+  {
     name: 'Agentic AI & Governance',
     category: 'Internal Audit',
     urlPrefix: 'Governance',

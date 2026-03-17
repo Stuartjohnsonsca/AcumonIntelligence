@@ -26,12 +26,19 @@ export async function GET(req: Request) {
       const codes = searchParams.get('accountCodes')?.split(',').filter(Boolean) || [];
       const dateFrom = searchParams.get('dateFrom');
       const dateTo = searchParams.get('dateTo');
+      const excludeManualJournals = searchParams.get('excludeManualJournals') === 'true';
 
       if (!dateFrom || !dateTo) {
         return NextResponse.json({ error: 'dateFrom and dateTo required' }, { status: 400 });
       }
 
-      const transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
+      let transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
+
+      if (excludeManualJournals) {
+        transactions = transactions.filter(
+          (txn: { Type: string }) => txn.Type !== 'MANJOURNAL' && txn.Type !== 'MANUAL JOURNAL'
+        );
+      }
 
       const rows = transactions.map(txn => ({
         date: txn.Date,
