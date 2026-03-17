@@ -11,6 +11,7 @@ import {
   History, Shuffle, MousePointer2
 } from 'lucide-react';
 import { DocumentViewer } from '@/components/tools/DocumentViewer';
+import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -190,6 +191,7 @@ const currencySymbols: Record<string, string> = {
 export function DataExtractionClient({
   userName, firmName, assignedClients, unassignedClients
 }: Props) {
+  const { addTask, updateTask } = useBackgroundTasks();
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showUnassigned, setShowUnassigned] = useState(false);
@@ -1064,62 +1066,108 @@ export function DataExtractionClient({
     });
   }
 
+  function loadXeroResultIntoSpreadsheet(data: { rows: Array<Record<string, unknown>> }) {
+    const cols = ['Date', 'Reference', 'Contact', 'Type', 'Description', 'Account Code', 'Net', 'Tax', 'Total'];
+    const rows: SpreadsheetRow[] = [];
+    for (const txn of data.rows) {
+      const t = txn as { date?: string; reference?: string; contact?: string; type?: string; description?: string; accountCode?: string; lineAmount?: number | null; taxAmount?: number | null; subtotal?: number; tax?: number; total?: number };
+      rows.push({
+        'Date': t.date ? new Date(t.date).toLocaleDateString('en-GB') : '',
+        'Reference': t.reference || '',
+        'Contact': t.contact || '',
+        'Type': t.type || '',
+        'Description': t.description || '',
+        'Account Code': t.accountCode || '',
+        'Net': t.lineAmount != null ? String(t.lineAmount) : String(t.subtotal ?? ''),
+        'Tax': t.taxAmount != null ? String(t.taxAmount) : String(t.tax ?? ''),
+        'Total': t.lineAmount != null && t.taxAmount != null ? String(t.lineAmount + t.taxAmount) : String(t.total ?? ''),
+      });
+    }
+    setLeftPanelColumns(cols);
+    setLeftPanelData(rows);
+    setLeftPanelFileName(`Xero - ${xeroOrgName || 'Data'}`);
+    setLeftPanelFromAccounting(true);
+    setLeftPanelMode('spreadsheet');
+  }
+
   async function handleXeroFetchData() {
     if (!selectedClient) return;
     if (!xeroDateFrom || !xeroDateTo) { setXeroError('Please select both from and to dates'); return; }
-    setXeroLoading(true);
     setXeroError('');
+    setXeroShowModal(false);
+
+    const taskId = `xero-${selectedClient.id}-${Date.now()}`;
+    const clientName = selectedClient.clientName;
+
+    addTask({
+      id: taskId,
+      clientName,
+      activity: `Fetching data from ${selectedClient.software || 'Xero'}`,
+      status: 'running',
+    });
+
     try {
       const codes = Array.from(xeroSelectedCodes).join(',');
-      const params = new URLSearchParams({
-        clientId: selectedClient.id, type: 'transactions',
-        accountCodes: codes, dateFrom: xeroDateFrom, dateTo: xeroDateTo,
+      const startRes = await fetch('/api/accounting/xero/fetch-background', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: selectedClient.id,
+          accountCodes: codes,
+          dateFrom: xeroDateFrom,
+          dateTo: xeroDateTo,
+          excludeManualJournals: !!xeroCategory,
+        }),
       });
-      if (xeroCategory) params.set('excludeManualJournals', 'true');
-      const res = await fetch(`/api/accounting/xero/data?${params}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to fetch Xero data');
-      const cols = ['Date', 'Reference', 'Contact', 'Type', 'Description', 'Account Code', 'Net', 'Tax', 'Total'];
-      const rows: SpreadsheetRow[] = [];
-      for (const txn of data.rows) {
-        if (txn.lineItems && txn.lineItems.length > 0) {
-          for (const li of txn.lineItems) {
-            rows.push({
-              'Date': txn.date ? new Date(txn.date).toLocaleDateString('en-GB') : '',
-              'Reference': txn.reference || '',
-              'Contact': txn.contact || '',
-              'Type': txn.type || '',
-              'Description': li.description || '',
-              'Account Code': li.accountCode || '',
-              'Net': li.lineAmount != null ? String(li.lineAmount) : '',
-              'Tax': li.taxAmount != null ? String(li.taxAmount) : '',
-              'Total': li.lineAmount != null && li.taxAmount != null ? String(li.lineAmount + li.taxAmount) : '',
-            });
+      const startData = await startRes.json();
+      if (!startRes.ok) throw new Error(startData.error || 'Failed to start fetch');
+
+      const serverTaskId = startData.taskId;
+
+      const poll = async () => {
+        const maxPolls = 120;
+        for (let i = 0; i < maxPolls; i++) {
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const statusRes = await fetch(`/api/accounting/xero/fetch-background?taskId=${serverTaskId}`);
+            const statusData = await statusRes.json();
+
+            if (statusData.status === 'completed') {
+              updateTask(taskId, {
+                status: 'completed',
+                completedAt: Date.now(),
+                result: statusData.data,
+              });
+              if (selectedClient?.id === clientId_at_start) {
+                loadXeroResultIntoSpreadsheet(statusData.data);
+              }
+              return;
+            }
+
+            if (statusData.status === 'error') {
+              updateTask(taskId, {
+                status: 'error',
+                error: statusData.error || 'Unknown error',
+                completedAt: Date.now(),
+              });
+              return;
+            }
+          } catch {
+            /* network blip, keep polling */
           }
-        } else {
-          rows.push({
-            'Date': txn.date ? new Date(txn.date).toLocaleDateString('en-GB') : '',
-            'Reference': txn.reference || '',
-            'Contact': txn.contact || '',
-            'Type': txn.type || '',
-            'Description': '',
-            'Account Code': '',
-            'Net': String(txn.subtotal ?? ''),
-            'Tax': String(txn.tax ?? ''),
-            'Total': String(txn.total ?? ''),
-          });
         }
-      }
-      setLeftPanelColumns(cols);
-      setLeftPanelData(rows);
-      setLeftPanelFileName(`Xero - ${xeroOrgName || 'Data'}`);
-      setLeftPanelFromAccounting(true);
-      setLeftPanelMode('spreadsheet');
-      setXeroShowModal(false);
+        updateTask(taskId, { status: 'error', error: 'Timed out waiting for data', completedAt: Date.now() });
+      };
+
+      const clientId_at_start = selectedClient.id;
+      poll();
+
     } catch (err) {
-      setXeroError(err instanceof Error ? err.message : 'Failed to fetch data from Xero');
-    } finally {
-      setXeroLoading(false);
+      updateTask(taskId, {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Failed to start fetch',
+        completedAt: Date.now(),
+      });
     }
   }
 
@@ -1948,8 +1996,8 @@ export function DataExtractionClient({
             </div>
             <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setXeroShowModal(false)}>Cancel</Button>
-              <Button onClick={handleXeroFetchData} disabled={xeroLoading}>
-                {xeroLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Fetching...</> : <><RefreshCw className="h-4 w-4 mr-2" />Fetch Transactions</>}
+              <Button onClick={handleXeroFetchData}>
+                <RefreshCw className="h-4 w-4 mr-2" />Fetch Transactions
               </Button>
             </div>
           </div>

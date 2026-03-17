@@ -320,6 +320,16 @@ npm run dev
 - UI shows warning banner when documents are within 30 days of expiry
 - Expired jobs display "Documents expired" message instead of viewer/export options
 
+## Background Task System
+- **BackgroundTaskProvider**: React context wrapping the app, manages task state (running/completed/error)
+- **Status dots in Navbar**: Appear to the right of the Acumon logo, one dot per active/recent task
+  - Red pulsing dot = running
+  - Green solid dot = completed (auto-removed after 3 hours)
+  - Red solid dot = error
+  - Hover shows client name, activity description, and status
+- **Background Xero fetch**: POST to /api/accounting/xero/fetch-background starts the fetch, returns a taskId. Client polls GET with taskId for status/results. Server stores results in memory (cleaned up after 4 hours).
+- User can navigate away and continue working while background tasks run
+
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
 - Add AZURE_COMMUNICATION_CONNECTION_STRING to Vercel env vars

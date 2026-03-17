@@ -9,6 +9,7 @@ import { Menu, X, ChevronDown, LogIn, LogOut, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { STATUTORY_AUDIT_PRODUCTS, ASSURANCE_PRODUCTS } from '@/lib/products';
 import { cn } from '@/lib/utils';
+import { BackgroundTaskDots } from '@/components/BackgroundTaskDots';
 
 export function Navbar() {
   const { data: session } = useSession();
@@ -31,20 +32,23 @@ export function Navbar() {
     <nav className="sticky top-0 z-50 w-full border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60 shadow-sm">
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
-          {/* Logo */}
-          <Link
-            href="/"
-            className="flex items-center flex-shrink-0"
-          >
-            <Image
-              src="/logo-dark.svg"
-              alt="Acumon Intelligence"
-              width={160}
-              height={51}
-              className="h-9 w-auto"
-              priority
-            />
-          </Link>
+          {/* Logo + Background Task Dots */}
+          <div className="flex items-center flex-shrink-0">
+            <Link
+              href="/"
+              className="flex items-center"
+            >
+              <Image
+                src="/logo-dark.svg"
+                alt="Acumon Intelligence"
+                width={160}
+                height={51}
+                className="h-9 w-auto"
+                priority
+              />
+            </Link>
+            <BackgroundTaskDots />
+          </div>
 
           {/* Desktop Nav */}
           <div className="hidden lg:flex items-center space-x-1">
