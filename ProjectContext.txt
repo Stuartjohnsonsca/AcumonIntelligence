@@ -16,7 +16,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - Tailwind CSS + shadcn/ui (custom build, components in /components/ui/)
 - NextAuth.js v5 (beta.25) — Credentials provider, JWT sessions
 - Prisma ORM + Supabase PostgreSQL
-- Nodemailer (Office 365 SMTP, agents@acumon.com)
+- Azure Communication Services Email (UK region, acumonintelligence-openai resource)
 - Stripe (placeholder, not yet live)
 - **Google Gemini API** (gemini-2.5-flash) — AI document extraction engine (paid tier, dynamic rate-limit handling, bounding box extraction for field locations)
 - **Azure Blob Storage** (acumondataextractor) — temporary file staging for extraction + SAS URL generation for secure browser access
@@ -39,7 +39,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 ## Key Files
 - /lib/auth.ts — NextAuth configuration (credentials + 2FA)
 - /lib/db.ts — Prisma client singleton
-- /lib/email.ts — Nodemailer email functions (OTP, reset, welcome)
+- /lib/email.ts — Azure Communication Services email functions (OTP, reset, welcome, Xero access request)
 - /lib/permissions.ts — Role checking helpers
 - /lib/products.ts — Product list + URL prefix constants
 - /lib/utils.ts — cn(), formatCurrency(), formatDate(), generateOTP()
@@ -129,14 +129,17 @@ Product subdomain pattern: {urlPrefix.toLowerCase()}.acumonintelligence.com
 - 2FA method: email
 
 ## Email Config
-- From: agents@acumon.com
-- SMTP: smtp.office365.com:587 (STARTTLS)
-- Requires SMTP AUTH enabled on the mailbox in M365 Admin Centre
+- Provider: Azure Communication Services (UK region)
+- Resource: acumonintelligence-openai
+- Sender domain: 9a3b0f92-2a07-4b75-98c6-3e9cecf2c5c4.azurecomm.net (Azure-managed; custom domain to be configured later)
+- Default sender: DoNotReply@9a3b0f92-2a07-4b75-98c6-3e9cecf2c5c4.azurecomm.net
+- SDK: @azure/communication-email
 
 ## Environment Variables Required
 DATABASE_URL, DIRECT_URL, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
 NEXTAUTH_SECRET, NEXTAUTH_URL
-EMAIL_FROM, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
+AZURE_COMMUNICATION_CONNECTION_STRING — Azure Communication Services connection string
+EMAIL_FROM — Sender email address (default: DoNotReply@...azurecomm.net)
 STRIPE_SECRET_KEY, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 GEMINI_API_KEY — Google AI API key for document extraction (project: DataExtractor, gen-lang-client-0724242070, key: DataExtractorKey)
 AZURE_STORAGE_CONNECTION_STRING — Azure Blob Storage connection string (acumondataextractor)
@@ -159,7 +162,7 @@ npm run dev
 ## Deployment Notes
 - vercel.json added to root — explicitly sets framework: nextjs, buildCommand includes prisma generate
 - All pages using useSearchParams() wrapped in Suspense (Next.js 15 requirement)
-- Nodemailer types declared in types/nodemailer.d.ts
+- Email sending via @azure/communication-email SDK (replaced Nodemailer)
 - Build verified locally: `npm run build` passes with 0 errors, 23 pages generated
 - GitHub repo: all app files are at root of repo (not in a subfolder) — Vercel Root Directory should be left empty (default)
 
@@ -318,8 +321,8 @@ npm run dev
 
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
-- Set SMTP_PASSWORD in Vercel env vars once Exchange password is known
-- Enable SMTP AUTH on agents@acumon.com in Microsoft 365 Admin Centre
+- Add AZURE_COMMUNICATION_CONNECTION_STRING to Vercel env vars
+- Configure custom sender domain on Azure Communication Services (replace azurecomm.net with acumon.com)
 - Configure Stripe when ready for live payments
 - Add XERO_CLIENT_ID, XERO_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, CRON_SECRET to Vercel env vars
 - Implement "Send by Email" feature on extraction results
