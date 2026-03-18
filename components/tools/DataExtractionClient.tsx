@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -217,6 +218,7 @@ export function DataExtractionClient({
   userName, firmName, assignedClients, unassignedClients
 }: Props) {
   const { addTask, updateTask } = useBackgroundTasks();
+  const searchParams = useSearchParams();
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showUnassigned, setShowUnassigned] = useState(false);
@@ -293,6 +295,23 @@ export function DataExtractionClient({
   const [xeroLoading, setXeroLoading] = useState(false);
   const [xeroCategory, setXeroCategory] = useState('');
   const [xeroError, setXeroError] = useState('');
+
+  // Read xeroError from URL query params (set by Xero OAuth callback redirect)
+  useEffect(() => {
+    const xeroErrorParam = searchParams.get('xeroError');
+    if (xeroErrorParam) {
+      const messages: Record<string, string> = {
+        missing_params: 'Xero authorisation failed: missing required parameters. Please try connecting again.',
+        state_mismatch: 'Xero authorisation failed: security state mismatch. Please try connecting again.',
+        missing_pkce: 'Xero authorisation failed: missing PKCE verification. Please try connecting again.',
+        invalid_state: 'Xero authorisation failed: invalid state token. Please try connecting again.',
+        no_organisation: 'Xero authorisation failed: no organisation found on your Xero account.',
+      };
+      setXeroError(messages[xeroErrorParam] || `Xero authorisation failed: ${xeroErrorParam}`);
+      // Clean up the URL without triggering a navigation
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [searchParams]);
 
   // Xero delegated access request state
   const [xeroRequestSending, setXeroRequestSending] = useState(false);

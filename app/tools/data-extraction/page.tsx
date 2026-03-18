@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
@@ -40,14 +41,16 @@ export default async function DataExtractionPage() {
   const unassignedClients = allFirmClients.filter(c => !assignedIds.has(c.id));
 
   return (
-    <DataExtractionClient
-      userId={session.user.id}
-      userName={session.user.name || ''}
-      firmName={userWithClients.firm.name}
-      assignedClients={assignedClients}
-      unassignedClients={unassignedClients}
-      isFirmAdmin={session.user.isFirmAdmin}
-      isPortfolioOwner={session.user.isPortfolioOwner}
-    />
+    <Suspense fallback={null}>
+      <DataExtractionClient
+        userId={session.user.id}
+        userName={session.user.name || ''}
+        firmName={userWithClients.firm.name}
+        assignedClients={assignedClients}
+        unassignedClients={unassignedClients}
+        isFirmAdmin={session.user.isFirmAdmin}
+        isPortfolioOwner={session.user.isPortfolioOwner}
+      />
+    </Suspense>
   );
 }
