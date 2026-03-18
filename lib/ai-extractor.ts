@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { pdfToImages, isPdf } from '@/lib/pdf-to-images';
 
 const client = new OpenAI({
   apiKey: process.env.TOGETHER_API_KEY!,
@@ -275,7 +276,27 @@ export async function extractDocumentFromBase64(
   clientName?: string,
 ): Promise<ExtractionResult> {
   const prompt = buildExtractionPrompt(clientName);
-  const dataUri = `data:${mimeType};base64,${base64Data}`;
+
+  // Build image content parts — convert PDFs to page images
+  let imageParts: { type: 'image_url'; image_url: { url: string } }[];
+
+  if (isPdf(mimeType)) {
+    try {
+      const pdfBuffer = Buffer.from(base64Data, 'base64');
+      const pages = await pdfToImages(pdfBuffer, 5, 2.0);
+      console.log(`[Extraction:AI] Converted PDF to ${pages.length} page image(s) | file=${fileName}`);
+      imageParts = pages.map(p => ({
+        type: 'image_url' as const,
+        image_url: { url: `data:image/png;base64,${p.base64}` },
+      }));
+    } catch (convErr) {
+      console.warn(`[Extraction:AI] PDF conversion failed, sending raw PDF | file=${fileName} | error=${convErr instanceof Error ? convErr.message : convErr}`);
+      // Fallback: send raw PDF (some models like Maverick may support it)
+      imageParts = [{ type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } }];
+    }
+  } else {
+    imageParts = [{ type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } }];
+  }
 
   const models = selectModels(EXTRACTION_PRIORITIES, true);
   let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
@@ -291,7 +312,7 @@ export async function extractDocumentFromBase64(
             {
               role: 'user',
               content: [
-                { type: 'image_url', image_url: { url: dataUri } },
+                ...imageParts,
                 { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
               ],
             },
@@ -307,12 +328,17 @@ export async function extractDocumentFromBase64(
         console.warn(`[Extraction:AI] Model ${modelId} unavailable, trying next...`);
         continue;
       }
-      throw err; // non-model error, propagate
+      // If image processing failed (400), also try next model
+      if (err instanceof Error && err.message.includes('400') && err.message.toLowerCase().includes('image')) {
+        console.warn(`[Extraction:AI] Model ${modelId} rejected image input for ${fileName}, trying next...`);
+        continue;
+      }
+      throw err; // other non-model error, propagate
     }
   }
 
   if (!result) {
-    throw new Error(`[extract:${fileName}] All models unavailable. Tried: ${models.join(', ')}`);
+    throw new Error(`[extract:${fileName}] All models failed. Tried: ${models.join(', ')}`);
   }
 
   const usage = extractUsageMetadata(result);
