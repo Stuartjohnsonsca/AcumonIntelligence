@@ -8,7 +8,7 @@ import {
   Upload, FileText, Loader2, Download, ChevronDown, ChevronRight,
   CheckCircle2, XCircle, AlertCircle, Search, UserPlus, Plus,
   Database, RefreshCw, Mail, X, Table, Link2, Unlink, Calendar, Eye,
-  History, Shuffle, MousePointer2
+  History, Shuffle, MousePointer2, Square
 } from 'lucide-react';
 import { DocumentViewer } from '@/components/tools/DocumentViewer';
 import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
@@ -301,6 +301,8 @@ export function DataExtractionClient({
     complete: boolean;
   } | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef(false);
+  const activeServerTaskRef = useRef<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -1281,6 +1283,8 @@ export function DataExtractionClient({
       toolPath: '/tools/data-extraction',
     });
 
+    abortRef.current = false;
+
     try {
       const startRes = await fetch('/api/accounting/xero/fetch-attachments', {
         method: 'POST',
@@ -1294,12 +1298,20 @@ export function DataExtractionClient({
       if (!startRes.ok) throw new Error(startData.error || 'Failed to start attachment extraction');
 
       const serverTaskId = startData.taskId;
+      activeServerTaskRef.current = serverTaskId;
       const clientIdAtStart = selectedClient.id;
 
       const poll = async () => {
         const maxPolls = 400;
         for (let i = 0; i < maxPolls; i++) {
           await new Promise(r => setTimeout(r, 3000));
+          if (abortRef.current) {
+            updateTask(taskId, { status: 'error', error: 'Stopped by user', completedAt: Date.now() });
+            setExtractingAttachments(false);
+            setAttachmentProgress(null);
+            activeServerTaskRef.current = null;
+            return;
+          }
           try {
             const statusRes = await fetch(`/api/accounting/xero/fetch-attachments?taskId=${serverTaskId}`);
             if (!statusRes.ok) continue;
@@ -1313,6 +1325,7 @@ export function DataExtractionClient({
               updateTask(taskId, { status: 'completed', completedAt: Date.now() });
               setExtractingAttachments(false);
               setAttachmentProgress(null);
+              activeServerTaskRef.current = null;
 
               if (statusData.data?.noDocsTxnIds) {
                 setNoDocsTxnIds(prev => {
@@ -1352,6 +1365,7 @@ export function DataExtractionClient({
               updateTask(taskId, { status: 'error', error: statusData.error, completedAt: Date.now() });
               setExtractingAttachments(false);
               setAttachmentProgress(null);
+              activeServerTaskRef.current = null;
               setError(statusData.error || 'Attachment extraction failed');
               return;
             }
@@ -1374,6 +1388,36 @@ export function DataExtractionClient({
       setError(err instanceof Error ? err.message : 'Failed to extract attachments');
     }
   }
+
+  // ─── Stop all background processing ─────────────────────────────────
+
+  async function handleStop() {
+    abortRef.current = true;
+
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+
+    if (activeServerTaskRef.current) {
+      try {
+        await fetch('/api/accounting/xero/fetch-attachments/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId: activeServerTaskRef.current }),
+        });
+      } catch { /* best-effort */ }
+      activeServerTaskRef.current = null;
+    }
+
+    setExtractingAttachments(false);
+    setAttachmentProgress(null);
+    setProcessing(false);
+    setUploading(false);
+    setProgress(null);
+  }
+
+  const isAnythingRunning = extractingAttachments || processing || uploading || xeroLoading;
 
   // ─── Client selection screen ──────────────────────────────────────────
 
@@ -1521,6 +1565,11 @@ export function DataExtractionClient({
             }}>
               <Plus className="h-4 w-4 mr-1" />New Session
             </Button>
+            {isAnythingRunning && (
+              <Button size="sm" variant="destructive" onClick={handleStop} className="bg-red-600 hover:bg-red-700">
+                <Square className="h-3.5 w-3.5 mr-1 fill-current" />Stop
+              </Button>
+            )}
             {jobResult && (
               <>
                 <Button size="sm" variant="outline" onClick={handleExportExcel}>
