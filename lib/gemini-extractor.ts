@@ -149,13 +149,46 @@ Rules:
 - pageCount: the total number of pages in this document (1 for single images)`;
 }
 
+export const AI_MODEL = 'gemini-2.5-flash';
+
+export interface AiTokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  model: string;
+}
+
+const AI_PRICING: Record<string, { inputPerToken: number; outputPerToken: number }> = {
+  'gemini-2.5-flash': { inputPerToken: 0.30 / 1_000_000, outputPerToken: 2.50 / 1_000_000 },
+};
+
+export function calculateCostUsd(usage: AiTokenUsage): number {
+  const pricing = AI_PRICING[usage.model] || AI_PRICING['gemini-2.5-flash'];
+  return (usage.promptTokens * pricing.inputPerToken) + (usage.completionTokens * pricing.outputPerToken);
+}
+
+function extractUsageMetadata(result: { response: { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } } }): AiTokenUsage {
+  const meta = result.response.usageMetadata;
+  return {
+    promptTokens: meta?.promptTokenCount ?? 0,
+    completionTokens: meta?.candidatesTokenCount ?? 0,
+    totalTokens: meta?.totalTokenCount ?? 0,
+    model: AI_MODEL,
+  };
+}
+
+export interface ExtractionResult {
+  document: ExtractedDocument;
+  usage: AiTokenUsage;
+}
+
 export async function extractDocumentFromBase64(
   base64Data: string,
   mimeType: string,
   fileName: string,
   clientName?: string,
-): Promise<ExtractedDocument> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+): Promise<ExtractionResult> {
+  const model = genAI.getGenerativeModel({ model: AI_MODEL });
   const prompt = buildExtractionPrompt(clientName);
 
   const result = await retryWithBackoff(
@@ -171,6 +204,7 @@ export async function extractDocumentFromBase64(
     `extract:${fileName}`,
   );
 
+  const usage = extractUsageMetadata(result);
   const text = result.response.text();
 
   // Strip markdown code blocks if present
@@ -193,42 +227,53 @@ export async function extractDocumentFromBase64(
     }
 
     return {
-      purchaserName: parsed.purchaserName ?? null,
-      purchaserTaxId: parsed.purchaserTaxId ?? null,
-      purchaserCountry: parsed.purchaserCountry ?? null,
-      sellerName: parsed.sellerName ?? null,
-      sellerTaxId: parsed.sellerTaxId ?? null,
-      sellerCountry: parsed.sellerCountry ?? null,
-      documentRef: parsed.documentRef ?? null,
-      documentDate: parsed.documentDate ?? null,
-      dueDate: parsed.dueDate ?? null,
-      netTotal: parsed.netTotal ?? null,
-      dutyTotal: parsed.dutyTotal ?? null,
-      taxTotal: parsed.taxTotal ?? null,
-      grossTotal: parsed.grossTotal ?? null,
-      lineItems: Array.isArray(parsed.lineItems) ? parsed.lineItems : [],
-      accountCategory: parsed.accountCategory ?? null,
-      confidence: parsed.confidence ?? 0.5,
-      fieldLocations,
-      pageCount: parsed.pageCount ?? 1,
+      document: {
+        purchaserName: parsed.purchaserName ?? null,
+        purchaserTaxId: parsed.purchaserTaxId ?? null,
+        purchaserCountry: parsed.purchaserCountry ?? null,
+        sellerName: parsed.sellerName ?? null,
+        sellerTaxId: parsed.sellerTaxId ?? null,
+        sellerCountry: parsed.sellerCountry ?? null,
+        documentRef: parsed.documentRef ?? null,
+        documentDate: parsed.documentDate ?? null,
+        dueDate: parsed.dueDate ?? null,
+        netTotal: parsed.netTotal ?? null,
+        dutyTotal: parsed.dutyTotal ?? null,
+        taxTotal: parsed.taxTotal ?? null,
+        grossTotal: parsed.grossTotal ?? null,
+        lineItems: Array.isArray(parsed.lineItems) ? parsed.lineItems : [],
+        accountCategory: parsed.accountCategory ?? null,
+        confidence: parsed.confidence ?? 0.5,
+        fieldLocations,
+        pageCount: parsed.pageCount ?? 1,
+      },
+      usage,
     };
   } catch {
     return {
-      purchaserName: null, purchaserTaxId: null, purchaserCountry: null,
-      sellerName: null, sellerTaxId: null, sellerCountry: null,
-      documentRef: null, documentDate: null, dueDate: null,
-      netTotal: null, dutyTotal: null, taxTotal: null, grossTotal: null,
-      lineItems: [], accountCategory: null, confidence: 0,
-      fieldLocations: {}, pageCount: 1,
+      document: {
+        purchaserName: null, purchaserTaxId: null, purchaserCountry: null,
+        sellerName: null, sellerTaxId: null, sellerCountry: null,
+        documentRef: null, documentDate: null, dueDate: null,
+        netTotal: null, dutyTotal: null, taxTotal: null, grossTotal: null,
+        lineItems: [], accountCategory: null, confidence: 0,
+        fieldLocations: {}, pageCount: 1,
+      },
+      usage,
     };
   }
+}
+
+export interface CategorisationResult {
+  category: string;
+  usage: AiTokenUsage;
 }
 
 export async function categoriseDescription(
   description: string,
   existingCategories: { description: string; category: string }[]
-): Promise<string> {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+): Promise<CategorisationResult> {
+  const model = genAI.getGenerativeModel({ model: AI_MODEL });
 
   const context = existingCategories.length > 0
     ? `Previously categorised items for this client:\n${existingCategories.slice(0, 20).map(c => `"${c.description}" → ${c.category}`).join('\n')}\n\n`
@@ -241,7 +286,10 @@ export async function categoriseDescription(
     `categorise:${description.substring(0, 40)}`,
   );
 
-  return result.response.text().trim().replace(/^["']|["']$/g, '');
+  return {
+    category: result.response.text().trim().replace(/^["']|["']$/g, ''),
+    usage: extractUsageMetadata(result),
+  };
 }
 
 export function generateReferenceId(index: number): string {

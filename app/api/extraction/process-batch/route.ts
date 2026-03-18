@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getBlobAsBase64, moveToProcessing, moveToProcessed, CONTAINERS } from '@/lib/azure-blob';
-import { extractDocumentFromBase64, categoriseDescription } from '@/lib/gemini-extractor';
+import { extractDocumentFromBase64, categoriseDescription, calculateCostUsd, type AiTokenUsage } from '@/lib/gemini-extractor';
 
 const MAX_CONCURRENT = parseInt(process.env.GEMINI_MAX_CONCURRENT || '3', 10);
 const INITIAL_DELAY_MS = 200;
@@ -75,6 +75,33 @@ export async function POST(req: Request) {
     where: { id: { in: fileIds } },
   });
 
+  const job = await prisma.extractionJob.findUnique({
+    where: { id: jobId },
+    select: { userId: true },
+  });
+  const userId = job?.userId || '';
+
+  async function logAiUsage(usage: AiTokenUsage, operation: string, fileId?: string) {
+    try {
+      await prisma.aiUsage.create({
+        data: {
+          clientId,
+          jobId,
+          fileId,
+          userId,
+          model: usage.model,
+          operation,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+          estimatedCostUsd: calculateCostUsd(usage),
+        },
+      });
+    } catch (err) {
+      console.error('[AiUsage] Failed to log usage:', err);
+    }
+  }
+
   async function processFile(file: typeof files[0], refIndex: number) {
     try {
       await moveToProcessing(file.storagePath);
@@ -84,17 +111,21 @@ export async function POST(req: Request) {
       });
 
       const base64 = await getBlobAsBase64(file.storagePath, CONTAINERS.PROCESSING);
-      const extracted = await extractDocumentFromBase64(
+      const { document: extracted, usage: extractionUsage } = await extractDocumentFromBase64(
         base64,
         file.mimeType || 'application/pdf',
         file.originalName,
         clientName,
       );
 
+      await logAiUsage(extractionUsage, 'extraction', file.id);
+
       let accountCategory = extracted.accountCategory;
       if (!accountCategory && extracted.lineItems.length > 0) {
         const desc = extracted.lineItems[0].description;
-        accountCategory = await categoriseDescription(desc, existingCategories);
+        const { category, usage: catUsage } = await categoriseDescription(desc, existingCategories);
+        accountCategory = category;
+        await logAiUsage(catUsage, 'categorisation', file.id);
       }
 
       const referenceId = file.originalName.replace(/\.[^.]+$/, '');
@@ -187,16 +218,16 @@ export async function POST(req: Request) {
     },
   });
 
-  const job = await prisma.extractionJob.findUnique({
+  const completionCheck = await prisma.extractionJob.findUnique({
     where: { id: jobId },
     select: { totalFiles: true, processedCount: true, failedCount: true },
   });
 
-  if (job && (job.processedCount + job.failedCount) >= job.totalFiles) {
+  if (completionCheck && (completionCheck.processedCount + completionCheck.failedCount) >= completionCheck.totalFiles) {
     await prisma.extractionJob.update({
       where: { id: jobId },
       data: {
-        status: job.processedCount > 0 ? 'complete' : 'failed',
+        status: completionCheck.processedCount > 0 ? 'complete' : 'failed',
         extractedAt: new Date(),
       },
     });

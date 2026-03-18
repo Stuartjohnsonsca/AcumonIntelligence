@@ -1102,6 +1102,19 @@ export function DataExtractionClient({
   useEffect(() => {
     if (selectedClient) {
       checkXeroRequestStatus();
+      // Check if Xero is already connected for this client
+      fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.connected) {
+            setXeroConnected(true);
+            setXeroOrgName(data.orgName);
+          } else {
+            setXeroConnected(false);
+            setXeroOrgName(null);
+          }
+        })
+        .catch(() => { /* non-fatal */ });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClient]);

@@ -53,7 +53,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /middleware.ts — Auth guard for /my-account and /tools routes
 - /components/Navbar.tsx — Main navigation (logo, dropdowns, login/logout)
 - /components/AuthProvider.tsx — NextAuth SessionProvider wrapper
-- /components/my-account/ — MyAccountClient, UsersTab, ClientsTab (with accounting connection status + disconnect button per client), SubscriptionsTab
+- /components/my-account/ — MyAccountClient, UsersTab, ClientsTab (with accounting connection status + disconnect button per client), SubscriptionsTab, AiUsageTab (per-client AI cost tracking with operation breakdowns)
 - /components/admin/ — AdminClient, ProductsAdmin, FirmsAdmin
 - /components/tools/DataExtractionClient.tsx — Data Extraction tool UI (75/25 audit working paper layout with unified spreadsheet, sampling, matching, verification, and summary)
 - /app/api/fx-rate/route.ts — FX rate lookup API endpoint
@@ -104,6 +104,8 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - GET /api/accounting/xero/fetch-attachments?taskId=X — Polls attachment extraction task status (progress phase/counts, or final results including noDocsTxnIds)
 - GET /api/cron/cleanup-xero — Daily cron (02:00 UTC): revokes expired Xero connections and deletes tokens from DB (secured by CRON_SECRET)
 - GET /api/fx-rate?from=X&to=Y&date=D — FX rate lookup (frankfurter.app primary, open.er-api.com fallback)
+- GET /api/ai-usage — AI usage summary per client for the user's firm; supports ?period=week|month|all
+- GET /api/ai-usage?clientId=X — Detailed AI usage for a specific client (summary, operation breakdown, recent records)
 - GET /api/cron/cleanup-extraction — Daily cron (03:00 UTC): sends 40-day/81-day reminders, deletes expired documents at 121 days
 
 ## Auth Flow
@@ -194,6 +196,7 @@ npm run dev
 - account_category_learning — per-client AI learning for description→category mapping
 - accounting_connections — stores encrypted Xero OAuth2 tokens per client (unique on [clientId, system]); auto-refreshes; 30-day expiry
 - background_tasks — DB-backed task state for serverless-safe background processing (replaces in-memory Maps); cleaned by daily cron
+- ai_usage — per-call AI cost tracking (clientId, jobId, fileId, userId, model, operation, promptTokens, completionTokens, totalTokens, estimatedCostUsd); indexed on (clientId), (clientId, createdAt), (userId)
 
 ## Parallel Extraction Pipeline Architecture
 - Files are uploaded via POST /api/extraction/upload (stores in Azure inbox, creates ExtractionFile rows)
@@ -404,6 +407,18 @@ npm run dev
 - Vercel Enterprise supports unlimited function regions for multi-region deployment
 - Region config in `lib/regions.ts` maps each region to its infrastructure endpoints
 - Cross-region data access is blocked by the client isolation layer (verifyClientAccess)
+
+## AI Cost Tracking
+- Every Gemini API call (extraction + categorisation) logs token usage to the `ai_usage` table
+- Token metadata captured from `result.response.usageMetadata` (promptTokenCount, candidatesTokenCount, totalTokenCount)
+- Estimated cost calculated using Gemini 2.5 Flash pricing: $0.30/1M input tokens, $2.50/1M output tokens
+- Records link to clientId, jobId, fileId, userId for full traceability
+- **API**: GET /api/ai-usage returns firm-wide summary or per-client drill-down
+- **UI**: "AI Usage" tab in My Account (visible to Firm Admin, Portfolio Owner, Super Admin)
+  - Summary cards: Total AI Calls, Input Tokens, Output Tokens, Estimated Cost (USD + GBP)
+  - Per-client table: sortable by cost, expandable rows showing operation breakdown and recent activity
+  - Period filter: 7 days / 30 days / All time
+- Cost model defined in `lib/gemini-extractor.ts` via `AI_PRICING` object (easy to update when pricing changes or new models are added)
 
 ## Outstanding Tasks
 - Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
