@@ -12,6 +12,10 @@ export const metadata: Metadata = {
   title: 'Acumon Intelligence',
   description: 'Intelligent tools for statutory audit and assurance professionals.',
   keywords: 'statutory audit, assurance, AI tools, financial data extraction, document summary',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-icon.svg',
+  },
 };
 
 export default function RootLayout({
