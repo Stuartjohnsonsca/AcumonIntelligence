@@ -8,7 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import {
   Plus, Upload, Pencil, X, Check, Loader2, Users, Search,
-  ChevronUp, ChevronDown, UserPlus, UserMinus, FileText, AlertCircle
+  ChevronUp, ChevronDown, UserPlus, UserMinus, FileText, AlertCircle,
+  Unlink, Link2
 } from 'lucide-react';
 
 interface AssignedUser {
@@ -24,6 +25,13 @@ interface PortfolioManagerInfo {
   email: string;
 }
 
+interface AccountingConnection {
+  system: string;
+  orgName: string | null;
+  connectedAt: string;
+  expiresAt: string;
+}
+
 interface Client {
   id: string;
   clientName: string;
@@ -36,6 +44,7 @@ interface Client {
   createdAt: string;
   _count: { subscriptions: number; userAssignments: number };
   userAssignments: { user: AssignedUser }[];
+  accountingConnections?: AccountingConnection[];
 }
 
 interface FirmUser {
@@ -268,6 +277,23 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
     });
     await loadClients();
     setAssignLoading(false);
+  }
+
+  // ── Disconnect accounting system ────────────────────────────────────────────
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
+
+  async function handleDisconnect(clientId: string, orgName: string | null) {
+    if (!confirm(`Disconnect ${orgName || 'accounting system'} from this client? Re-authorisation will be required to reconnect.`)) return;
+    setDisconnecting(clientId);
+    try {
+      const res = await fetch('/api/accounting/xero/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId }),
+      });
+      if (res.ok) await loadClients();
+    } catch { /* non-fatal */ }
+    finally { setDisconnecting(null); }
   }
 
   // ── Header cell ─────────────────────────────────────────────────────────────
@@ -538,6 +564,9 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                     <th className="px-3 py-2 text-left">
                       <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Portfolio Manager</span>
                     </th>
+                    <th className="px-3 py-2 text-left">
+                      <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Connection</span>
+                    </th>
                     <SortableHeader k="isActive" label="Status" />
                     <th className="px-3 py-2 text-left">
                       <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Assigned Users</span>
@@ -583,6 +612,19 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                               ))}
                             </select>
                           </td>
+                          {(() => {
+                            const conn = c.accountingConnections?.[0];
+                            return (
+                              <td className="px-3 py-2">
+                                {conn ? (
+                                  <div className="flex items-center gap-1">
+                                    <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                    <span className="text-xs text-green-700">{conn.orgName || conn.system}</span>
+                                  </div>
+                                ) : <span className="text-xs text-slate-300">—</span>}
+                              </td>
+                            );
+                          })()}
                           <td className="px-3 py-2">
                             <Badge variant={c.isActive ? 'default' : 'secondary'} className={c.isActive ? 'bg-green-100 text-green-700 hover:bg-green-100' : ''}>
                               {c.isActive ? 'Active' : 'Inactive'}
@@ -607,6 +649,35 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                           <td className="px-3 py-3 text-slate-500">{c.contactName || '—'}</td>
                           <td className="px-3 py-3 text-slate-500">{c.contactEmail || '—'}</td>
                           <td className="px-3 py-3 text-slate-500">{c.portfolioManager?.name || '—'}</td>
+                          {(() => {
+                            const conn = c.accountingConnections?.[0];
+                            return (
+                              <td className="px-3 py-3">
+                                {conn ? (
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <Link2 className="h-3 w-3 text-green-600" />
+                                      <span className="text-xs text-green-700 font-medium">{conn.orgName || conn.system}</span>
+                                    </div>
+                                    {canManage && (
+                                      <button
+                                        onClick={() => handleDisconnect(c.id, conn.orgName)}
+                                        disabled={disconnecting === c.id}
+                                        className="text-xs text-red-400 hover:text-red-600 flex items-center gap-0.5 transition-colors"
+                                        title="Disconnect accounting system"
+                                      >
+                                        {disconnecting === c.id
+                                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                                          : <Unlink className="h-3 w-3" />}
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-slate-300">—</span>
+                                )}
+                              </td>
+                            );
+                          })()}
                           <td className="px-3 py-3">
                             <button onClick={() => canManage && toggleActive(c)} title={canManage ? 'Click to toggle status' : undefined}>
                               <Badge

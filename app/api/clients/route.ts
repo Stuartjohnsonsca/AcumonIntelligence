@@ -20,6 +20,10 @@ export async function GET(req: Request) {
       _count: { select: { subscriptions: true, userAssignments: true } },
       userAssignments: { include: { user: { select: { id: true, name: true, displayId: true, email: true } } } },
       portfolioManager: { select: { id: true, name: true, email: true } },
+      accountingConnections: {
+        select: { system: true, orgName: true, connectedAt: true, expiresAt: true },
+        where: { expiresAt: { gt: new Date() } },
+      },
     },
     orderBy: { clientName: 'asc' },
   });

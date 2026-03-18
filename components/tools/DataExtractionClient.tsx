@@ -1684,8 +1684,8 @@ export function DataExtractionClient({
                 </div>
               </div>
 
-              {/* Unified spreadsheet */}
-              <div className="flex-1 overflow-auto">
+              {/* Unified spreadsheet — contained scroll area */}
+              <div className="flex-1 overflow-auto min-h-0">
                 <table className="text-[11px] border-collapse" onPaste={handlePaste}>
                   <thead className="sticky top-0 z-20">
                     {/* Row 1: merged group headers */}
@@ -1882,6 +1882,42 @@ export function DataExtractionClient({
                   </div>
                 )}
               </div>
+
+              {/* Session tabs — pinned at bottom of left panel */}
+              {previousJobs.length > 0 && (
+                <div className="flex-shrink-0 border-t border-slate-200 bg-slate-50">
+                  <div className="flex items-center overflow-x-auto scrollbar-thin">
+                    {previousJobs.map(job => {
+                      const isActive = currentJobId === job.id;
+                      const isExpired = job.status === 'expired';
+                      const dateStr = (job.extractedAt ? new Date(job.extractedAt) : new Date(job.createdAt))
+                        .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                      return (
+                        <button
+                          key={job.id}
+                          onClick={() => !isActive && !isExpired && loadSession(job.id)}
+                          disabled={!!loadingSession || isExpired}
+                          className={`flex-shrink-0 px-3 py-1.5 text-[10px] border-r border-slate-200 flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+                            isActive
+                              ? 'bg-white text-blue-700 font-semibold border-t-2 border-t-blue-500'
+                              : isExpired
+                                ? 'text-slate-400 bg-slate-100 cursor-not-allowed'
+                                : 'text-slate-600 hover:bg-white hover:text-blue-600 border-t-2 border-t-transparent'
+                          }`}
+                          title={`${job.processedCount} extracted${job.failedCount > 0 ? `, ${job.failedCount} failed` : ''}${isExpired ? ' (expired)' : ''}`}
+                        >
+                          {loadingSession === job.id
+                            ? <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                            : <History className="h-2.5 w-2.5" />}
+                          <span>{dateStr}</span>
+                          <span className="text-[8px] text-slate-400">({job.processedCount})</span>
+                          {isExpired && <span className="text-[8px] text-red-400">expired</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2061,43 +2097,6 @@ export function DataExtractionClient({
               </div>
             )}
 
-            {/* Previous sessions */}
-            {previousJobs.length > 0 && (
-              <div className="border-t border-slate-100 pt-3 mt-3">
-                <h3 className="text-xs font-semibold text-slate-600 flex items-center gap-1 mb-2">
-                  <History className="h-3 w-3 text-slate-400" />Previous Sessions
-                </h3>
-                <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {previousJobs.map(job => {
-                    const isActive = currentJobId === job.id;
-                    const isExpired = job.status === 'expired';
-                    const dateStr = (job.extractedAt ? new Date(job.extractedAt) : new Date(job.createdAt))
-                      .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-                    return (
-                      <button key={job.id} onClick={() => !isActive && loadSession(job.id)} disabled={!!loadingSession}
-                        className={`w-full text-left p-2 rounded border text-[10px] transition-colors ${
-                          isActive ? 'border-blue-300 bg-blue-50'
-                            : isExpired ? 'border-slate-200 bg-slate-50 opacity-60'
-                              : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/50'
-                        }`}>
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-slate-700">{dateStr}</span>
-                          <div className="flex items-center gap-1">
-                            {isExpired && <Badge variant="secondary" className="text-[8px] px-1">Expired</Badge>}
-                            {isActive && <Badge className="text-[8px] px-1 bg-blue-600">Active</Badge>}
-                            {loadingSession === job.id && <Loader2 className="h-2 w-2 animate-spin" />}
-                          </div>
-                        </div>
-                        <div className="flex gap-2 mt-0.5 text-slate-500">
-                          <span>{job.processedCount} extracted</span>
-                          {job.failedCount > 0 && <span className="text-red-500">{job.failedCount} failed</span>}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
             {loadingJobs && (
               <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-2">
                 <Loader2 className="h-2 w-2 animate-spin" />Loading sessions...

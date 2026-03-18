@@ -53,7 +53,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /middleware.ts — Auth guard for /my-account and /tools routes
 - /components/Navbar.tsx — Main navigation (logo, dropdowns, login/logout)
 - /components/AuthProvider.tsx — NextAuth SessionProvider wrapper
-- /components/my-account/ — MyAccountClient, UsersTab, ClientsTab, SubscriptionsTab
+- /components/my-account/ — MyAccountClient, UsersTab, ClientsTab (with accounting connection status + disconnect button per client), SubscriptionsTab
 - /components/admin/ — AdminClient, ProductsAdmin, FirmsAdmin
 - /components/tools/DataExtractionClient.tsx — Data Extraction tool UI (75/25 audit working paper layout with unified spreadsheet, sampling, matching, verification, and summary)
 - /app/api/fx-rate/route.ts — FX rate lookup API endpoint
@@ -298,7 +298,9 @@ npm run dev
 - **Audit Summary** (right panel top): Total Population Value, Sample Total, Sampled Error Total, Error %, Extrapolated Error, Conclusion (No Errors Found/No Material Error/Potential Error)
 - **Population Value**: auto-calculated from accounting system data (Xero total); prompted for manual entry if data loaded from spreadsheet/blank
 - **FX Rate API**: GET /api/fx-rate?from=X&to=Y&date=D — tries frankfurter.app (ECB data), falls back to open.er-api.com. Source displayed in tooltip
-- Right panel slimmed to: Audit Summary, compact upload drop zone, file list, Upload & Extract button, extraction details (collapsible), previous sessions
+- Right panel slimmed to: Audit Summary, compact upload drop zone, file list, Upload & Extract button, extraction details (collapsible)
+- **Session Tabs**: Previous extraction sessions shown as horizontal tabs pinned at the bottom of the left panel (below the spreadsheet). Tabs scroll horizontally and are never pushed down by spreadsheet content. Each tab shows date/time and document count. Active session highlighted with blue top border. Expired sessions are greyed out and disabled.
+- **Spreadsheet Scroll Containment**: Left panel spreadsheet uses `overflow-auto min-h-0` to ensure both vertical and horizontal scrollbars appear within the contained area, preventing the spreadsheet from pushing session tabs off-screen
 - Full-width results area below split removed — all data now in unified left-panel spreadsheet
 
 ## Document Viewer & Annotations
