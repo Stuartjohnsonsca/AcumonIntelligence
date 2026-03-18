@@ -1594,10 +1594,23 @@ export function DataExtractionClient({
 
     if (!val || val === '—') return <span className="text-slate-300">—</span>;
 
-    if (fieldName && r.fieldLocations && Object.keys(r.fieldLocations).length > 0) {
+    // All extracted values are clickable to open the source document
+    if (r.fileId && fieldName) {
+      const hasLocations = r.fieldLocations && Object.keys(r.fieldLocations).length > 0;
       return (
-        <button onClick={() => openDocumentViewer(r, fieldName)}
-          className="text-blue-600 hover:text-blue-800 hover:underline text-left" title="View in document">
+        <button onClick={() => openDocumentViewer(r, hasLocations ? fieldName : null)}
+          className="text-blue-600 hover:text-blue-800 hover:underline text-left"
+          title={hasLocations ? 'View in document (with highlights)' : 'View source document'}>
+          {val}
+        </button>
+      );
+    }
+
+    // Ref column — always make clickable if file exists
+    if (r.fileId && colName === 'Ref') {
+      return (
+        <button onClick={() => openDocumentViewer(r, null)}
+          className="text-blue-600 hover:text-blue-800 hover:underline text-left" title="View source document">
           {val}
         </button>
       );
