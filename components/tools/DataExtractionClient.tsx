@@ -25,6 +25,9 @@ interface PreviousJob {
   createdAt: string;
   extractedAt: string | null;
   expiresAt: string | null;
+  accountingSystem?: string | null;
+  orgName?: string | null;
+  user?: { name: string | null };
 }
 
 interface Client {
@@ -103,11 +106,11 @@ const ACCOUNTING_COLUMNS_BASIC = [
 ];
 
 const ACCOUNTING_COLUMNS_FULL = [
-  'Date', 'Reference', 'Contact', 'Type', 'Status',
-  'Description', 'Account Code', 'Account Name',
-  'Net', 'Tax', 'Total',
+  'Date', 'Reference', 'Contact', 'Contact Group', 'Type', 'Status',
+  'Description', 'Account Code', 'Account Name', 'Bank Account',
+  'Net', 'Tax', 'VAT Rate', 'Total', 'Tracking',
   'Created By', 'Approved By',
-  'Invoice No', 'Due Date', 'Reconciled',
+  'Invoice No', 'Due Date', 'Reconciled', 'Source', 'Process Date',
 ];
 
 const UPLOADED_DOC_COLUMNS_BASE = [
@@ -243,6 +246,8 @@ export function DataExtractionClient({
 
   // Previous sessions state
   const [previousJobs, setPreviousJobs] = useState<PreviousJob[]>([]);
+  const [hiddenJobIds, setHiddenJobIds] = useState<Set<string>>(new Set());
+  const [allSessionsOpen, setAllSessionsOpen] = useState(false);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
 
@@ -352,6 +357,47 @@ export function DataExtractionClient({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  // Column resize state
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const resizingRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
+
+  function getDefaultWidth(colName: string): number {
+    if (['Net', 'Tax', 'Total', 'VAT Rate'].includes(colName)) return 80;
+    if (['Date', 'Due Date', 'Process Date'].includes(colName)) return 95;
+    if (['Description', 'Contact'].includes(colName)) return 160;
+    if (['Contact Group', 'Account Name', 'Bank Account'].includes(colName)) return 130;
+    if (['Ref', 'Doc Ref', 'Reference'].includes(colName)) return 100;
+    if (['Reconciled', 'Source'].includes(colName)) return 75;
+    return 100;
+  }
+
+  function handleColumnResizeStart(e: React.MouseEvent, col: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = columnWidths[col] || getDefaultWidth(col);
+    resizingRef.current = { col, startX, startWidth };
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const newWidth = Math.max(40, resizingRef.current.startWidth + (ev.clientX - resizingRef.current.startX));
+      setColumnWidths(prev => ({ ...prev, [resizingRef.current!.col]: newWidth }));
+    };
+
+    const onMouseUp = () => {
+      resizingRef.current = null;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
 
   const filteredAssigned = assignedClients.filter(c =>
     c.clientName.toLowerCase().includes(clientSearch.toLowerCase())
@@ -1249,33 +1295,41 @@ export function DataExtractionClient({
     const meta: { id: string; type: string; hasAttachments: boolean }[] = [];
     for (const txn of data.rows) {
       const t = txn as {
-        date?: string; reference?: string; contact?: string; type?: string;
-        status?: string; description?: string; accountCode?: string; accountName?: string;
-        lineAmount?: number | null; taxAmount?: number | null;
+        date?: string; reference?: string; contact?: string; contactGroup?: string;
+        type?: string; status?: string; description?: string;
+        accountCode?: string; accountName?: string; bankAccountName?: string;
+        lineAmount?: number | null; taxAmount?: number | null; vatRate?: number | null;
         subtotal?: number; tax?: number; total?: number;
         transactionId?: string; transactionType?: string; hasAttachments?: boolean;
         createdBy?: string; approvedBy?: string;
         invoiceNumber?: string; dueDate?: string;
-        isReconciled?: boolean | null; bankAccountName?: string;
+        isReconciled?: boolean | null;
         tracking?: string; xeroUrl?: string;
+        source?: string; processDateTime?: string;
       };
       rows.push({
         'Date': parseXeroDate(t.date),
         'Reference': t.reference || '',
         'Contact': t.contact || '',
+        'Contact Group': t.contactGroup || '',
         'Type': t.type || '',
         'Status': t.status || '',
         'Description': t.description || '',
         'Account Code': t.accountCode || '',
         'Account Name': t.accountName || '',
+        'Bank Account': t.bankAccountName || '',
         'Net': t.lineAmount != null ? String(t.lineAmount) : String(t.subtotal ?? ''),
         'Tax': t.taxAmount != null ? String(t.taxAmount) : String(t.tax ?? ''),
+        'VAT Rate': t.vatRate != null ? `${t.vatRate}%` : '',
         'Total': t.lineAmount != null && t.taxAmount != null ? String(t.lineAmount + t.taxAmount) : String(t.total ?? ''),
+        'Tracking': t.tracking || '',
         'Created By': t.createdBy || '',
         'Approved By': t.approvedBy || '',
         'Invoice No': t.invoiceNumber || '',
         'Due Date': parseXeroDate(t.dueDate),
         'Reconciled': t.isReconciled != null ? (t.isReconciled ? 'Yes' : 'No') : '',
+        'Source': t.source || '',
+        'Process Date': parseXeroDate(t.processDateTime),
       });
       meta.push({
         id: t.transactionId || '',
@@ -1983,8 +2037,8 @@ export function DataExtractionClient({
               </div>
 
               {/* Unified spreadsheet — contained scroll area */}
-              <div className="flex-1 overflow-auto min-h-0">
-                <table className="text-[11px] border-collapse" onPaste={handlePaste}>
+              <div className="flex-1 overflow-y-auto overflow-x-scroll min-h-0">
+                <table className="text-[11px] border-collapse" style={{ tableLayout: 'fixed' }} onPaste={handlePaste}>
                   <thead className="sticky top-0 z-20">
                     {/* Row 1: merged group headers */}
                     <tr className="bg-slate-100">
@@ -2008,18 +2062,30 @@ export function DataExtractionClient({
                     {/* Row 2: individual column headers */}
                     <tr className="bg-slate-50">
                       {leftPanelColumns.map(col => (
-                        <th key={`ac-${col}`} className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100">
+                        <th key={`ac-${col}`}
+                          style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
+                          className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 relative overflow-hidden text-ellipsis">
                           {col}
+                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                            onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
                       {uploadedDocColumns.map(col => (
-                        <th key={`ud-${col}`} className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-green-50/30">
+                        <th key={`ud-${col}`}
+                          style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
+                          className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-green-50/30 relative overflow-hidden text-ellipsis">
                           {col}
+                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                            onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
                       {AUDIT_VERIFY_COLUMNS.map(col => (
-                        <th key={`av-${col}`} className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-amber-50/30">
+                        <th key={`av-${col}`}
+                          style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
+                          className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-amber-50/30 relative overflow-hidden text-ellipsis">
                           {col}
+                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                            onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
                     </tr>
@@ -2181,41 +2247,111 @@ export function DataExtractionClient({
                 )}
               </div>
 
-              {/* Session tabs — pinned at bottom of left panel */}
-              {previousJobs.length > 0 && (
-                <div className="flex-shrink-0 border-t border-slate-200 bg-slate-50">
-                  <div className="flex items-center overflow-x-auto scrollbar-thin">
-                    {previousJobs.map(job => {
-                      const isActive = currentJobId === job.id;
-                      const isExpired = job.status === 'expired';
-                      const dateStr = (job.extractedAt ? new Date(job.extractedAt) : new Date(job.createdAt))
-                        .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-                      return (
-                        <button
-                          key={job.id}
-                          onClick={() => !isActive && !isExpired && loadSession(job.id)}
-                          disabled={!!loadingSession || isExpired}
-                          className={`flex-shrink-0 px-3 py-1.5 text-[10px] border-r border-slate-200 flex items-center gap-1.5 transition-colors whitespace-nowrap ${
-                            isActive
-                              ? 'bg-white text-blue-700 font-semibold border-t-2 border-t-blue-500'
-                              : isExpired
-                                ? 'text-slate-400 bg-slate-100 cursor-not-allowed'
-                                : 'text-slate-600 hover:bg-white hover:text-blue-600 border-t-2 border-t-transparent'
-                          }`}
-                          title={`${job.processedCount} extracted${job.failedCount > 0 ? `, ${job.failedCount} failed` : ''}${isExpired ? ' (expired)' : ''}`}
-                        >
-                          {loadingSession === job.id
-                            ? <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                            : <History className="h-2.5 w-2.5" />}
-                          <span>{dateStr}</span>
-                          <span className="text-[8px] text-slate-400">({job.processedCount})</span>
-                          {isExpired && <span className="text-[8px] text-red-400">expired</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
+              {/* Session tabs — always pinned at bottom of left panel */}
+              <div className="flex-shrink-0 border-t-2 border-slate-300 bg-slate-50 min-h-[38px] relative">
+                <div className="flex items-center overflow-x-auto scrollbar-thin">
+                  {/* All Sessions button */}
+                  <button
+                    onClick={() => setAllSessionsOpen(!allSessionsOpen)}
+                    className="flex-shrink-0 px-3 py-2 text-xs border-r border-slate-200 flex items-center gap-1.5 text-slate-500 hover:bg-white hover:text-blue-600 transition-colors"
+                    title="Show all sessions"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                  </button>
+                  {previousJobs.filter(j => !hiddenJobIds.has(j.id)).map(job => {
+                    const isActive = currentJobId === job.id;
+                    const isExpired = job.status === 'expired';
+                    const dateStr = (job.extractedAt ? new Date(job.extractedAt) : new Date(job.createdAt))
+                      .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                    const visibleJobs = previousJobs.filter(j => !hiddenJobIds.has(j.id));
+                    const tooltipParts = [
+                      job.user?.name && `User: ${job.user.name}`,
+                      job.orgName && `Org: ${job.orgName}`,
+                      `${job.processedCount} extracted`,
+                      job.failedCount > 0 && `${job.failedCount} failed`,
+                      job.expiresAt && `Expires: ${new Date(job.expiresAt).toLocaleDateString('en-GB')}`,
+                      isExpired && '(expired)',
+                    ].filter(Boolean).join(' | ');
+                    return (
+                      <button
+                        key={job.id}
+                        onClick={() => !isActive && !isExpired && loadSession(job.id)}
+                        disabled={!!loadingSession || isExpired}
+                        style={{
+                          flex: visibleJobs.length <= 6 ? '1 1 0%' : '0 0 auto',
+                          minWidth: visibleJobs.length <= 6 ? 0 : 'auto',
+                        }}
+                        className={`px-4 py-2 text-xs border-r border-slate-200 flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap truncate group ${
+                          isActive
+                            ? 'bg-white text-blue-700 font-semibold border-t-2 border-t-blue-500'
+                            : isExpired
+                              ? 'text-slate-400 bg-slate-100 cursor-not-allowed border-t-2 border-t-transparent'
+                              : 'text-slate-600 hover:bg-white hover:text-blue-600 border-t-2 border-t-transparent'
+                        }`}
+                        title={tooltipParts}
+                      >
+                        {loadingSession === job.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <History className="h-3 w-3" />}
+                        <span>{dateStr}</span>
+                        <span className="text-[9px] text-slate-400">({job.processedCount})</span>
+                        {isExpired && <span className="text-[9px] text-red-400">expired</span>}
+                        {!isActive && (
+                          <span
+                            onClick={e => { e.stopPropagation(); setHiddenJobIds(prev => new Set([...prev, job.id])); }}
+                            className="ml-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity cursor-pointer"
+                            title="Close tab"
+                          >
+                            <X className="h-3 w-3" />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+                {/* All Sessions dropdown */}
+                {allSessionsOpen && (
+                  <div className="absolute bottom-full left-0 w-80 max-h-60 overflow-y-auto bg-white border border-slate-200 rounded-t-lg shadow-lg z-30">
+                    <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-700">All Sessions</span>
+                      <button onClick={() => setAllSessionsOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {previousJobs.length === 0 ? (
+                      <div className="px-3 py-4 text-xs text-slate-400 text-center">No previous sessions</div>
+                    ) : (
+                      previousJobs.map(job => {
+                        const dateStr = (job.extractedAt ? new Date(job.extractedAt) : new Date(job.createdAt))
+                          .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        const isActive = currentJobId === job.id;
+                        const isHidden = hiddenJobIds.has(job.id);
+                        return (
+                          <button
+                            key={job.id}
+                            onClick={() => {
+                              if (isHidden) setHiddenJobIds(prev => { const next = new Set(prev); next.delete(job.id); return next; });
+                              if (!isActive && job.status !== 'expired') loadSession(job.id);
+                              setAllSessionsOpen(false);
+                            }}
+                            className={`w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-blue-50 border-b border-slate-50 ${
+                              isActive ? 'bg-blue-50 font-semibold' : ''
+                            }`}
+                          >
+                            <History className="h-3 w-3 flex-shrink-0 text-slate-400" />
+                            <div className="flex-1 min-w-0">
+                              <div className="truncate">{dateStr} — {job.user?.name || 'Unknown'}</div>
+                              <div className="text-[10px] text-slate-400">{job.orgName || 'Manual'} · {job.processedCount} files{job.failedCount > 0 ? ` · ${job.failedCount} failed` : ''}</div>
+                            </div>
+                            {isActive && <span className="text-[9px] text-blue-500 font-medium">Active</span>}
+                            {job.status === 'expired' && <span className="text-[9px] text-red-400">Expired</span>}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

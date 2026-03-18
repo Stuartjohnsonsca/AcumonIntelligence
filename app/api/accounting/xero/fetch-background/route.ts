@@ -1,6 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
-import { getTransactions, getAccounts, batchFetchHistories } from '@/lib/xero';
+import { getTransactions, getAccounts, batchFetchHistories, getTaxRates, batchFetchContactGroups } from '@/lib/xero';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
 
@@ -45,9 +45,10 @@ export async function POST(req: Request) {
 
       await updateProgress({ phase: 'fetching', message: 'Fetching transactions from Xero...' });
 
-      const [transactions, accounts] = await Promise.all([
+      const [transactions, accounts, taxRateMap] = await Promise.all([
         getTransactions(clientId, codes, dateFrom, dateTo),
         getAccounts(clientId),
+        getTaxRates(clientId),
       ]);
 
       await updateProgress({ phase: 'fetching', message: `Fetched ${transactions.length} transactions. Processing...` });
@@ -80,12 +81,20 @@ export async function POST(req: Request) {
 
       await updateProgress({ phase: 'histories', message: `Fetching audit history for ${uniqueTxns.length} transactions...` });
 
-      let historyMap = new Map<string, { createdBy: string; approvedBy: string }>();
-      try {
-        historyMap = await batchFetchHistories(clientId, uniqueTxns);
-      } catch (histErr) {
-        console.warn('History fetch failed (non-fatal):', histErr instanceof Error ? histErr.message : histErr);
-      }
+      const uniqueContactIds = [...new Set(
+        transactions.map(t => t.Contact?.ContactID).filter((id): id is string => !!id)
+      )];
+
+      const [historyMap, contactGroupMap] = await Promise.all([
+        batchFetchHistories(clientId, uniqueTxns).catch(err => {
+          console.warn('History fetch failed (non-fatal):', err instanceof Error ? err.message : err);
+          return new Map<string, { createdBy: string; approvedBy: string }>();
+        }),
+        batchFetchContactGroups(clientId, uniqueContactIds).catch(err => {
+          console.warn('Contact group fetch failed (non-fatal):', err instanceof Error ? err.message : err);
+          return new Map<string, string>();
+        }),
+      ]);
 
       await updateProgress({ phase: 'processing', message: `Building ${transactions.length} rows...` });
 
@@ -103,6 +112,7 @@ export async function POST(req: Request) {
           date: normaliseXeroDate(txn.Date),
           reference: txn.Reference || '',
           contact: txn.Contact?.Name || '',
+          contactGroup: txn.Contact?.ContactID ? (contactGroupMap.get(txn.Contact.ContactID) || '') : '',
           type: txn.Type,
           status: txn.Status || '',
           invoiceNumber: txn.InvoiceNumber || '',
@@ -119,12 +129,15 @@ export async function POST(req: Request) {
           createdBy: audit.createdBy,
           approvedBy: audit.approvedBy,
           xeroUrl: txn.Url || '',
+          source: txn.SourceTransactionID || '',
+          processDateTime: normaliseXeroDate(txn.UpdatedDateUTC),
         };
 
         if (txn.LineItems && txn.LineItems.length > 0) {
           for (const li of txn.LineItems) {
             const acct = accountMap.get(li.AccountCode);
             const trackingStr = li.Tracking?.map(t => `${t.Name}: ${t.Option}`).join('; ') || '';
+            const vatRate = li.TaxType ? (taxRateMap.get(li.TaxType) ?? null) : null;
             rows.push({
               ...baseFields,
               description: li.Description || '',
@@ -132,6 +145,7 @@ export async function POST(req: Request) {
               accountName: acct?.name || '',
               lineAmount: li.LineAmount,
               taxAmount: li.TaxAmount,
+              vatRate,
               tracking: trackingStr,
             });
           }
@@ -143,6 +157,7 @@ export async function POST(req: Request) {
             accountName: '',
             lineAmount: null,
             taxAmount: null,
+            vatRate: null,
             tracking: '',
           });
         }
