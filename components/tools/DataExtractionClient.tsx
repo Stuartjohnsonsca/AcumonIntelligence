@@ -182,17 +182,19 @@ function formatCurrencyVal(v: number | null, symbol = '£'): string {
   return `${symbol}${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function formatAttachmentProgress(p: { phase: string; current: number; total: number; downloaded?: number; extracted?: number }): string {
+function formatAttachmentProgress(p: { phase: string; current: number; total: number; downloaded?: number; extracted?: number; skipped?: number }): string {
   if (p.phase === 'listing') {
-    return `Listing transactions... ${p.current}/${p.total}`;
+    return `Scanning attachments... ${p.current}/${p.total} transactions`;
   }
   if (p.phase === 'downloading') {
-    const parts = [`Downloaded ${p.downloaded ?? p.current}/${p.total}`];
-    if (p.extracted && p.extracted > 0) parts.push(`Extracted ${p.extracted}`);
+    const parts: string[] = [];
+    parts.push(`Downloaded ${p.downloaded ?? 0}/${p.total}`);
+    if ((p.skipped ?? 0) > 0) parts.push(`${p.skipped} skipped`);
+    if ((p.extracted ?? 0) > 0) parts.push(`Extracted ${p.extracted}`);
     return parts.join(' · ');
   }
   if (p.phase === 'extracting') {
-    return `Extracting... ${p.current}/${p.total}${p.downloaded ? ` (${p.downloaded} downloaded)` : ''}`;
+    return `Extracting... ${p.extracted ?? p.current}/${p.downloaded ?? p.total}`;
   }
   return `${p.phase}... ${p.current}/${p.total}`;
 }

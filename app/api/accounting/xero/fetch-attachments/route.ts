@@ -175,11 +175,12 @@ export async function POST(req: Request) {
       // Phase 2: Download and extract concurrently
       // Download one at a time (Xero rate limits), but dispatch extraction batches immediately
       const totalToDownload = downloadItems.length;
+      const consistentTotal = totalToDownload;
       const fileIds: string[] = [];
 
       await prisma.backgroundTask.update({
         where: { id: task.id },
-        data: { progress: { phase: 'downloading', current: 0, total: totalToDownload, downloaded: 0, extracted: 0 } },
+        data: { progress: { phase: 'downloading', current: 0, total: consistentTotal, downloaded: 0, extracted: 0 } },
       });
 
       for (let i = 0; i < downloadItems.length; i++) {
@@ -250,9 +251,10 @@ export async function POST(req: Request) {
             progress: {
               phase: 'downloading',
               current: i + 1,
-              total: totalToDownload,
+              total: consistentTotal,
               downloaded,
               extracted: extractedSoFar,
+              skipped: skipped + duplicateCount,
             },
           },
         });
@@ -312,8 +314,8 @@ export async function POST(req: Request) {
           data: {
             progress: {
               phase: 'extracting',
-              current: completed,
-              total: updatedJob.totalFiles,
+              current: updatedJob.processedCount + updatedJob.failedCount,
+              total: downloaded,
               downloaded,
               extracted: updatedJob.processedCount,
             },
