@@ -251,6 +251,8 @@ export function DataExtractionClient({
   const [extractingAttachments, setExtractingAttachments] = useState(false);
   const [attachmentProgress, setAttachmentProgress] = useState<{ phase: string; current: number; total: number } | null>(null);
   const [noDocsTxnIds, setNoDocsTxnIds] = useState<Set<string>>(new Set());
+  const [sampleExtracted, setSampleExtracted] = useState(false);
+  const [extractedTxnIds, setExtractedTxnIds] = useState<Set<string>>(new Set());
 
   // FX rate cache
   const fxCache = useRef<Map<string, { rate: number; source: string }>>(new Map());
@@ -1223,7 +1225,7 @@ export function DataExtractionClient({
 
   // ─── Extract Xero attachments ───────────────────────────────────────────
 
-  async function handleExtractXeroAttachments() {
+  async function handleExtractXeroAttachments(sampleOnly?: boolean) {
     if (!selectedClient || txnMetadata.length === 0) return;
     setExtractingAttachments(true);
     setAttachmentProgress(null);
@@ -1234,11 +1236,32 @@ export function DataExtractionClient({
       if (m.id && !uniqueTxns.has(m.id)) uniqueTxns.set(m.id, m);
     }
 
+    let txnsToExtract: { id: string; type: string; hasAttachments: boolean }[];
+
+    if (sampleOnly && sampledRows.size > 0) {
+      const sampledTxnIds = new Set<string>();
+      for (const ri of sampledRows) {
+        const meta = txnMetadata[ri];
+        if (meta?.id) sampledTxnIds.add(meta.id);
+      }
+      txnsToExtract = Array.from(uniqueTxns.values()).filter(t => sampledTxnIds.has(t.id));
+    } else {
+      txnsToExtract = Array.from(uniqueTxns.values()).filter(t => !extractedTxnIds.has(t.id));
+    }
+
+    if (txnsToExtract.length === 0) {
+      setExtractingAttachments(false);
+      return;
+    }
+
     const taskId = `xero-attach-${selectedClient.id}-${Date.now()}`;
+    const activityLabel = sampleOnly
+      ? `Extracting sample documents from ${selectedClient.software || 'Xero'}`
+      : `Extracting all documents from ${selectedClient.software || 'Xero'}`;
     addTask({
       id: taskId,
       clientName: selectedClient.clientName,
-      activity: `Extracting documents from ${selectedClient.software || 'Xero'}`,
+      activity: activityLabel,
       status: 'running',
       toolPath: '/tools/data-extraction',
     });
@@ -1249,7 +1272,7 @@ export function DataExtractionClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clientId: selectedClient.id,
-          transactions: Array.from(uniqueTxns.values()),
+          transactions: txnsToExtract,
         }),
       });
       const startData = await startRes.json();
@@ -1276,8 +1299,20 @@ export function DataExtractionClient({
               setAttachmentProgress(null);
 
               if (statusData.data?.noDocsTxnIds) {
-                setNoDocsTxnIds(new Set(statusData.data.noDocsTxnIds));
+                setNoDocsTxnIds(prev => {
+                  const next = new Set(prev);
+                  for (const id of statusData.data.noDocsTxnIds) next.add(id);
+                  return next;
+                });
               }
+
+              setExtractedTxnIds(prev => {
+                const next = new Set(prev);
+                for (const t of txnsToExtract) next.add(t.id);
+                return next;
+              });
+
+              if (sampleOnly) setSampleExtracted(true);
 
               if (statusData.data?.jobId && selectedClient?.id === clientIdAtStart) {
                 const jobRes = await fetch(`/api/extraction/process?jobId=${statusData.data.jobId}`);
@@ -1465,6 +1500,7 @@ export function DataExtractionClient({
               setSelectedRows(new Set()); setLeftPanelData([]); setLeftPanelColumns([]);
               setLeftPanelMode('idle'); setLeftPanelFileName(null); setLeftPanelFromAccounting(false);
               setTxnMetadata([]); setNoDocsTxnIds(new Set());
+              setSampleExtracted(false); setExtractedTxnIds(new Set());
               loadPreviousJobs(selectedClient.id);
             }}>
               <Plus className="h-4 w-4 mr-1" />New Session
@@ -1946,25 +1982,51 @@ export function DataExtractionClient({
 
           {/* Extract from accounting system */}
           {leftPanelFromAccounting && selectedClient.software && txnMetadata.length > 0 && (
-            <div className="px-4 pt-4 pb-0">
-              <Button
-                className="w-full bg-green-600 hover:bg-green-700 text-xs h-9"
-                disabled={extractingAttachments || uploading || processing}
-                onClick={handleExtractXeroAttachments}
-              >
-                {extractingAttachments ? (
-                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    {attachmentProgress
-                      ? `${attachmentProgress.phase === 'downloading' ? 'Downloading' : 'Extracting'}... ${attachmentProgress.current}/${attachmentProgress.total}`
-                      : 'Extracting...'}</>
-                ) : (
-                  <><Database className="mr-1.5 h-3.5 w-3.5" />Extract Documents from {selectedClient.software}</>
-                )}
-              </Button>
+            <div className="px-4 pt-4 pb-0 space-y-2">
+              {/* Phase 1: Extract sample documents (when sample exists and hasn't been extracted yet) */}
+              {sampledRows.size > 0 && !sampleExtracted && (
+                <Button
+                  className="w-full text-xs h-9 bg-green-600 hover:bg-green-700 ring-2 ring-slate-800 ring-offset-1"
+                  disabled={extractingAttachments || uploading || processing}
+                  onClick={() => handleExtractXeroAttachments(true)}
+                >
+                  {extractingAttachments ? (
+                    <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      {attachmentProgress
+                        ? `${attachmentProgress.phase === 'listing' ? 'Listing' : attachmentProgress.phase === 'downloading' ? 'Downloading' : 'Extracting'}... ${attachmentProgress.current}/${attachmentProgress.total}`
+                        : 'Extracting sample...'}</>
+                  ) : (
+                    <><Database className="mr-1.5 h-3.5 w-3.5" />Extract Sample Documents ({sampledRows.size} rows)</>
+                  )}
+                </Button>
+              )}
+              {/* Phase 2: Extract all remaining (or all if no sample) */}
+              {(sampleExtracted || sampledRows.size === 0) && (
+                <Button
+                  className="w-full text-xs h-9 bg-green-600 hover:bg-green-700"
+                  disabled={extractingAttachments || uploading || processing}
+                  onClick={() => handleExtractXeroAttachments(false)}
+                >
+                  {extractingAttachments ? (
+                    <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      {attachmentProgress
+                        ? `${attachmentProgress.phase === 'listing' ? 'Listing' : attachmentProgress.phase === 'downloading' ? 'Downloading' : 'Extracting'}... ${attachmentProgress.current}/${attachmentProgress.total}`
+                        : 'Extracting...'}</>
+                  ) : (
+                    <><Database className="mr-1.5 h-3.5 w-3.5" />Extract {sampleExtracted ? 'ALL Remaining' : 'ALL'} Documents from {selectedClient.software}</>
+                  )}
+                </Button>
+              )}
+              {sampleExtracted && !extractingAttachments && (
+                <p className="text-[10px] text-green-600 text-center font-medium">
+                  Sample documents extracted — click above to extract all remaining
+                </p>
+              )}
               {txnMetadata.length > 0 && (
-                <p className="text-[10px] text-slate-500 mt-1.5 text-center">
+                <p className="text-[10px] text-slate-500 text-center">
                   {txnMetadata.filter((m, i, a) => a.findIndex(x => x.id === m.id) === i).filter(m => m.hasAttachments).length} of{' '}
                   {txnMetadata.filter((m, i, a) => a.findIndex(x => x.id === m.id) === i).length} transactions have attachments
+                  {extractedTxnIds.size > 0 && <span className="text-green-600"> · {extractedTxnIds.size} processed</span>}
                 </p>
               )}
             </div>
