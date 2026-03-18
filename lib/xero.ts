@@ -219,6 +219,100 @@ export async function getAccounts(clientId: string): Promise<XeroAccount[]> {
   return data.Accounts ?? [];
 }
 
+// ─── Tax Rates ───────────────────────────────────────────────────────────────
+
+export interface XeroTaxRate {
+  Name: string;
+  TaxType: string;
+  EffectiveRate: number;
+  DisplayTaxRate: number;
+  Status: string;
+}
+
+export async function getTaxRates(clientId: string): Promise<Map<string, number>> {
+  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+  const res = await fetch(`${XERO_API_BASE}/TaxRates`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Xero-Tenant-Id': tenantId,
+      Accept: 'application/json',
+    },
+  });
+  if (!res.ok) {
+    console.warn(`Xero TaxRates fetch failed (${res.status})`);
+    return new Map();
+  }
+  const data = await res.json();
+  const rates = new Map<string, number>();
+  for (const tr of (data.TaxRates ?? []) as XeroTaxRate[]) {
+    rates.set(tr.TaxType, tr.EffectiveRate ?? tr.DisplayTaxRate ?? 0);
+  }
+  return rates;
+}
+
+// ─── Contact Groups ──────────────────────────────────────────────────────────
+
+export async function batchFetchContactGroups(
+  clientId: string,
+  contactIds: string[],
+): Promise<Map<string, string>> {
+  const results = new Map<string, string>();
+  if (contactIds.length === 0) return results;
+
+  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+  const unique = [...new Set(contactIds)];
+  const BATCH_SIZE = 50;
+
+  for (let i = 0; i < unique.length; i += BATCH_SIZE) {
+    const batch = unique.slice(i, i + BATCH_SIZE);
+    const ids = batch.join(',');
+    try {
+      const res = await xeroFetchWithRetry(
+        `${XERO_API_BASE}/Contacts?IDs=${ids}`,
+        {
+          Authorization: `Bearer ${accessToken}`,
+          'Xero-Tenant-Id': tenantId,
+          Accept: 'application/json',
+        },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const contact of (data.Contacts ?? [])) {
+          const groups = (contact.ContactGroups ?? [])
+            .map((g: { Name: string }) => g.Name)
+            .filter(Boolean)
+            .join(', ');
+          results.set(contact.ContactID, groups);
+        }
+      }
+    } catch (err) {
+      console.warn('Contact group fetch failed (non-fatal):', err instanceof Error ? err.message : err);
+    }
+
+    if (i + BATCH_SIZE < unique.length) {
+      await new Promise(resolve => setTimeout(resolve, XERO_PAGE_DELAY_MS));
+    }
+  }
+  return results;
+}
+
+// ─── Transactions ────────────────────────────────────────────────────────────
+
+export interface XeroLineItem {
+  LineItemID?: string;
+  Description: string;
+  Quantity: number;
+  UnitAmount: number;
+  TaxAmount: number;
+  LineAmount: number;
+  AccountCode: string;
+  TaxType?: string;
+  DiscountRate?: number;
+  DiscountAmount?: number;
+  ItemCode?: string;
+  Tracking?: { Name: string; Option: string }[];
+}
+
 export interface XeroTransaction {
   BankTransactionID?: string;
   InvoiceID?: string;
@@ -228,27 +322,32 @@ export interface XeroTransaction {
   Status?: string;
   Date: string;
   DueDate?: string;
+  ExpectedPaymentDate?: string;
   Reference?: string;
   CurrencyCode?: string;
+  CurrencyRate?: number;
   UpdatedDateUTC?: string;
+  FullyPaidOnDate?: string;
   Url?: string;
+  SourceTransactionID?: string;
+  LineAmountTypes?: string;
+  SentToContact?: boolean;
+  RepeatingInvoiceID?: string;
+  BrandingThemeID?: string;
   Contact?: { Name: string; ContactID: string };
   SubTotal: number;
   TotalTax: number;
   Total: number;
   AmountDue?: number;
   AmountPaid?: number;
+  AmountCredited?: number;
   IsReconciled?: boolean;
   BankAccount?: { AccountID: string; Name: string; Code: string };
-  LineItems: {
-    Description: string;
-    Quantity: number;
-    UnitAmount: number;
-    TaxAmount: number;
-    LineAmount: number;
-    AccountCode: string;
-    Tracking?: { Name: string; Option: string }[];
-  }[];
+  Payments?: { PaymentID: string; Date: string; Amount: number; Reference?: string }[];
+  CreditNotes?: { CreditNoteID: string; CreditNoteNumber: string; Total: number }[];
+  Overpayments?: { OverpaymentID: string; Total: number }[];
+  Prepayments?: { PrepaymentID: string; Total: number }[];
+  LineItems: XeroLineItem[];
 }
 
 export async function getTransactions(

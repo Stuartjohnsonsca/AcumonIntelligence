@@ -36,6 +36,7 @@ export async function GET(req: Request) {
         expiresAt: true,
         accountingSystem: true,
         orgName: true,
+        user: { select: { name: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 20,

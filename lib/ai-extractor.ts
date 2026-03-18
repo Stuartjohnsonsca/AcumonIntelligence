@@ -9,6 +9,84 @@ const MAX_RETRIES = 5;
 const BASE_BACKOFF_MS = 2000;
 const MAX_BACKOFF_MS = 60000;
 
+// ─── AI Model Selection ──────────────────────────────────────────────────────
+
+export interface ModelPriorities {
+  accuracy: number;  // 1 = highest priority, 4 = lowest
+  speed: number;
+  cost: number;
+  depth: number;
+}
+
+interface ModelProfile {
+  id: string;
+  speed: number;     // 1-5, 5=fastest
+  accuracy: number;  // 1-5, 5=best
+  depth: number;     // 1-5, 5=deepest
+  cost: number;      // 1-5, 5=cheapest
+  vision: boolean;
+}
+
+const MODEL_REGISTRY: ModelProfile[] = [
+  { id: 'google/gemma-3n-E4B-it',                                speed: 5, accuracy: 2, depth: 1, cost: 5, vision: true },
+  { id: 'Qwen/Qwen3-VL-8B-Instruct',                            speed: 4, accuracy: 3, depth: 2, cost: 4, vision: true },
+  { id: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',     speed: 3, accuracy: 4, depth: 3, cost: 3, vision: true },
+  { id: 'moonshotai/Kimi-K2.5',                                  speed: 2, accuracy: 4, depth: 4, cost: 2, vision: true },
+  { id: 'Qwen/Qwen3.5-397B-A17B',                                speed: 1, accuracy: 5, depth: 5, cost: 1, vision: true },
+];
+
+// Per-operation default priorities (1=highest, 4=lowest)
+export const EXTRACTION_PRIORITIES: ModelPriorities = { accuracy: 1, speed: 2, cost: 3, depth: 4 };
+export const CATEGORISATION_PRIORITIES: ModelPriorities = { speed: 1, cost: 2, accuracy: 3, depth: 4 };
+
+// Track models that returned 404/unavailable during this process lifetime
+const unavailableModels = new Set<string>();
+
+function scoreModel(model: ModelProfile, priorities: ModelPriorities): number {
+  // Weight = (5 - priority_rank), so priority 1 gets weight 4, priority 4 gets weight 1
+  return (
+    model.accuracy * (5 - priorities.accuracy) +
+    model.speed * (5 - priorities.speed) +
+    model.cost * (5 - priorities.cost) +
+    model.depth * (5 - priorities.depth)
+  );
+}
+
+/**
+ * Select the best model for a given set of priorities.
+ * Skips models that have returned 404/unavailable errors.
+ * Returns a ranked list (best first) for fallback support.
+ */
+export function selectModels(priorities: ModelPriorities, requireVision = true): string[] {
+  const envOverride = process.env.AI_MODEL;
+  const candidates = MODEL_REGISTRY
+    .filter(m => (!requireVision || m.vision) && !unavailableModels.has(m.id))
+    .sort((a, b) => scoreModel(b, priorities) - scoreModel(a, priorities))
+    .map(m => m.id);
+
+  // If env override is set and available, put it first
+  if (envOverride && !unavailableModels.has(envOverride)) {
+    return [envOverride, ...candidates.filter(id => id !== envOverride)];
+  }
+  return candidates;
+}
+
+export function markModelUnavailable(modelId: string): void {
+  unavailableModels.add(modelId);
+  console.warn(`[AI] Model marked unavailable: ${modelId}. Will use fallback for remaining calls.`);
+}
+
+function isModelUnavailableError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return (msg.includes('404') && (msg.includes('model') || msg.includes('unable to access')))
+      || msg.includes('model not found')
+      || msg.includes('does not exist');
+  }
+  return false;
+}
+
+// Legacy export for backward compatibility
 export const AI_MODEL = process.env.AI_MODEL || 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
 
 function isTransientError(err: unknown): boolean {
@@ -199,30 +277,46 @@ export async function extractDocumentFromBase64(
   const prompt = buildExtractionPrompt(clientName);
   const dataUri = `data:${mimeType};base64,${base64Data}`;
 
-  const result = await retryWithBackoff(
-    () => client.chat.completions.create({
-      model: AI_MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: [
+  const models = selectModels(EXTRACTION_PRIORITIES, true);
+  let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+  let usedModel = models[0];
+
+  for (const modelId of models) {
+    usedModel = modelId;
+    try {
+      result = await retryWithBackoff(
+        () => client.chat.completions.create({
+          model: modelId,
+          messages: [
             {
-              type: 'image_url',
-              image_url: { url: dataUri },
-            },
-            {
-              type: 'text',
-              text: `File name: ${fileName}\n\n${prompt}`,
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: dataUri } },
+                { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
+              ],
             },
           ],
-        },
-      ],
-      max_tokens: 4096,
-    }),
-    `extract:${fileName}`,
-  );
+          max_tokens: 4096,
+        }),
+        `extract:${fileName}`,
+      );
+      break; // success
+    } catch (err) {
+      if (isModelUnavailableError(err)) {
+        markModelUnavailable(modelId);
+        console.warn(`[Extraction:AI] Model ${modelId} unavailable, trying next...`);
+        continue;
+      }
+      throw err; // non-model error, propagate
+    }
+  }
+
+  if (!result) {
+    throw new Error(`[extract:${fileName}] All models unavailable. Tried: ${models.join(', ')}`);
+  }
 
   const usage = extractUsageMetadata(result);
+  usage.model = usedModel;
   const text = result.choices[0]?.message?.content || '';
 
   const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/(\{[\s\S]*\})/);
@@ -298,19 +392,37 @@ export async function categoriseDescription(
     ? `Previously categorised items for this client:\n${existingCategories.slice(0, 20).map(c => `"${c.description}" → ${c.category}`).join('\n')}\n\n`
     : '';
 
-  const result = await retryWithBackoff(
-    () => client.chat.completions.create({
-      model: AI_MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: `${context}What accounting category does this description belong to? Reply with ONLY the category name (2-4 words max, e.g. "Professional Fees", "Insurance", "IT Services", "Travel & Subsistence").\n\nDescription: "${description}"`,
-        },
-      ],
-      max_tokens: 50,
-    }),
-    `categorise:${description.substring(0, 40)}`,
-  );
+  const models = selectModels(CATEGORISATION_PRIORITIES, false);
+  let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+
+  for (const modelId of models) {
+    try {
+      result = await retryWithBackoff(
+        () => client.chat.completions.create({
+          model: modelId,
+          messages: [
+            {
+              role: 'user',
+              content: `${context}What accounting category does this description belong to? Reply with ONLY the category name (2-4 words max, e.g. "Professional Fees", "Insurance", "IT Services", "Travel & Subsistence").\n\nDescription: "${description}"`,
+            },
+          ],
+          max_tokens: 50,
+        }),
+        `categorise:${description.substring(0, 40)}`,
+      );
+      break;
+    } catch (err) {
+      if (isModelUnavailableError(err)) {
+        markModelUnavailable(modelId);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (!result) {
+    throw new Error(`[categorise] All models unavailable. Tried: ${models.join(', ')}`);
+  }
 
   return {
     category: (result.choices[0]?.message?.content || '').trim().replace(/^["']|["']$/g, ''),

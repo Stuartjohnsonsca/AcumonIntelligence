@@ -1,6 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
-import { getTransactions, getAccounts, batchFetchHistories } from '@/lib/xero';
+import { getTransactions, getAccounts, batchFetchHistories, getTaxRates, batchFetchContactGroups } from '@/lib/xero';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
 
@@ -34,13 +34,24 @@ export async function POST(req: Request) {
   });
 
   after(async () => {
+    const updateProgress = (progress: Record<string, unknown>) =>
+      prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: { progress: progress as never },
+      });
+
     try {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
 
-      const [transactions, accounts] = await Promise.all([
+      await updateProgress({ phase: 'fetching', message: 'Fetching transactions from Xero...' });
+
+      const [transactions, accounts, taxRateMap] = await Promise.all([
         getTransactions(clientId, codes, dateFrom, dateTo),
         getAccounts(clientId),
+        getTaxRates(clientId),
       ]);
+
+      await updateProgress({ phase: 'fetching', message: `Fetched ${transactions.length} transactions. Processing...` });
 
       const accountMap = new Map<string, { name: string; description: string }>();
       for (const acc of accounts) {
@@ -68,12 +79,24 @@ export async function POST(req: Request) {
         }
       }
 
-      let historyMap = new Map<string, { createdBy: string; approvedBy: string }>();
-      try {
-        historyMap = await batchFetchHistories(clientId, uniqueTxns);
-      } catch (histErr) {
-        console.warn('History fetch failed (non-fatal):', histErr instanceof Error ? histErr.message : histErr);
-      }
+      await updateProgress({ phase: 'histories', message: `Fetching audit history for ${uniqueTxns.length} transactions...` });
+
+      const uniqueContactIds = [...new Set(
+        transactions.map(t => t.Contact?.ContactID).filter((id): id is string => !!id)
+      )];
+
+      const [historyMap, contactGroupMap] = await Promise.all([
+        batchFetchHistories(clientId, uniqueTxns).catch(err => {
+          console.warn('History fetch failed (non-fatal):', err instanceof Error ? err.message : err);
+          return new Map<string, { createdBy: string; approvedBy: string }>();
+        }),
+        batchFetchContactGroups(clientId, uniqueContactIds).catch(err => {
+          console.warn('Contact group fetch failed (non-fatal):', err instanceof Error ? err.message : err);
+          return new Map<string, string>();
+        }),
+      ]);
+
+      await updateProgress({ phase: 'processing', message: `Building ${transactions.length} rows...` });
 
       const rows = [];
       for (const txn of transactions) {
@@ -85,32 +108,59 @@ export async function POST(req: Request) {
         const hasAttachments = txn.HasAttachments ?? false;
         const audit = historyMap.get(txnId) || { createdBy: '', approvedBy: '' };
 
+        // Payment summary
+        const paymentCount = txn.Payments?.length ?? 0;
+        const paymentTotal = txn.Payments?.reduce((s, p) => s + (p.Amount || 0), 0) ?? 0;
+        const lastPaymentDate = txn.Payments?.length
+          ? normaliseXeroDate(txn.Payments[txn.Payments.length - 1].Date)
+          : '';
+        const creditNoteCount = txn.CreditNotes?.length ?? 0;
+        const creditNoteTotal = txn.CreditNotes?.reduce((s, c) => s + (c.Total || 0), 0) ?? 0;
+
         const baseFields = {
           date: normaliseXeroDate(txn.Date),
           reference: txn.Reference || '',
           contact: txn.Contact?.Name || '',
+          contactGroup: txn.Contact?.ContactID ? (contactGroupMap.get(txn.Contact.ContactID) || '') : '',
           type: txn.Type,
           status: txn.Status || '',
           invoiceNumber: txn.InvoiceNumber || '',
           dueDate: normaliseXeroDate(txn.DueDate),
+          expectedPaymentDate: normaliseXeroDate(txn.ExpectedPaymentDate),
+          fullyPaidOnDate: normaliseXeroDate(txn.FullyPaidOnDate),
           currencyCode: txn.CurrencyCode || '',
+          currencyRate: txn.CurrencyRate ?? null,
+          lineAmountTypes: txn.LineAmountTypes || '',
           isReconciled: txn.IsReconciled ?? null,
+          sentToContact: txn.SentToContact ?? null,
+          bankAccountCode: txn.BankAccount?.Code || '',
           bankAccountName: txn.BankAccount?.Name || '',
           subtotal: txn.SubTotal,
           tax: txn.TotalTax,
           total: txn.Total,
+          amountDue: txn.AmountDue ?? null,
+          amountPaid: txn.AmountPaid ?? null,
+          amountCredited: txn.AmountCredited ?? null,
+          paymentCount,
+          paymentTotal: paymentCount > 0 ? paymentTotal : null,
+          lastPaymentDate,
+          creditNoteCount,
+          creditNoteTotal: creditNoteCount > 0 ? creditNoteTotal : null,
           transactionId: txnId,
           transactionType: txnType,
           hasAttachments,
           createdBy: audit.createdBy,
           approvedBy: audit.approvedBy,
           xeroUrl: txn.Url || '',
+          source: txn.SourceTransactionID || '',
+          processDateTime: normaliseXeroDate(txn.UpdatedDateUTC),
         };
 
         if (txn.LineItems && txn.LineItems.length > 0) {
           for (const li of txn.LineItems) {
             const acct = accountMap.get(li.AccountCode);
             const trackingStr = li.Tracking?.map(t => `${t.Name}: ${t.Option}`).join('; ') || '';
+            const vatRate = li.TaxType ? (taxRateMap.get(li.TaxType) ?? null) : null;
             rows.push({
               ...baseFields,
               description: li.Description || '',
@@ -118,6 +168,12 @@ export async function POST(req: Request) {
               accountName: acct?.name || '',
               lineAmount: li.LineAmount,
               taxAmount: li.TaxAmount,
+              vatRate,
+              taxType: li.TaxType || '',
+              quantity: li.Quantity ?? null,
+              unitAmount: li.UnitAmount ?? null,
+              discountRate: li.DiscountRate ?? null,
+              itemCode: li.ItemCode || '',
               tracking: trackingStr,
             });
           }
@@ -129,6 +185,12 @@ export async function POST(req: Request) {
             accountName: '',
             lineAmount: null,
             taxAmount: null,
+            vatRate: null,
+            taxType: '',
+            quantity: null,
+            unitAmount: null,
+            discountRate: null,
+            itemCode: '',
             tracking: '',
           });
         }
@@ -183,6 +245,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     status: task.status,
     data: task.status === 'completed' ? task.result : undefined,
+    progress: task.status === 'running' ? task.progress : undefined,
     error: task.error,
   });
 }

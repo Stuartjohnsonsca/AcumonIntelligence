@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -24,6 +25,9 @@ interface PreviousJob {
   createdAt: string;
   extractedAt: string | null;
   expiresAt: string | null;
+  accountingSystem?: string | null;
+  orgName?: string | null;
+  user?: { name: string | null };
 }
 
 interface Client {
@@ -101,13 +105,31 @@ const ACCOUNTING_COLUMNS_BASIC = [
   'Net', 'Tax', 'Gross',
 ];
 
-const ACCOUNTING_COLUMNS_FULL = [
-  'Date', 'Reference', 'Contact', 'Type', 'Status',
-  'Description', 'Account Code', 'Account Name',
-  'Net', 'Tax', 'Total',
+// All available accounting columns (order matters for display)
+const ACCOUNTING_COLUMNS_ALL = [
+  'Date', 'Reference', 'Contact', 'Contact Group', 'Type', 'Status',
+  'Description', 'Account Code', 'Account Name', 'Bank Account', 'Bank Account Code',
+  'Item Code', 'Quantity', 'Unit Amount', 'Discount %',
+  'Net', 'Tax', 'VAT Rate', 'Tax Type', 'Total', 'Tracking',
+  'Subtotal', 'Total Tax', 'Grand Total', 'Amount Due', 'Amount Paid', 'Amount Credited',
+  'Currency', 'Currency Rate', 'Line Amount Types',
+  'Payments', 'Payment Total', 'Last Payment Date', 'Credit Notes', 'Credit Note Total',
   'Created By', 'Approved By',
-  'Invoice No', 'Due Date', 'Reconciled',
+  'Invoice No', 'Due Date', 'Expected Payment Date', 'Fully Paid Date',
+  'Reconciled', 'Sent to Contact', 'Source', 'Process Date', 'Xero URL',
 ];
+
+// Default visible columns (common sense subset)
+const ACCOUNTING_COLUMNS_DEFAULT = new Set([
+  'Date', 'Reference', 'Contact', 'Contact Group', 'Type', 'Status',
+  'Description', 'Account Code', 'Account Name', 'Bank Account',
+  'Net', 'Tax', 'VAT Rate', 'Total', 'Tracking',
+  'Created By', 'Approved By',
+  'Invoice No', 'Due Date', 'Reconciled', 'Source', 'Process Date',
+]);
+
+// Legacy alias
+const ACCOUNTING_COLUMNS_FULL = ACCOUNTING_COLUMNS_ALL.filter(c => ACCOUNTING_COLUMNS_DEFAULT.has(c));
 
 const UPLOADED_DOC_COLUMNS_BASE = [
   'Ref', 'Doc Ref', 'Date', 'Due Date', 'Seller', 'Purchaser',
@@ -217,6 +239,7 @@ export function DataExtractionClient({
   userName, firmName, assignedClients, unassignedClients
 }: Props) {
   const { addTask, updateTask } = useBackgroundTasks();
+  const searchParams = useSearchParams();
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showUnassigned, setShowUnassigned] = useState(false);
@@ -241,6 +264,19 @@ export function DataExtractionClient({
 
   // Previous sessions state
   const [previousJobs, setPreviousJobs] = useState<PreviousJob[]>([]);
+  const [hiddenJobIds, setHiddenJobIds] = useState<Set<string>>(new Set());
+  const [allSessionsOpen, setAllSessionsOpen] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set(ACCOUNTING_COLUMNS_DEFAULT));
+  const [columnPickerOpen, setColumnPickerOpen] = useState(false);
+
+  // Document browser state
+  const [docBrowserOpen, setDocBrowserOpen] = useState(false);
+  const [docBrowserFiles, setDocBrowserFiles] = useState<{
+    id: string; originalName: string; mimeType: string | null; fileSize: number | null;
+    status: string; errorMessage: string | null; pageCount: number | null; createdAt: string;
+  }[]>([]);
+  const [docBrowserLoading, setDocBrowserLoading] = useState(false);
+  const [reExtractingIds, setReExtractingIds] = useState<Set<string>>(new Set());
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
 
@@ -293,6 +329,40 @@ export function DataExtractionClient({
   const [xeroLoading, setXeroLoading] = useState(false);
   const [xeroCategory, setXeroCategory] = useState('');
   const [xeroError, setXeroError] = useState('');
+  const [xeroFetching, setXeroFetching] = useState(false);
+  const [xeroFetchProgress, setXeroFetchProgress] = useState<string | null>(null);
+  const xeroFetchAbortRef = useRef(false);
+
+  // Read Xero OAuth result from URL query params (set by callback redirect)
+  useEffect(() => {
+    const xeroErrorParam = searchParams.get('xeroError');
+    const xeroConnectedParam = searchParams.get('xeroConnected');
+    const returnedClientId = searchParams.get('clientId');
+
+    if (xeroErrorParam) {
+      const messages: Record<string, string> = {
+        missing_params: 'Xero authorisation failed: missing required parameters. Please try connecting again.',
+        state_mismatch: 'Xero authorisation failed: security state mismatch. Please try connecting again.',
+        missing_pkce: 'Xero authorisation failed: missing PKCE verification. Please try connecting again.',
+        invalid_state: 'Xero authorisation failed: invalid state token. Please try connecting again.',
+        no_organisation: 'Xero authorisation failed: no organisation found on your Xero account.',
+      };
+      setXeroError(messages[xeroErrorParam] || `Xero authorisation failed: ${xeroErrorParam}`);
+    }
+
+    if (xeroConnectedParam === 'true' && returnedClientId) {
+      // Auto-select the client that was just connected and refresh its status
+      const client = assignedClients.find(c => c.id === returnedClientId)
+        || unassignedClients.find(c => c.id === returnedClientId);
+      if (client) setSelectedClient(client as Client);
+      setXeroConnected(true);
+    }
+
+    // Clean up OAuth params from URL without triggering a navigation
+    if (xeroErrorParam || xeroConnectedParam) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [searchParams]);
 
   // Xero delegated access request state
   const [xeroRequestSending, setXeroRequestSending] = useState(false);
@@ -316,6 +386,47 @@ export function DataExtractionClient({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  // Column resize state
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const resizingRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
+
+  function getDefaultWidth(colName: string): number {
+    if (['Net', 'Tax', 'Total', 'VAT Rate'].includes(colName)) return 80;
+    if (['Date', 'Due Date', 'Process Date'].includes(colName)) return 95;
+    if (['Description', 'Contact'].includes(colName)) return 160;
+    if (['Contact Group', 'Account Name', 'Bank Account'].includes(colName)) return 130;
+    if (['Ref', 'Doc Ref', 'Reference'].includes(colName)) return 100;
+    if (['Reconciled', 'Source'].includes(colName)) return 75;
+    return 100;
+  }
+
+  function handleColumnResizeStart(e: React.MouseEvent, col: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = columnWidths[col] || getDefaultWidth(col);
+    resizingRef.current = { col, startX, startWidth };
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const newWidth = Math.max(40, resizingRef.current.startWidth + (ev.clientX - resizingRef.current.startX));
+      setColumnWidths(prev => ({ ...prev, [resizingRef.current!.col]: newWidth }));
+    };
+
+    const onMouseUp = () => {
+      resizingRef.current = null;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
 
   const filteredAssigned = assignedClients.filter(c =>
     c.clientName.toLowerCase().includes(clientSearch.toLowerCase())
@@ -348,6 +459,12 @@ export function DataExtractionClient({
     if (hasForeignCurrency) cols.push('FX Rate', `Amount (${functionalCurrency})`);
     return cols;
   }, [hasLineItems, hasForeignCurrency, functionalCurrency]);
+
+  // Filtered columns based on column picker visibility
+  const filteredLeftColumns = useMemo(() =>
+    leftPanelColumns.filter(col => visibleColumns.has(col)),
+    [leftPanelColumns, visibleColumns],
+  );
 
   // ─── Audit verification computation ──────────────────────────────────────
 
@@ -603,6 +720,36 @@ export function DataExtractionClient({
     a.download = `extraction-${currentJobId.substring(0, 8)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function openDocBrowser() {
+    if (!currentJobId) return;
+    setDocBrowserOpen(true);
+    setDocBrowserLoading(true);
+    try {
+      const res = await fetch(`/api/extraction/files?jobId=${currentJobId}`);
+      if (res.ok) setDocBrowserFiles(await res.json());
+    } catch { /* non-fatal */ }
+    finally { setDocBrowserLoading(false); }
+  }
+
+  async function handleReExtract(fileIds: string[]) {
+    if (!currentJobId || fileIds.length === 0) return;
+    setReExtractingIds(new Set(fileIds));
+    try {
+      const res = await fetch('/api/extraction/re-extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: currentJobId, fileIds }),
+      });
+      if (res.ok) {
+        // Update local state to show files as re-processing
+        setDocBrowserFiles(prev => prev.map(f =>
+          fileIds.includes(f.id) ? { ...f, status: 'processing', errorMessage: null } : f
+        ));
+      }
+    } catch { /* non-fatal */ }
+    finally { setReExtractingIds(new Set()); }
   }
 
   async function handleExportZip() {
@@ -1208,38 +1355,59 @@ export function DataExtractionClient({
   }
 
   function loadAccountingSystemData(data: { rows: Array<Record<string, unknown>> }) {
-    const cols = ACCOUNTING_COLUMNS_FULL;
+    const cols = ACCOUNTING_COLUMNS_ALL;
     const rows: SpreadsheetRow[] = [];
     const meta: { id: string; type: string; hasAttachments: boolean }[] = [];
     for (const txn of data.rows) {
-      const t = txn as {
-        date?: string; reference?: string; contact?: string; type?: string;
-        status?: string; description?: string; accountCode?: string; accountName?: string;
-        lineAmount?: number | null; taxAmount?: number | null;
-        subtotal?: number; tax?: number; total?: number;
-        transactionId?: string; transactionType?: string; hasAttachments?: boolean;
-        createdBy?: string; approvedBy?: string;
-        invoiceNumber?: string; dueDate?: string;
-        isReconciled?: boolean | null; bankAccountName?: string;
-        tracking?: string; xeroUrl?: string;
-      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = txn as Record<string, any>;
       rows.push({
         'Date': parseXeroDate(t.date),
         'Reference': t.reference || '',
         'Contact': t.contact || '',
+        'Contact Group': t.contactGroup || '',
         'Type': t.type || '',
         'Status': t.status || '',
         'Description': t.description || '',
         'Account Code': t.accountCode || '',
         'Account Name': t.accountName || '',
+        'Bank Account': t.bankAccountName || '',
+        'Bank Account Code': t.bankAccountCode || '',
+        'Item Code': t.itemCode || '',
+        'Quantity': t.quantity != null ? String(t.quantity) : '',
+        'Unit Amount': t.unitAmount != null ? String(t.unitAmount) : '',
+        'Discount %': t.discountRate != null ? `${t.discountRate}%` : '',
         'Net': t.lineAmount != null ? String(t.lineAmount) : String(t.subtotal ?? ''),
         'Tax': t.taxAmount != null ? String(t.taxAmount) : String(t.tax ?? ''),
+        'VAT Rate': t.vatRate != null ? `${t.vatRate}%` : '',
+        'Tax Type': t.taxType || '',
         'Total': t.lineAmount != null && t.taxAmount != null ? String(t.lineAmount + t.taxAmount) : String(t.total ?? ''),
+        'Tracking': t.tracking || '',
+        'Subtotal': t.subtotal != null ? String(t.subtotal) : '',
+        'Total Tax': t.tax != null ? String(t.tax) : '',
+        'Grand Total': t.total != null ? String(t.total) : '',
+        'Amount Due': t.amountDue != null ? String(t.amountDue) : '',
+        'Amount Paid': t.amountPaid != null ? String(t.amountPaid) : '',
+        'Amount Credited': t.amountCredited != null ? String(t.amountCredited) : '',
+        'Currency': t.currencyCode || '',
+        'Currency Rate': t.currencyRate != null ? String(t.currencyRate) : '',
+        'Line Amount Types': t.lineAmountTypes || '',
+        'Payments': t.paymentCount != null && t.paymentCount > 0 ? String(t.paymentCount) : '',
+        'Payment Total': t.paymentTotal != null ? String(t.paymentTotal) : '',
+        'Last Payment Date': parseXeroDate(t.lastPaymentDate),
+        'Credit Notes': t.creditNoteCount != null && t.creditNoteCount > 0 ? String(t.creditNoteCount) : '',
+        'Credit Note Total': t.creditNoteTotal != null ? String(t.creditNoteTotal) : '',
         'Created By': t.createdBy || '',
         'Approved By': t.approvedBy || '',
         'Invoice No': t.invoiceNumber || '',
         'Due Date': parseXeroDate(t.dueDate),
+        'Expected Payment Date': parseXeroDate(t.expectedPaymentDate),
+        'Fully Paid Date': parseXeroDate(t.fullyPaidOnDate),
         'Reconciled': t.isReconciled != null ? (t.isReconciled ? 'Yes' : 'No') : '',
+        'Sent to Contact': t.sentToContact != null ? (t.sentToContact ? 'Yes' : 'No') : '',
+        'Source': t.source || '',
+        'Process Date': parseXeroDate(t.processDateTime),
+        'Xero URL': t.xeroUrl || '',
       });
       meta.push({
         id: t.transactionId || '',
@@ -1258,9 +1426,13 @@ export function DataExtractionClient({
 
   async function handleXeroFetchData() {
     if (!selectedClient) return;
+    if (xeroFetching) return; // prevent duplicate fetches
     if (!xeroDateFrom || !xeroDateTo) { setXeroError('Please select both from and to dates'); return; }
     setXeroError('');
     setXeroShowModal(false);
+    setXeroFetching(true);
+    setXeroFetchProgress('Starting...');
+    xeroFetchAbortRef.current = false;
 
     const taskId = `xero-${selectedClient.id}-${Date.now()}`;
     const clientName = selectedClient.clientName;
@@ -1295,9 +1467,19 @@ export function DataExtractionClient({
         const maxPolls = 120;
         for (let i = 0; i < maxPolls; i++) {
           await new Promise(r => setTimeout(r, 3000));
+          if (xeroFetchAbortRef.current) {
+            updateTask(taskId, { status: 'error', error: 'Cancelled by user', completedAt: Date.now() });
+            setXeroFetching(false);
+            setXeroFetchProgress(null);
+            return;
+          }
           try {
             const statusRes = await fetch(`/api/accounting/xero/fetch-background?taskId=${serverTaskId}`);
             const statusData = await statusRes.json();
+
+            if (statusData.progress?.message) {
+              setXeroFetchProgress(statusData.progress.message);
+            }
 
             if (statusData.status === 'completed') {
               updateTask(taskId, {
@@ -1308,6 +1490,8 @@ export function DataExtractionClient({
               if (selectedClient?.id === clientId_at_start) {
                 loadAccountingSystemData(statusData.data);
               }
+              setXeroFetching(false);
+              setXeroFetchProgress(null);
               return;
             }
 
@@ -1317,6 +1501,8 @@ export function DataExtractionClient({
                 error: statusData.error || 'Unknown error',
                 completedAt: Date.now(),
               });
+              setXeroFetching(false);
+              setXeroFetchProgress(null);
               return;
             }
           } catch {
@@ -1324,6 +1510,8 @@ export function DataExtractionClient({
           }
         }
         updateTask(taskId, { status: 'error', error: 'Timed out waiting for data', completedAt: Date.now() });
+        setXeroFetching(false);
+        setXeroFetchProgress(null);
       };
 
       const clientId_at_start = selectedClient.id;
@@ -1335,7 +1523,13 @@ export function DataExtractionClient({
         error: err instanceof Error ? err.message : 'Failed to start fetch',
         completedAt: Date.now(),
       });
+      setXeroFetching(false);
+      setXeroFetchProgress(null);
     }
+  }
+
+  function handleCancelXeroFetch() {
+    xeroFetchAbortRef.current = true;
   }
 
   // ─── Extract Xero attachments ───────────────────────────────────────────
@@ -1515,7 +1709,7 @@ export function DataExtractionClient({
     setProgress(null);
   }
 
-  const isAnythingRunning = extractingAttachments || processing || uploading || xeroLoading;
+  const isAnythingRunning = extractingAttachments || processing || uploading || xeroLoading || xeroFetching;
 
   // ─── Client selection screen ──────────────────────────────────────────
 
@@ -1782,11 +1976,33 @@ export function DataExtractionClient({
                   <Upload className="h-4 w-4 mr-2" />Upload Spreadsheet (.xlsx / .csv)
                 </Button>
                 <Button className="w-full justify-start" variant="outline" onClick={handleXeroButtonClick}
-                  disabled={xeroLoading || xeroRequestSending}>
+                  disabled={xeroLoading || xeroRequestSending || xeroFetching}>
                   {xeroLoading || xeroRequestSending
                     ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />{xeroRequestSending ? 'Sending request...' : 'Connecting...'}</>
                     : <><Link2 className="h-4 w-4 mr-2" />{xeroConnected ? 'Fetch from' : 'Connect to'} {selectedClient.software || 'Accounting System'}</>}
                 </Button>
+                {xeroFetching && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 -mt-1 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
+                        <span className="text-sm text-blue-800 font-medium">Fetching data...</span>
+                      </div>
+                      <button
+                        onClick={handleCancelXeroFetch}
+                        className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    {xeroFetchProgress && (
+                      <p className="text-xs text-blue-600">{xeroFetchProgress}</p>
+                    )}
+                    <div className="h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '100%' }} />
+                    </div>
+                  </div>
+                )}
                 {xeroConnected && xeroOrgName && (
                   <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-2 -mt-1">
                     <div className="flex items-center gap-2">
@@ -1891,6 +2107,41 @@ export function DataExtractionClient({
                       <RefreshCw className="h-3 w-3 mr-1" />Re-match
                     </Button>
                   )}
+                  {/* Column picker toggle */}
+                  {leftPanelFromAccounting && (
+                    <div className="relative">
+                      <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setColumnPickerOpen(!columnPickerOpen)}>
+                        <Table className="h-3 w-3 mr-1" />Columns ({filteredLeftColumns.length}/{leftPanelColumns.length})
+                      </Button>
+                      {columnPickerOpen && (
+                        <div className="absolute right-0 top-full mt-1 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg z-30 p-2">
+                          <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
+                            <span className="text-xs font-semibold text-slate-700">Show/Hide Columns</span>
+                            <div className="flex gap-1">
+                              <button className="text-[10px] text-blue-600 hover:underline" onClick={() => setVisibleColumns(new Set(ACCOUNTING_COLUMNS_ALL))}>All</button>
+                              <span className="text-slate-300">|</span>
+                              <button className="text-[10px] text-blue-600 hover:underline" onClick={() => setVisibleColumns(new Set(ACCOUNTING_COLUMNS_DEFAULT))}>Default</button>
+                              <span className="text-slate-300">|</span>
+                              <button className="text-[10px] text-slate-400 hover:underline" onClick={() => setColumnPickerOpen(false)}>Close</button>
+                            </div>
+                          </div>
+                          {ACCOUNTING_COLUMNS_ALL.map(col => (
+                            <label key={col} className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50 rounded cursor-pointer">
+                              <input type="checkbox" className="h-3 w-3 rounded border-slate-300"
+                                checked={visibleColumns.has(col)}
+                                onChange={() => setVisibleColumns(prev => {
+                                  const next = new Set(prev);
+                                  next.has(col) ? next.delete(col) : next.add(col);
+                                  return next;
+                                })} />
+                              <span className="text-xs text-slate-700">{col}</span>
+                              {ACCOUNTING_COLUMNS_DEFAULT.has(col) && <span className="text-[9px] text-slate-400 ml-auto">default</span>}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <Button size="sm" variant="ghost" className="h-7"
                     onClick={() => { setLeftPanelMode('idle'); setLeftPanelData([]); setLeftPanelFileName(null); setLeftPanelFromAccounting(false); setRowMatches(new Map()); setSampledRows(new Set()); setSelectedRows(new Set()); }}>
                     <X className="h-3 w-3 mr-1" />Clear
@@ -1899,14 +2150,14 @@ export function DataExtractionClient({
               </div>
 
               {/* Unified spreadsheet — contained scroll area */}
-              <div className="flex-1 overflow-auto min-h-0">
-                <table className="text-[11px] border-collapse" onPaste={handlePaste}>
+              <div className="flex-1 overflow-y-auto overflow-x-scroll min-h-0">
+                <table className="text-[11px] border-collapse" style={{ tableLayout: 'fixed' }} onPaste={handlePaste}>
                   <thead className="sticky top-0 z-20">
                     {/* Row 1: merged group headers */}
                     <tr className="bg-slate-100">
                       <th className="w-7 border-b border-slate-300" rowSpan={2}></th>
                       <th className="w-7 border-b border-slate-300" rowSpan={2}>#</th>
-                      <th colSpan={leftPanelColumns.length}
+                      <th colSpan={filteredLeftColumns.length}
                         className="px-2 py-1.5 text-center font-bold text-slate-700 bg-blue-50 border-b border-slate-300 border-r border-blue-200">
                         From: {leftPanelFileName || selectedClient.software || 'Data'}
                       </th>
@@ -1923,19 +2174,31 @@ export function DataExtractionClient({
                     </tr>
                     {/* Row 2: individual column headers */}
                     <tr className="bg-slate-50">
-                      {leftPanelColumns.map(col => (
-                        <th key={`ac-${col}`} className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100">
+                      {filteredLeftColumns.map(col => (
+                        <th key={`ac-${col}`}
+                          style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
+                          className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 relative overflow-hidden text-ellipsis">
                           {col}
+                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                            onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
                       {uploadedDocColumns.map(col => (
-                        <th key={`ud-${col}`} className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-green-50/30">
+                        <th key={`ud-${col}`}
+                          style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
+                          className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-green-50/30 relative overflow-hidden text-ellipsis">
                           {col}
+                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                            onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
                       {AUDIT_VERIFY_COLUMNS.map(col => (
-                        <th key={`av-${col}`} className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-amber-50/30">
+                        <th key={`av-${col}`}
+                          style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
+                          className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-amber-50/30 relative overflow-hidden text-ellipsis">
                           {col}
+                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                            onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
                     </tr>
@@ -1964,12 +2227,14 @@ export function DataExtractionClient({
                             {ri + 1}
                           </td>
 
-                          {/* Accounting columns — editable */}
-                          {leftPanelColumns.map((col, ci) => (
-                            <td key={`ac-${col}`} className={`px-0 py-0 border-r border-slate-50 ${leftCellBg}`}>
+                          {/* Accounting columns — editable, filtered by column picker */}
+                          {filteredLeftColumns.map((col, ci) => (
+                            <td key={`ac-${col}`}
+                              style={{ width: columnWidths[col] || getDefaultWidth(col) }}
+                              className={`px-0 py-0 border-r border-slate-50 overflow-hidden ${leftCellBg}`}>
                               <input type="text" value={row[col] || ''} onChange={e => handleCellEdit(ri, col, e.target.value)}
                                 data-row={ri} data-col={ci}
-                                className={`w-full px-1.5 py-0.5 text-[11px] border-0 focus:bg-white focus:ring-1 focus:ring-blue-300 outline-none ${isSampled ? 'bg-blue-50' : 'bg-transparent'}`} />
+                                className={`w-full px-1.5 py-0.5 text-[11px] border-0 focus:bg-white focus:ring-1 focus:ring-blue-300 outline-none truncate ${isSampled ? 'bg-blue-50' : 'bg-transparent'}`} />
                             </td>
                           ))}
 
@@ -2097,41 +2362,111 @@ export function DataExtractionClient({
                 )}
               </div>
 
-              {/* Session tabs — pinned at bottom of left panel */}
-              {previousJobs.length > 0 && (
-                <div className="flex-shrink-0 border-t border-slate-200 bg-slate-50">
-                  <div className="flex items-center overflow-x-auto scrollbar-thin">
-                    {previousJobs.map(job => {
-                      const isActive = currentJobId === job.id;
-                      const isExpired = job.status === 'expired';
-                      const dateStr = (job.extractedAt ? new Date(job.extractedAt) : new Date(job.createdAt))
-                        .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-                      return (
-                        <button
-                          key={job.id}
-                          onClick={() => !isActive && !isExpired && loadSession(job.id)}
-                          disabled={!!loadingSession || isExpired}
-                          className={`flex-shrink-0 px-3 py-1.5 text-[10px] border-r border-slate-200 flex items-center gap-1.5 transition-colors whitespace-nowrap ${
-                            isActive
-                              ? 'bg-white text-blue-700 font-semibold border-t-2 border-t-blue-500'
-                              : isExpired
-                                ? 'text-slate-400 bg-slate-100 cursor-not-allowed'
-                                : 'text-slate-600 hover:bg-white hover:text-blue-600 border-t-2 border-t-transparent'
-                          }`}
-                          title={`${job.processedCount} extracted${job.failedCount > 0 ? `, ${job.failedCount} failed` : ''}${isExpired ? ' (expired)' : ''}`}
-                        >
-                          {loadingSession === job.id
-                            ? <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                            : <History className="h-2.5 w-2.5" />}
-                          <span>{dateStr}</span>
-                          <span className="text-[8px] text-slate-400">({job.processedCount})</span>
-                          {isExpired && <span className="text-[8px] text-red-400">expired</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
+              {/* Session tabs — always pinned at bottom of left panel */}
+              <div className="flex-shrink-0 border-t-2 border-slate-300 bg-slate-50 min-h-[38px] relative">
+                <div className="flex items-center overflow-x-auto scrollbar-thin">
+                  {/* All Sessions button */}
+                  <button
+                    onClick={() => setAllSessionsOpen(!allSessionsOpen)}
+                    className="flex-shrink-0 px-3 py-2 text-xs border-r border-slate-200 flex items-center gap-1.5 text-slate-500 hover:bg-white hover:text-blue-600 transition-colors"
+                    title="Show all sessions"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                  </button>
+                  {previousJobs.filter(j => !hiddenJobIds.has(j.id)).map(job => {
+                    const isActive = currentJobId === job.id;
+                    const isExpired = job.status === 'expired';
+                    const dateStr = (job.extractedAt ? new Date(job.extractedAt) : new Date(job.createdAt))
+                      .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                    const visibleJobs = previousJobs.filter(j => !hiddenJobIds.has(j.id));
+                    const tooltipParts = [
+                      job.user?.name && `User: ${job.user.name}`,
+                      job.orgName && `Org: ${job.orgName}`,
+                      `${job.processedCount} extracted`,
+                      job.failedCount > 0 && `${job.failedCount} failed`,
+                      job.expiresAt && `Expires: ${new Date(job.expiresAt).toLocaleDateString('en-GB')}`,
+                      isExpired && '(expired)',
+                    ].filter(Boolean).join(' | ');
+                    return (
+                      <button
+                        key={job.id}
+                        onClick={() => !isActive && !isExpired && loadSession(job.id)}
+                        disabled={!!loadingSession || isExpired}
+                        style={{
+                          flex: visibleJobs.length <= 6 ? '1 1 0%' : '0 0 auto',
+                          minWidth: visibleJobs.length <= 6 ? 0 : 'auto',
+                        }}
+                        className={`px-4 py-2 text-xs border-r border-slate-200 flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap truncate group ${
+                          isActive
+                            ? 'bg-white text-blue-700 font-semibold border-t-2 border-t-blue-500'
+                            : isExpired
+                              ? 'text-slate-400 bg-slate-100 cursor-not-allowed border-t-2 border-t-transparent'
+                              : 'text-slate-600 hover:bg-white hover:text-blue-600 border-t-2 border-t-transparent'
+                        }`}
+                        title={tooltipParts}
+                      >
+                        {loadingSession === job.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <History className="h-3 w-3" />}
+                        <span>{dateStr}</span>
+                        <span className="text-[9px] text-slate-400">({job.processedCount})</span>
+                        {isExpired && <span className="text-[9px] text-red-400">expired</span>}
+                        {!isActive && (
+                          <span
+                            onClick={e => { e.stopPropagation(); setHiddenJobIds(prev => new Set([...prev, job.id])); }}
+                            className="ml-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity cursor-pointer"
+                            title="Close tab"
+                          >
+                            <X className="h-3 w-3" />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+                {/* All Sessions dropdown */}
+                {allSessionsOpen && (
+                  <div className="absolute bottom-full left-0 w-80 max-h-60 overflow-y-auto bg-white border border-slate-200 rounded-t-lg shadow-lg z-30">
+                    <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-700">All Sessions</span>
+                      <button onClick={() => setAllSessionsOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {previousJobs.length === 0 ? (
+                      <div className="px-3 py-4 text-xs text-slate-400 text-center">No previous sessions</div>
+                    ) : (
+                      previousJobs.map(job => {
+                        const dateStr = (job.extractedAt ? new Date(job.extractedAt) : new Date(job.createdAt))
+                          .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        const isActive = currentJobId === job.id;
+                        const isHidden = hiddenJobIds.has(job.id);
+                        return (
+                          <button
+                            key={job.id}
+                            onClick={() => {
+                              if (isHidden) setHiddenJobIds(prev => { const next = new Set(prev); next.delete(job.id); return next; });
+                              if (!isActive && job.status !== 'expired') loadSession(job.id);
+                              setAllSessionsOpen(false);
+                            }}
+                            className={`w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-blue-50 border-b border-slate-50 ${
+                              isActive ? 'bg-blue-50 font-semibold' : ''
+                            }`}
+                          >
+                            <History className="h-3 w-3 flex-shrink-0 text-slate-400" />
+                            <div className="flex-1 min-w-0">
+                              <div className="truncate">{dateStr} — {job.user?.name || 'Unknown'}</div>
+                              <div className="text-[10px] text-slate-400">{job.orgName || 'Manual'} · {job.processedCount} files{job.failedCount > 0 ? ` · ${job.failedCount} failed` : ''}</div>
+                            </div>
+                            {isActive && <span className="text-[9px] text-blue-500 font-medium">Active</span>}
+                            {job.status === 'expired' && <span className="text-[9px] text-red-400">Expired</span>}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -2200,6 +2535,11 @@ export function DataExtractionClient({
                   {txnMetadata.filter((m, i, a) => a.findIndex(x => x.id === m.id) === i).length} transactions have attachments
                   {extractedTxnIds.size > 0 && <span className="text-green-600"> · {extractedTxnIds.size} processed</span>}
                 </p>
+              )}
+              {currentJobId && (
+                <Button className="w-full text-xs h-8" variant="outline" onClick={openDocBrowser}>
+                  <FileText className="mr-1.5 h-3.5 w-3.5" />View Downloaded Documents
+                </Button>
               )}
             </div>
           )}
@@ -2273,8 +2613,10 @@ export function DataExtractionClient({
                     : <><RefreshCw className="mr-1 h-3 w-3" />Upload & Extract</>}
               </Button>
               {selectedClient.software && (
-                <Button className="w-full text-xs h-8" variant="outline" disabled={uploading || processing} onClick={handleXeroButtonClick}>
-                  <Database className="mr-1 h-3 w-3" />Extract from {selectedClient.software}
+                <Button className="w-full text-xs h-8" variant="outline" disabled={uploading || processing || xeroFetching} onClick={handleXeroButtonClick}>
+                  {xeroFetching
+                    ? <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Fetching from {selectedClient.software}...</>
+                    : <><Database className="mr-1 h-3 w-3" />Extract from {selectedClient.software}</>}
                 </Button>
               )}
             </div>
@@ -2459,6 +2801,101 @@ export function DataExtractionClient({
           extractedValues={viewerExtractedValues}
           onClose={() => setViewerOpen(false)}
         />
+      )}
+
+      {/* Document Browser Modal */}
+      {docBrowserOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-800">Downloaded Documents</h2>
+              <div className="flex items-center gap-2">
+                {docBrowserFiles.some(f => f.status === 'failed') && (
+                  <Button size="sm" variant="outline" className="text-xs"
+                    disabled={reExtractingIds.size > 0}
+                    onClick={() => handleReExtract(docBrowserFiles.filter(f => f.status === 'failed').map(f => f.id))}>
+                    <RefreshCw className={`h-3 w-3 mr-1 ${reExtractingIds.size > 0 ? 'animate-spin' : ''}`} />
+                    Re-extract All Failed ({docBrowserFiles.filter(f => f.status === 'failed').length})
+                  </Button>
+                )}
+                <button onClick={() => setDocBrowserOpen(false)} className="text-slate-400 hover:text-slate-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {docBrowserLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                </div>
+              ) : docBrowserFiles.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No documents found for this job.</p>
+              ) : (
+                <div className="space-y-1">
+                  {docBrowserFiles.map(file => (
+                    <div key={file.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm ${
+                      file.status === 'extracted' ? 'border-green-100 bg-green-50/50'
+                        : file.status === 'failed' ? 'border-red-100 bg-red-50/50'
+                          : file.status === 'processing' ? 'border-blue-100 bg-blue-50/50'
+                            : 'border-slate-100'
+                    }`}>
+                      <FileText className={`h-4 w-4 flex-shrink-0 ${
+                        file.status === 'extracted' ? 'text-green-600'
+                          : file.status === 'failed' ? 'text-red-500'
+                            : 'text-slate-400'
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate font-medium text-slate-800">{file.originalName}</p>
+                        <p className="text-[10px] text-slate-400">
+                          {file.fileSize ? `${(file.fileSize / 1024).toFixed(0)} KB` : ''}
+                          {file.pageCount ? ` · ${file.pageCount} page${file.pageCount > 1 ? 's' : ''}` : ''}
+                          {file.errorMessage && <span className="text-red-500 ml-1">· {file.errorMessage}</span>}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {file.status === 'extracted' && (
+                          <button onClick={() => { setViewerFileId(file.id); setViewerActiveField(null); setViewerFieldLocations({}); setViewerExtractedValues({}); setViewerOpen(true); setDocBrowserOpen(false); }}
+                            className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50">
+                            <Eye className="h-3 w-3 inline mr-0.5" />View
+                          </button>
+                        )}
+                        {file.status === 'failed' && (
+                          <button onClick={() => handleReExtract([file.id])}
+                            disabled={reExtractingIds.has(file.id)}
+                            className="text-xs text-orange-600 hover:text-orange-800 px-2 py-1 rounded hover:bg-orange-50 disabled:opacity-50">
+                            <RefreshCw className={`h-3 w-3 inline mr-0.5 ${reExtractingIds.has(file.id) ? 'animate-spin' : ''}`} />
+                            Re-extract
+                          </button>
+                        )}
+                        {file.status === 'processing' && (
+                          <span className="text-xs text-blue-500 flex items-center gap-1">
+                            <Loader2 className="h-3 w-3 animate-spin" />Processing
+                          </span>
+                        )}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                          file.status === 'extracted' ? 'bg-green-100 text-green-700'
+                            : file.status === 'failed' ? 'bg-red-100 text-red-700'
+                              : file.status === 'processing' ? 'bg-blue-100 text-blue-700'
+                                : file.status === 'multi-line' ? 'bg-purple-100 text-purple-700'
+                                  : 'bg-slate-100 text-slate-600'
+                        }`}>{file.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+              <span>
+                {docBrowserFiles.filter(f => f.status === 'extracted').length} extracted ·{' '}
+                {docBrowserFiles.filter(f => f.status === 'failed').length} failed ·{' '}
+                {docBrowserFiles.filter(f => f.status === 'multi-line').length} duplicates ·{' '}
+                {docBrowserFiles.length} total
+              </span>
+              <Button size="sm" variant="outline" onClick={() => setDocBrowserOpen(false)}>Close</Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
