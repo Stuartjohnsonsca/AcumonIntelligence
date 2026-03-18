@@ -34,13 +34,23 @@ export async function POST(req: Request) {
   });
 
   after(async () => {
+    const updateProgress = (progress: Record<string, unknown>) =>
+      prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: { progress: progress as never },
+      });
+
     try {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
+
+      await updateProgress({ phase: 'fetching', message: 'Fetching transactions from Xero...' });
 
       const [transactions, accounts] = await Promise.all([
         getTransactions(clientId, codes, dateFrom, dateTo),
         getAccounts(clientId),
       ]);
+
+      await updateProgress({ phase: 'fetching', message: `Fetched ${transactions.length} transactions. Processing...` });
 
       const accountMap = new Map<string, { name: string; description: string }>();
       for (const acc of accounts) {
@@ -68,12 +78,16 @@ export async function POST(req: Request) {
         }
       }
 
+      await updateProgress({ phase: 'histories', message: `Fetching audit history for ${uniqueTxns.length} transactions...` });
+
       let historyMap = new Map<string, { createdBy: string; approvedBy: string }>();
       try {
         historyMap = await batchFetchHistories(clientId, uniqueTxns);
       } catch (histErr) {
         console.warn('History fetch failed (non-fatal):', histErr instanceof Error ? histErr.message : histErr);
       }
+
+      await updateProgress({ phase: 'processing', message: `Building ${transactions.length} rows...` });
 
       const rows = [];
       for (const txn of transactions) {
@@ -183,6 +197,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     status: task.status,
     data: task.status === 'completed' ? task.result : undefined,
+    progress: task.status === 'running' ? task.progress : undefined,
     error: task.error,
   });
 }

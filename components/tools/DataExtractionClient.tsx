@@ -295,6 +295,9 @@ export function DataExtractionClient({
   const [xeroLoading, setXeroLoading] = useState(false);
   const [xeroCategory, setXeroCategory] = useState('');
   const [xeroError, setXeroError] = useState('');
+  const [xeroFetching, setXeroFetching] = useState(false);
+  const [xeroFetchProgress, setXeroFetchProgress] = useState<string | null>(null);
+  const xeroFetchAbortRef = useRef(false);
 
   // Read Xero OAuth result from URL query params (set by callback redirect)
   useEffect(() => {
@@ -1291,9 +1294,13 @@ export function DataExtractionClient({
 
   async function handleXeroFetchData() {
     if (!selectedClient) return;
+    if (xeroFetching) return; // prevent duplicate fetches
     if (!xeroDateFrom || !xeroDateTo) { setXeroError('Please select both from and to dates'); return; }
     setXeroError('');
     setXeroShowModal(false);
+    setXeroFetching(true);
+    setXeroFetchProgress('Starting...');
+    xeroFetchAbortRef.current = false;
 
     const taskId = `xero-${selectedClient.id}-${Date.now()}`;
     const clientName = selectedClient.clientName;
@@ -1328,9 +1335,19 @@ export function DataExtractionClient({
         const maxPolls = 120;
         for (let i = 0; i < maxPolls; i++) {
           await new Promise(r => setTimeout(r, 3000));
+          if (xeroFetchAbortRef.current) {
+            updateTask(taskId, { status: 'error', error: 'Cancelled by user', completedAt: Date.now() });
+            setXeroFetching(false);
+            setXeroFetchProgress(null);
+            return;
+          }
           try {
             const statusRes = await fetch(`/api/accounting/xero/fetch-background?taskId=${serverTaskId}`);
             const statusData = await statusRes.json();
+
+            if (statusData.progress?.message) {
+              setXeroFetchProgress(statusData.progress.message);
+            }
 
             if (statusData.status === 'completed') {
               updateTask(taskId, {
@@ -1341,6 +1358,8 @@ export function DataExtractionClient({
               if (selectedClient?.id === clientId_at_start) {
                 loadAccountingSystemData(statusData.data);
               }
+              setXeroFetching(false);
+              setXeroFetchProgress(null);
               return;
             }
 
@@ -1350,6 +1369,8 @@ export function DataExtractionClient({
                 error: statusData.error || 'Unknown error',
                 completedAt: Date.now(),
               });
+              setXeroFetching(false);
+              setXeroFetchProgress(null);
               return;
             }
           } catch {
@@ -1357,6 +1378,8 @@ export function DataExtractionClient({
           }
         }
         updateTask(taskId, { status: 'error', error: 'Timed out waiting for data', completedAt: Date.now() });
+        setXeroFetching(false);
+        setXeroFetchProgress(null);
       };
 
       const clientId_at_start = selectedClient.id;
@@ -1368,7 +1391,13 @@ export function DataExtractionClient({
         error: err instanceof Error ? err.message : 'Failed to start fetch',
         completedAt: Date.now(),
       });
+      setXeroFetching(false);
+      setXeroFetchProgress(null);
     }
+  }
+
+  function handleCancelXeroFetch() {
+    xeroFetchAbortRef.current = true;
   }
 
   // ─── Extract Xero attachments ───────────────────────────────────────────
@@ -1548,7 +1577,7 @@ export function DataExtractionClient({
     setProgress(null);
   }
 
-  const isAnythingRunning = extractingAttachments || processing || uploading || xeroLoading;
+  const isAnythingRunning = extractingAttachments || processing || uploading || xeroLoading || xeroFetching;
 
   // ─── Client selection screen ──────────────────────────────────────────
 
@@ -1815,11 +1844,33 @@ export function DataExtractionClient({
                   <Upload className="h-4 w-4 mr-2" />Upload Spreadsheet (.xlsx / .csv)
                 </Button>
                 <Button className="w-full justify-start" variant="outline" onClick={handleXeroButtonClick}
-                  disabled={xeroLoading || xeroRequestSending}>
+                  disabled={xeroLoading || xeroRequestSending || xeroFetching}>
                   {xeroLoading || xeroRequestSending
                     ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />{xeroRequestSending ? 'Sending request...' : 'Connecting...'}</>
                     : <><Link2 className="h-4 w-4 mr-2" />{xeroConnected ? 'Fetch from' : 'Connect to'} {selectedClient.software || 'Accounting System'}</>}
                 </Button>
+                {xeroFetching && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 -mt-1 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
+                        <span className="text-sm text-blue-800 font-medium">Fetching data...</span>
+                      </div>
+                      <button
+                        onClick={handleCancelXeroFetch}
+                        className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    {xeroFetchProgress && (
+                      <p className="text-xs text-blue-600">{xeroFetchProgress}</p>
+                    )}
+                    <div className="h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '100%' }} />
+                    </div>
+                  </div>
+                )}
                 {xeroConnected && xeroOrgName && (
                   <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-2 -mt-1">
                     <div className="flex items-center gap-2">
@@ -2306,8 +2357,10 @@ export function DataExtractionClient({
                     : <><RefreshCw className="mr-1 h-3 w-3" />Upload & Extract</>}
               </Button>
               {selectedClient.software && (
-                <Button className="w-full text-xs h-8" variant="outline" disabled={uploading || processing} onClick={handleXeroButtonClick}>
-                  <Database className="mr-1 h-3 w-3" />Extract from {selectedClient.software}
+                <Button className="w-full text-xs h-8" variant="outline" disabled={uploading || processing || xeroFetching} onClick={handleXeroButtonClick}>
+                  {xeroFetching
+                    ? <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Fetching from {selectedClient.software}...</>
+                    : <><Database className="mr-1 h-3 w-3" />Extract from {selectedClient.software}</>}
                 </Button>
               )}
             </div>
