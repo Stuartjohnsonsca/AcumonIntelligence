@@ -268,6 +268,15 @@ export function DataExtractionClient({
   const [allSessionsOpen, setAllSessionsOpen] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set(ACCOUNTING_COLUMNS_DEFAULT));
   const [columnPickerOpen, setColumnPickerOpen] = useState(false);
+
+  // Document browser state
+  const [docBrowserOpen, setDocBrowserOpen] = useState(false);
+  const [docBrowserFiles, setDocBrowserFiles] = useState<{
+    id: string; originalName: string; mimeType: string | null; fileSize: number | null;
+    status: string; errorMessage: string | null; pageCount: number | null; createdAt: string;
+  }[]>([]);
+  const [docBrowserLoading, setDocBrowserLoading] = useState(false);
+  const [reExtractingIds, setReExtractingIds] = useState<Set<string>>(new Set());
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
 
@@ -711,6 +720,36 @@ export function DataExtractionClient({
     a.download = `extraction-${currentJobId.substring(0, 8)}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function openDocBrowser() {
+    if (!currentJobId) return;
+    setDocBrowserOpen(true);
+    setDocBrowserLoading(true);
+    try {
+      const res = await fetch(`/api/extraction/files?jobId=${currentJobId}`);
+      if (res.ok) setDocBrowserFiles(await res.json());
+    } catch { /* non-fatal */ }
+    finally { setDocBrowserLoading(false); }
+  }
+
+  async function handleReExtract(fileIds: string[]) {
+    if (!currentJobId || fileIds.length === 0) return;
+    setReExtractingIds(new Set(fileIds));
+    try {
+      const res = await fetch('/api/extraction/re-extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: currentJobId, fileIds }),
+      });
+      if (res.ok) {
+        // Update local state to show files as re-processing
+        setDocBrowserFiles(prev => prev.map(f =>
+          fileIds.includes(f.id) ? { ...f, status: 'processing', errorMessage: null } : f
+        ));
+      }
+    } catch { /* non-fatal */ }
+    finally { setReExtractingIds(new Set()); }
   }
 
   async function handleExportZip() {
@@ -2497,6 +2536,11 @@ export function DataExtractionClient({
                   {extractedTxnIds.size > 0 && <span className="text-green-600"> · {extractedTxnIds.size} processed</span>}
                 </p>
               )}
+              {currentJobId && (
+                <Button className="w-full text-xs h-8" variant="outline" onClick={openDocBrowser}>
+                  <FileText className="mr-1.5 h-3.5 w-3.5" />View Downloaded Documents
+                </Button>
+              )}
             </div>
           )}
 
@@ -2757,6 +2801,101 @@ export function DataExtractionClient({
           extractedValues={viewerExtractedValues}
           onClose={() => setViewerOpen(false)}
         />
+      )}
+
+      {/* Document Browser Modal */}
+      {docBrowserOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-800">Downloaded Documents</h2>
+              <div className="flex items-center gap-2">
+                {docBrowserFiles.some(f => f.status === 'failed') && (
+                  <Button size="sm" variant="outline" className="text-xs"
+                    disabled={reExtractingIds.size > 0}
+                    onClick={() => handleReExtract(docBrowserFiles.filter(f => f.status === 'failed').map(f => f.id))}>
+                    <RefreshCw className={`h-3 w-3 mr-1 ${reExtractingIds.size > 0 ? 'animate-spin' : ''}`} />
+                    Re-extract All Failed ({docBrowserFiles.filter(f => f.status === 'failed').length})
+                  </Button>
+                )}
+                <button onClick={() => setDocBrowserOpen(false)} className="text-slate-400 hover:text-slate-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {docBrowserLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                </div>
+              ) : docBrowserFiles.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No documents found for this job.</p>
+              ) : (
+                <div className="space-y-1">
+                  {docBrowserFiles.map(file => (
+                    <div key={file.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm ${
+                      file.status === 'extracted' ? 'border-green-100 bg-green-50/50'
+                        : file.status === 'failed' ? 'border-red-100 bg-red-50/50'
+                          : file.status === 'processing' ? 'border-blue-100 bg-blue-50/50'
+                            : 'border-slate-100'
+                    }`}>
+                      <FileText className={`h-4 w-4 flex-shrink-0 ${
+                        file.status === 'extracted' ? 'text-green-600'
+                          : file.status === 'failed' ? 'text-red-500'
+                            : 'text-slate-400'
+                      }`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate font-medium text-slate-800">{file.originalName}</p>
+                        <p className="text-[10px] text-slate-400">
+                          {file.fileSize ? `${(file.fileSize / 1024).toFixed(0)} KB` : ''}
+                          {file.pageCount ? ` · ${file.pageCount} page${file.pageCount > 1 ? 's' : ''}` : ''}
+                          {file.errorMessage && <span className="text-red-500 ml-1">· {file.errorMessage}</span>}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {file.status === 'extracted' && (
+                          <button onClick={() => { setViewerFileId(file.id); setViewerActiveField(null); setViewerFieldLocations({}); setViewerExtractedValues({}); setViewerOpen(true); setDocBrowserOpen(false); }}
+                            className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50">
+                            <Eye className="h-3 w-3 inline mr-0.5" />View
+                          </button>
+                        )}
+                        {file.status === 'failed' && (
+                          <button onClick={() => handleReExtract([file.id])}
+                            disabled={reExtractingIds.has(file.id)}
+                            className="text-xs text-orange-600 hover:text-orange-800 px-2 py-1 rounded hover:bg-orange-50 disabled:opacity-50">
+                            <RefreshCw className={`h-3 w-3 inline mr-0.5 ${reExtractingIds.has(file.id) ? 'animate-spin' : ''}`} />
+                            Re-extract
+                          </button>
+                        )}
+                        {file.status === 'processing' && (
+                          <span className="text-xs text-blue-500 flex items-center gap-1">
+                            <Loader2 className="h-3 w-3 animate-spin" />Processing
+                          </span>
+                        )}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                          file.status === 'extracted' ? 'bg-green-100 text-green-700'
+                            : file.status === 'failed' ? 'bg-red-100 text-red-700'
+                              : file.status === 'processing' ? 'bg-blue-100 text-blue-700'
+                                : file.status === 'multi-line' ? 'bg-purple-100 text-purple-700'
+                                  : 'bg-slate-100 text-slate-600'
+                        }`}>{file.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+              <span>
+                {docBrowserFiles.filter(f => f.status === 'extracted').length} extracted ·{' '}
+                {docBrowserFiles.filter(f => f.status === 'failed').length} failed ·{' '}
+                {docBrowserFiles.filter(f => f.status === 'multi-line').length} duplicates ·{' '}
+                {docBrowserFiles.length} total
+              </span>
+              <Button size="sm" variant="outline" onClick={() => setDocBrowserOpen(false)}>Close</Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
