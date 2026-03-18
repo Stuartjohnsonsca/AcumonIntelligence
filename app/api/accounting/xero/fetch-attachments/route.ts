@@ -9,7 +9,9 @@ import { createHash } from 'crypto';
 
 export const maxDuration = 300;
 
-const XERO_CALL_DELAY_MS = 1200;
+const XERO_CONCURRENCY = 3;
+const XERO_CALL_DELAY_MS = 500;
+const EXTRACTION_BATCH_SIZE = 5;
 
 interface TransactionRef {
   id: string;
@@ -19,6 +21,32 @@ interface TransactionRef {
 
 function computeHash(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
+}
+
+async function runWithConcurrency<T>(
+  tasks: (() => Promise<T>)[],
+  limit: number,
+  delayMs = 0,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const idx = nextIndex++;
+      if (delayMs > 0 && idx > 0) {
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+      try {
+        results[idx] = { status: 'fulfilled', value: await tasks[idx]() };
+      } catch (reason) {
+        results[idx] = { status: 'rejected', reason };
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
+  return results;
 }
 
 export async function POST(req: Request) {
@@ -94,99 +122,104 @@ export async function POST(req: Request) {
       let duplicateCount = 0;
       let listFailures = 0;
       let firstListError = '';
-      const fileIds: string[] = [];
+      let extractionStarted = 0;
 
-      for (const txn of withAttachments) {
-        const endpoint = txn.type === 'Invoice' ? 'Invoices' : 'BankTransactions';
+      const extractionQueue: string[] = [];
+      let extractionRunning = false;
 
-        await new Promise(r => setTimeout(r, XERO_CALL_DELAY_MS));
-        let attachments;
+      async function flushExtractionQueue() {
+        if (extractionRunning || extractionQueue.length === 0) return;
+        extractionRunning = true;
         try {
-          attachments = await getAttachmentsList(clientId, endpoint, txn.id);
-        } catch (err) {
-          listFailures++;
-          const msg = err instanceof Error ? err.message : String(err);
-          if (!firstListError) firstListError = msg;
-          console.error(`[XeroAttachments] Failed to list attachments for ${endpoint}/${txn.id}:`, msg);
-          if (msg.includes('403') || msg.includes('scope') || msg.includes('Forbidden')) {
-            await prisma.backgroundTask.update({
-              where: { id: task.id },
-              data: {
-                status: 'error',
-                error: 'Xero connection does not have permission to read attachments. Please disconnect and reconnect Xero to grant the required scope (accounting.attachments.read).',
-              },
-            });
-            return;
-          }
-          continue;
-        }
-
-        for (const att of attachments) {
-          totalAttachments++;
-          if (!isSupportedForExtraction(att.FileName)) {
-            skipped++;
-            continue;
-          }
-
-          await new Promise(r => setTimeout(r, XERO_CALL_DELAY_MS));
-
-          try {
-            const { buffer, mimeType } = await downloadAttachment(clientId, endpoint, txn.id, att.FileName);
-            const hash = computeHash(buffer);
-            const existingId = seenHashes.get(hash);
-
-            if (existingId) {
-              await prisma.extractionFile.create({
-                data: {
+          while (extractionQueue.length > 0) {
+            const batch = extractionQueue.splice(0, EXTRACTION_BATCH_SIZE);
+            try {
+              const baseUrl = process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app';
+              await fetch(`${baseUrl}/api/extraction/process-batch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
                   jobId: job.id,
-                  originalName: att.FileName,
-                  storagePath: '',
-                  containerName: '',
-                  fileSize: buffer.length,
-                  mimeType: mimeType || getMimeType(att.FileName),
-                  status: 'duplicate',
-                  fileHash: hash,
-                  duplicateOfId: existingId,
-                },
+                  fileIds: batch,
+                  startIndex: extractionStarted,
+                  clientId,
+                  internalSecret: process.env.NEXTAUTH_SECRET,
+                }),
               });
-              duplicateCount++;
-              continue;
+              extractionStarted += batch.length;
+            } catch (err) {
+              console.error(`[XeroAttachments] Batch extraction error:`, err);
             }
+          }
+        } finally {
+          extractionRunning = false;
+        }
+      }
 
-            const blobName = generateBlobName(job.id, att.FileName);
-            await uploadToInbox(blobName, buffer, mimeType || getMimeType(att.FileName));
+      // Phase 1: List attachments for all transactions in parallel
+      const listTasks = withAttachments.map(txn => async () => {
+        const endpoint: 'Invoices' | 'BankTransactions' = txn.type === 'Invoice' ? 'Invoices' : 'BankTransactions';
+        try {
+          const attachments = await getAttachmentsList(clientId, endpoint, txn.id);
+          return { txn, endpoint, attachments, error: null as string | null };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { txn, endpoint, attachments: [] as { FileName: string; ContentLength: number; MimeType: string }[], error: msg };
+        }
+      });
 
-            const fileRecord = await prisma.extractionFile.create({
-              data: {
-                jobId: job.id,
-                originalName: att.FileName,
-                storagePath: blobName,
-                containerName: CONTAINERS.INBOX,
-                fileSize: buffer.length,
-                mimeType: mimeType || getMimeType(att.FileName),
-                status: 'uploaded',
-                fileHash: hash,
-              },
+      await prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: { progress: { phase: 'listing', current: 0, total: withAttachments.length } },
+      });
+
+      const listResults = await runWithConcurrency(listTasks, XERO_CONCURRENCY, XERO_CALL_DELAY_MS);
+
+      // Check for 403 errors first
+      for (const r of listResults) {
+        if (r.status !== 'fulfilled') continue;
+        const { error } = r.value;
+        if (error && (error.includes('403') || error.includes('scope') || error.includes('Forbidden'))) {
+          await prisma.backgroundTask.update({
+            where: { id: task.id },
+            data: {
+              status: 'error',
+              error: 'Xero connection does not have permission to read attachments. Please disconnect and reconnect Xero to grant the required scope (accounting.attachments.read).',
+            },
+          });
+          return;
+        }
+        if (error) {
+          listFailures++;
+          if (!firstListError) firstListError = error;
+        }
+      }
+
+      // Build flat list of all attachments to download
+      interface DownloadItem {
+        txn: TransactionRef;
+        endpoint: 'Invoices' | 'BankTransactions';
+        fileName: string;
+      }
+      const downloadItems: DownloadItem[] = [];
+
+      for (const r of listResults) {
+        if (r.status !== 'fulfilled' || r.value.error) continue;
+        for (const att of r.value.attachments) {
+          totalAttachments++;
+          if (isSupportedForExtraction(att.FileName)) {
+            downloadItems.push({
+              txn: r.value.txn,
+              endpoint: r.value.endpoint,
+              fileName: att.FileName,
             });
-
-            seenHashes.set(hash, fileRecord.id);
-            fileIds.push(fileRecord.id);
-            downloaded++;
-
-            await prisma.backgroundTask.update({
-              where: { id: task.id },
-              data: {
-                progress: { phase: 'downloading', current: downloaded, total: withAttachments.length },
-              },
-            });
-          } catch (err) {
-            console.error(`[XeroAttachments] Failed to download ${att.FileName}:`, err);
+          } else {
             skipped++;
           }
         }
       }
 
-      if (listFailures > 0 && totalAttachments === 0 && fileIds.length === 0) {
+      if (listFailures > 0 && totalAttachments === 0 && downloadItems.length === 0) {
         await prisma.backgroundTask.update({
           where: { id: task.id },
           data: {
@@ -197,7 +230,84 @@ export async function POST(req: Request) {
         return;
       }
 
-      const uniqueCount = fileIds.length;
+      // Phase 2: Download attachments in parallel, queue extraction as each completes
+      await prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: { progress: { phase: 'downloading', current: 0, total: downloadItems.length } },
+      });
+
+      const downloadTasks = downloadItems.map(item => async () => {
+        try {
+          const { buffer, mimeType } = await downloadAttachment(clientId, item.endpoint, item.txn.id, item.fileName);
+          const hash = computeHash(buffer);
+          const existingId = seenHashes.get(hash);
+
+          if (existingId) {
+            await prisma.extractionFile.create({
+              data: {
+                jobId: job.id,
+                originalName: item.fileName,
+                storagePath: '',
+                containerName: '',
+                fileSize: buffer.length,
+                mimeType: mimeType || getMimeType(item.fileName),
+                status: 'duplicate',
+                fileHash: hash,
+                duplicateOfId: existingId,
+              },
+            });
+            duplicateCount++;
+            return { status: 'duplicate' as const };
+          }
+
+          const blobName = generateBlobName(job.id, item.fileName);
+          await uploadToInbox(blobName, buffer, mimeType || getMimeType(item.fileName));
+
+          const fileRecord = await prisma.extractionFile.create({
+            data: {
+              jobId: job.id,
+              originalName: item.fileName,
+              storagePath: blobName,
+              containerName: CONTAINERS.INBOX,
+              fileSize: buffer.length,
+              mimeType: mimeType || getMimeType(item.fileName),
+              status: 'uploaded',
+              fileHash: hash,
+            },
+          });
+
+          seenHashes.set(hash, fileRecord.id);
+          downloaded++;
+
+          // Queue for extraction immediately
+          extractionQueue.push(fileRecord.id);
+          if (extractionQueue.length >= EXTRACTION_BATCH_SIZE) {
+            flushExtractionQueue();
+          }
+
+          await prisma.backgroundTask.update({
+            where: { id: task.id },
+            data: {
+              progress: { phase: 'downloading', current: downloaded, total: downloadItems.length },
+            },
+          });
+
+          return { status: 'downloaded' as const, fileId: fileRecord.id };
+        } catch (err) {
+          console.error(`[XeroAttachments] Failed to download ${item.fileName}:`, err);
+          skipped++;
+          return { status: 'skipped' as const };
+        }
+      });
+
+      await runWithConcurrency(downloadTasks, XERO_CONCURRENCY, XERO_CALL_DELAY_MS);
+
+      // Flush any remaining files in extraction queue
+      if (extractionQueue.length > 0) {
+        await flushExtractionQueue();
+      }
+
+      const uniqueCount = downloaded;
       await prisma.extractionJob.update({
         where: { id: job.id },
         data: { totalFiles: uniqueCount, duplicateCount },
@@ -218,31 +328,11 @@ export async function POST(req: Request) {
         return;
       }
 
+      // Phase 3: Wait for extraction to complete (batches already dispatched concurrently)
       await prisma.backgroundTask.update({
         where: { id: task.id },
         data: { progress: { phase: 'extracting', current: 0, total: uniqueCount } },
       });
-
-      const batchSize = 5;
-      for (let i = 0; i < fileIds.length; i += batchSize) {
-        const batch = fileIds.slice(i, i + batchSize);
-        try {
-          const baseUrl = process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app';
-          await fetch(`${baseUrl}/api/extraction/process-batch`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jobId: job.id,
-              fileIds: batch,
-              startIndex: i,
-              clientId,
-              internalSecret: process.env.NEXTAUTH_SECRET,
-            }),
-          });
-        } catch (err) {
-          console.error(`[XeroAttachments] Batch extraction error:`, err);
-        }
-      }
 
       let extractionDone = false;
       const pollStart = Date.now();

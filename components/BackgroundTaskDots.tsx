@@ -1,10 +1,12 @@
 'use client';
 
 import { useBackgroundTasks, type BackgroundTask } from '@/components/BackgroundTaskProvider';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 function TaskDot({ task }: { task: BackgroundTask }) {
   const [showTooltip, setShowTooltip] = useState(false);
+  const router = useRouter();
 
   const dotColor = task.status === 'running'
     ? 'bg-red-500'
@@ -20,14 +22,27 @@ function TaskDot({ task }: { task: BackgroundTask }) {
       ? `${task.clientName}: ${task.activity} — Complete`
       : `${task.clientName}: ${task.activity}`;
 
+  const isClickable = !!task.toolPath;
+
+  function handleClick() {
+    if (task.toolPath) {
+      router.push(task.toolPath);
+    }
+  }
+
   return (
     <div
       className="relative"
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
-      <div
-        className={`w-3 h-3 rounded-full ${dotColor} ${animate} cursor-default transition-colors`}
+      <button
+        onClick={handleClick}
+        disabled={!isClickable}
+        className={`w-3 h-3 rounded-full ${dotColor} ${animate} transition-colors ${
+          isClickable ? 'cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-blue-400' : 'cursor-default'
+        }`}
+        title={tooltipText}
       />
       {showTooltip && (
         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-[100] pointer-events-none">
@@ -39,6 +54,9 @@ function TaskDot({ task }: { task: BackgroundTask }) {
             )}
             {task.status === 'completed' && (
               <div className="text-green-300 mt-1">Complete</div>
+            )}
+            {isClickable && (
+              <div className="text-blue-300 mt-1 text-[10px]">Click to open</div>
             )}
           </div>
           <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-slate-900" />

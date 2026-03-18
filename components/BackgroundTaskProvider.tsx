@@ -13,6 +13,7 @@ export interface BackgroundTask {
   startedAt: number;
   completedAt?: number;
   result?: unknown;
+  toolPath?: string;
 }
 
 interface BackgroundTaskContextValue {

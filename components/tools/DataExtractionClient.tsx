@@ -1153,6 +1153,7 @@ export function DataExtractionClient({
       clientName,
       activity: `Fetching data from ${selectedClient.software || 'Xero'}`,
       status: 'running',
+      toolPath: '/tools/data-extraction',
     });
 
     try {
@@ -1239,6 +1240,7 @@ export function DataExtractionClient({
       clientName: selectedClient.clientName,
       activity: `Extracting documents from ${selectedClient.software || 'Xero'}`,
       status: 'running',
+      toolPath: '/tools/data-extraction',
     });
 
     try {
@@ -1925,8 +1927,8 @@ export function DataExtractionClient({
         {/* RIGHT PANEL — Compact upload & summary (~25%) */}
         <div className="w-1/4 bg-white flex flex-col overflow-y-auto">
 
-          {/* Audit Summary */}
-          {auditSummary && sampledRows.size > 0 && (
+          {/* Audit Summary — only shown after documents are matched and verification is populated */}
+          {auditSummary && sampledRows.size > 0 && jobResult && rowMatches.size > 0 && (
             <div className="border-b border-slate-200 p-4 space-y-2">
               <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Audit Summary</h3>
               <div className="space-y-1 text-xs">
