@@ -298,6 +298,21 @@ export async function batchFetchContactGroups(
 
 // ─── Transactions ────────────────────────────────────────────────────────────
 
+export interface XeroLineItem {
+  LineItemID?: string;
+  Description: string;
+  Quantity: number;
+  UnitAmount: number;
+  TaxAmount: number;
+  LineAmount: number;
+  AccountCode: string;
+  TaxType?: string;
+  DiscountRate?: number;
+  DiscountAmount?: number;
+  ItemCode?: string;
+  Tracking?: { Name: string; Option: string }[];
+}
+
 export interface XeroTransaction {
   BankTransactionID?: string;
   InvoiceID?: string;
@@ -307,29 +322,32 @@ export interface XeroTransaction {
   Status?: string;
   Date: string;
   DueDate?: string;
+  ExpectedPaymentDate?: string;
   Reference?: string;
   CurrencyCode?: string;
+  CurrencyRate?: number;
   UpdatedDateUTC?: string;
+  FullyPaidOnDate?: string;
   Url?: string;
   SourceTransactionID?: string;
+  LineAmountTypes?: string;
+  SentToContact?: boolean;
+  RepeatingInvoiceID?: string;
+  BrandingThemeID?: string;
   Contact?: { Name: string; ContactID: string };
   SubTotal: number;
   TotalTax: number;
   Total: number;
   AmountDue?: number;
   AmountPaid?: number;
+  AmountCredited?: number;
   IsReconciled?: boolean;
   BankAccount?: { AccountID: string; Name: string; Code: string };
-  LineItems: {
-    Description: string;
-    Quantity: number;
-    UnitAmount: number;
-    TaxAmount: number;
-    LineAmount: number;
-    AccountCode: string;
-    TaxType?: string;
-    Tracking?: { Name: string; Option: string }[];
-  }[];
+  Payments?: { PaymentID: string; Date: string; Amount: number; Reference?: string }[];
+  CreditNotes?: { CreditNoteID: string; CreditNoteNumber: string; Total: number }[];
+  Overpayments?: { OverpaymentID: string; Total: number }[];
+  Prepayments?: { PrepaymentID: string; Total: number }[];
+  LineItems: XeroLineItem[];
 }
 
 export async function getTransactions(

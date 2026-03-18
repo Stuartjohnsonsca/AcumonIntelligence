@@ -108,6 +108,15 @@ export async function POST(req: Request) {
         const hasAttachments = txn.HasAttachments ?? false;
         const audit = historyMap.get(txnId) || { createdBy: '', approvedBy: '' };
 
+        // Payment summary
+        const paymentCount = txn.Payments?.length ?? 0;
+        const paymentTotal = txn.Payments?.reduce((s, p) => s + (p.Amount || 0), 0) ?? 0;
+        const lastPaymentDate = txn.Payments?.length
+          ? normaliseXeroDate(txn.Payments[txn.Payments.length - 1].Date)
+          : '';
+        const creditNoteCount = txn.CreditNotes?.length ?? 0;
+        const creditNoteTotal = txn.CreditNotes?.reduce((s, c) => s + (c.Total || 0), 0) ?? 0;
+
         const baseFields = {
           date: normaliseXeroDate(txn.Date),
           reference: txn.Reference || '',
@@ -117,12 +126,26 @@ export async function POST(req: Request) {
           status: txn.Status || '',
           invoiceNumber: txn.InvoiceNumber || '',
           dueDate: normaliseXeroDate(txn.DueDate),
+          expectedPaymentDate: normaliseXeroDate(txn.ExpectedPaymentDate),
+          fullyPaidOnDate: normaliseXeroDate(txn.FullyPaidOnDate),
           currencyCode: txn.CurrencyCode || '',
+          currencyRate: txn.CurrencyRate ?? null,
+          lineAmountTypes: txn.LineAmountTypes || '',
           isReconciled: txn.IsReconciled ?? null,
+          sentToContact: txn.SentToContact ?? null,
+          bankAccountCode: txn.BankAccount?.Code || '',
           bankAccountName: txn.BankAccount?.Name || '',
           subtotal: txn.SubTotal,
           tax: txn.TotalTax,
           total: txn.Total,
+          amountDue: txn.AmountDue ?? null,
+          amountPaid: txn.AmountPaid ?? null,
+          amountCredited: txn.AmountCredited ?? null,
+          paymentCount,
+          paymentTotal: paymentCount > 0 ? paymentTotal : null,
+          lastPaymentDate,
+          creditNoteCount,
+          creditNoteTotal: creditNoteCount > 0 ? creditNoteTotal : null,
           transactionId: txnId,
           transactionType: txnType,
           hasAttachments,
@@ -146,6 +169,11 @@ export async function POST(req: Request) {
               lineAmount: li.LineAmount,
               taxAmount: li.TaxAmount,
               vatRate,
+              taxType: li.TaxType || '',
+              quantity: li.Quantity ?? null,
+              unitAmount: li.UnitAmount ?? null,
+              discountRate: li.DiscountRate ?? null,
+              itemCode: li.ItemCode || '',
               tracking: trackingStr,
             });
           }
@@ -158,6 +186,11 @@ export async function POST(req: Request) {
             lineAmount: null,
             taxAmount: null,
             vatRate: null,
+            taxType: '',
+            quantity: null,
+            unitAmount: null,
+            discountRate: null,
+            itemCode: '',
             tracking: '',
           });
         }

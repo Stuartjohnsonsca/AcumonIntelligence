@@ -105,13 +105,31 @@ const ACCOUNTING_COLUMNS_BASIC = [
   'Net', 'Tax', 'Gross',
 ];
 
-const ACCOUNTING_COLUMNS_FULL = [
+// All available accounting columns (order matters for display)
+const ACCOUNTING_COLUMNS_ALL = [
+  'Date', 'Reference', 'Contact', 'Contact Group', 'Type', 'Status',
+  'Description', 'Account Code', 'Account Name', 'Bank Account', 'Bank Account Code',
+  'Item Code', 'Quantity', 'Unit Amount', 'Discount %',
+  'Net', 'Tax', 'VAT Rate', 'Tax Type', 'Total', 'Tracking',
+  'Subtotal', 'Total Tax', 'Grand Total', 'Amount Due', 'Amount Paid', 'Amount Credited',
+  'Currency', 'Currency Rate', 'Line Amount Types',
+  'Payments', 'Payment Total', 'Last Payment Date', 'Credit Notes', 'Credit Note Total',
+  'Created By', 'Approved By',
+  'Invoice No', 'Due Date', 'Expected Payment Date', 'Fully Paid Date',
+  'Reconciled', 'Sent to Contact', 'Source', 'Process Date', 'Xero URL',
+];
+
+// Default visible columns (common sense subset)
+const ACCOUNTING_COLUMNS_DEFAULT = new Set([
   'Date', 'Reference', 'Contact', 'Contact Group', 'Type', 'Status',
   'Description', 'Account Code', 'Account Name', 'Bank Account',
   'Net', 'Tax', 'VAT Rate', 'Total', 'Tracking',
   'Created By', 'Approved By',
   'Invoice No', 'Due Date', 'Reconciled', 'Source', 'Process Date',
-];
+]);
+
+// Legacy alias
+const ACCOUNTING_COLUMNS_FULL = ACCOUNTING_COLUMNS_ALL.filter(c => ACCOUNTING_COLUMNS_DEFAULT.has(c));
 
 const UPLOADED_DOC_COLUMNS_BASE = [
   'Ref', 'Doc Ref', 'Date', 'Due Date', 'Seller', 'Purchaser',
@@ -248,6 +266,8 @@ export function DataExtractionClient({
   const [previousJobs, setPreviousJobs] = useState<PreviousJob[]>([]);
   const [hiddenJobIds, setHiddenJobIds] = useState<Set<string>>(new Set());
   const [allSessionsOpen, setAllSessionsOpen] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set(ACCOUNTING_COLUMNS_DEFAULT));
+  const [columnPickerOpen, setColumnPickerOpen] = useState(false);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
 
@@ -430,6 +450,12 @@ export function DataExtractionClient({
     if (hasForeignCurrency) cols.push('FX Rate', `Amount (${functionalCurrency})`);
     return cols;
   }, [hasLineItems, hasForeignCurrency, functionalCurrency]);
+
+  // Filtered columns based on column picker visibility
+  const filteredLeftColumns = useMemo(() =>
+    leftPanelColumns.filter(col => visibleColumns.has(col)),
+    [leftPanelColumns, visibleColumns],
+  );
 
   // ─── Audit verification computation ──────────────────────────────────────
 
@@ -1290,23 +1316,12 @@ export function DataExtractionClient({
   }
 
   function loadAccountingSystemData(data: { rows: Array<Record<string, unknown>> }) {
-    const cols = ACCOUNTING_COLUMNS_FULL;
+    const cols = ACCOUNTING_COLUMNS_ALL;
     const rows: SpreadsheetRow[] = [];
     const meta: { id: string; type: string; hasAttachments: boolean }[] = [];
     for (const txn of data.rows) {
-      const t = txn as {
-        date?: string; reference?: string; contact?: string; contactGroup?: string;
-        type?: string; status?: string; description?: string;
-        accountCode?: string; accountName?: string; bankAccountName?: string;
-        lineAmount?: number | null; taxAmount?: number | null; vatRate?: number | null;
-        subtotal?: number; tax?: number; total?: number;
-        transactionId?: string; transactionType?: string; hasAttachments?: boolean;
-        createdBy?: string; approvedBy?: string;
-        invoiceNumber?: string; dueDate?: string;
-        isReconciled?: boolean | null;
-        tracking?: string; xeroUrl?: string;
-        source?: string; processDateTime?: string;
-      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = txn as Record<string, any>;
       rows.push({
         'Date': parseXeroDate(t.date),
         'Reference': t.reference || '',
@@ -1318,18 +1333,42 @@ export function DataExtractionClient({
         'Account Code': t.accountCode || '',
         'Account Name': t.accountName || '',
         'Bank Account': t.bankAccountName || '',
+        'Bank Account Code': t.bankAccountCode || '',
+        'Item Code': t.itemCode || '',
+        'Quantity': t.quantity != null ? String(t.quantity) : '',
+        'Unit Amount': t.unitAmount != null ? String(t.unitAmount) : '',
+        'Discount %': t.discountRate != null ? `${t.discountRate}%` : '',
         'Net': t.lineAmount != null ? String(t.lineAmount) : String(t.subtotal ?? ''),
         'Tax': t.taxAmount != null ? String(t.taxAmount) : String(t.tax ?? ''),
         'VAT Rate': t.vatRate != null ? `${t.vatRate}%` : '',
+        'Tax Type': t.taxType || '',
         'Total': t.lineAmount != null && t.taxAmount != null ? String(t.lineAmount + t.taxAmount) : String(t.total ?? ''),
         'Tracking': t.tracking || '',
+        'Subtotal': t.subtotal != null ? String(t.subtotal) : '',
+        'Total Tax': t.tax != null ? String(t.tax) : '',
+        'Grand Total': t.total != null ? String(t.total) : '',
+        'Amount Due': t.amountDue != null ? String(t.amountDue) : '',
+        'Amount Paid': t.amountPaid != null ? String(t.amountPaid) : '',
+        'Amount Credited': t.amountCredited != null ? String(t.amountCredited) : '',
+        'Currency': t.currencyCode || '',
+        'Currency Rate': t.currencyRate != null ? String(t.currencyRate) : '',
+        'Line Amount Types': t.lineAmountTypes || '',
+        'Payments': t.paymentCount != null && t.paymentCount > 0 ? String(t.paymentCount) : '',
+        'Payment Total': t.paymentTotal != null ? String(t.paymentTotal) : '',
+        'Last Payment Date': parseXeroDate(t.lastPaymentDate),
+        'Credit Notes': t.creditNoteCount != null && t.creditNoteCount > 0 ? String(t.creditNoteCount) : '',
+        'Credit Note Total': t.creditNoteTotal != null ? String(t.creditNoteTotal) : '',
         'Created By': t.createdBy || '',
         'Approved By': t.approvedBy || '',
         'Invoice No': t.invoiceNumber || '',
         'Due Date': parseXeroDate(t.dueDate),
+        'Expected Payment Date': parseXeroDate(t.expectedPaymentDate),
+        'Fully Paid Date': parseXeroDate(t.fullyPaidOnDate),
         'Reconciled': t.isReconciled != null ? (t.isReconciled ? 'Yes' : 'No') : '',
+        'Sent to Contact': t.sentToContact != null ? (t.sentToContact ? 'Yes' : 'No') : '',
         'Source': t.source || '',
         'Process Date': parseXeroDate(t.processDateTime),
+        'Xero URL': t.xeroUrl || '',
       });
       meta.push({
         id: t.transactionId || '',
@@ -2029,6 +2068,41 @@ export function DataExtractionClient({
                       <RefreshCw className="h-3 w-3 mr-1" />Re-match
                     </Button>
                   )}
+                  {/* Column picker toggle */}
+                  {leftPanelFromAccounting && (
+                    <div className="relative">
+                      <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setColumnPickerOpen(!columnPickerOpen)}>
+                        <Table className="h-3 w-3 mr-1" />Columns ({filteredLeftColumns.length}/{leftPanelColumns.length})
+                      </Button>
+                      {columnPickerOpen && (
+                        <div className="absolute right-0 top-full mt-1 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg z-30 p-2">
+                          <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
+                            <span className="text-xs font-semibold text-slate-700">Show/Hide Columns</span>
+                            <div className="flex gap-1">
+                              <button className="text-[10px] text-blue-600 hover:underline" onClick={() => setVisibleColumns(new Set(ACCOUNTING_COLUMNS_ALL))}>All</button>
+                              <span className="text-slate-300">|</span>
+                              <button className="text-[10px] text-blue-600 hover:underline" onClick={() => setVisibleColumns(new Set(ACCOUNTING_COLUMNS_DEFAULT))}>Default</button>
+                              <span className="text-slate-300">|</span>
+                              <button className="text-[10px] text-slate-400 hover:underline" onClick={() => setColumnPickerOpen(false)}>Close</button>
+                            </div>
+                          </div>
+                          {ACCOUNTING_COLUMNS_ALL.map(col => (
+                            <label key={col} className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50 rounded cursor-pointer">
+                              <input type="checkbox" className="h-3 w-3 rounded border-slate-300"
+                                checked={visibleColumns.has(col)}
+                                onChange={() => setVisibleColumns(prev => {
+                                  const next = new Set(prev);
+                                  next.has(col) ? next.delete(col) : next.add(col);
+                                  return next;
+                                })} />
+                              <span className="text-xs text-slate-700">{col}</span>
+                              {ACCOUNTING_COLUMNS_DEFAULT.has(col) && <span className="text-[9px] text-slate-400 ml-auto">default</span>}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <Button size="sm" variant="ghost" className="h-7"
                     onClick={() => { setLeftPanelMode('idle'); setLeftPanelData([]); setLeftPanelFileName(null); setLeftPanelFromAccounting(false); setRowMatches(new Map()); setSampledRows(new Set()); setSelectedRows(new Set()); }}>
                     <X className="h-3 w-3 mr-1" />Clear
@@ -2044,7 +2118,7 @@ export function DataExtractionClient({
                     <tr className="bg-slate-100">
                       <th className="w-7 border-b border-slate-300" rowSpan={2}></th>
                       <th className="w-7 border-b border-slate-300" rowSpan={2}>#</th>
-                      <th colSpan={leftPanelColumns.length}
+                      <th colSpan={filteredLeftColumns.length}
                         className="px-2 py-1.5 text-center font-bold text-slate-700 bg-blue-50 border-b border-slate-300 border-r border-blue-200">
                         From: {leftPanelFileName || selectedClient.software || 'Data'}
                       </th>
@@ -2061,7 +2135,7 @@ export function DataExtractionClient({
                     </tr>
                     {/* Row 2: individual column headers */}
                     <tr className="bg-slate-50">
-                      {leftPanelColumns.map(col => (
+                      {filteredLeftColumns.map(col => (
                         <th key={`ac-${col}`}
                           style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
                           className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 relative overflow-hidden text-ellipsis">
@@ -2114,12 +2188,14 @@ export function DataExtractionClient({
                             {ri + 1}
                           </td>
 
-                          {/* Accounting columns — editable */}
-                          {leftPanelColumns.map((col, ci) => (
-                            <td key={`ac-${col}`} className={`px-0 py-0 border-r border-slate-50 ${leftCellBg}`}>
+                          {/* Accounting columns — editable, filtered by column picker */}
+                          {filteredLeftColumns.map((col, ci) => (
+                            <td key={`ac-${col}`}
+                              style={{ width: columnWidths[col] || getDefaultWidth(col) }}
+                              className={`px-0 py-0 border-r border-slate-50 overflow-hidden ${leftCellBg}`}>
                               <input type="text" value={row[col] || ''} onChange={e => handleCellEdit(ri, col, e.target.value)}
                                 data-row={ri} data-col={ci}
-                                className={`w-full px-1.5 py-0.5 text-[11px] border-0 focus:bg-white focus:ring-1 focus:ring-blue-300 outline-none ${isSampled ? 'bg-blue-50' : 'bg-transparent'}`} />
+                                className={`w-full px-1.5 py-0.5 text-[11px] border-0 focus:bg-white focus:ring-1 focus:ring-blue-300 outline-none truncate ${isSampled ? 'bg-blue-50' : 'bg-transparent'}`} />
                             </td>
                           ))}
 
