@@ -182,6 +182,21 @@ function formatCurrencyVal(v: number | null, symbol = '£'): string {
   return `${symbol}${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function formatAttachmentProgress(p: { phase: string; current: number; total: number; downloaded?: number; extracted?: number }): string {
+  if (p.phase === 'listing') {
+    return `Listing transactions... ${p.current}/${p.total}`;
+  }
+  if (p.phase === 'downloading') {
+    const parts = [`Downloaded ${p.downloaded ?? p.current}/${p.total}`];
+    if (p.extracted && p.extracted > 0) parts.push(`Extracted ${p.extracted}`);
+    return parts.join(' · ');
+  }
+  if (p.phase === 'extracting') {
+    return `Extracting... ${p.current}/${p.total}${p.downloaded ? ` (${p.downloaded} downloaded)` : ''}`;
+  }
+  return `${p.phase}... ${p.current}/${p.total}`;
+}
+
 const currencySymbols: Record<string, string> = {
   GBP: '£', USD: '$', EUR: '€', JPY: '¥', CNY: '¥', CHF: 'CHF ',
 };
@@ -249,7 +264,7 @@ export function DataExtractionClient({
   // Transaction metadata for Xero attachment extraction
   const [txnMetadata, setTxnMetadata] = useState<{ id: string; type: string; hasAttachments: boolean }[]>([]);
   const [extractingAttachments, setExtractingAttachments] = useState(false);
-  const [attachmentProgress, setAttachmentProgress] = useState<{ phase: string; current: number; total: number } | null>(null);
+  const [attachmentProgress, setAttachmentProgress] = useState<{ phase: string; current: number; total: number; downloaded?: number; extracted?: number } | null>(null);
   const [noDocsTxnIds, setNoDocsTxnIds] = useState<Set<string>>(new Set());
   const [sampleExtracted, setSampleExtracted] = useState(false);
   const [extractedTxnIds, setExtractedTxnIds] = useState<Set<string>>(new Set());
@@ -1282,11 +1297,12 @@ export function DataExtractionClient({
       const clientIdAtStart = selectedClient.id;
 
       const poll = async () => {
-        const maxPolls = 200;
+        const maxPolls = 400;
         for (let i = 0; i < maxPolls; i++) {
           await new Promise(r => setTimeout(r, 3000));
           try {
             const statusRes = await fetch(`/api/accounting/xero/fetch-attachments?taskId=${serverTaskId}`);
+            if (!statusRes.ok) continue;
             const statusData = await statusRes.json();
 
             if (statusData.progress) {
@@ -1992,9 +2008,7 @@ export function DataExtractionClient({
                 >
                   {extractingAttachments ? (
                     <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      {attachmentProgress
-                        ? `${attachmentProgress.phase === 'listing' ? 'Listing' : attachmentProgress.phase === 'downloading' ? 'Downloading' : 'Extracting'}... ${attachmentProgress.current}/${attachmentProgress.total}`
-                        : 'Extracting sample...'}</>
+                      {attachmentProgress ? formatAttachmentProgress(attachmentProgress) : 'Starting...'}</>
                   ) : (
                     <><Database className="mr-1.5 h-3.5 w-3.5" />Extract Sample Documents ({sampledRows.size} rows)</>
                   )}
@@ -2009,9 +2023,7 @@ export function DataExtractionClient({
                 >
                   {extractingAttachments ? (
                     <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      {attachmentProgress
-                        ? `${attachmentProgress.phase === 'listing' ? 'Listing' : attachmentProgress.phase === 'downloading' ? 'Downloading' : 'Extracting'}... ${attachmentProgress.current}/${attachmentProgress.total}`
-                        : 'Extracting...'}</>
+                      {attachmentProgress ? formatAttachmentProgress(attachmentProgress) : 'Starting...'}</>
                   ) : (
                     <><Database className="mr-1.5 h-3.5 w-3.5" />Extract {sampleExtracted ? 'ALL Remaining' : 'ALL'} Documents from {selectedClient.software}</>
                   )}

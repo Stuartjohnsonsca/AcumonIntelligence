@@ -9,8 +9,8 @@ import { createHash } from 'crypto';
 
 export const maxDuration = 300;
 
-const XERO_CONCURRENCY = 3;
-const XERO_CALL_DELAY_MS = 500;
+const XERO_CONCURRENCY = 2;
+const XERO_CALL_DELAY_MS = 600;
 const EXTRACTION_BATCH_SIZE = 5;
 
 interface TransactionRef {
@@ -21,32 +21,6 @@ interface TransactionRef {
 
 function computeHash(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
-}
-
-async function runWithConcurrency<T>(
-  tasks: (() => Promise<T>)[],
-  limit: number,
-  delayMs = 0,
-): Promise<PromiseSettledResult<T>[]> {
-  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
-  let nextIndex = 0;
-
-  async function worker() {
-    while (nextIndex < tasks.length) {
-      const idx = nextIndex++;
-      if (delayMs > 0 && idx > 0) {
-        await new Promise(r => setTimeout(r, delayMs));
-      }
-      try {
-        results[idx] = { status: 'fulfilled', value: await tasks[idx]() };
-      } catch (reason) {
-        results[idx] = { status: 'rejected', reason };
-      }
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
-  return results;
 }
 
 export async function POST(req: Request) {
@@ -122,100 +96,53 @@ export async function POST(req: Request) {
       let duplicateCount = 0;
       let listFailures = 0;
       let firstListError = '';
-      let extractionStarted = 0;
 
-      const extractionQueue: string[] = [];
-      let extractionRunning = false;
-
-      async function flushExtractionQueue() {
-        if (extractionRunning || extractionQueue.length === 0) return;
-        extractionRunning = true;
-        try {
-          while (extractionQueue.length > 0) {
-            const batch = extractionQueue.splice(0, EXTRACTION_BATCH_SIZE);
-            try {
-              const baseUrl = process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app';
-              await fetch(`${baseUrl}/api/extraction/process-batch`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  jobId: job.id,
-                  fileIds: batch,
-                  startIndex: extractionStarted,
-                  clientId,
-                  internalSecret: process.env.NEXTAUTH_SECRET,
-                }),
-              });
-              extractionStarted += batch.length;
-            } catch (err) {
-              console.error(`[XeroAttachments] Batch extraction error:`, err);
-            }
-          }
-        } finally {
-          extractionRunning = false;
-        }
-      }
-
-      // Phase 1: List attachments for all transactions in parallel
-      const listTasks = withAttachments.map(txn => async () => {
-        const endpoint: 'Invoices' | 'BankTransactions' = txn.type === 'Invoice' ? 'Invoices' : 'BankTransactions';
-        try {
-          const attachments = await getAttachmentsList(clientId, endpoint, txn.id);
-          return { txn, endpoint, attachments, error: null as string | null };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return { txn, endpoint, attachments: [] as { FileName: string; ContentLength: number; MimeType: string }[], error: msg };
-        }
-      });
-
+      // Phase 1: List attachments sequentially to avoid Xero rate limits
       await prisma.backgroundTask.update({
         where: { id: task.id },
-        data: { progress: { phase: 'listing', current: 0, total: withAttachments.length } },
+        data: { progress: { phase: 'listing', current: 0, total: withAttachments.length, downloaded: 0, extracted: 0 } },
       });
 
-      const listResults = await runWithConcurrency(listTasks, XERO_CONCURRENCY, XERO_CALL_DELAY_MS);
+      interface AttachmentInfo { txn: TransactionRef; endpoint: 'Invoices' | 'BankTransactions'; fileName: string }
+      const downloadItems: AttachmentInfo[] = [];
+      let listed = 0;
 
-      // Check for 403 errors first
-      for (const r of listResults) {
-        if (r.status !== 'fulfilled') continue;
-        const { error } = r.value;
-        if (error && (error.includes('403') || error.includes('scope') || error.includes('Forbidden'))) {
+      for (const txn of withAttachments) {
+        const endpoint: 'Invoices' | 'BankTransactions' = txn.type === 'Invoice' ? 'Invoices' : 'BankTransactions';
+        await new Promise(r => setTimeout(r, XERO_CALL_DELAY_MS));
+
+        try {
+          const attachments = await getAttachmentsList(clientId, endpoint, txn.id);
+          for (const att of attachments) {
+            totalAttachments++;
+            if (isSupportedForExtraction(att.FileName)) {
+              downloadItems.push({ txn, endpoint, fileName: att.FileName });
+            } else {
+              skipped++;
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          listFailures++;
+          if (!firstListError) firstListError = msg;
+          if (msg.includes('403') || msg.includes('scope') || msg.includes('Forbidden')) {
+            await prisma.backgroundTask.update({
+              where: { id: task.id },
+              data: {
+                status: 'error',
+                error: 'Xero connection does not have permission to read attachments. Please disconnect and reconnect Xero to grant the required scope (accounting.attachments.read).',
+              },
+            });
+            return;
+          }
+        }
+
+        listed++;
+        if (listed % 5 === 0 || listed === withAttachments.length) {
           await prisma.backgroundTask.update({
             where: { id: task.id },
-            data: {
-              status: 'error',
-              error: 'Xero connection does not have permission to read attachments. Please disconnect and reconnect Xero to grant the required scope (accounting.attachments.read).',
-            },
+            data: { progress: { phase: 'listing', current: listed, total: withAttachments.length, downloaded: 0, extracted: 0 } },
           });
-          return;
-        }
-        if (error) {
-          listFailures++;
-          if (!firstListError) firstListError = error;
-        }
-      }
-
-      // Build flat list of all attachments to download
-      interface DownloadItem {
-        txn: TransactionRef;
-        endpoint: 'Invoices' | 'BankTransactions';
-        fileName: string;
-      }
-      const downloadItems: DownloadItem[] = [];
-
-      for (const r of listResults) {
-        if (r.status !== 'fulfilled' || r.value.error) continue;
-        for (const att of r.value.attachments) {
-          totalAttachments++;
-          if (isSupportedForExtraction(att.FileName)) {
-            downloadItems.push({
-              txn: r.value.txn,
-              endpoint: r.value.endpoint,
-              fileName: att.FileName,
-            });
-          } else {
-            skipped++;
-          }
         }
       }
 
@@ -230,13 +157,35 @@ export async function POST(req: Request) {
         return;
       }
 
-      // Phase 2: Download attachments in parallel, queue extraction as each completes
+      if (downloadItems.length === 0) {
+        await prisma.extractionJob.update({
+          where: { id: job.id },
+          data: { status: 'complete', extractedAt: new Date(), totalFiles: 0 },
+        });
+        await prisma.backgroundTask.update({
+          where: { id: task.id },
+          data: {
+            status: 'completed',
+            result: { jobId: job.id, totalAttachments, downloaded: 0, extracted: 0, failed: 0, skipped, noDocsTxnIds },
+          },
+        });
+        return;
+      }
+
+      // Phase 2: Download and extract concurrently
+      // Download one at a time (Xero rate limits), but dispatch extraction batches immediately
+      const totalToDownload = downloadItems.length;
+      const fileIds: string[] = [];
+
       await prisma.backgroundTask.update({
         where: { id: task.id },
-        data: { progress: { phase: 'downloading', current: 0, total: downloadItems.length } },
+        data: { progress: { phase: 'downloading', current: 0, total: totalToDownload, downloaded: 0, extracted: 0 } },
       });
 
-      const downloadTasks = downloadItems.map(item => async () => {
+      for (let i = 0; i < downloadItems.length; i++) {
+        const item = downloadItems[i];
+        await new Promise(r => setTimeout(r, XERO_CALL_DELAY_MS));
+
         try {
           const { buffer, mimeType } = await downloadAttachment(clientId, item.endpoint, item.txn.id, item.fileName);
           const hash = computeHash(buffer);
@@ -257,63 +206,76 @@ export async function POST(req: Request) {
               },
             });
             duplicateCount++;
-            return { status: 'duplicate' as const };
+          } else {
+            const blobName = generateBlobName(job.id, item.fileName);
+            await uploadToInbox(blobName, buffer, mimeType || getMimeType(item.fileName));
+
+            const fileRecord = await prisma.extractionFile.create({
+              data: {
+                jobId: job.id,
+                originalName: item.fileName,
+                storagePath: blobName,
+                containerName: CONTAINERS.INBOX,
+                fileSize: buffer.length,
+                mimeType: mimeType || getMimeType(item.fileName),
+                status: 'uploaded',
+                fileHash: hash,
+              },
+            });
+
+            seenHashes.set(hash, fileRecord.id);
+            fileIds.push(fileRecord.id);
+            downloaded++;
           }
-
-          const blobName = generateBlobName(job.id, item.fileName);
-          await uploadToInbox(blobName, buffer, mimeType || getMimeType(item.fileName));
-
-          const fileRecord = await prisma.extractionFile.create({
-            data: {
-              jobId: job.id,
-              originalName: item.fileName,
-              storagePath: blobName,
-              containerName: CONTAINERS.INBOX,
-              fileSize: buffer.length,
-              mimeType: mimeType || getMimeType(item.fileName),
-              status: 'uploaded',
-              fileHash: hash,
-            },
-          });
-
-          seenHashes.set(hash, fileRecord.id);
-          downloaded++;
-
-          // Queue for extraction immediately
-          extractionQueue.push(fileRecord.id);
-          if (extractionQueue.length >= EXTRACTION_BATCH_SIZE) {
-            flushExtractionQueue();
-          }
-
-          await prisma.backgroundTask.update({
-            where: { id: task.id },
-            data: {
-              progress: { phase: 'downloading', current: downloaded, total: downloadItems.length },
-            },
-          });
-
-          return { status: 'downloaded' as const, fileId: fileRecord.id };
         } catch (err) {
           console.error(`[XeroAttachments] Failed to download ${item.fileName}:`, err);
           skipped++;
-          return { status: 'skipped' as const };
         }
-      });
 
-      await runWithConcurrency(downloadTasks, XERO_CONCURRENCY, XERO_CALL_DELAY_MS);
+        // Dispatch extraction batch as soon as we have enough files
+        if (fileIds.length >= EXTRACTION_BATCH_SIZE) {
+          const batch = fileIds.splice(0, EXTRACTION_BATCH_SIZE);
+          await prisma.extractionJob.update({
+            where: { id: job.id },
+            data: { totalFiles: { increment: batch.length } },
+          });
+          dispatchExtractionBatch(job.id, batch, clientId);
+        }
 
-      // Flush any remaining files in extraction queue
-      if (extractionQueue.length > 0) {
-        await flushExtractionQueue();
+        // Update progress every file
+        const extractedSoFar = await getExtractionProgress(job.id);
+        await prisma.backgroundTask.update({
+          where: { id: task.id },
+          data: {
+            progress: {
+              phase: 'downloading',
+              current: i + 1,
+              total: totalToDownload,
+              downloaded,
+              extracted: extractedSoFar,
+            },
+          },
+        });
       }
 
-      const uniqueCount = downloaded;
+      // Flush remaining files
+      if (fileIds.length > 0) {
+        await prisma.extractionJob.update({
+          where: { id: job.id },
+          data: { totalFiles: { increment: fileIds.length } },
+        });
+        dispatchExtractionBatch(job.id, [...fileIds], clientId);
+        fileIds.length = 0;
+      }
+
       await prisma.extractionJob.update({
         where: { id: job.id },
-        data: { totalFiles: uniqueCount, duplicateCount },
+        data: { duplicateCount },
       });
 
-      if (uniqueCount === 0) {
+      // Phase 3: Wait for extraction to finish
+      const totalFiles = downloaded;
+      if (totalFiles === 0) {
         await prisma.extractionJob.update({
           where: { id: job.id },
           data: { status: 'complete', extractedAt: new Date() },
@@ -328,33 +290,32 @@ export async function POST(req: Request) {
         return;
       }
 
-      // Phase 3: Wait for extraction to complete (batches already dispatched concurrently)
-      await prisma.backgroundTask.update({
-        where: { id: task.id },
-        data: { progress: { phase: 'extracting', current: 0, total: uniqueCount } },
-      });
-
       let extractionDone = false;
       const pollStart = Date.now();
-      const maxWaitMs = 10 * 60 * 1000;
+      const maxWaitMs = 15 * 60 * 1000;
 
       while (!extractionDone && Date.now() - pollStart < maxWaitMs) {
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 4000));
         const updatedJob = await prisma.extractionJob.findUnique({
           where: { id: job.id },
           select: { processedCount: true, failedCount: true, totalFiles: true },
         });
         if (!updatedJob) break;
-        if (updatedJob.processedCount + updatedJob.failedCount >= updatedJob.totalFiles) {
+
+        const completed = updatedJob.processedCount + updatedJob.failedCount;
+        if (completed >= updatedJob.totalFiles && updatedJob.totalFiles > 0) {
           extractionDone = true;
         }
+
         await prisma.backgroundTask.update({
           where: { id: task.id },
           data: {
             progress: {
               phase: 'extracting',
-              current: updatedJob.processedCount + updatedJob.failedCount,
+              current: completed,
               total: updatedJob.totalFiles,
+              downloaded,
+              extracted: updatedJob.processedCount,
             },
           },
         });
@@ -364,6 +325,13 @@ export async function POST(req: Request) {
         where: { id: job.id },
         select: { processedCount: true, failedCount: true },
       });
+
+      if (!extractionDone) {
+        await prisma.extractionJob.update({
+          where: { id: job.id },
+          data: { status: finalJob && finalJob.processedCount > 0 ? 'complete' : 'failed', extractedAt: new Date() },
+        });
+      }
 
       await prisma.backgroundTask.update({
         where: { id: task.id },
@@ -381,6 +349,7 @@ export async function POST(req: Request) {
         },
       });
     } catch (err) {
+      console.error('[XeroAttachments] Fatal error:', err);
       await prisma.backgroundTask.update({
         where: { id: task.id },
         data: {
@@ -392,6 +361,35 @@ export async function POST(req: Request) {
   });
 
   return NextResponse.json({ taskId: task.id });
+}
+
+function dispatchExtractionBatch(jobId: string, fileIds: string[], clientId: string) {
+  const baseUrl = process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app';
+  fetch(`${baseUrl}/api/extraction/process-batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jobId,
+      fileIds,
+      startIndex: 0,
+      clientId,
+      internalSecret: process.env.NEXTAUTH_SECRET,
+    }),
+  }).catch(err => {
+    console.error('[XeroAttachments] Extraction dispatch failed:', err);
+  });
+}
+
+async function getExtractionProgress(jobId: string): Promise<number> {
+  try {
+    const job = await prisma.extractionJob.findUnique({
+      where: { id: jobId },
+      select: { processedCount: true },
+    });
+    return job?.processedCount ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 export async function GET(req: Request) {
@@ -417,6 +415,25 @@ export async function GET(req: Request) {
 
   if (task.userId !== session.user.id && !session.user.isSuperAdmin) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  // Detect stalled tasks: running for >6 minutes with no updates
+  if (task.status === 'running') {
+    const stalledMs = 6 * 60 * 1000;
+    const lastUpdate = task.updatedAt.getTime();
+    if (Date.now() - lastUpdate > stalledMs) {
+      await prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: {
+          status: 'error',
+          error: 'Task appears to have stalled. Please try again.',
+        },
+      });
+      return NextResponse.json({
+        status: 'error',
+        error: 'Task appears to have stalled. Please try again.',
+      });
+    }
   }
 
   const result = task.result as Record<string, unknown> | null;
