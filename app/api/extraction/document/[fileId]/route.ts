@@ -54,7 +54,8 @@ export async function GET(
       fileId: file.id,
     });
   } catch (err) {
-    console.error('SAS generation error:', err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Extraction:Document] SAS generation failed | fileId=${fileId} | container=${containerName} | path=${file.storagePath} | error=${msg}`);
     return NextResponse.json({ error: 'Failed to generate document URL' }, { status: 500 });
   }
 }

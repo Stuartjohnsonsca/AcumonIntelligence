@@ -31,6 +31,7 @@ export async function GET(req: Request) {
 
   if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+  try {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Acumon Intelligence';
   workbook.created = new Date();
@@ -214,4 +215,9 @@ export async function GET(req: Request) {
       'Content-Disposition': `attachment; filename="extraction-${jobId.substring(0, 8)}.xlsx"`,
     },
   });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[Extraction:Export] Failed | jobId=${jobId} | records=${job.records.length} | files=${job.files.length} | error=${msg}`);
+    return NextResponse.json({ error: 'Export failed' }, { status: 500 });
+  }
 }
