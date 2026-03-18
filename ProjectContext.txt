@@ -196,7 +196,7 @@ npm run dev
 - account_category_learning — per-client AI learning for description→category mapping
 - accounting_connections — stores encrypted Xero OAuth2 tokens per client (unique on [clientId, system]); auto-refreshes; 30-day expiry
 - background_tasks — DB-backed task state for serverless-safe background processing (replaces in-memory Maps); cleaned by daily cron
-- ai_usage — per-call AI cost tracking (clientId, jobId, fileId, userId, model, operation, promptTokens, completionTokens, totalTokens, estimatedCostUsd); indexed on (clientId), (clientId, createdAt), (userId)
+- ai_usage — per-call AI cost tracking (clientId, jobId, fileId, userId, action, model, operation, promptTokens, completionTokens, totalTokens, estimatedCostUsd); indexed on (clientId), (clientId, createdAt), (userId). `action` identifies the tool (e.g. "Financial Data Extraction"), `model` identifies the AI model (e.g. "gemini-2.5-flash"), `operation` is the sub-task (e.g. "extraction", "categorisation")
 
 ## Parallel Extraction Pipeline Architecture
 - Files are uploaded via POST /api/extraction/upload (stores in Azure inbox, creates ExtractionFile rows)
@@ -416,7 +416,10 @@ npm run dev
 - **API**: GET /api/ai-usage returns firm-wide summary or per-client drill-down
 - **UI**: "AI Usage" tab in My Account (visible to Firm Admin, Portfolio Owner, Super Admin)
   - Summary cards: Total AI Calls, Input Tokens, Output Tokens, Estimated Cost (USD + GBP)
-  - Per-client table: sortable by cost, expandable rows showing operation breakdown and recent activity
+  - Firm-wide "By Action" summary (e.g. Financial Data Extraction, Document Summary) with call counts and costs
+  - Firm-wide "By Model" summary (e.g. gemini-2.5-flash) with call counts, token totals, and costs
+  - Per-client table: sortable by cost, expandable rows showing action+operation breakdown, model breakdown, and recent activity log
+  - Recent activity log columns: Time, Action, Model, Operation, Input tokens, Output tokens, Cost
   - Period filter: 7 days / 30 days / All time
 - Cost model defined in `lib/gemini-extractor.ts` via `AI_PRICING` object (easy to update when pricing changes or new models are added)
 

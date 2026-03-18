@@ -350,6 +350,7 @@ model AiUsage {
   jobId            String?  @map("job_id")
   fileId           String?  @map("file_id")
   userId           String   @map("user_id")
+  action           String   @default("Financial Data Extraction") // which tool/product triggered the AI call
   model            String   // e.g. "gemini-2.5-flash"
   operation        String   // "extraction" | "categorisation"
   promptTokens     Int      @map("prompt_tokens")

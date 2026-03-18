@@ -81,7 +81,7 @@ export async function POST(req: Request) {
   });
   const userId = job?.userId || '';
 
-  async function logAiUsage(usage: AiTokenUsage, operation: string, fileId?: string) {
+  async function logAiUsage(usage: AiTokenUsage, operation: string, fileId?: string, action = 'Financial Data Extraction') {
     try {
       await prisma.aiUsage.create({
         data: {
@@ -89,6 +89,7 @@ export async function POST(req: Request) {
           jobId,
           fileId,
           userId,
+          action,
           model: usage.model,
           operation,
           promptTokens: usage.promptTokens,

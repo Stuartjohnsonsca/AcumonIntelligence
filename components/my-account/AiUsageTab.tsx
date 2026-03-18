@@ -22,18 +22,45 @@ interface FirmSummary {
   estimatedCostUsd: number;
 }
 
+interface ActionSummary {
+  action: string;
+  calls: number;
+  estimatedCostUsd: number;
+}
+
+interface ModelSummary {
+  model: string;
+  calls: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+}
+
+interface ClientDetailAction {
+  action: string;
+  operation: string;
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+}
+
+interface ClientDetailModel {
+  model: string;
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+}
+
 interface ClientDetail {
   summary: FirmSummary;
-  byOperation: {
-    operation: string;
-    calls: number;
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-    estimatedCostUsd: number;
-  }[];
+  byAction: ClientDetailAction[];
+  byModel: ClientDetailModel[];
   recentRecords: {
     id: string;
+    action: string;
     model: string;
     operation: string;
     promptTokens: number;
@@ -70,6 +97,8 @@ export function AiUsageTab() {
   const [period, setPeriod] = useState<Period>('all');
   const [firmSummary, setFirmSummary] = useState<FirmSummary | null>(null);
   const [clients, setClients] = useState<ClientUsage[]>([]);
+  const [byAction, setByAction] = useState<ActionSummary[]>([]);
+  const [byModel, setByModel] = useState<ModelSummary[]>([]);
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
   const [clientDetail, setClientDetail] = useState<ClientDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -82,6 +111,8 @@ export function AiUsageTab() {
       const data = await res.json();
       setFirmSummary(data.firmSummary);
       setClients(data.clients || []);
+      setByAction(data.byAction || []);
+      setByModel(data.byModel || []);
     } catch { /* non-fatal */ }
     setLoading(false);
   }, []);
@@ -149,6 +180,44 @@ export function AiUsageTab() {
               subValue={formatGbp(firmSummary.estimatedCostUsd)}
             />
           </div>
+
+          {/* Action + Model summary */}
+          {(byAction.length > 0 || byModel.length > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {byAction.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">By Action</h3>
+                  <div className="space-y-1.5">
+                    {byAction.map(a => (
+                      <div key={a.action} className="flex items-center justify-between bg-white border border-slate-200 rounded px-3 py-2">
+                        <div>
+                          <span className="text-sm font-medium text-slate-800">{a.action}</span>
+                          <span className="text-xs text-slate-400 ml-2">{a.calls.toLocaleString()} calls</span>
+                        </div>
+                        <span className="text-sm font-bold text-slate-800">{formatCost(a.estimatedCostUsd)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {byModel.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">By Model</h3>
+                  <div className="space-y-1.5">
+                    {byModel.map(m => (
+                      <div key={m.model} className="flex items-center justify-between bg-white border border-slate-200 rounded px-3 py-2">
+                        <div>
+                          <span className="text-sm font-medium text-slate-800 font-mono">{m.model}</span>
+                          <span className="text-xs text-slate-400 ml-2">{m.calls.toLocaleString()} calls · {formatTokens(m.totalTokens)} tokens</span>
+                        </div>
+                        <span className="text-sm font-bold text-slate-800">{formatCost(m.estimatedCostUsd)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Per-client breakdown */}
           <div>
@@ -229,19 +298,39 @@ function ClientRow({
               </div>
             ) : detail ? (
               <div className="space-y-3">
-                {/* Operation breakdown */}
-                {detail.byOperation.length > 0 && (
+                {/* Action + Operation breakdown */}
+                {detail.byAction.length > 0 && (
                   <div>
-                    <div className="text-xs font-semibold text-slate-600 mb-1.5">By Operation</div>
+                    <div className="text-xs font-semibold text-slate-600 mb-1.5">By Action & Operation</div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {detail.byOperation.map(op => (
-                        <div key={op.operation} className="bg-white border border-slate-200 rounded px-3 py-2">
+                      {detail.byAction.map(a => (
+                        <div key={`${a.action}-${a.operation}`} className="bg-white border border-slate-200 rounded px-3 py-2">
                           <div className="flex justify-between items-center">
-                            <span className="text-xs font-medium capitalize text-slate-700">{op.operation}</span>
-                            <span className="text-xs font-bold text-slate-800">{formatCost(op.estimatedCostUsd)}</span>
+                            <span className="text-xs font-medium text-slate-700">{a.action}</span>
+                            <span className="text-xs font-bold text-slate-800">{formatCost(a.estimatedCostUsd)}</span>
                           </div>
                           <div className="text-[10px] text-slate-400 mt-0.5">
-                            {op.calls} calls · {formatTokens(op.promptTokens)} in · {formatTokens(op.completionTokens)} out
+                            <span className="capitalize">{a.operation}</span> · {a.calls} calls · {formatTokens(a.promptTokens)} in · {formatTokens(a.completionTokens)} out
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Model breakdown */}
+                {detail.byModel.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-600 mb-1.5">By Model</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {detail.byModel.map(m => (
+                        <div key={m.model} className="bg-white border border-slate-200 rounded px-3 py-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-medium text-slate-700 font-mono">{m.model}</span>
+                            <span className="text-xs font-bold text-slate-800">{formatCost(m.estimatedCostUsd)}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            {m.calls} calls · {formatTokens(m.totalTokens)} tokens
                           </div>
                         </div>
                       ))}
@@ -258,6 +347,8 @@ function ClientRow({
                         <thead className="text-slate-500">
                           <tr>
                             <th className="text-left py-1 pr-2">Time</th>
+                            <th className="text-left py-1 pr-2">Action</th>
+                            <th className="text-left py-1 pr-2">Model</th>
                             <th className="text-left py-1 pr-2">Operation</th>
                             <th className="text-right py-1 pr-2">In</th>
                             <th className="text-right py-1 pr-2">Out</th>
@@ -270,7 +361,9 @@ function ClientRow({
                               <td className="py-1 pr-2 text-slate-500 whitespace-nowrap">
                                 {new Date(r.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                               </td>
-                              <td className="py-1 pr-2 capitalize text-slate-700">{r.operation}</td>
+                              <td className="py-1 pr-2 text-slate-700 whitespace-nowrap">{r.action}</td>
+                              <td className="py-1 pr-2 text-slate-500 font-mono whitespace-nowrap">{r.model}</td>
+                              <td className="py-1 pr-2 capitalize text-slate-500">{r.operation}</td>
                               <td className="py-1 pr-2 text-right text-slate-500">{formatTokens(r.promptTokens)}</td>
                               <td className="py-1 pr-2 text-right text-slate-500">{formatTokens(r.completionTokens)}</td>
                               <td className="py-1 text-right font-medium text-slate-700">{formatCost(r.estimatedCostUsd)}</td>

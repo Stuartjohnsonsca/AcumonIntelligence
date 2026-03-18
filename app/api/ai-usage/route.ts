@@ -10,14 +10,13 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const clientId = searchParams.get('clientId');
-  const period = searchParams.get('period') || 'all'; // all | month | week
+  const period = searchParams.get('period') || 'all';
   const firmId = (session.user as { firmId: string }).firmId;
 
   let dateFilter: Date | undefined;
   if (period === 'month') dateFilter = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   else if (period === 'week') dateFilter = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  // If requesting a specific client, verify access
   if (clientId) {
     const client = await prisma.client.findUnique({
       where: { id: clientId },
@@ -32,13 +31,14 @@ export async function GET(req: Request) {
       ...(dateFilter ? { createdAt: { gte: dateFilter } } : {}),
     };
 
-    const [records, aggregation, byOperation] = await Promise.all([
+    const [records, aggregation, byAction, byModel] = await Promise.all([
       prisma.aiUsage.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take: 200,
         select: {
           id: true,
+          action: true,
           model: true,
           operation: true,
           promptTokens: true,
@@ -59,7 +59,18 @@ export async function GET(req: Request) {
         _count: true,
       }),
       prisma.aiUsage.groupBy({
-        by: ['operation'],
+        by: ['action', 'operation'],
+        where,
+        _sum: {
+          promptTokens: true,
+          completionTokens: true,
+          totalTokens: true,
+          estimatedCostUsd: true,
+        },
+        _count: true,
+      }),
+      prisma.aiUsage.groupBy({
+        by: ['model'],
         where,
         _sum: {
           promptTokens: true,
@@ -81,19 +92,28 @@ export async function GET(req: Request) {
         totalTokens: aggregation._sum.totalTokens || 0,
         estimatedCostUsd: Math.round((aggregation._sum.estimatedCostUsd || 0) * 1_000_000) / 1_000_000,
       },
-      byOperation: byOperation.map(op => ({
-        operation: op.operation,
-        calls: op._count,
-        promptTokens: op._sum.promptTokens || 0,
-        completionTokens: op._sum.completionTokens || 0,
-        totalTokens: op._sum.totalTokens || 0,
-        estimatedCostUsd: Math.round((op._sum.estimatedCostUsd || 0) * 1_000_000) / 1_000_000,
+      byAction: byAction.map(a => ({
+        action: a.action,
+        operation: a.operation,
+        calls: a._count,
+        promptTokens: a._sum.promptTokens || 0,
+        completionTokens: a._sum.completionTokens || 0,
+        totalTokens: a._sum.totalTokens || 0,
+        estimatedCostUsd: Math.round((a._sum.estimatedCostUsd || 0) * 1_000_000) / 1_000_000,
+      })),
+      byModel: byModel.map(m => ({
+        model: m.model,
+        calls: m._count,
+        promptTokens: m._sum.promptTokens || 0,
+        completionTokens: m._sum.completionTokens || 0,
+        totalTokens: m._sum.totalTokens || 0,
+        estimatedCostUsd: Math.round((m._sum.estimatedCostUsd || 0) * 1_000_000) / 1_000_000,
       })),
       recentRecords: records,
     });
   }
 
-  // No specific client — return summary per client for the firm
+  // Firm-wide summary
   const firmClients = await prisma.client.findMany({
     where: { firmId },
     select: { id: true, clientName: true },
@@ -106,7 +126,7 @@ export async function GET(req: Request) {
     ...(dateFilter ? { createdAt: { gte: dateFilter } } : {}),
   };
 
-  const [firmTotal, perClient] = await Promise.all([
+  const [firmTotal, perClient, firmByAction, firmByModel] = await Promise.all([
     prisma.aiUsage.aggregate({
       where,
       _sum: {
@@ -129,6 +149,18 @@ export async function GET(req: Request) {
       _count: true,
       orderBy: { _sum: { estimatedCostUsd: 'desc' } },
     }),
+    prisma.aiUsage.groupBy({
+      by: ['action'],
+      where,
+      _sum: { estimatedCostUsd: true },
+      _count: true,
+    }),
+    prisma.aiUsage.groupBy({
+      by: ['model'],
+      where,
+      _sum: { estimatedCostUsd: true, totalTokens: true },
+      _count: true,
+    }),
   ]);
 
   return NextResponse.json({
@@ -140,6 +172,17 @@ export async function GET(req: Request) {
       totalTokens: firmTotal._sum.totalTokens || 0,
       estimatedCostUsd: Math.round((firmTotal._sum.estimatedCostUsd || 0) * 1_000_000) / 1_000_000,
     },
+    byAction: firmByAction.map(a => ({
+      action: a.action,
+      calls: a._count,
+      estimatedCostUsd: Math.round((a._sum.estimatedCostUsd || 0) * 1_000_000) / 1_000_000,
+    })),
+    byModel: firmByModel.map(m => ({
+      model: m.model,
+      calls: m._count,
+      totalTokens: m._sum.totalTokens || 0,
+      estimatedCostUsd: Math.round((m._sum.estimatedCostUsd || 0) * 1_000_000) / 1_000_000,
+    })),
     clients: perClient.map(c => ({
       clientId: c.clientId,
       clientName: clientNameMap.get(c.clientId) || 'Unknown',
