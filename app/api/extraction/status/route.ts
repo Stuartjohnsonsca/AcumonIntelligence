@@ -18,27 +18,33 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: jobAccess.reason || 'Forbidden' }, { status: 403 });
   }
 
-  const job = await prisma.extractionJob.findUnique({
-    where: { id: jobId },
-    select: {
-      status: true,
-      totalFiles: true,
-      processedCount: true,
-      failedCount: true,
-      duplicateCount: true,
-    },
-  });
+  try {
+    const job = await prisma.extractionJob.findUnique({
+      where: { id: jobId },
+      select: {
+        status: true,
+        totalFiles: true,
+        processedCount: true,
+        failedCount: true,
+        duplicateCount: true,
+      },
+    });
 
-  if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const complete = job.status === 'complete' || job.status === 'failed';
+    const complete = job.status === 'complete' || job.status === 'failed';
 
-  return NextResponse.json({
-    status: job.status,
-    total: job.totalFiles,
-    extracted: job.processedCount,
-    failed: job.failedCount,
-    duplicated: job.duplicateCount,
-    complete,
-  });
+    return NextResponse.json({
+      status: job.status,
+      total: job.totalFiles,
+      extracted: job.processedCount,
+      failed: job.failedCount,
+      duplicated: job.duplicateCount,
+      complete,
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[Extraction:Status] Failed | jobId=${jobId} | error=${msg}`);
+    return NextResponse.json({ error: 'Failed to fetch status' }, { status: 500 });
+  }
 }

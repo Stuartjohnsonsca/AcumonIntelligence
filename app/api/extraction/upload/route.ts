@@ -134,7 +134,9 @@ export async function POST(req: Request) {
       files: uploadedFiles,
     });
   } catch (error) {
-    console.error('Upload error:', error);
+    const msg = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error(`[Extraction:Upload] Failed | user=${session.user.id} | error=${msg}`, stack ? `\n${stack}` : '');
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }
 }

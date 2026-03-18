@@ -104,7 +104,12 @@ export async function POST(req: Request) {
   }
 
   async function processFile(file: typeof files[0], refIndex: number) {
+    const startTime = Date.now();
+    const logCtx = `jobId=${jobId} | fileId=${file.id} | file=${file.originalName}`;
+
     try {
+      console.log(`[Extraction:Batch] Processing file ${refIndex} | ${logCtx} | size=${file.fileSize || 'unknown'} | mime=${file.mimeType}`);
+
       await moveToProcessing(file.storagePath);
       await prisma.extractionFile.update({
         where: { id: file.id },
@@ -188,9 +193,16 @@ export async function POST(req: Request) {
         data: { status: 'extracted', containerName: CONTAINERS.PROCESSED },
       });
 
+      const duration = Date.now() - startTime;
+      console.log(`[Extraction:Batch] Extracted file ${refIndex} | ${logCtx} | duration=${duration}ms | confidence=${extracted.confidence} | lineItems=${extracted.lineItems.length} | tokens=${extractionUsage.totalTokens}`);
+
       return { fileId: file.id, status: 'extracted' as const };
     } catch (error) {
+      const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const stack = error instanceof Error ? error.stack : undefined;
+      console.error(`[Extraction:Batch] Failed file ${refIndex} | ${logCtx} | duration=${duration}ms | error=${errorMessage}`, stack ? `\n${stack}` : '');
+
       await prisma.extractionFile.update({
         where: { id: file.id },
         data: { status: 'failed', errorMessage },
@@ -198,6 +210,9 @@ export async function POST(req: Request) {
       return { fileId: file.id, status: 'failed' as const, error: errorMessage };
     }
   }
+
+  const batchStartTime = Date.now();
+  console.log(`[Extraction:Batch] Starting batch | jobId=${jobId} | files=${files.length} | startIndex=${startIndex} | concurrency=${MAX_CONCURRENT}`);
 
   const tasks = files.map((file, i) => () => processFile(file, startIndex + i));
   const results = await runWithAdaptiveConcurrency(tasks, MAX_CONCURRENT);
@@ -210,6 +225,9 @@ export async function POST(req: Request) {
     if (val.status === 'extracted') batchExtracted++;
     else batchFailed++;
   }
+
+  const batchDuration = Date.now() - batchStartTime;
+  console.log(`[Extraction:Batch] Batch complete | jobId=${jobId} | extracted=${batchExtracted} | failed=${batchFailed} | duration=${batchDuration}ms`);
 
   await prisma.extractionJob.update({
     where: { id: jobId },
@@ -225,10 +243,13 @@ export async function POST(req: Request) {
   });
 
   if (completionCheck && (completionCheck.processedCount + completionCheck.failedCount) >= completionCheck.totalFiles) {
+    const finalStatus = completionCheck.processedCount > 0 ? 'complete' : 'failed';
+    console.log(`[Extraction:Batch] Job finished | jobId=${jobId} | status=${finalStatus} | processed=${completionCheck.processedCount} | failed=${completionCheck.failedCount} | total=${completionCheck.totalFiles}`);
+
     await prisma.extractionJob.update({
       where: { id: jobId },
       data: {
-        status: completionCheck.processedCount > 0 ? 'complete' : 'failed',
+        status: finalStatus,
         extractedAt: new Date(),
       },
     });

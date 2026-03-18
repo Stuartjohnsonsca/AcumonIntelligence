@@ -67,10 +67,14 @@ export async function POST(req: Request) {
 
   const baseUrl = getBaseUrl();
 
+  console.log(`[Extraction:Process] Starting | jobId=${jobId} | files=${files.length} | batches=${batches.length} | batchSize=${batchSize}`);
+
   after(async () => {
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
       const startIndex = i * batchSize + 1;
+
+      console.log(`[Extraction:Process] Dispatching batch ${i + 1}/${batches.length} | jobId=${jobId} | files=${batch.length}`);
 
       fetch(`${baseUrl}/api/extraction/process-batch`, {
         method: 'POST',
@@ -83,7 +87,8 @@ export async function POST(req: Request) {
           internalSecret: process.env.NEXTAUTH_SECRET,
         }),
       }).catch(err => {
-        console.error(`Batch ${i + 1} fire failed:`, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[Extraction:Process] Batch ${i + 1}/${batches.length} dispatch failed | jobId=${jobId} | error=${msg}`);
       });
 
       if (i < batches.length - 1) {

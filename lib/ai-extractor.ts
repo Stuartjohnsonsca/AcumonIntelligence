@@ -230,6 +230,7 @@ export async function extractDocumentFromBase64(
 
   try {
     const parsed = JSON.parse(jsonText.trim());
+    console.log(`[Extraction:AI] Parsed successfully | file=${fileName} | confidence=${parsed.confidence ?? 'N/A'} | lineItems=${Array.isArray(parsed.lineItems) ? parsed.lineItems.length : 0} | model=${result.model || AI_MODEL}`);
 
     const rawLocations = parsed.fieldLocations ?? {};
     const fieldLocations: Record<string, FieldLocation> = {};
@@ -266,7 +267,10 @@ export async function extractDocumentFromBase64(
       },
       usage,
     };
-  } catch {
+  } catch (parseError) {
+    const snippet = text.substring(0, 200).replace(/\n/g, '\\n');
+    console.error(`[Extraction:AI] JSON parse failed | file=${fileName} | model=${result.model || AI_MODEL} | error=${parseError instanceof Error ? parseError.message : 'Unknown'} | responseSnippet="${snippet}"`);
+
     return {
       document: {
         purchaserName: null, purchaserTaxId: null, purchaserCountry: null,
