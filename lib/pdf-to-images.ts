@@ -53,11 +53,13 @@ export async function pdfToImages(
     const canvas = createCanvas(viewport.width, viewport.height);
     const ctx = canvas.getContext('2d');
 
-    // pdfjs render expects a CanvasRenderingContext2D-like object
+    // pdfjs-dist v5 RenderParameters requires canvas + canvasContext
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await page.render({
-      canvasContext: ctx as unknown as CanvasRenderingContext2D,
+      canvasContext: ctx as any,
       viewport,
-    }).promise;
+      canvas: canvas as any,
+    } as any).promise;
 
     const pngBuffer = canvas.toBuffer('image/png');
     pages.push({
