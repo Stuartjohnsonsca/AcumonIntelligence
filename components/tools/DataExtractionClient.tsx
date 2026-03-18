@@ -296,9 +296,12 @@ export function DataExtractionClient({
   const [xeroCategory, setXeroCategory] = useState('');
   const [xeroError, setXeroError] = useState('');
 
-  // Read xeroError from URL query params (set by Xero OAuth callback redirect)
+  // Read Xero OAuth result from URL query params (set by callback redirect)
   useEffect(() => {
     const xeroErrorParam = searchParams.get('xeroError');
+    const xeroConnectedParam = searchParams.get('xeroConnected');
+    const returnedClientId = searchParams.get('clientId');
+
     if (xeroErrorParam) {
       const messages: Record<string, string> = {
         missing_params: 'Xero authorisation failed: missing required parameters. Please try connecting again.',
@@ -308,7 +311,18 @@ export function DataExtractionClient({
         no_organisation: 'Xero authorisation failed: no organisation found on your Xero account.',
       };
       setXeroError(messages[xeroErrorParam] || `Xero authorisation failed: ${xeroErrorParam}`);
-      // Clean up the URL without triggering a navigation
+    }
+
+    if (xeroConnectedParam === 'true' && returnedClientId) {
+      // Auto-select the client that was just connected and refresh its status
+      const client = assignedClients.find(c => c.id === returnedClientId)
+        || unassignedClients.find(c => c.id === returnedClientId);
+      if (client) setSelectedClient(client as Client);
+      setXeroConnected(true);
+    }
+
+    // Clean up OAuth params from URL without triggering a navigation
+    if (xeroErrorParam || xeroConnectedParam) {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [searchParams]);
