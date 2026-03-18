@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth';
 import { getAttachmentsList, downloadAttachment } from '@/lib/xero';
 import { prisma } from '@/lib/db';
 import { uploadToInbox, generateBlobName, CONTAINERS } from '@/lib/azure-blob';
-import { isSupportedForExtraction, getMimeType } from '@/lib/gemini-extractor';
+import { isSupportedForExtraction, getMimeType } from '@/lib/ai-extractor';
 import { verifyClientAccess } from '@/lib/client-access';
 import { createHash } from 'crypto';
 

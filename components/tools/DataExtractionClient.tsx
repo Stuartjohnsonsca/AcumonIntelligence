@@ -96,9 +96,17 @@ interface SpreadsheetRow {
   [key: string]: string;
 }
 
-const ACCOUNTING_COLUMNS = [
+const ACCOUNTING_COLUMNS_BASIC = [
   'Date', 'Reference', 'Contact', 'Description', 'Account Code',
   'Net', 'Tax', 'Gross',
+];
+
+const ACCOUNTING_COLUMNS_FULL = [
+  'Date', 'Reference', 'Contact', 'Type', 'Status',
+  'Description', 'Account Code', 'Account Name',
+  'Net', 'Tax', 'Total',
+  'Created By', 'Approved By',
+  'Invoice No', 'Due Date', 'Reconciled',
 ];
 
 const UPLOADED_DOC_COLUMNS_BASE = [
@@ -239,7 +247,7 @@ export function DataExtractionClient({
   // Left panel state
   const [leftPanelMode, setLeftPanelMode] = useState<LeftPanelMode>('idle');
   const [leftPanelData, setLeftPanelData] = useState<SpreadsheetRow[]>([]);
-  const [leftPanelColumns, setLeftPanelColumns] = useState<string[]>(ACCOUNTING_COLUMNS);
+  const [leftPanelColumns, setLeftPanelColumns] = useState<string[]>(ACCOUNTING_COLUMNS_BASIC);
   const [leftPanelFileName, setLeftPanelFileName] = useState<string | null>(null);
   const [leftPanelFromAccounting, setLeftPanelFromAccounting] = useState(false);
   const leftSpreadsheetRef = useRef<HTMLInputElement>(null);
@@ -966,10 +974,10 @@ export function DataExtractionClient({
   }
 
   function handleLoadBlankSpreadsheet() {
-    setLeftPanelColumns(ACCOUNTING_COLUMNS);
+    setLeftPanelColumns(ACCOUNTING_COLUMNS_BASIC);
     const emptyRows: SpreadsheetRow[] = Array.from({ length: 50 }, () => {
       const row: SpreadsheetRow = {};
-      ACCOUNTING_COLUMNS.forEach(c => { row[c] = ''; });
+      ACCOUNTING_COLUMNS_BASIC.forEach(c => { row[c] = ''; });
       return row;
     });
     setLeftPanelData(emptyRows);
@@ -1199,22 +1207,39 @@ export function DataExtractionClient({
     return dateStr;
   }
 
-  function loadXeroResultIntoSpreadsheet(data: { rows: Array<Record<string, unknown>> }) {
-    const cols = ['Date', 'Reference', 'Contact', 'Type', 'Description', 'Account Code', 'Net', 'Tax', 'Total'];
+  function loadAccountingSystemData(data: { rows: Array<Record<string, unknown>> }) {
+    const cols = ACCOUNTING_COLUMNS_FULL;
     const rows: SpreadsheetRow[] = [];
     const meta: { id: string; type: string; hasAttachments: boolean }[] = [];
     for (const txn of data.rows) {
-      const t = txn as { date?: string; reference?: string; contact?: string; type?: string; description?: string; accountCode?: string; lineAmount?: number | null; taxAmount?: number | null; subtotal?: number; tax?: number; total?: number; transactionId?: string; transactionType?: string; hasAttachments?: boolean };
+      const t = txn as {
+        date?: string; reference?: string; contact?: string; type?: string;
+        status?: string; description?: string; accountCode?: string; accountName?: string;
+        lineAmount?: number | null; taxAmount?: number | null;
+        subtotal?: number; tax?: number; total?: number;
+        transactionId?: string; transactionType?: string; hasAttachments?: boolean;
+        createdBy?: string; approvedBy?: string;
+        invoiceNumber?: string; dueDate?: string;
+        isReconciled?: boolean | null; bankAccountName?: string;
+        tracking?: string; xeroUrl?: string;
+      };
       rows.push({
         'Date': parseXeroDate(t.date),
         'Reference': t.reference || '',
         'Contact': t.contact || '',
         'Type': t.type || '',
+        'Status': t.status || '',
         'Description': t.description || '',
         'Account Code': t.accountCode || '',
+        'Account Name': t.accountName || '',
         'Net': t.lineAmount != null ? String(t.lineAmount) : String(t.subtotal ?? ''),
         'Tax': t.taxAmount != null ? String(t.taxAmount) : String(t.tax ?? ''),
         'Total': t.lineAmount != null && t.taxAmount != null ? String(t.lineAmount + t.taxAmount) : String(t.total ?? ''),
+        'Created By': t.createdBy || '',
+        'Approved By': t.approvedBy || '',
+        'Invoice No': t.invoiceNumber || '',
+        'Due Date': parseXeroDate(t.dueDate),
+        'Reconciled': t.isReconciled != null ? (t.isReconciled ? 'Yes' : 'No') : '',
       });
       meta.push({
         id: t.transactionId || '',
@@ -1281,7 +1306,7 @@ export function DataExtractionClient({
                 result: statusData.data,
               });
               if (selectedClient?.id === clientId_at_start) {
-                loadXeroResultIntoSpreadsheet(statusData.data);
+                loadAccountingSystemData(statusData.data);
               }
               return;
             }

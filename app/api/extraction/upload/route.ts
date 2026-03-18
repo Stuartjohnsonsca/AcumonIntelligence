@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { uploadToInbox, generateBlobName, CONTAINERS } from '@/lib/azure-blob';
-import { getMimeType, isSupportedForExtraction } from '@/lib/gemini-extractor';
+import { getMimeType, isSupportedForExtraction } from '@/lib/ai-extractor';
 import { verifyClientAccess } from '@/lib/client-access';
 import JSZip from 'jszip';
 import { createHash } from 'crypto';

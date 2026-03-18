@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { getAccounts, getTransactions } from '@/lib/xero';
+import { getAccounts, getTransactions, batchFetchHistories } from '@/lib/xero';
 import { verifyClientAccess } from '@/lib/client-access';
 
 export const maxDuration = 120;
@@ -40,13 +40,37 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: 'dateFrom and dateTo required' }, { status: 400 });
       }
 
-      let transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
+      const [allTransactions, allAccounts] = await Promise.all([
+        getTransactions(clientId, codes, dateFrom, dateTo),
+        getAccounts(clientId),
+      ]);
 
+      let transactions = allTransactions;
       if (excludeManualJournals) {
         transactions = transactions.filter(
           (txn: { Type: string }) => txn.Type !== 'MANJOURNAL' && txn.Type !== 'MANUAL JOURNAL'
         );
       }
+
+      const accountMap = new Map<string, { name: string; description: string }>();
+      for (const acc of allAccounts) {
+        accountMap.set(acc.Code, { name: acc.Name, description: acc.Description || '' });
+      }
+
+      const uniqueTxns: { id: string; type: 'Invoice' | 'BankTransaction' }[] = [];
+      const seenIds = new Set<string>();
+      for (const txn of transactions) {
+        const txnId = txn.InvoiceID || txn.BankTransactionID || '';
+        if (txnId && !seenIds.has(txnId)) {
+          seenIds.add(txnId);
+          uniqueTxns.push({ id: txnId, type: txn.InvoiceID ? 'Invoice' : 'BankTransaction' });
+        }
+      }
+
+      let historyMap = new Map<string, { createdBy: string; approvedBy: string }>();
+      try {
+        historyMap = await batchFetchHistories(clientId, uniqueTxns);
+      } catch { /* non-fatal */ }
 
       function normaliseXeroDate(raw: string | undefined): string {
         if (!raw) return '';
@@ -56,26 +80,44 @@ export async function GET(req: Request) {
         return isNaN(d.getTime()) ? raw : d.toISOString();
       }
 
-      const rows = transactions.map(txn => ({
-        date: normaliseXeroDate(txn.Date),
-        reference: txn.Reference || '',
-        contact: txn.Contact?.Name || '',
-        type: txn.Type,
-        subtotal: txn.SubTotal,
-        tax: txn.TotalTax,
-        total: txn.Total,
-        transactionId: txn.InvoiceID || txn.BankTransactionID || '',
-        transactionType: txn.InvoiceID ? 'Invoice' as const : 'BankTransaction' as const,
-        hasAttachments: txn.HasAttachments ?? false,
-        lineItems: txn.LineItems?.map(li => ({
-          description: li.Description,
-          quantity: li.Quantity,
-          unitAmount: li.UnitAmount,
-          taxAmount: li.TaxAmount,
-          lineAmount: li.LineAmount,
-          accountCode: li.AccountCode,
-        })) || [],
-      }));
+      const rows = transactions.map(txn => {
+        const txnId = txn.InvoiceID || txn.BankTransactionID || '';
+        const audit = historyMap.get(txnId) || { createdBy: '', approvedBy: '' };
+        return {
+          date: normaliseXeroDate(txn.Date),
+          reference: txn.Reference || '',
+          contact: txn.Contact?.Name || '',
+          type: txn.Type,
+          status: txn.Status || '',
+          invoiceNumber: txn.InvoiceNumber || '',
+          dueDate: normaliseXeroDate(txn.DueDate),
+          currencyCode: txn.CurrencyCode || '',
+          isReconciled: txn.IsReconciled ?? null,
+          bankAccountName: txn.BankAccount?.Name || '',
+          subtotal: txn.SubTotal,
+          tax: txn.TotalTax,
+          total: txn.Total,
+          transactionId: txnId,
+          transactionType: txn.InvoiceID ? 'Invoice' as const : 'BankTransaction' as const,
+          hasAttachments: txn.HasAttachments ?? false,
+          createdBy: audit.createdBy,
+          approvedBy: audit.approvedBy,
+          xeroUrl: txn.Url || '',
+          lineItems: txn.LineItems?.map(li => {
+            const acct = accountMap.get(li.AccountCode);
+            return {
+              description: li.Description,
+              quantity: li.Quantity,
+              unitAmount: li.UnitAmount,
+              taxAmount: li.TaxAmount,
+              lineAmount: li.LineAmount,
+              accountCode: li.AccountCode,
+              accountName: acct?.name || '',
+              tracking: li.Tracking?.map(t => `${t.Name}: ${t.Option}`).join('; ') || '',
+            };
+          }) || [],
+        };
+      });
 
       return NextResponse.json({ rows });
     }

@@ -1,6 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
-import { getTransactions } from '@/lib/xero';
+import { getTransactions, getAccounts, batchFetchHistories } from '@/lib/xero';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
 
@@ -36,7 +36,16 @@ export async function POST(req: Request) {
   after(async () => {
     try {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
-      const transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
+
+      const [transactions, accounts] = await Promise.all([
+        getTransactions(clientId, codes, dateFrom, dateTo),
+        getAccounts(clientId),
+      ]);
+
+      const accountMap = new Map<string, { name: string; description: string }>();
+      for (const acc of accounts) {
+        accountMap.set(acc.Code, { name: acc.Name, description: acc.Description || '' });
+      }
 
       function normaliseXeroDate(raw: string | undefined): string {
         if (!raw) return '';
@@ -44,6 +53,26 @@ export async function POST(req: Request) {
         if (msMatch) return new Date(parseInt(msMatch[1], 10)).toISOString();
         const d = new Date(raw);
         return isNaN(d.getTime()) ? raw : d.toISOString();
+      }
+
+      const uniqueTxns: { id: string; type: 'Invoice' | 'BankTransaction' }[] = [];
+      const seenIds = new Set<string>();
+      for (const txn of transactions) {
+        const txnId = txn.InvoiceID || txn.BankTransactionID || '';
+        if (txnId && !seenIds.has(txnId)) {
+          seenIds.add(txnId);
+          uniqueTxns.push({
+            id: txnId,
+            type: txn.InvoiceID ? 'Invoice' : 'BankTransaction',
+          });
+        }
+      }
+
+      let historyMap = new Map<string, { createdBy: string; approvedBy: string }>();
+      try {
+        historyMap = await batchFetchHistories(clientId, uniqueTxns);
+      } catch (histErr) {
+        console.warn('History fetch failed (non-fatal):', histErr instanceof Error ? histErr.message : histErr);
       }
 
       const rows = [];
@@ -54,42 +83,53 @@ export async function POST(req: Request) {
         const txnId = txn.InvoiceID || txn.BankTransactionID || '';
         const txnType = txn.InvoiceID ? 'Invoice' : 'BankTransaction';
         const hasAttachments = txn.HasAttachments ?? false;
+        const audit = historyMap.get(txnId) || { createdBy: '', approvedBy: '' };
+
+        const baseFields = {
+          date: normaliseXeroDate(txn.Date),
+          reference: txn.Reference || '',
+          contact: txn.Contact?.Name || '',
+          type: txn.Type,
+          status: txn.Status || '',
+          invoiceNumber: txn.InvoiceNumber || '',
+          dueDate: normaliseXeroDate(txn.DueDate),
+          currencyCode: txn.CurrencyCode || '',
+          isReconciled: txn.IsReconciled ?? null,
+          bankAccountName: txn.BankAccount?.Name || '',
+          subtotal: txn.SubTotal,
+          tax: txn.TotalTax,
+          total: txn.Total,
+          transactionId: txnId,
+          transactionType: txnType,
+          hasAttachments,
+          createdBy: audit.createdBy,
+          approvedBy: audit.approvedBy,
+          xeroUrl: txn.Url || '',
+        };
 
         if (txn.LineItems && txn.LineItems.length > 0) {
           for (const li of txn.LineItems) {
+            const acct = accountMap.get(li.AccountCode);
+            const trackingStr = li.Tracking?.map(t => `${t.Name}: ${t.Option}`).join('; ') || '';
             rows.push({
-              date: normaliseXeroDate(txn.Date),
-              reference: txn.Reference || '',
-              contact: txn.Contact?.Name || '',
-              type: txn.Type,
+              ...baseFields,
               description: li.Description || '',
               accountCode: li.AccountCode || '',
+              accountName: acct?.name || '',
               lineAmount: li.LineAmount,
               taxAmount: li.TaxAmount,
-              subtotal: txn.SubTotal,
-              tax: txn.TotalTax,
-              total: txn.Total,
-              transactionId: txnId,
-              transactionType: txnType,
-              hasAttachments,
+              tracking: trackingStr,
             });
           }
         } else {
           rows.push({
-            date: normaliseXeroDate(txn.Date),
-            reference: txn.Reference || '',
-            contact: txn.Contact?.Name || '',
-            type: txn.Type,
+            ...baseFields,
             description: '',
             accountCode: '',
+            accountName: '',
             lineAmount: null,
             taxAmount: null,
-            subtotal: txn.SubTotal,
-            tax: txn.TotalTax,
-            total: txn.Total,
-            transactionId: txnId,
-            transactionType: txnType,
-            hasAttachments,
+            tracking: '',
           });
         }
       }

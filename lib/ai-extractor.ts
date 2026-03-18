@@ -1,10 +1,15 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const client = new OpenAI({
+  apiKey: process.env.TOGETHER_API_KEY!,
+  baseURL: 'https://api.together.xyz/v1',
+});
 
 const MAX_RETRIES = 5;
 const BASE_BACKOFF_MS = 2000;
 const MAX_BACKOFF_MS = 60000;
+
+export const AI_MODEL = process.env.AI_MODEL || 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
 
 function isTransientError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -149,8 +154,6 @@ Rules:
 - pageCount: the total number of pages in this document (1 for single images)`;
 }
 
-export const AI_MODEL = 'gemini-2.5-flash';
-
 export interface AiTokenUsage {
   promptTokens: number;
   completionTokens: number;
@@ -159,21 +162,26 @@ export interface AiTokenUsage {
 }
 
 const AI_PRICING: Record<string, { inputPerToken: number; outputPerToken: number }> = {
-  'gemini-2.5-flash': { inputPerToken: 0.30 / 1_000_000, outputPerToken: 2.50 / 1_000_000 },
+  'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8': { inputPerToken: 0.27 / 1_000_000, outputPerToken: 0.85 / 1_000_000 },
+  'Qwen/Qwen3-VL-8B-Instruct': { inputPerToken: 0.18 / 1_000_000, outputPerToken: 0.68 / 1_000_000 },
+  'Qwen/Qwen3.5-397B-A17B': { inputPerToken: 0.60 / 1_000_000, outputPerToken: 3.60 / 1_000_000 },
+  'moonshotai/Kimi-K2.5': { inputPerToken: 0.50 / 1_000_000, outputPerToken: 2.80 / 1_000_000 },
+  'google/gemma-3n-E4B-it': { inputPerToken: 0.02 / 1_000_000, outputPerToken: 0.04 / 1_000_000 },
 };
 
+const DEFAULT_PRICING = { inputPerToken: 0.27 / 1_000_000, outputPerToken: 0.85 / 1_000_000 };
+
 export function calculateCostUsd(usage: AiTokenUsage): number {
-  const pricing = AI_PRICING[usage.model] || AI_PRICING['gemini-2.5-flash'];
+  const pricing = AI_PRICING[usage.model] || DEFAULT_PRICING;
   return (usage.promptTokens * pricing.inputPerToken) + (usage.completionTokens * pricing.outputPerToken);
 }
 
-function extractUsageMetadata(result: { response: { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } } }): AiTokenUsage {
-  const meta = result.response.usageMetadata;
+function extractUsageMetadata(response: OpenAI.Chat.Completions.ChatCompletion): AiTokenUsage {
   return {
-    promptTokens: meta?.promptTokenCount ?? 0,
-    completionTokens: meta?.candidatesTokenCount ?? 0,
-    totalTokens: meta?.totalTokenCount ?? 0,
-    model: AI_MODEL,
+    promptTokens: response.usage?.prompt_tokens ?? 0,
+    completionTokens: response.usage?.completion_tokens ?? 0,
+    totalTokens: response.usage?.total_tokens ?? 0,
+    model: response.model || AI_MODEL,
   };
 }
 
@@ -188,26 +196,35 @@ export async function extractDocumentFromBase64(
   fileName: string,
   clientName?: string,
 ): Promise<ExtractionResult> {
-  const model = genAI.getGenerativeModel({ model: AI_MODEL });
   const prompt = buildExtractionPrompt(clientName);
+  const dataUri = `data:${mimeType};base64,${base64Data}`;
 
   const result = await retryWithBackoff(
-    () => model.generateContent([
-      {
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf',
+    () => client.chat.completions.create({
+      model: AI_MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: dataUri },
+            },
+            {
+              type: 'text',
+              text: `File name: ${fileName}\n\n${prompt}`,
+            },
+          ],
         },
-      },
-      `File name: ${fileName}\n\n${prompt}`,
-    ]),
+      ],
+      max_tokens: 4096,
+    }),
     `extract:${fileName}`,
   );
 
   const usage = extractUsageMetadata(result);
-  const text = result.response.text();
+  const text = result.choices[0]?.message?.content || '';
 
-  // Strip markdown code blocks if present
   const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/(\{[\s\S]*\})/);
   const jsonText = jsonMatch ? jsonMatch[1] : text;
 
@@ -273,21 +290,26 @@ export async function categoriseDescription(
   description: string,
   existingCategories: { description: string; category: string }[]
 ): Promise<CategorisationResult> {
-  const model = genAI.getGenerativeModel({ model: AI_MODEL });
-
   const context = existingCategories.length > 0
     ? `Previously categorised items for this client:\n${existingCategories.slice(0, 20).map(c => `"${c.description}" → ${c.category}`).join('\n')}\n\n`
     : '';
 
   const result = await retryWithBackoff(
-    () => model.generateContent(
-      `${context}What accounting category does this description belong to? Reply with ONLY the category name (2-4 words max, e.g. "Professional Fees", "Insurance", "IT Services", "Travel & Subsistence").\n\nDescription: "${description}"`
-    ),
+    () => client.chat.completions.create({
+      model: AI_MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: `${context}What accounting category does this description belong to? Reply with ONLY the category name (2-4 words max, e.g. "Professional Fees", "Insurance", "IT Services", "Travel & Subsistence").\n\nDescription: "${description}"`,
+        },
+      ],
+      max_tokens: 50,
+    }),
     `categorise:${description.substring(0, 40)}`,
   );
 
   return {
-    category: result.response.text().trim().replace(/^["']|["']$/g, ''),
+    category: (result.choices[0]?.message?.content || '').trim().replace(/^["']|["']$/g, ''),
     usage: extractUsageMetadata(result),
   };
 }

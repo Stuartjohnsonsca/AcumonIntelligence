@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getBlobAsBase64, moveToProcessing, moveToProcessed, CONTAINERS } from '@/lib/azure-blob';
-import { extractDocumentFromBase64, categoriseDescription, calculateCostUsd, type AiTokenUsage } from '@/lib/gemini-extractor';
+import { extractDocumentFromBase64, categoriseDescription, calculateCostUsd, type AiTokenUsage } from '@/lib/ai-extractor';
 
 const MAX_CONCURRENT = parseInt(process.env.GEMINI_MAX_CONCURRENT || '3', 10);
 const INITIAL_DELAY_MS = 200;

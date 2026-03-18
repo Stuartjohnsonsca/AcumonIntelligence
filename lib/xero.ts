@@ -197,6 +197,7 @@ export interface XeroAccount {
   AccountID: string;
   Code: string;
   Name: string;
+  Description?: string;
   Type: string;
   Class: string;
   Status: string;
@@ -221,14 +222,24 @@ export async function getAccounts(clientId: string): Promise<XeroAccount[]> {
 export interface XeroTransaction {
   BankTransactionID?: string;
   InvoiceID?: string;
+  InvoiceNumber?: string;
   HasAttachments?: boolean;
   Type: string;
+  Status?: string;
   Date: string;
+  DueDate?: string;
   Reference?: string;
+  CurrencyCode?: string;
+  UpdatedDateUTC?: string;
+  Url?: string;
   Contact?: { Name: string; ContactID: string };
   SubTotal: number;
   TotalTax: number;
   Total: number;
+  AmountDue?: number;
+  AmountPaid?: number;
+  IsReconciled?: boolean;
+  BankAccount?: { AccountID: string; Name: string; Code: string };
   LineItems: {
     Description: string;
     Quantity: number;
@@ -236,6 +247,7 @@ export interface XeroTransaction {
     TaxAmount: number;
     LineAmount: number;
     AccountCode: string;
+    Tracking?: { Name: string; Option: string }[];
   }[];
 }
 
@@ -290,6 +302,89 @@ export async function revokeConnection(accessToken: string, tenantId: string): P
   } catch (err) {
     console.warn('Xero revoke failed (best-effort):', err instanceof Error ? err.message : err);
   }
+}
+
+// ─── History & Notes ─────────────────────────────────────────────────────────
+
+export interface XeroHistoryRecord {
+  Changes: string;
+  DateUTCString: string;
+  DateUTC: string;
+  User: string;
+  Details: string;
+}
+
+export async function getTransactionHistory(
+  clientId: string,
+  endpoint: 'Invoices' | 'BankTransactions',
+  transactionId: string,
+): Promise<XeroHistoryRecord[]> {
+  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+  const url = `${XERO_API_BASE}/${endpoint}/${transactionId}/History`;
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'Xero-Tenant-Id': tenantId,
+    Accept: 'application/json',
+  };
+  const res = await xeroFetchWithRetry(url, headers);
+  if (!res.ok) {
+    console.warn(`Xero history fetch failed (${res.status}) for ${endpoint}/${transactionId}`);
+    return [];
+  }
+  const data = await res.json();
+  return data.HistoryRecords ?? [];
+}
+
+export interface TransactionAuditInfo {
+  createdBy: string;
+  approvedBy: string;
+}
+
+export async function batchFetchHistories(
+  clientId: string,
+  transactions: { id: string; type: 'Invoice' | 'BankTransaction' }[],
+): Promise<Map<string, TransactionAuditInfo>> {
+  const results = new Map<string, TransactionAuditInfo>();
+  const uniqueTxns = new Map<string, 'Invoice' | 'BankTransaction'>();
+  for (const t of transactions) {
+    if (t.id && !uniqueTxns.has(t.id)) uniqueTxns.set(t.id, t.type);
+  }
+
+  const BATCH_SIZE = 5;
+  const entries = Array.from(uniqueTxns.entries());
+
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const batch = entries.slice(i, i + BATCH_SIZE);
+
+    const promises = batch.map(async ([id, type]) => {
+      const endpoint = type === 'Invoice' ? 'Invoices' : 'BankTransactions';
+      try {
+        const history = await getTransactionHistory(clientId, endpoint, id);
+        let createdBy = '';
+        let approvedBy = '';
+        for (const record of history) {
+          const changes = (record.Changes || '').toLowerCase();
+          if (changes.includes('created') || changes.includes('submitted')) {
+            if (!createdBy) createdBy = record.User || '';
+          }
+          if (changes.includes('approved') || changes.includes('authorised')) {
+            approvedBy = record.User || '';
+          }
+        }
+        results.set(id, { createdBy, approvedBy });
+      } catch {
+        results.set(id, { createdBy: '', approvedBy: '' });
+      }
+    });
+
+    await Promise.all(promises);
+
+    if (i + BATCH_SIZE < entries.length) {
+      await new Promise(resolve => setTimeout(resolve, XERO_PAGE_DELAY_MS));
+    }
+  }
+
+  return results;
 }
 
 // ─── Attachments ──────────────────────────────────────────────────────────────

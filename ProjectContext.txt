@@ -18,7 +18,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - Prisma ORM + Supabase PostgreSQL
 - Azure Communication Services Email (UK region, acumonintelligence-openai resource)
 - Stripe (placeholder, not yet live)
-- **Google Gemini API** (gemini-2.5-flash) — AI document extraction engine (paid tier, dynamic rate-limit handling, bounding box extraction for field locations)
+- **Together AI API** (OpenAI-compatible endpoint at api.together.xyz/v1) — AI document extraction engine using configurable vision model (default: meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8); dynamic rate-limit handling, bounding box extraction for field locations
 - **Azure Blob Storage** (acumondataextractor) — temporary file staging for extraction + SAS URL generation for secure browser access
 - **pdf-lib** — server-side PDF annotation (coloured bounding boxes on extracted documents)
 - **pdfjs-dist** — client-side PDF rendering in DocumentViewer component
@@ -44,7 +44,7 @@ c:\Users\stuart\OneDrive - Johnsons Financial Management\AI Toolkit - Documents\
 - /lib/products.ts — Product list + URL prefix constants
 - /lib/utils.ts — cn(), formatCurrency(), formatDate(), generateOTP()
 - /lib/azure-blob.ts — Azure Blob Storage helpers (upload, move, download)
-- /lib/gemini-extractor.ts — Gemini AI extraction + category inference (5 retries, dynamic backoff with server-hint parsing, jitter)
+- /lib/ai-extractor.ts — AI extraction + category inference via Together AI (OpenAI SDK, 5 retries, dynamic backoff with server-hint parsing, jitter)
 - /lib/xero.ts — Xero OAuth2 helpers (authorize, token exchange/refresh, AES-256-GCM encryption, API wrappers)
 - /lib/client-access.ts — Client data isolation helpers (verifyClientAccess, verifyJobAccess)
 - /lib/regions.ts — Region configuration for data residency (uk, eu, us, ap infrastructure mappings)
@@ -147,7 +147,8 @@ NEXTAUTH_SECRET, NEXTAUTH_URL
 AZURE_COMMUNICATION_CONNECTION_STRING — Azure Communication Services connection string
 EMAIL_FROM — Sender email address (default: DoNotReply@...azurecomm.net)
 STRIPE_SECRET_KEY, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-GEMINI_API_KEY — Google AI API key for document extraction (project: DataExtractor, gen-lang-client-0724242070, key: DataExtractorKey)
+TOGETHER_API_KEY — Together AI API key for document extraction (OpenAI-compatible endpoint at api.together.xyz/v1)
+AI_MODEL — (optional) Together AI model string (default: meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8)
 AZURE_STORAGE_CONNECTION_STRING — Azure Blob Storage connection string (acumondataextractor)
 AZURE_STORAGE_CONTAINER_INBOX=upload-inbox
 AZURE_STORAGE_CONTAINER_PROCESSING=processing
@@ -196,7 +197,7 @@ npm run dev
 - account_category_learning — per-client AI learning for description→category mapping
 - accounting_connections — stores encrypted Xero OAuth2 tokens per client (unique on [clientId, system]); auto-refreshes; 30-day expiry
 - background_tasks — DB-backed task state for serverless-safe background processing (replaces in-memory Maps); cleaned by daily cron
-- ai_usage — per-call AI cost tracking (clientId, jobId, fileId, userId, action, model, operation, promptTokens, completionTokens, totalTokens, estimatedCostUsd); indexed on (clientId), (clientId, createdAt), (userId). `action` identifies the tool (e.g. "Financial Data Extraction"), `model` identifies the AI model (e.g. "gemini-2.5-flash"), `operation` is the sub-task (e.g. "extraction", "categorisation")
+- ai_usage — per-call AI cost tracking (clientId, jobId, fileId, userId, action, model, operation, promptTokens, completionTokens, totalTokens, estimatedCostUsd); indexed on (clientId), (clientId, createdAt), (userId). `action` identifies the tool (e.g. "Financial Data Extraction"), `model` identifies the AI model (e.g. "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"), `operation` is the sub-task (e.g. "extraction", "categorisation")
 
 ## Parallel Extraction Pipeline Architecture
 - Files are uploaded via POST /api/extraction/upload (stores in Azure inbox, creates ExtractionFile rows)
@@ -232,10 +233,17 @@ npm run dev
 
 ## Data Extraction — Left Panel Features
 - **Upload Spreadsheet**: Opens file picker for a single .xlsx or .csv file; parsed client-side (ExcelJS for xlsx, native for CSV) and displayed in an editable spreadsheet grid on the left panel
-- **Load Blank Spreadsheet**: Creates an empty editable grid with standard accounting columns (Date, Reference, Contact, Description, Account Code, Net, Tax, Gross); supports clipboard paste for bulk data entry; user can add more rows
-- **Collate from Xero**: Checks if client has a valid Xero connection via GET /api/accounting/xero/status
+- **Load Blank Spreadsheet**: Creates an empty editable grid with basic accounting columns (Date, Reference, Contact, Description, Account Code, Net, Tax, Gross); supports clipboard paste for bulk data entry; user can add more rows
+- **Collate from Accounting System**: Generic approach — any connected accounting system populates the same standard column set:
+  - Full columns: Date, Reference, Contact, Type, Status, Description, Account Code, Account Name, Net, Tax, Total, Created By, Approved By, Invoice No, Due Date, Reconciled
+  - Account Name resolved via Chart of Accounts lookup (code → name mapping)
+  - Created By / Approved By populated via History & Notes API (audit trail)
+  - Designed to work with Xero, QuickBooks, Sage, or any future accounting system integration
+- **Xero Integration**: Checks if client has a valid Xero connection via GET /api/accounting/xero/status
   - If not connected: redirects to GET /api/accounting/xero/connect to initiate OAuth2 flow
   - If connected: shows modal with chart of accounts multi-select + date range picker; fetches transactions and populates left panel grid
+  - Ancillary data: fetches Accounts for code→name lookup, fetches History for created/approved users (batched with rate-limit delays)
+  - Additional fields captured: InvoiceNumber, Status, DueDate, CurrencyCode, IsReconciled, BankAccount name, Tracking categories
   - Xero OAuth2 flow with PKCE: redirect → Xero login → callback → state validation → token exchange with code_verifier → encrypted storage (AES-256-GCM) in accounting_connections table
   - Tokens auto-refresh on expiry; connection expires after 30 days
   - Scopes: offline_access, openid, profile, email, accounting.invoices.read, accounting.payments.read, accounting.banktransactions.read, accounting.manualjournals.read, accounting.settings.read, accounting.contacts.read, accounting.attachments.read (granular scopes required for apps created after 2 March 2026)
@@ -387,7 +395,7 @@ npm run dev
 | Supabase PostgreSQL | `eu-north-1` (Stockholm) | **No** | Migrate to eu-west-2 (London) |
 | Azure Blob Storage | Verify in Azure Portal | **Check** | Verify `acumondataextractor` is in UK South |
 | Azure Communication Services | `.uk.communication.azure.com` | Yes | Already UK |
-| Google Gemini API | US (global endpoint) | **No** | Migrate to Vertex AI with europe-west2 (London) |
+| Together AI API | US (global endpoint) | **No** | Monitor for EU endpoint availability |
 | Xero API | Global (Xero-hosted) | N/A | Third-party API, data in transit only |
 
 ### Required Infrastructure Migrations
@@ -395,9 +403,9 @@ npm run dev
 2. **Gemini → Vertex AI**: Switch from `@google/generative-ai` SDK (US endpoint) to `@google/genai` SDK with Vertex AI:
    - Create Google Cloud project with Vertex AI API enabled
    - Configure europe-west2 (London) as the processing location
-   - Replace API key auth with Google Cloud service account credentials
-   - Update `lib/gemini-extractor.ts` to use `GoogleGenAI({ vertexai: true, project: '...', location: 'europe-west2' })`
-   - Data residency guaranteed: ML processing occurs within the specified region
+   - Monitor Together AI for EU-based endpoint availability
+   - AI inference currently routes via Together AI's US endpoint (api.together.xyz/v1)
+   - Model configurable via AI_MODEL env var; pricing in lib/ai-extractor.ts
 3. **Azure Blob Storage**: Verify region in Azure Portal. If not UK South, create new storage account in UK South and migrate containers
 4. **Vercel Pro plan**: Required for lhr1 (London) function region. Free plan defaults to iad1 (US)
 
@@ -417,14 +425,14 @@ npm run dev
 - **UI**: "AI Usage" tab in My Account (visible to Firm Admin, Portfolio Owner, Super Admin)
   - Summary cards: Total AI Calls, Input Tokens, Output Tokens, Estimated Cost (USD + GBP)
   - Firm-wide "By Action" summary (e.g. Financial Data Extraction, Document Summary) with call counts and costs
-  - Firm-wide "By Model" summary (e.g. gemini-2.5-flash) with call counts, token totals, and costs
+  - Firm-wide "By Model" summary (e.g. meta-llama/Llama-4-Maverick) with call counts, token totals, and costs
   - Per-client table: sortable by cost, expandable rows showing action+operation breakdown, model breakdown, and recent activity log
   - Recent activity log columns: Time, Action, Model, Operation, Input tokens, Output tokens, Cost
   - Period filter: 7 days / 30 days / All time
-- Cost model defined in `lib/gemini-extractor.ts` via `AI_PRICING` object (easy to update when pricing changes or new models are added)
+- Cost model defined in `lib/ai-extractor.ts` via `AI_PRICING` object (easy to update when pricing changes or new models are added)
 
 ## Outstanding Tasks
-- Add GEMINI_API_KEY, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
+- Add TOGETHER_API_KEY (renamed from GEMINI_API_KEY), AI_MODEL (optional), AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_* to Vercel env vars
 - Add AZURE_COMMUNICATION_CONNECTION_STRING to Vercel env vars
 - Configure custom sender domain on Azure Communication Services (replace azurecomm.net with acumon.com)
 - Configure Stripe when ready for live payments
