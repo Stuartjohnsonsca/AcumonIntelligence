@@ -201,7 +201,7 @@ export async function POST(req: Request) {
                 containerName: '',
                 fileSize: buffer.length,
                 mimeType: mimeType || getMimeType(item.fileName),
-                status: 'duplicate',
+                status: 'multi-line',
                 fileHash: hash,
                 duplicateOfId: existingId,
               },

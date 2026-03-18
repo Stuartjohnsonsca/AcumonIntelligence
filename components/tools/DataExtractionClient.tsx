@@ -792,6 +792,64 @@ export function DataExtractionClient({
       }
     }
 
+    // Second pass: for multi-line records already matched, try to match
+    // their remaining line items to unmatched rows (same document covers multiple accounting rows)
+    if (grossCol) {
+      const matchedEntries = Array.from(newMatches.entries());
+      for (const [, match] of matchedEntries) {
+        const rec = match.record;
+        if (!rec.lineItems || rec.lineItems.length <= 1) continue;
+
+        const usedLineIndices = new Set<number>();
+        if (match.matchedLineIdx != null) usedLineIndices.add(match.matchedLineIdx);
+
+        for (let li = 0; li < rec.lineItems.length; li++) {
+          if (usedLineIndices.has(li)) continue;
+          const lineTotal = (rec.lineItems[li].net || 0) + (rec.lineItems[li].tax || 0);
+          if (lineTotal === 0) continue;
+
+          let bestRi = -1;
+          let bestScore = 0;
+
+          for (let ri = 0; ri < leftPanelData.length; ri++) {
+            if (usedLeftRows.has(ri)) continue;
+            const row = leftPanelData[ri];
+            const leftGross = parseNumber(row[grossCol]);
+            if (leftGross == null) continue;
+
+            if (Math.abs(leftGross - lineTotal) < 0.02) {
+              let score = 3;
+              if (dateCol && rec.documentDate) {
+                if (normalizeDate(row[dateCol]) === normalizeDate(rec.documentDate)) score += 2;
+              }
+              if (refCol && rec.documentRef) {
+                const lr = (row[refCol] || '').trim().toLowerCase();
+                const dr = rec.documentRef.trim().toLowerCase();
+                if (lr && dr && (lr.includes(dr) || dr.includes(lr))) score += 2;
+              }
+              if (score > bestScore) {
+                bestScore = score;
+                bestRi = ri;
+              }
+            }
+          }
+
+          if (bestScore >= 3 && bestRi >= 0) {
+            newMatches.set(bestRi, {
+              record: rec,
+              confidence: bestScore >= 5 ? 'high' : 'uncertain',
+              matchedLineIdx: li,
+              fxRate: match.fxRate,
+              fxSource: match.fxSource,
+              convertedAmount: match.convertedAmount,
+            });
+            usedLeftRows.add(bestRi);
+            usedLineIndices.add(li);
+          }
+        }
+      }
+    }
+
     setRowMatches(newMatches);
     setUnmatchedRecords(jobResult.records.filter(r => !usedRecords.has(r.id)));
   }
@@ -2165,7 +2223,7 @@ export function DataExtractionClient({
                 <div className="flex items-center gap-2 text-[10px] flex-wrap">
                   <span className="text-green-700"><CheckCircle2 className="h-3 w-3 inline mr-0.5" />{progress.extracted}</span>
                   {progress.failed > 0 && <span className="text-red-600"><XCircle className="h-3 w-3 inline mr-0.5" />{progress.failed}</span>}
-                  {progress.duplicated > 0 && <span className="text-slate-500">{progress.duplicated} dup</span>}
+                  {progress.duplicated > 0 && <span className="text-blue-500">{progress.duplicated} multi-line</span>}
                 </div>
               </div>
             )}
@@ -2195,15 +2253,18 @@ export function DataExtractionClient({
                     {jobResult.files.filter(f => f.status === 'failed').length > 0 && (
                       <p className="text-red-500">{jobResult.files.filter(f => f.status === 'failed').length} failed</p>
                     )}
-                    {jobResult.files.filter(f => f.status === 'duplicate').length > 0 && (
-                      <p className="text-slate-400">{jobResult.files.filter(f => f.status === 'duplicate').length} duplicates skipped</p>
-                    )}
+                    {(() => {
+                      const multiLine = jobResult.files.filter(f => f.status === 'multi-line' || f.status === 'duplicate');
+                      return multiLine.length > 0 ? (
+                        <p className="text-blue-500">{multiLine.length} multi-line (same document, multiple rows)</p>
+                      ) : null;
+                    })()}
                   </div>
                 </details>
                 <details className="text-[10px]">
-                  <summary className="text-xs font-semibold text-slate-600 cursor-pointer">Files ({jobResult.files.filter(f => f.status !== 'duplicate').length})</summary>
+                  <summary className="text-xs font-semibold text-slate-600 cursor-pointer">Files ({jobResult.files.filter(f => f.status !== 'duplicate' && f.status !== 'multi-line').length})</summary>
                   <div className="mt-2 max-h-32 overflow-y-auto space-y-1">
-                    {jobResult.files.filter(f => f.status !== 'duplicate').map(file => (
+                    {jobResult.files.filter(f => f.status !== 'duplicate' && f.status !== 'multi-line').map(file => (
                       <div key={file.id} className="text-slate-600">
                         <div className="flex items-center gap-1">
                           {file.status === 'extracted'
@@ -2218,22 +2279,25 @@ export function DataExtractionClient({
                     ))}
                   </div>
                 </details>
-                {jobResult.files.filter(f => f.status === 'duplicate').length > 0 && (
-                  <details className="text-[10px]">
-                    <summary className="text-xs font-semibold text-slate-600 cursor-pointer">Duplicates ({jobResult.files.filter(f => f.status === 'duplicate').length})</summary>
-                    <div className="mt-2 max-h-24 overflow-y-auto space-y-1">
-                      {jobResult.files.filter(f => f.status === 'duplicate').map(file => {
-                        const original = jobResult.files.find(o => o.id === file.duplicateOfId);
-                        return (
-                          <div key={file.id} className="text-slate-400 flex items-center gap-1">
-                            <span className="truncate">{file.originalName}</span>
-                            {original && <span className="text-[8px] flex-shrink-0">(= {original.originalName})</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </details>
-                )}
+                {(() => {
+                  const multiLine = jobResult.files.filter(f => f.status === 'multi-line' || f.status === 'duplicate');
+                  return multiLine.length > 0 ? (
+                    <details className="text-[10px]">
+                      <summary className="text-xs font-semibold text-blue-600 cursor-pointer">Multi-line Documents ({multiLine.length})</summary>
+                      <div className="mt-2 max-h-24 overflow-y-auto space-y-1">
+                        {multiLine.map(file => {
+                          const original = jobResult.files.find(o => o.id === file.duplicateOfId);
+                          return (
+                            <div key={file.id} className="text-blue-400 flex items-center gap-1">
+                              <span className="truncate">{file.originalName}</span>
+                              {original && <span className="text-[8px] flex-shrink-0">(same as {original.originalName})</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  ) : null;
+                })()}
               </div>
             )}
 
