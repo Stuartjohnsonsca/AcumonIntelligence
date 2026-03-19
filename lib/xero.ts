@@ -162,6 +162,9 @@ export async function getConnectedTenants(accessToken: string): Promise<XeroTena
   return res.json();
 }
 
+// Exported as getValidToken for use by lightweight endpoints
+export { getValidAccessToken as getValidToken };
+
 async function getValidAccessToken(clientId: string): Promise<{ accessToken: string; tenantId: string }> {
   const conn = await prisma.accountingConnection.findUnique({
     where: { clientId_system: { clientId, system: 'xero' } },
