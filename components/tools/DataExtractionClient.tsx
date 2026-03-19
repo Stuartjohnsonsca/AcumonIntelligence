@@ -1244,8 +1244,11 @@ export function DataExtractionClient({
       setXeroCategory('');
       setXeroSelectedCodes(new Set());
       setXeroShowModal(true);
-      // Load accounts in background if not yet available
-      if (xeroAccounts.length === 0) loadXeroAccounts();
+      // Load accounts if pre-load didn't complete
+      if (xeroAccounts.length === 0) {
+        console.log('[Xero] Accounts not pre-loaded, fetching now...');
+        loadXeroAccounts();
+      }
       return;
     }
 
@@ -1358,17 +1361,35 @@ export function DataExtractionClient({
       accountsPreloadAbortRef.current?.abort();
       const ctrl = new AbortController();
       accountsPreloadAbortRef.current = ctrl;
+      const cid = selectedClient.id;
 
-      // Wait 500ms after status check to avoid back-to-back Xero calls
-      const timer = setTimeout(() => {
-        if (ctrl.signal.aborted) return;
-        fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`, { signal: ctrl.signal })
-          .then(r => r.ok ? r.json() : null)
-          .then(data => { if (data?.accounts) setXeroAccounts(data.accounts); })
-          .catch(() => { /* aborted or failed */ });
-      }, 500);
+      // Attempt up to 3 times with increasing delays
+      (async () => {
+        const delays = [800, 3000, 6000];
+        for (let attempt = 0; attempt < delays.length; attempt++) {
+          if (ctrl.signal.aborted) return;
+          await new Promise(r => setTimeout(r, delays[attempt]));
+          if (ctrl.signal.aborted) return;
+          try {
+            const res = await fetch(`/api/accounting/xero/data?clientId=${cid}&type=accounts`, { signal: ctrl.signal });
+            if (res.ok) {
+              const data = await res.json();
+              if (data?.accounts?.length > 0) {
+                console.log(`[Pre-load] Loaded ${data.accounts.length} accounts (attempt ${attempt + 1})`);
+                setXeroAccounts(data.accounts);
+                return; // success
+              }
+            }
+            console.warn(`[Pre-load] Attempt ${attempt + 1} failed: ${res.status}`);
+          } catch (err) {
+            if (ctrl.signal.aborted) return;
+            console.warn(`[Pre-load] Attempt ${attempt + 1} error:`, err);
+          }
+        }
+        console.warn('[Pre-load] All 3 attempts failed — accounts will load on button click');
+      })();
 
-      return () => { clearTimeout(timer); ctrl.abort(); };
+      return () => { ctrl.abort(); };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClient]);
@@ -2816,7 +2837,7 @@ export function DataExtractionClient({
                       </label>
                     ))}
                   </div>
-                ) : <p className="text-sm text-slate-400">Loading accounts...</p>}
+                ) : <div className="flex items-center gap-2 py-4 justify-center"><Loader2 className="h-4 w-4 text-blue-500 animate-spin" /><p className="text-sm text-slate-400">Loading accounts from Xero...</p></div>}
               </div>
               {xeroError && (
                 <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">{xeroError}</div>
