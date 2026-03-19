@@ -1,12 +1,9 @@
 /**
  * PDF text extraction for AI document processing.
  *
- * Uses pdf-parse (lightweight, no native dependencies, serverless-safe).
- * Extracts text content from PDFs so vision models aren't needed.
+ * Uses pdf-parse with serverExternalPackages in next.config.js
+ * to prevent Turbopack from bundling pdfjs-dist's canvas dependencies.
  */
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse');
 
 export interface PdfContent {
   mode: 'text' | 'raw';
@@ -23,9 +20,9 @@ export async function processPdf(
   maxPages = 10,
 ): Promise<PdfContent> {
   try {
-    const result = await pdfParse(pdfBuffer, {
-      max: maxPages, // limit pages parsed
-    });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require('pdf-parse');
+    const result = await pdfParse(pdfBuffer, { max: maxPages });
 
     const text = (result.text || '').trim();
     const pageCount = result.numpages || 1;
