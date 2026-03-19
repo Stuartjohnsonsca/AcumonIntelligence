@@ -249,6 +249,22 @@ model AccountingConnection {
   @@map("accounting_connections")
 }
 
+// Temporary storage for Xero OAuth tokens while user picks an organisation
+model PendingXeroAuth {
+  id             String   @id @default(uuid())
+  clientId       String   @map("client_id")
+  accessToken    String   @map("access_token")
+  refreshToken   String   @map("refresh_token")
+  expiresIn      Int      @map("expires_in")
+  connectedBy    String   @map("connected_by")
+  isDelegated    Boolean  @default(false) @map("is_delegated")
+  delegatedToken String?  @map("delegated_token")
+  tenants        Json     // Array of { tenantId, tenantName, createdDateUtc }
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("pending_xero_auths")
+}
+
 // ─── Data Extraction Tool ────────────────────────────────────────────────────
 
 model ExtractionJob {
