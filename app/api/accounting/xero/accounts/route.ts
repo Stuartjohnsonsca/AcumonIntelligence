@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { decrypt } from '@/lib/xero';
 import { verifyClientAccess } from '@/lib/client-access';
 
-// Ultra-fast: reads cached accounts from DB, no Xero API calls
-// Cache is populated by fetch-background route during data fetches
+// Fast accounts endpoint:
+// 1. Try DB cache first (instant)
+// 2. If cache empty, try direct Xero call using stored token (no refresh)
+// 3. Cache is refreshed by fetch-background on every data fetch
 
 export async function GET(req: Request) {
   const start = Date.now();
@@ -26,28 +29,82 @@ export async function GET(req: Request) {
   }
 
   try {
-    // Read cached accounts from DB — no Xero API call needed
     const conn = await prisma.accountingConnection.findUnique({
       where: { clientId_system: { clientId, system: 'xero' } },
-      select: { accountsCache: true, accountsCachedAt: true },
+      select: {
+        accountsCache: true,
+        accountsCachedAt: true,
+        accessToken: true,
+        tenantId: true,
+        tokenExpiresAt: true,
+      },
     });
 
-    const accounts = (conn?.accountsCache as { Code: string; Name: string }[] | null) ?? [];
-    const cachedAt = conn?.accountsCachedAt?.toISOString() ?? null;
-    const elapsed = Date.now() - start;
+    if (!conn) {
+      return NextResponse.json({ accounts: [], hint: 'No Xero connection found' });
+    }
 
-    console.log(`[Accounts] Returned ${accounts.length} cached accounts in ${elapsed}ms (cached: ${cachedAt ?? 'never'})`);
+    // 1. Try cache first
+    const cached = (conn.accountsCache as { Code: string; Name: string }[] | null) ?? [];
+    if (cached.length > 0) {
+      const elapsed = Date.now() - start;
+      console.log(`[Accounts] Cache hit: ${cached.length} accounts in ${elapsed}ms`);
+      return NextResponse.json({ accounts: cached, cached: true, cachedAt: conn.accountsCachedAt?.toISOString() });
+    }
 
-    return NextResponse.json({
-      accounts,
-      cached: true,
-      cachedAt,
-      // If no cache exists, tell the client to fetch data first
-      ...(accounts.length === 0 ? { hint: 'No cached accounts. Fetch data from Xero first.' } : {}),
-    });
+    // 2. Cache empty — try direct Xero call (only if token is still valid)
+    const now = new Date();
+    if (now >= conn.tokenExpiresAt) {
+      console.log(`[Accounts] Cache empty + token expired — cannot fetch. User needs to do a data fetch first.`);
+      return NextResponse.json({ accounts: [], hint: 'Token expired. Fetch data from Xero to populate accounts.' });
+    }
+
+    console.log(`[Accounts] Cache empty — trying direct Xero call...`);
+    const accessToken = decrypt(conn.accessToken);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+
+    try {
+      const xeroStart = Date.now();
+      const res = await fetch('https://api.xero.com/api.xro/2.0/Accounts', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Xero-Tenant-Id': conn.tenantId!,
+          Accept: 'application/json',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const xeroMs = Date.now() - xeroStart;
+
+      if (!res.ok) {
+        console.warn(`[Accounts] Xero returned ${res.status} in ${xeroMs}ms`);
+        return NextResponse.json({ accounts: [], hint: `Xero returned ${res.status}` });
+      }
+
+      const data = await res.json();
+      const accounts = data.Accounts ?? [];
+      console.log(`[Accounts] Fetched ${accounts.length} accounts from Xero in ${xeroMs}ms — caching`);
+
+      // Cache for next time
+      await prisma.accountingConnection.update({
+        where: { clientId_system: { clientId, system: 'xero' } },
+        data: {
+          accountsCache: accounts as unknown as never,
+          accountsCachedAt: new Date(),
+        },
+      });
+
+      return NextResponse.json({ accounts, cached: false });
+    } catch (fetchErr) {
+      clearTimeout(timeout);
+      const msg = fetchErr instanceof Error ? fetchErr.message : 'Unknown';
+      console.warn(`[Accounts] Direct Xero call failed: ${msg}`);
+      return NextResponse.json({ accounts: [], hint: 'Xero call timed out. Fetch data first.' });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[Accounts] DB error:', msg);
+    console.error('[Accounts] Error:', msg);
     return NextResponse.json({ accounts: [], error: msg });
   }
 }
