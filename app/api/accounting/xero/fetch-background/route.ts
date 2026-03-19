@@ -82,29 +82,17 @@ export async function POST(req: Request) {
         transactions.map(t => t.Contact?.ContactID).filter((id): id is string => !!id)
       )];
 
-      await updateProgress({ phase: 'enriching', step: 3, totalSteps: 4, message: `Enriching ${uniqueTxns.length} transactions (0/${uniqueTxns.length} history, 0/${uniqueContactIds.length} contacts)...` });
+      // Step 3: Fetch contact groups (few calls, fast) — skip history on initial load
+      await updateProgress({ phase: 'enriching', step: 3, totalSteps: 4, message: `Loading contact groups (${uniqueContactIds.length} contacts)...` });
 
-      let historyDone = 0;
-      let contactsDone = 0;
-
-      const progressUpdate = () => updateProgress({
-        phase: 'enriching', step: 3, totalSteps: 4,
-        message: `Enriching: ${historyDone}/${uniqueTxns.length} history, ${contactsDone}/${uniqueContactIds.length} contacts`,
+      const contactGroupMap = await batchFetchContactGroups(clientId, uniqueContactIds).catch(err => {
+        console.warn('Contact group fetch failed (non-fatal):', err instanceof Error ? err.message : err);
+        return new Map<string, string>();
       });
 
-      const [historyMap, contactGroupMap] = await Promise.all([
-        batchFetchHistories(clientId, uniqueTxns, (done) => {
-          historyDone = done;
-          progressUpdate();
-        }).catch(err => {
-          console.warn('History fetch failed (non-fatal):', err instanceof Error ? err.message : err);
-          return new Map<string, { createdBy: string; approvedBy: string }>();
-        }),
-        batchFetchContactGroups(clientId, uniqueContactIds).catch(err => {
-          console.warn('Contact group fetch failed (non-fatal):', err instanceof Error ? err.message : err);
-          return new Map<string, string>();
-        }),
-      ]);
+      // History fetch is expensive (1 API call per transaction) — skip on initial load
+      // Created By / Approved By columns will be empty initially
+      const historyMap = new Map<string, { createdBy: string; approvedBy: string }>();
 
       await updateProgress({ phase: 'processing', step: 4, totalSteps: 4, message: `Building ${transactions.length} rows...` });
 
