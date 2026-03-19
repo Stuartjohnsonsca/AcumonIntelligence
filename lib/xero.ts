@@ -441,20 +441,27 @@ export async function batchFetchHistories(
   }
 
   const entries = Array.from(uniqueTxns.entries());
-  // Adaptive batch size: more transactions → larger batches to finish faster
-  // Xero allows ~60 calls/min; stay within limits while maximizing throughput
-  const batchSize = entries.length <= 20 ? 5
-    : entries.length <= 100 ? 10
-    : entries.length <= 300 ? 15
-    : 20;
-  let consecutiveErrors = 0;
-  let currentDelay = XERO_PAGE_DELAY_MS;
 
-  for (let i = 0; i < entries.length; i += batchSize) {
-    const batch = entries.slice(i, i + batchSize);
+  // Dynamic concurrency: start aggressive, back off on rate limits, speed up on success
+  let concurrency = Math.min(10, Math.max(3, Math.ceil(entries.length / 20)));
+  let delayMs = 100; // Start fast
+  let rateLimitHits = 0;
+  let processed = 0;
 
-    const promises = batch.map(async ([id, type]) => {
+  // Process using a worker pool pattern
+  const queue = [...entries];
+
+  async function processOne(): Promise<void> {
+    while (queue.length > 0) {
+      const entry = queue.shift();
+      if (!entry) return;
+      const [id, type] = entry;
       const endpoint = type === 'Invoice' ? 'Invoices' : 'BankTransactions';
+
+      if (delayMs > 0 && processed > 0) {
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+
       try {
         const history = await getTransactionHistory(clientId, endpoint, id);
         let createdBy = '';
@@ -469,29 +476,35 @@ export async function batchFetchHistories(
           }
         }
         results.set(id, { createdBy, approvedBy });
-        consecutiveErrors = 0;
+
+        // Success: gradually speed up
+        if (rateLimitHits === 0 && delayMs > 50) {
+          delayMs = Math.max(50, Math.round(delayMs * 0.9));
+        }
       } catch (err) {
         results.set(id, { createdBy: '', approvedBy: '' });
         const msg = err instanceof Error ? err.message : '';
         if (msg.includes('429') || msg.includes('rate')) {
-          consecutiveErrors++;
-          currentDelay = Math.min(currentDelay * 2, 5000); // Back off on rate limits
+          rateLimitHits++;
+          // Back off: double delay and reduce concurrency
+          delayMs = Math.min(delayMs * 2, 5000);
+          concurrency = Math.max(1, concurrency - 1);
+          console.warn(`[Xero] Rate limit hit, slowing down: delay=${delayMs}ms concurrency=${concurrency}`);
         }
       }
-    });
 
-    await Promise.all(promises);
-
-    const done = Math.min(i + batchSize, entries.length);
-    if (onProgress) onProgress(done, entries.length);
-
-    if (i + batchSize < entries.length) {
-      if (consecutiveErrors === 0 && currentDelay > 200) {
-        currentDelay = Math.max(200, Math.round(currentDelay * 0.8));
+      processed++;
+      if (onProgress && processed % 5 === 0) {
+        onProgress(processed, entries.length);
       }
-      await new Promise(resolve => setTimeout(resolve, currentDelay));
     }
   }
+
+  // Launch worker pool
+  const workers = Array.from({ length: concurrency }, () => processOne());
+  await Promise.all(workers);
+
+  if (onProgress) onProgress(entries.length, entries.length);
 
   return results;
 }
@@ -568,7 +581,7 @@ async function xeroFetchWithRetry(
   throw new Error('Unreachable');
 }
 
-const XERO_PAGE_DELAY_MS = 500; // Xero allows ~60 calls/min; 500ms is safe
+const XERO_PAGE_DELAY_MS = 300; // Xero allows ~60 calls/min; 300ms between pages is safe
 
 async function fetchPaginated(
   url: string,

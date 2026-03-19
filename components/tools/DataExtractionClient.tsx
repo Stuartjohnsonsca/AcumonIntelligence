@@ -1434,6 +1434,15 @@ export function DataExtractionClient({
     setXeroFetchProgress({ message: 'Starting...' });
     xeroFetchAbortRef.current = false;
 
+    const bgTaskId = `xero-${selectedClient.id}-${Date.now()}`;
+    addTask({
+      id: bgTaskId,
+      clientName: selectedClient.clientName,
+      activity: `Fetching data from ${selectedClient.software || 'Xero'}`,
+      status: 'running',
+      toolPath: '/tools/data-extraction',
+    });
+
     try {
       const codes = Array.from(xeroSelectedCodes).join(',');
       const startRes = await fetch('/api/accounting/xero/fetch-background', {
@@ -1474,6 +1483,7 @@ export function DataExtractionClient({
             }
 
             if (statusData.status === 'completed') {
+              updateTask(bgTaskId, { status: 'completed', completedAt: Date.now() });
               if (selectedClient?.id === clientId_at_start) {
                 loadAccountingSystemData(statusData.data);
               }
@@ -1483,6 +1493,7 @@ export function DataExtractionClient({
             }
 
             if (statusData.status === 'error') {
+              updateTask(bgTaskId, { status: 'error', error: statusData.error, completedAt: Date.now() });
               setXeroError(statusData.error || 'Unknown error');
               setXeroFetching(false);
               setXeroFetchProgress(null);
@@ -1492,6 +1503,7 @@ export function DataExtractionClient({
             /* network blip, keep polling */
           }
         }
+        updateTask(bgTaskId, { status: 'error', error: 'Timed out', completedAt: Date.now() });
         setXeroError('Timed out waiting for data');
         setXeroFetching(false);
         setXeroFetchProgress(null);
@@ -1501,6 +1513,7 @@ export function DataExtractionClient({
       poll();
 
     } catch (err) {
+      updateTask(bgTaskId, { status: 'error', error: err instanceof Error ? err.message : 'Failed', completedAt: Date.now() });
       setXeroError(err instanceof Error ? err.message : 'Failed to start fetch');
       setXeroFetching(false);
       setXeroFetchProgress(null);
