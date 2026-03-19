@@ -79,6 +79,7 @@ export async function POST(req: Request) {
       finding: f.finding,
       clauseReference: f.clauseReference,
       isSignificantRisk: f.isSignificantRisk,
+      aiSignificantRisk: f.aiSignificantRisk,
       userResponse: f.userResponse,
       addToTesting: f.addToTesting,
       reviewed: f.reviewed,

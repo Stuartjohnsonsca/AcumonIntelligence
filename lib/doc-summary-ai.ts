@@ -139,6 +139,7 @@ CRITICAL RULES:
 - Every finding MUST cite a specific clause, section, paragraph, or page reference from the document. If there is no clear clause number, reference the relevant paragraph or page.
 - Be EVIDENCE-BASED only. Do not fabricate or assume content that is not in the document.
 - If a minimum area has no relevant content in the document, still include it with a finding stating it is not addressed.
+- Each finding must be a complete, properly formed summary. NEVER truncate findings with '...' or leave them incomplete. If a clause is lengthy, summarise it concisely but completely.
 
 SIGNIFICANT RISK ASSESSMENT (isSignificantRisk: true):
 You MUST assess significant risk from the perspective of an auditor evaluating the risk of material misstatement of financial statements. Flag as significant risk ANY finding that:

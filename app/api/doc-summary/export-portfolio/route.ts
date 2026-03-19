@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifySummaryJobAccess } from '@/lib/client-access';
-import { generateDocSummaryPdf, type Finding, type FileInfo } from '@/lib/doc-summary-pdf';
+import {
+  generatePortfolioPdf,
+  type Finding,
+  type FileInfo,
+  type FailedFileInfo,
+} from '@/lib/doc-summary-pdf';
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -12,7 +17,6 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const jobId = searchParams.get('jobId');
-  const singleFileId = searchParams.get('fileId') || undefined;
   if (!jobId) return NextResponse.json({ error: 'jobId required' }, { status: 400 });
 
   const jobAccess = await verifySummaryJobAccess(
@@ -36,6 +40,8 @@ export async function GET(req: Request) {
             originalName: true,
             fileSize: true,
             pageCount: true,
+            status: true,
+            errorMessage: true,
             createdAt: true,
           },
         },
@@ -51,8 +57,12 @@ export async function GET(req: Request) {
     const firmName = job.user.firm.name;
     const userName = job.user.name;
 
-    // Build file info array with uploader name
-    const files: FileInfo[] = job.files.map((f) => ({
+    // Separate analysed files from failed files
+    const analysedDbFiles = job.files.filter((f) => f.status === 'analysed');
+    const failedDbFiles = job.files.filter((f) => f.status === 'failed');
+
+    // Build file info array for analysed files
+    const files: FileInfo[] = analysedDbFiles.map((f) => ({
       id: f.id,
       originalName: f.originalName,
       fileSize: f.fileSize,
@@ -61,25 +71,37 @@ export async function GET(req: Request) {
       uploadedBy: userName,
     }));
 
+    // Build failed file info
+    const failedFiles: FailedFileInfo[] = failedDbFiles.map((f) => ({
+      originalName: f.originalName,
+      fileSize: f.fileSize,
+      createdAt: f.createdAt.toISOString(),
+      errorMessage: f.errorMessage,
+    }));
+
     // Build file ID -> name lookup for findings
     const fileNameMap = new Map(job.files.map((f) => [f.id, f.originalName]));
 
-    const findings: Finding[] = job.findings.map((f) => ({
-      id: f.id,
-      area: f.area,
-      finding: f.finding,
-      clauseReference: f.clauseReference,
-      isSignificantRisk: f.isSignificantRisk,
-      aiSignificantRisk: f.aiSignificantRisk,
-      userResponse: f.userResponse,
-      addToTesting: f.addToTesting,
-      reviewed: f.reviewed,
-      fileId: f.fileId,
-      fileName: fileNameMap.get(f.fileId) || 'Unknown',
-    }));
+    // Only include findings for analysed files
+    const analysedFileIds = new Set(analysedDbFiles.map((f) => f.id));
+    const findings: Finding[] = job.findings
+      .filter((f) => analysedFileIds.has(f.fileId))
+      .map((f) => ({
+        id: f.id,
+        area: f.area,
+        finding: f.finding,
+        clauseReference: f.clauseReference,
+        isSignificantRisk: f.isSignificantRisk,
+        aiSignificantRisk: f.aiSignificantRisk,
+        userResponse: f.userResponse,
+        addToTesting: f.addToTesting,
+        reviewed: f.reviewed,
+        fileId: f.fileId,
+        fileName: fileNameMap.get(f.fileId) || 'Unknown',
+      }));
 
     const exportDate = new Date();
-    const pdfBytes = await generateDocSummaryPdf({
+    const pdfBytes = await generatePortfolioPdf({
       jobId,
       findings,
       files,
@@ -87,12 +109,12 @@ export async function GET(req: Request) {
       firmName,
       userName,
       exportDate,
-      singleFileId,
+      failedFiles,
     });
 
     const safeClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, '_');
     const dateStr = exportDate.toISOString().slice(0, 10);
-    const filename = `Document-Summary-${safeClientName}-${dateStr}.pdf`;
+    const filename = `Portfolio-Report-${safeClientName}-${dateStr}.pdf`;
 
     return new Response(Buffer.from(pdfBytes), {
       headers: {
@@ -103,7 +125,7 @@ export async function GET(req: Request) {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error(`[DocSummary:ExportPDF] Failed | jobId=${jobId} | error=${msg}`);
-    return NextResponse.json({ error: 'Failed to generate PDF' }, { status: 500 });
+    console.error(`[DocSummary:ExportPortfolio] Failed | jobId=${jobId} | error=${msg}`);
+    return NextResponse.json({ error: 'Failed to generate portfolio PDF' }, { status: 500 });
   }
 }
