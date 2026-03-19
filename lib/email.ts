@@ -3,18 +3,29 @@ import { EmailClient } from '@azure/communication-email';
 const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING || '';
 const senderAddress = process.env.EMAIL_FROM || 'DoNotReply@acumonintelligence.com';
 
-async function sendEmail(to: string, subject: string, html: string): Promise<{ messageId?: string }> {
+export interface EmailAttachment {
+  name: string;
+  contentType: string;
+  contentInBase64: string;
+}
+
+async function sendEmail(to: string, subject: string, html: string, options?: {
+  displayName?: string;
+  attachments?: EmailAttachment[];
+}): Promise<{ messageId?: string }> {
   if (!connectionString) {
-    throw new Error('AZURE_COMMUNICATION_CONNECTION_STRING is not configured');
+    console.error('[Email] AZURE_COMMUNICATION_CONNECTION_STRING is not configured');
+    throw new Error('Email service is not configured');
   }
 
-  console.log(`[Email] Sending to ${to}, subject: "${subject}", sender: ${senderAddress}`);
+  console.log(`[Email] Sending to ${to}, subject: "${subject}", sender: ${senderAddress}, attachments: ${options?.attachments?.length ?? 0}`);
 
   const client = new EmailClient(connectionString);
   const poller = await client.beginSend({
     senderAddress,
     content: { subject, html },
-    recipients: { to: [{ address: to }] },
+    recipients: { to: [{ address: to, displayName: options?.displayName || to }] },
+    attachments: options?.attachments,
   });
 
   const result = await poller.pollUntilDone();
@@ -26,6 +37,8 @@ async function sendEmail(to: string, subject: string, html: string): Promise<{ m
 
   return { messageId: result.id };
 }
+
+export { sendEmail };
 
 export async function sendTwoFactorCode(email: string, name: string, code: string): Promise<void> {
   await sendEmail(email, 'Your Acumon Intelligence verification code', `

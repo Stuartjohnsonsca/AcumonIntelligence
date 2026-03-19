@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
-import { EmailClient } from '@azure/communication-email';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifySummaryJobAccess } from '@/lib/client-access';
+import { sendEmail, type EmailAttachment } from '@/lib/email';
 import { generateDocSummaryPdf, type Finding, type FileInfo } from '@/lib/doc-summary-pdf';
 
-const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING || '';
-const senderAddress = process.env.EMAIL_FROM || 'DoNotReply@acumonintelligence.com';
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -98,18 +97,10 @@ export async function POST(req: Request) {
       exportDate,
     });
 
-    // Convert to base64 for email attachment
     const pdfBase64 = Buffer.from(pdfBytes).toString('base64');
-
     const safeClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, '_');
     const dateStr = exportDate.toISOString().slice(0, 10);
     const filename = `Document-Summary-${safeClientName}-${dateStr}.pdf`;
-
-    // Send email via Azure Communication Services
-    if (!connectionString) {
-      console.error('[DocSummary:SendEmail] AZURE_COMMUNICATION_CONNECTION_STRING is not configured');
-      return NextResponse.json({ error: 'Email service is not configured. Please set AZURE_COMMUNICATION_CONNECTION_STRING in environment variables.' }, { status: 500 });
-    }
 
     const formattedDate = exportDate.toLocaleDateString('en-GB', {
       day: 'numeric',
@@ -137,33 +128,24 @@ export async function POST(req: Request) {
       </div>
     `;
 
+    const attachment: EmailAttachment = {
+      name: filename,
+      contentType: 'application/pdf',
+      contentInBase64: pdfBase64,
+    };
+
     console.log(`[DocSummary:SendEmail] Sending to ${recipientEmail} | jobId=${jobId} | client=${clientName}`);
 
-    const client = new EmailClient(connectionString);
-    const poller = await client.beginSend({
-      senderAddress,
-      content: { subject, html },
-      recipients: { to: [{ address: recipientEmail, displayName: displayName }] },
-      attachments: [
-        {
-          name: filename,
-          contentType: 'application/pdf',
-          contentInBase64: pdfBase64,
-        },
-      ],
+    const result = await sendEmail(recipientEmail, subject, html, {
+      displayName,
+      attachments: [attachment],
     });
 
-    const result = await poller.pollUntilDone();
-    console.log(`[DocSummary:SendEmail] Result: status=${result.status}, id=${result.id}`);
-
-    if (result.status !== 'Succeeded') {
-      throw new Error(`Email send failed with status: ${result.status} — ${result.error?.message || 'Unknown error'}`);
-    }
-
-    return NextResponse.json({ success: true, messageId: result.id });
+    console.log(`[DocSummary:SendEmail] Sent | messageId=${result.messageId}`);
+    return NextResponse.json({ success: true, messageId: result.messageId });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[DocSummary:SendEmail] Failed | jobId=${jobId} | error=${msg}`);
-    return NextResponse.json({ error: 'Failed to send email' }, { status: 500 });
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
