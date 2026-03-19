@@ -120,7 +120,18 @@ export async function GET(req: Request) {
   try {
     const tokens = await exchangeCodeForTokens(code, redirectUri, codeVerifier);
     const tenants = await getConnectedTenants(tokens.access_token);
-    const tenant = tenants[0];
+
+    // Pick the most recently connected tenant — this is the one the user
+    // just selected in Xero's org picker (newest createdDateUtc)
+    const tenant = tenants.length > 1
+      ? [...tenants].sort((a, b) =>
+          new Date(b.createdDateUtc || 0).getTime() - new Date(a.createdDateUtc || 0).getTime()
+        )[0]
+      : tenants[0];
+
+    if (tenants.length > 1) {
+      console.log(`[Xero] ${tenants.length} orgs available, selected most recent: ${tenant?.tenantName} (${tenant?.tenantId?.substring(0, 8)}...)`);
+    }
 
     if (!tenant) {
       const noOrgUrl = isDelegated
