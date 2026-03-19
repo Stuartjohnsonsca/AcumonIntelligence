@@ -81,6 +81,8 @@ export async function GET(req: Request) {
       reviewed: f.reviewed,
       fileId: f.fileId,
       fileName: fileNameMap.get(f.fileId) || 'Unknown',
+      accountingImpact: f.accountingImpact ?? null,
+      auditImpact: f.auditImpact ?? null,
     }));
 
     const exportDate = new Date();
