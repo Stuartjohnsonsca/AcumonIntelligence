@@ -249,6 +249,21 @@ model AccountingConnection {
   @@map("accounting_connections")
 }
 
+model PendingXeroAuth {
+  id             String   @id @default(uuid())
+  clientId       String   @map("client_id")
+  accessToken    String   @map("access_token")
+  refreshToken   String   @map("refresh_token")
+  expiresIn      Int      @map("expires_in")
+  connectedBy    String   @map("connected_by")
+  isDelegated    Boolean  @default(false) @map("is_delegated")
+  delegatedToken String?  @map("delegated_token")
+  tenants        Json
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("pending_xero_auths")
+}
+
 // ─── Data Extraction Tool ────────────────────────────────────────────────────
 
 model ExtractionJob {

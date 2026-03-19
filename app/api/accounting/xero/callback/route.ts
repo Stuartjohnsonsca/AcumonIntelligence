@@ -121,33 +121,49 @@ export async function GET(req: Request) {
     const tokens = await exchangeCodeForTokens(code, redirectUri, codeVerifier);
     const tenants = await getConnectedTenants(tokens.access_token);
 
-    // Pick the most recently connected tenant — this is the one the user
-    // just selected in Xero's org picker (newest createdDateUtc)
-    // Note: DO NOT revoke other connections — the same user may legitimately
-    // have multiple clients each connected to different Xero orgs
-    const tenant = tenants.length > 1
-      ? [...tenants].sort((a, b) =>
-          new Date(b.createdDateUtc || 0).getTime() - new Date(a.createdDateUtc || 0).getTime()
-        )[0]
-      : tenants[0];
-
-    if (tenants.length > 1) {
-      console.log(`[Xero] ${tenants.length} orgs connected. Selected most recent: ${tenant?.tenantName} (${tenant?.tenantId?.substring(0, 8)}...)`);
-    }
-
-    if (!tenant) {
+    if (!tenants || tenants.length === 0) {
       const noOrgUrl = isDelegated
         ? `/xero-authorise/${delegatedToken}?error=no_organisation`
         : '/tools/data-extraction?xeroError=no_organisation';
       return clearOAuthCookies(NextResponse.redirect(new URL(noOrgUrl, req.url)));
     }
 
-    const tokenExpiry = new Date(Date.now() + tokens.expires_in * 1000);
-    const connectionExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
     const connectedBy = isDelegated
       ? `client:${delegatedToken}`
       : (await auth())?.user?.email || 'unknown';
+
+    // Multiple orgs: store tokens temporarily and redirect to org picker
+    if (tenants.length > 1) {
+      console.log(`[Xero] ${tenants.length} orgs available — redirecting to org picker`);
+
+      const pending = await prisma.pendingXeroAuth.create({
+        data: {
+          clientId,
+          accessToken: encrypt(tokens.access_token),
+          refreshToken: encrypt(tokens.refresh_token),
+          expiresIn: tokens.expires_in,
+          connectedBy,
+          isDelegated,
+          delegatedToken,
+          tenants: tenants.map((t: { tenantId: string; tenantName: string; createdDateUtc?: string }) => ({
+            tenantId: t.tenantId,
+            tenantName: t.tenantName,
+            createdDateUtc: t.createdDateUtc,
+          })),
+        },
+      });
+
+      return clearOAuthCookies(
+        NextResponse.redirect(new URL(`/xero-select-org?pendingId=${pending.id}`, req.url)),
+      );
+    }
+
+    // Single org: save connection immediately
+    const tenant = tenants[0];
+    console.log(`[Xero] Single org: ${tenant.tenantName} — saving connection`);
+
+    const tokenExpiry = new Date(Date.now() + tokens.expires_in * 1000);
+    const connectionExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     await prisma.accountingConnection.upsert({
       where: { clientId_system: { clientId, system: 'xero' } },
@@ -178,17 +194,11 @@ export async function GET(req: Request) {
       data: { software: 'Xero' },
     });
 
-    // Mark the delegated request as authorised
     if (isDelegated) {
       await prisma.xeroAuthRequest.update({
         where: { token: delegatedToken! },
-        data: {
-          status: 'authorised',
-          respondedAt: new Date(),
-          codeVerifier: null,
-        },
+        data: { status: 'authorised', respondedAt: new Date(), codeVerifier: null },
       });
-
       return clearOAuthCookies(
         NextResponse.redirect(new URL(`/xero-authorise/${delegatedToken}`, req.url)),
       );

@@ -163,6 +163,8 @@ export interface XeroTenant {
   tenantId: string;
   tenantName: string;
   tenantType: string;
+  createdDateUtc?: string;
+  updatedDateUtc?: string;
 }
 
 export async function getConnectedTenants(accessToken: string): Promise<XeroTenant[]> {
