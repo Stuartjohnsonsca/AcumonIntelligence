@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { getAccounts } from '@/lib/xero';
+import { getValidToken } from '@/lib/xero';
 import { verifyClientAccess } from '@/lib/client-access';
 
-// Lightweight endpoint for accounts pre-load — short timeout, minimal retries
-export const maxDuration = 15;
+// Ultra-lightweight: single Xero call, no retries, no backoff
+// Must complete within Vercel's function timeout (10s hobby / 15s pro)
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -25,13 +25,34 @@ export async function GET(req: Request) {
   }
 
   try {
-    // Only 2 retries — this is a pre-load, not critical path
-    const accounts = await getAccounts(clientId, 2);
-    return NextResponse.json({ accounts });
+    // Step 1: Get valid token (DB lookup + refresh if expired, ~1-2s max)
+    const { accessToken, tenantId } = await getValidToken(clientId);
+
+    // Step 2: Single direct fetch — no retry wrapper, no backoff
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000); // 7s hard limit
+
+    const res = await fetch('https://api.xero.com/api.xro/2.0/Accounts', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Xero-Tenant-Id': tenantId,
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      console.warn(`[Accounts] Xero returned ${res.status}`);
+      return NextResponse.json({ accounts: [] });
+    }
+
+    const data = await res.json();
+    console.log(`[Accounts] Loaded ${data.Accounts?.length ?? 0} accounts`);
+    return NextResponse.json({ accounts: data.Accounts ?? [] });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.warn('[Accounts pre-load] Failed:', msg);
-    return NextResponse.json({ error: msg, accounts: [] }, { status: 200 });
-    // Return 200 with empty accounts so client doesn't see it as an error
+    console.warn('[Accounts] Failed:', msg);
+    return NextResponse.json({ accounts: [] });
   }
 }
