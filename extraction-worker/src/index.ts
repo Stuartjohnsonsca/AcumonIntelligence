@@ -1,22 +1,30 @@
 /**
- * Acumon Extraction Worker
- *
- * Runs as a long-lived server process (Azure Container Instance).
- * Polls the database for pending extraction tasks and processes them
- * without the timeout constraints of Vercel serverless.
+ * Acumon Extraction Worker — self-contained.
  */
 
-import { PrismaClient } from '@prisma/client';
-import { processXeroAttachments } from './xero-pipeline';
-import { processExtractionBatch } from './ai-pipeline';
+console.error('[BOOT] Starting worker...');
+console.error('[BOOT] NODE_PATH=' + process.env.NODE_PATH);
+console.error('[BOOT] DATABASE_URL=' + (process.env.DATABASE_URL ? 'set' : 'NOT SET'));
+console.error('[BOOT] TOGETHER_API_KEY=' + (process.env.TOGETHER_API_KEY ? 'set' : 'NOT SET'));
 
-const prisma = new PrismaClient();
+// Use require to control load order and catch import errors
+let PrismaClient: any;
+try {
+  const prismaModule = require('@prisma/client');
+  PrismaClient = prismaModule.PrismaClient;
+  console.error('[BOOT] @prisma/client loaded');
+} catch (err: any) {
+  console.error('[BOOT] FATAL: Cannot load @prisma/client:', err.message);
+  console.error(err.stack);
+  // Keep process alive so logs are captured
+  setTimeout(() => process.exit(1), 5000);
+  throw err;
+}
 
+const prisma = new PrismaClient({ log: ['error'] });
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '3000', 10);
-const WORKER_ID = `worker-${process.pid}-${Date.now().toString(36)}`;
 
 async function pollForTasks(): Promise<void> {
-  // Look for pending background tasks (xero-attachments type)
   const task = await prisma.backgroundTask.findFirst({
     where: {
       status: 'pending',
@@ -27,9 +35,8 @@ async function pollForTasks(): Promise<void> {
 
   if (!task) return;
 
-  console.log(`[Worker:${WORKER_ID}] Picked up task ${task.id} | type=${task.type} | client=${task.clientId}`);
+  console.log(`[Worker] Picked up task ${task.id} | type=${task.type}`);
 
-  // Mark as running
   await prisma.backgroundTask.update({
     where: { id: task.id },
     data: { status: 'running' },
@@ -37,58 +44,53 @@ async function pollForTasks(): Promise<void> {
 
   try {
     if (task.type === 'xero-attachments') {
+      const { processXeroAttachments } = require('./xero-pipeline');
       await processXeroAttachments(prisma, task);
-    } else if (task.type === 'extraction-batch') {
-      const meta = task.result as { jobId?: string; fileIds?: string[]; clientId?: string } | null;
-      if (meta?.jobId && meta?.fileIds && meta?.clientId) {
-        await processExtractionBatch(prisma, meta.jobId, meta.fileIds, meta.clientId);
-      }
     }
 
     await prisma.backgroundTask.update({
       where: { id: task.id },
       data: { status: 'completed' },
     });
-
-    console.log(`[Worker:${WORKER_ID}] Task ${task.id} completed`);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[Worker:${WORKER_ID}] Task ${task.id} failed:`, errorMsg);
-
+    console.log(`[Worker] Task ${task.id} completed`);
+  } catch (err: any) {
+    console.error(`[Worker] Task ${task.id} failed:`, err.message);
     await prisma.backgroundTask.update({
       where: { id: task.id },
-      data: { status: 'error', error: errorMsg },
+      data: { status: 'error', error: err.message || String(err) },
     });
   }
 }
 
 async function main(): Promise<void> {
-  console.log(`[Worker:${WORKER_ID}] Starting extraction worker...`);
-  console.log(`[Worker:${WORKER_ID}] Poll interval: ${POLL_INTERVAL_MS}ms`);
-  console.log(`[Worker:${WORKER_ID}] Database connected`);
+  console.error('[BOOT] Testing database connection...');
 
-  // Graceful shutdown
-  const shutdown = async () => {
-    console.log(`[Worker:${WORKER_ID}] Shutting down...`);
-    await prisma.$disconnect();
-    process.exit(0);
-  };
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    console.error('[BOOT] Database connected OK');
+  } catch (err: any) {
+    console.error('[BOOT] Database connection FAILED:', err.message);
+    // Stay alive for log capture
+    await new Promise(r => setTimeout(r, 10000));
+    process.exit(1);
+  }
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  console.log('[Worker] Polling for tasks...');
 
-  // Main loop
+  process.on('SIGINT', async () => { await prisma.$disconnect(); process.exit(0); });
+  process.on('SIGTERM', async () => { await prisma.$disconnect(); process.exit(0); });
+
   while (true) {
     try {
       await pollForTasks();
-    } catch (err) {
-      console.error(`[Worker:${WORKER_ID}] Poll error:`, err instanceof Error ? err.message : err);
+    } catch (err: any) {
+      console.error('[Worker] Poll error:', err.message);
     }
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
   }
 }
 
 main().catch(err => {
-  console.error('Fatal worker error:', err);
-  process.exit(1);
+  console.error('[BOOT] Fatal error:', err);
+  setTimeout(() => process.exit(1), 10000);
 });

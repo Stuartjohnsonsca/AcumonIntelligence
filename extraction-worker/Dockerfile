@@ -1,25 +1,26 @@
 FROM node:20-slim
 
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Copy root-level shared files
+# Install root-level Prisma (pinned to match main project)
 COPY prisma/ ./prisma/
-COPY lib/ ./lib/
+RUN npm init -y && npm install @prisma/client@5.22.0 prisma@5.22.0
+RUN npx prisma generate --schema=./prisma/schema.prisma
 
-# Copy worker files
-COPY extraction-worker/package*.json ./extraction-worker/
-COPY extraction-worker/tsconfig.json ./extraction-worker/
-COPY extraction-worker/src/ ./extraction-worker/src/
-
-# Install dependencies
+# Install worker dependencies
+COPY extraction-worker/package.json ./extraction-worker/
 WORKDIR /app/extraction-worker
-RUN npm ci --production=false
+RUN npm install
 
-# Generate Prisma client
-RUN npx prisma generate --schema=../prisma/schema.prisma
+# Copy worker source
+COPY extraction-worker/src/ ./src/
 
-# Build TypeScript
-RUN npx tsc
+# Compile TypeScript
+RUN npx tsc --outDir dist --esModuleInterop --skipLibCheck --module commonjs --target ES2022 --moduleResolution node --resolveJsonModule src/index.ts src/xero-pipeline.ts
 
-# Run the worker
+# NODE_PATH ensures @prisma/client resolves from /app/node_modules (where it was generated)
+ENV NODE_PATH=/app/node_modules
+
 CMD ["node", "dist/index.js"]

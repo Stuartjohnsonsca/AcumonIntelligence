@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "databaseUrl": { "type": "secureString" },
+    "togetherApiKey": { "type": "secureString" },
+    "nextAuthSecret": { "type": "secureString" },
+    "azureStorageConnectionString": { "type": "secureString" },
+    "acrPassword": { "type": "secureString" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerInstance/containerGroups",
+      "apiVersion": "2023-05-01",
+      "name": "acumon-extraction-worker",
+      "location": "uksouth",
+      "tags": {
+        "app": "AUDIT_AI",
+        "env": "dev",
+        "owner": "d5918a70-3f94-47d1-a2dd-9544cb97be16"
+      },
+      "properties": {
+        "containers": [
+          {
+            "name": "extraction-worker",
+            "properties": {
+              "image": "acrauditdev.azurecr.io/acumon-extraction-worker:latest",
+              "resources": {
+                "requests": { "cpu": 1, "memoryInGB": 1.5 }
+              },
+              "environmentVariables": [
+                { "name": "POLL_INTERVAL_MS", "value": "3000" },
+                { "name": "DATABASE_URL", "secureValue": "[parameters('databaseUrl')]" },
+                { "name": "TOGETHER_API_KEY", "secureValue": "[parameters('togetherApiKey')]" },
+                { "name": "NEXTAUTH_SECRET", "secureValue": "[parameters('nextAuthSecret')]" },
+                { "name": "AZURE_STORAGE_CONNECTION_STRING", "secureValue": "[parameters('azureStorageConnectionString')]" }
+              ]
+            }
+          }
+        ],
+        "imageRegistryCredentials": [
+          {
+            "server": "acrauditdev.azurecr.io",
+            "username": "acrauditdev",
+            "password": "[parameters('acrPassword')]"
+          }
+        ],
+        "osType": "Linux",
+        "restartPolicy": "Always"
+      }
+    }
+  ]
+}
