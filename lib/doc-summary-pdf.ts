@@ -514,6 +514,9 @@ function renderKeyMatters(ctx: PageContext, findings: Finding[]): void {
         backgroundColor: COLOUR_WHITE,
       });
       textField.enableMultiline();
+      textField.setFontSize(10);
+      // Set red text colour via default appearance
+      textField.acroField.setDefaultAppearance('/Helv 10 Tf 1 0 0 rg');
       if (rf.userResponse) {
         textField.setText(rf.userResponse);
       }
@@ -615,6 +618,8 @@ function renderKeyMatters(ctx: PageContext, findings: Finding[]): void {
         borderWidth: 0.5,
         backgroundColor: COLOUR_WHITE,
       });
+      initialsField.setFontSize(10);
+      initialsField.acroField.setDefaultAppearance('/Helv 10 Tf 1 0 0 rg');
     } else {
       ctx.currentPage.drawRectangle({
         x: initialsX + 42,
@@ -1351,6 +1356,8 @@ function renderCombinedKeyMatters(
           backgroundColor: COLOUR_WHITE,
         });
         textField.enableMultiline();
+        textField.setFontSize(10);
+        textField.acroField.setDefaultAppearance('/Helv 10 Tf 1 0 0 rg');
         if (rf.userResponse) {
           textField.setText(rf.userResponse);
         }
@@ -1450,6 +1457,8 @@ function renderCombinedKeyMatters(
           borderWidth: 0.5,
           backgroundColor: COLOUR_WHITE,
         });
+        initialsField.setFontSize(10);
+        initialsField.acroField.setDefaultAppearance('/Helv 10 Tf 1 0 0 rg');
       } else {
         ctx.currentPage.drawRectangle({
           x: initialsX + 42,
