@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { pdfToImages, isPdf } from '@/lib/pdf-to-images';
+import { processPdf, isPdf } from '@/lib/pdf-to-images';
 
 const client = new OpenAI({
   apiKey: process.env.TOGETHER_API_KEY!,
@@ -65,9 +65,12 @@ export function selectModels(priorities: ModelPriorities, requireVision = true):
     .sort((a, b) => scoreModel(b, priorities) - scoreModel(a, priorities))
     .map(m => m.id);
 
-  // If env override is set and available, put it first
-  if (envOverride && !unavailableModels.has(envOverride)) {
+  // Only use env override if it looks like a valid model ID (contains /)
+  if (envOverride && envOverride.includes('/') && !unavailableModels.has(envOverride)) {
     return [envOverride, ...candidates.filter(id => id !== envOverride)];
+  }
+  if (envOverride && !envOverride.includes('/')) {
+    console.warn(`[AI] AI_MODEL env var "${envOverride}" doesn't look like a valid model ID (expected format: org/model-name). Ignoring.`);
   }
   return candidates;
 }
@@ -277,30 +280,54 @@ export async function extractDocumentFromBase64(
 ): Promise<ExtractionResult> {
   const prompt = buildExtractionPrompt(clientName);
 
-  // Build image content parts — convert PDFs to page images
-  let imageParts: { type: 'image_url'; image_url: { url: string } }[];
+  // Build message content based on file type
+  type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
+  let contentParts: ContentPart[];
+  let inputMode = 'image';
 
   if (isPdf(mimeType)) {
-    try {
-      const pdfBuffer = Buffer.from(base64Data, 'base64');
-      const pages = await pdfToImages(pdfBuffer, 5, 2.0);
-      console.log(`[Extraction:AI] Converted PDF to ${pages.length} page image(s) | file=${fileName}`);
-      imageParts = pages.map(p => ({
-        type: 'image_url' as const,
-        image_url: { url: `data:image/png;base64,${p.base64}` },
-      }));
-    } catch (convErr) {
-      console.warn(`[Extraction:AI] PDF conversion failed, sending raw PDF | file=${fileName} | error=${convErr instanceof Error ? convErr.message : convErr}`);
-      // Fallback: send raw PDF (some models like Maverick may support it)
-      imageParts = [{ type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } }];
+    const pdfBuffer = Buffer.from(base64Data, 'base64');
+    const pdfContent = await processPdf(pdfBuffer, 5, 2.0);
+
+    if (pdfContent.mode === 'images' && pdfContent.images) {
+      // Best: send page images to vision model
+      inputMode = 'pdf-images';
+      contentParts = [
+        ...pdfContent.images.map(p => ({
+          type: 'image_url' as const,
+          image_url: { url: `data:image/png;base64,${p.base64}` },
+        })),
+        { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
+      ];
+    } else if (pdfContent.mode === 'text' && pdfContent.text) {
+      // Fallback: send extracted text (no vision needed)
+      inputMode = 'pdf-text';
+      contentParts = [
+        { type: 'text', text: `File name: ${fileName}\n\nDocument text content (extracted from PDF, ${pdfContent.pageCount} pages):\n\n${pdfContent.text}\n\n${prompt}` },
+      ];
+    } else {
+      // Last resort: raw PDF
+      inputMode = 'pdf-raw';
+      contentParts = [
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+        { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
+      ];
     }
   } else {
-    imageParts = [{ type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } }];
+    contentParts = [
+      { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+      { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
+    ];
   }
 
-  const models = selectModels(EXTRACTION_PRIORITIES, true);
+  console.log(`[Extraction:AI] Starting extraction | file=${fileName} | mode=${inputMode} | mime=${mimeType}`);
+
+  // Text-only mode doesn't require vision models
+  const requireVision = inputMode !== 'pdf-text';
+  const models = selectModels(EXTRACTION_PRIORITIES, requireVision);
   let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
   let usedModel = models[0];
+  const errors: string[] = [];
 
   for (const modelId of models) {
     usedModel = modelId;
@@ -308,37 +335,33 @@ export async function extractDocumentFromBase64(
       result = await retryWithBackoff(
         () => client.chat.completions.create({
           model: modelId,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                ...imageParts,
-                { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
-              ],
-            },
-          ],
+          messages: [{ role: 'user', content: contentParts }],
           max_tokens: 4096,
         }),
         `extract:${fileName}`,
       );
-      break; // success
+      console.log(`[Extraction:AI] Success | file=${fileName} | model=${modelId} | mode=${inputMode}`);
+      break;
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      errors.push(`${modelId}: ${errMsg}`);
+      console.warn(`[Extraction:AI] Model ${modelId} failed for ${fileName}: ${errMsg}`);
+
       if (isModelUnavailableError(err)) {
         markModelUnavailable(modelId);
-        console.warn(`[Extraction:AI] Model ${modelId} unavailable, trying next...`);
         continue;
       }
-      // If image processing failed (400), also try next model
-      if (err instanceof Error && err.message.includes('400') && err.message.toLowerCase().includes('image')) {
-        console.warn(`[Extraction:AI] Model ${modelId} rejected image input for ${fileName}, trying next...`);
+      // Any 400-level error: try next model (bad input for this model)
+      if (err instanceof Error && err.message.includes('400')) {
         continue;
       }
-      throw err; // other non-model error, propagate
+      throw err; // 500s, network errors, etc. — propagate
     }
   }
 
   if (!result) {
-    throw new Error(`[extract:${fileName}] All models failed. Tried: ${models.join(', ')}`);
+    const errorDetail = errors.join(' | ');
+    throw new Error(`[extract:${fileName}] All models failed (mode=${inputMode}). ${errorDetail}`);
   }
 
   const usage = extractUsageMetadata(result);

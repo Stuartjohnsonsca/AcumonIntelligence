@@ -1,29 +1,33 @@
 /**
- * Convert PDF pages to PNG images for vision model consumption.
- * Uses pdfjs-dist with @napi-rs/canvas (Vercel serverless compatible).
+ * PDF processing for AI extraction.
+ *
+ * Strategy (in order of preference):
+ * 1. Render PDF pages as PNG images using @napi-rs/canvas (best for vision models)
+ * 2. Extract text content using pdfjs-dist (no canvas needed, works everywhere)
+ * 3. Send raw PDF base64 (last resort — some models may accept it)
  */
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { createCanvas } = require('@napi-rs/canvas');
 
 export interface PdfPage {
   pageNumber: number;
-  base64: string; // PNG base64 (no data: prefix)
+  base64: string;
   width: number;
   height: number;
 }
 
+export interface PdfContent {
+  mode: 'images' | 'text' | 'raw';
+  images?: PdfPage[];
+  text?: string;
+  pageCount: number;
+}
+
 /**
- * Convert a PDF buffer to an array of PNG base64 images (one per page).
- * @param pdfBuffer - Raw PDF file as Buffer
- * @param maxPages - Maximum number of pages to convert (default: 5)
- * @param scale - Rendering scale factor (default: 2.0 for good quality)
+ * Try to render PDF pages as PNG images. May fail if canvas isn't available.
  */
-export async function pdfToImages(
-  pdfBuffer: Buffer,
-  maxPages = 5,
-  scale = 2.0,
-): Promise<PdfPage[]> {
+async function tryRenderImages(pdfBuffer: Buffer, maxPages: number, scale: number): Promise<PdfPage[]> {
+  // Dynamic require — will throw if @napi-rs/canvas isn't available
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createCanvas } = require('@napi-rs/canvas');
   const pdfjs = await import('pdfjs-dist');
 
   const data = new Uint8Array(pdfBuffer);
@@ -39,13 +43,12 @@ export async function pdfToImages(
   for (let i = 1; i <= numPages; i++) {
     const page = await doc.getPage(i);
     const viewport = page.getViewport({ scale });
-
     const width = Math.round(viewport.width);
     const height = Math.round(viewport.height);
+
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // pdfjs render — use any cast for cross-canvas compatibility
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (page.render({
       canvasContext: ctx as any,
@@ -63,6 +66,72 @@ export async function pdfToImages(
   }
 
   return pages;
+}
+
+/**
+ * Extract text content from PDF pages. Works without canvas.
+ */
+async function extractText(pdfBuffer: Buffer, maxPages: number): Promise<{ text: string; pageCount: number }> {
+  const pdfjs = await import('pdfjs-dist');
+
+  const data = new Uint8Array(pdfBuffer);
+  const doc = await pdfjs.getDocument({
+    data,
+    useSystemFonts: true,
+    isEvalSupported: false,
+  }).promise;
+
+  const numPages = Math.min(doc.numPages, maxPages);
+  const pageTexts: string[] = [];
+
+  for (let i = 1; i <= numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item: { str?: string }) => item.str || '')
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (pageText) pageTexts.push(`--- Page ${i} ---\n${pageText}`);
+  }
+
+  return { text: pageTexts.join('\n\n'), pageCount: doc.numPages };
+}
+
+/**
+ * Process a PDF for AI extraction. Tries image rendering first, falls back to text.
+ */
+export async function processPdf(
+  pdfBuffer: Buffer,
+  maxPages = 5,
+  scale = 2.0,
+): Promise<PdfContent> {
+  // Try image rendering first (best quality for vision models)
+  try {
+    const images = await tryRenderImages(pdfBuffer, maxPages, scale);
+    if (images.length > 0) {
+      console.log(`[PDF] Rendered ${images.length} page(s) as images`);
+      return { mode: 'images', images, pageCount: images.length };
+    }
+  } catch (err) {
+    console.warn(`[PDF] Image rendering failed, falling back to text extraction: ${err instanceof Error ? err.message : err}`);
+  }
+
+  // Fall back to text extraction (works without canvas)
+  try {
+    const { text, pageCount } = await extractText(pdfBuffer, maxPages);
+    if (text.length > 50) {
+      console.log(`[PDF] Extracted ${text.length} chars of text from ${pageCount} page(s)`);
+      return { mode: 'text', text, pageCount };
+    }
+    console.warn(`[PDF] Text extraction returned very little content (${text.length} chars), will try raw`);
+  } catch (err) {
+    console.warn(`[PDF] Text extraction also failed: ${err instanceof Error ? err.message : err}`);
+  }
+
+  // Last resort: raw PDF
+  console.warn('[PDF] All extraction methods failed, returning raw PDF');
+  return { mode: 'raw', pageCount: 1 };
 }
 
 /**
