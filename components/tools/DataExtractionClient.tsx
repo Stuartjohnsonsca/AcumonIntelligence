@@ -1223,41 +1223,42 @@ export function DataExtractionClient({
     setXeroSelectedCodes(new Set(filtered.map(a => a.Code)));
   }
 
+  async function loadXeroAccounts() {
+    if (!selectedClient) return;
+    try {
+      const res = await fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.accounts) setXeroAccounts(data.accounts);
+      }
+    } catch { /* non-fatal */ }
+  }
+
   async function handleXeroButtonClick() {
     if (!selectedClient) return;
     setXeroError('');
-
-    // If already connected, open modal immediately (accounts pre-loaded on client selection)
-    if (xeroConnected) {
-      setXeroCategory('');
-      setXeroSelectedCodes(new Set());
-      setXeroShowModal(true);
-      // If accounts not loaded yet, fetch in background (modal shows loading)
-      if (xeroAccounts.length === 0) {
-        fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`)
-          .then(r => r.ok ? r.json() : null)
-          .then(data => { if (data?.accounts) setXeroAccounts(data.accounts); })
-          .catch(() => {});
-      }
-      return;
-    }
-
-    // Not connected — check status
     setXeroLoading(true);
+
     try {
+      // If already connected, just need to ensure accounts are loaded
+      if (xeroConnected) {
+        if (xeroAccounts.length === 0) await loadXeroAccounts();
+        setXeroCategory('');
+        setXeroSelectedCodes(new Set());
+        setXeroShowModal(true);
+        return;
+      }
+
+      // Not connected — check status
       const statusRes = await fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`);
       const statusData = await statusRes.json();
       if (statusData.connected) {
         setXeroConnected(true);
         setXeroOrgName(statusData.orgName);
+        await loadXeroAccounts();
         setXeroCategory('');
         setXeroSelectedCodes(new Set());
         setXeroShowModal(true);
-        // Load accounts in background
-        fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`)
-          .then(r => r.ok ? r.json() : null)
-          .then(data => { if (data?.accounts) setXeroAccounts(data.accounts); })
-          .catch(() => {});
       } else {
         await handleRequestXeroAccess();
       }
