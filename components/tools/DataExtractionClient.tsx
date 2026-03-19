@@ -1431,7 +1431,7 @@ export function DataExtractionClient({
     setXeroError('');
     setXeroShowModal(false);
     setXeroFetching(true);
-    setXeroFetchProgress('Starting...');
+    setXeroFetchProgress({ message: 'Starting...' });
     xeroFetchAbortRef.current = false;
 
     const taskId = `xero-${selectedClient.id}-${Date.now()}`;
