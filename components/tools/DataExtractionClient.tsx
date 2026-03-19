@@ -1227,10 +1227,10 @@ export function DataExtractionClient({
   async function loadXeroAccounts() {
     if (!selectedClient) return;
     try {
-      const res = await fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`);
+      const res = await fetch(`/api/accounting/xero/accounts?clientId=${selectedClient.id}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.accounts) setXeroAccounts(data.accounts);
+        if (data?.accounts?.length > 0) setXeroAccounts(data.accounts);
       }
     } catch { /* non-fatal */ }
   }
@@ -1363,30 +1363,31 @@ export function DataExtractionClient({
       accountsPreloadAbortRef.current = ctrl;
       const cid = selectedClient.id;
 
-      // Attempt up to 3 times with increasing delays
+      // Pre-load accounts via lightweight endpoint (15s timeout, 2 retries)
       (async () => {
-        const delays = [800, 3000, 6000];
+        const delays = [500, 5000, 15000];
         for (let attempt = 0; attempt < delays.length; attempt++) {
           if (ctrl.signal.aborted) return;
           await new Promise(r => setTimeout(r, delays[attempt]));
           if (ctrl.signal.aborted) return;
           try {
-            const res = await fetch(`/api/accounting/xero/data?clientId=${cid}&type=accounts`, { signal: ctrl.signal });
+            console.log(`[Pre-load] Attempt ${attempt + 1}/3 for accounts...`);
+            const res = await fetch(`/api/accounting/xero/accounts?clientId=${cid}`, { signal: ctrl.signal });
             if (res.ok) {
               const data = await res.json();
               if (data?.accounts?.length > 0) {
-                console.log(`[Pre-load] Loaded ${data.accounts.length} accounts (attempt ${attempt + 1})`);
+                console.log(`[Pre-load] ✓ Loaded ${data.accounts.length} accounts (attempt ${attempt + 1})`);
                 setXeroAccounts(data.accounts);
-                return; // success
+                return;
               }
             }
-            console.warn(`[Pre-load] Attempt ${attempt + 1} failed: ${res.status}`);
+            console.warn(`[Pre-load] Attempt ${attempt + 1} returned ${res.status}`);
           } catch (err) {
             if (ctrl.signal.aborted) return;
             console.warn(`[Pre-load] Attempt ${attempt + 1} error:`, err);
           }
         }
-        console.warn('[Pre-load] All 3 attempts failed — accounts will load on button click');
+        console.warn('[Pre-load] All attempts failed — will load on button click');
       })();
 
       return () => { ctrl.abort(); };
