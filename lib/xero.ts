@@ -582,7 +582,7 @@ export function getXeroRateRemaining(): number {
 async function xeroFetchWithRetry(
   url: string,
   headers: Record<string, string>,
-  maxRetries = 20,
+  maxRetries = 3,
 ): Promise<Response> {
   const urlPath = url.replace(/^https?:\/\/[^/]+/, '');
 
@@ -595,6 +595,10 @@ async function xeroFetchWithRetry(
     const remaining = res.headers.get('X-MinLimit-Remaining');
     if (remaining) xeroMinLimitRemaining = parseInt(remaining, 10);
 
+    // Check daily limit — stop immediately if exhausted
+    const dayRemaining = res.headers.get('X-DayLimit-Remaining');
+    const rateProblem = res.headers.get('X-Rate-Limit-Problem');
+
     if (res.status === 401) {
       console.error(`[Xero] 401 on ${urlPath} in ${callMs}ms — token expired`);
       throw new Error(`Xero token expired (401) on ${urlPath} — will refresh and retry`);
@@ -602,26 +606,33 @@ async function xeroFetchWithRetry(
 
     if (res.status !== 429) {
       if (res.ok) {
-        console.log(`[Xero] ${res.status} on ${urlPath} in ${callMs}ms (remaining=${remaining ?? '?'})`);
+        console.log(`[Xero] ${res.status} on ${urlPath} in ${callMs}ms (min=${remaining ?? '?'}, day=${dayRemaining ?? '?'})`);
       } else {
         console.warn(`[Xero] ${res.status} on ${urlPath} in ${callMs}ms`);
       }
       return res;
     }
 
-    if (attempt === maxRetries) {
-      // Exhausted all retries — throw so callers get a clear error
-      throw new Error(`Xero rate limit exceeded after ${maxRetries} retries on ${urlPath}. Please wait a minute and try again.`);
+    // 429 — check WHY we're rate limited
+    if (rateProblem === 'day' || dayRemaining === '0') {
+      const retryAfter = res.headers.get('Retry-After');
+      const hours = retryAfter ? Math.round(parseInt(retryAfter, 10) / 3600) : '?';
+      console.error(`[Xero] DAILY LIMIT EXHAUSTED on ${urlPath}. Resets in ~${hours}h. Stopping immediately.`);
+      throw new Error(`Xero daily API limit reached. Resets in ~${hours} hours. No retries — please try again later.`);
     }
 
-    // Use Retry-After header if available, otherwise exponential backoff
+    if (attempt === maxRetries) {
+      throw new Error(`Xero rate limited after ${maxRetries} retries on ${urlPath}. Please wait a minute and try again.`);
+    }
+
+    // Per-minute limit — wait and retry (max 3 retries to conserve daily quota)
     const retryAfter = res.headers.get('Retry-After');
     const serverWaitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 0;
-    // Start at 5s, ramp up to 60s — Xero's minute window needs real waiting
-    const backoffMs = Math.min(5000 * Math.pow(1.3, attempt), 60000);
+    // Conservative backoff: 3s, 6s, 12s
+    const backoffMs = Math.min(3000 * Math.pow(2, attempt), 15000);
     const waitMs = Math.max(serverWaitMs || backoffMs, 3000);
 
-    console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${Math.round(waitMs / 1000)}s (remaining=${xeroMinLimitRemaining})`);
+    console.log(`[Xero] 429 (minute limit) on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${Math.round(waitMs / 1000)}s (min=${xeroMinLimitRemaining}, day=${dayRemaining ?? '?'})`);
     await new Promise(resolve => setTimeout(resolve, waitMs));
   }
 
