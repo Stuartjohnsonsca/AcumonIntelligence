@@ -238,6 +238,8 @@ model AccountingConnection {
   connectedBy     String   @map("connected_by")
   connectedAt     DateTime @default(now()) @map("connected_at")
   expiresAt       DateTime @map("expires_at")
+  accountsCache   Json?    @map("accounts_cache")
+  accountsCachedAt DateTime? @map("accounts_cached_at")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
