@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifySummaryJobAccess } from '@/lib/client-access';
 import { generateDocSummaryPdf, type Finding, type FileInfo } from '@/lib/doc-summary-pdf';
+import { uploadToInbox } from '@/lib/azure-blob';
+import { setPdfStatus } from '@/lib/redis';
+
+const PDF_SIZE_THRESHOLD = 5 * 1024 * 1024; // 5 MB
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -93,13 +98,30 @@ export async function GET(req: Request) {
     const safeClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, '_');
     const dateStr = exportDate.toISOString().slice(0, 10);
     const filename = `Document-Summary-${safeClientName}-${dateStr}.pdf`;
+    const pdfBuffer = Buffer.from(pdfBytes);
 
-    return new Response(Buffer.from(pdfBytes), {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'Cache-Control': 'no-store',
-      },
+    // If the PDF is small enough, return it directly
+    if (pdfBuffer.length < PDF_SIZE_THRESHOLD) {
+      return new Response(pdfBuffer, {
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+
+    // Large PDF: upload to Azure Blob and return a task ID for async retrieval
+    const taskId = crypto.randomUUID();
+    const blobPath = `pdf-exports/${taskId}/${filename}`;
+    await uploadToInbox(blobPath, pdfBuffer, 'application/pdf');
+    await setPdfStatus(taskId, 'ready', blobPath);
+
+    return NextResponse.json({
+      taskId,
+      status: 'ready',
+      filename,
+      size: pdfBuffer.length,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
