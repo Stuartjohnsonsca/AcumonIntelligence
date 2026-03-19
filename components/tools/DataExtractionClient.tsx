@@ -1237,28 +1237,30 @@ export function DataExtractionClient({
   async function handleXeroButtonClick() {
     if (!selectedClient) return;
     setXeroError('');
+
+    // Already connected — open modal immediately, no API calls
+    if (xeroConnected) {
+      setXeroCategory('');
+      setXeroSelectedCodes(new Set());
+      setXeroShowModal(true);
+      // Load accounts in background if not yet available
+      if (xeroAccounts.length === 0) loadXeroAccounts();
+      return;
+    }
+
+    // Not connected — check status (show Connecting...)
     setXeroLoading(true);
-
     try {
-      // If already connected with accounts loaded, open modal instantly
-      if (xeroConnected) {
-        if (xeroAccounts.length === 0) await loadXeroAccounts();
-        setXeroCategory('');
-        setXeroSelectedCodes(new Set());
-        setXeroShowModal(true);
-        return;
-      }
-
-      // Not connected — check status
       const statusRes = await fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`);
       const statusData = await statusRes.json();
       if (statusData.connected) {
         setXeroConnected(true);
         setXeroOrgName(statusData.orgName);
-        await loadXeroAccounts();
         setXeroCategory('');
         setXeroSelectedCodes(new Set());
         setXeroShowModal(true);
+        // Load accounts in background
+        loadXeroAccounts();
       } else {
         await handleRequestXeroAccess();
       }
