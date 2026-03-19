@@ -139,7 +139,23 @@ CRITICAL RULES:
 - Every finding MUST cite a specific clause, section, paragraph, or page reference from the document. If there is no clear clause number, reference the relevant paragraph or page.
 - Be EVIDENCE-BASED only. Do not fabricate or assume content that is not in the document.
 - If a minimum area has no relevant content in the document, still include it with a finding stating it is not addressed.
-- Flag findings as significant risks (isSignificantRisk: true) if they could materially impact the audit opinion, financial statements, or represent a significant exposure.
+
+SIGNIFICANT RISK ASSESSMENT (isSignificantRisk: true):
+You MUST assess significant risk from the perspective of an auditor evaluating the risk of material misstatement of financial statements. Flag as significant risk ANY finding that:
+- Creates an **uncertain or unquantified financial obligation** (e.g. dilapidations, make-good provisions, repair obligations on lease termination, decommissioning costs)
+- Could require a **provision, contingent liability, or disclosure** under IAS 37/IAS 16/IFRS 16
+- Involves **onerous contract indicators** — where unavoidable costs exceed expected economic benefits
+- Affects **revenue recognition** timing or measurement (IFRS 15 performance obligations)
+- Creates **lease liability or right-of-use asset implications** under IFRS 16 (rent reviews, break clauses, extension options, variable lease payments)
+- Involves **guarantees, indemnities, or personal covenants** that could create unrecognised liabilities
+- Involves **penalty clauses, liquidated damages, or default consequences** with material financial impact
+- Creates **commitments not yet recognised** in financial statements (capital commitments, purchase obligations)
+- Could affect **going concern** assessment or entity viability
+- Involves **related party transactions** or non-arm's length terms
+- Contains **unusual, non-standard, or one-sided terms** that could disadvantage one party materially
+- Requires **management judgement or estimation** that could be materially misstated
+- Has **vacant possession, surrender, or reinstatement obligations** — these are almost always significant risks as the cost is uncertain and potentially material
+When in doubt about whether something is a significant risk, ERR ON THE SIDE OF FLAGGING IT. Auditors prefer to assess and dismiss a flagged risk rather than miss one entirely.
 
 File name: ${fileName}
 

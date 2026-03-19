@@ -107,7 +107,8 @@ export async function POST(req: Request) {
 
     // Send email via Azure Communication Services
     if (!connectionString) {
-      throw new Error('AZURE_COMMUNICATION_CONNECTION_STRING is not configured');
+      console.error('[DocSummary:SendEmail] AZURE_COMMUNICATION_CONNECTION_STRING is not configured');
+      return NextResponse.json({ error: 'Email service is not configured. Please set AZURE_COMMUNICATION_CONNECTION_STRING in environment variables.' }, { status: 500 });
     }
 
     const formattedDate = exportDate.toLocaleDateString('en-GB', {
