@@ -287,26 +287,16 @@ export async function extractDocumentFromBase64(
 
   if (isPdf(mimeType)) {
     const pdfBuffer = Buffer.from(base64Data, 'base64');
-    const pdfContent = await processPdf(pdfBuffer, 5, 2.0);
+    const pdfContent = await processPdf(pdfBuffer, 10);
 
-    if (pdfContent.mode === 'images' && pdfContent.images) {
-      // Best: send page images to vision model
-      inputMode = 'pdf-images';
-      contentParts = [
-        ...pdfContent.images.map(p => ({
-          type: 'image_url' as const,
-          image_url: { url: `data:image/png;base64,${p.base64}` },
-        })),
-        { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
-      ];
-    } else if (pdfContent.mode === 'text' && pdfContent.text) {
-      // Fallback: send extracted text (no vision needed)
+    if (pdfContent.mode === 'text' && pdfContent.text) {
+      // Send extracted text (no vision needed — works with all models)
       inputMode = 'pdf-text';
       contentParts = [
         { type: 'text', text: `File name: ${fileName}\n\nDocument text content (extracted from PDF, ${pdfContent.pageCount} pages):\n\n${pdfContent.text}\n\n${prompt}` },
       ];
     } else {
-      // Last resort: raw PDF
+      // Scanned PDF with no extractable text — send raw (some models may handle it)
       inputMode = 'pdf-raw';
       contentParts = [
         { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
