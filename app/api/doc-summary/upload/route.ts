@@ -88,9 +88,11 @@ export async function POST(req: Request) {
       data: { totalFiles },
     });
 
+    // Return only the newly uploaded files (client appends to existing)
     return NextResponse.json({
       jobId: job.id,
       files: uploadedFiles,
+      totalFiles,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
