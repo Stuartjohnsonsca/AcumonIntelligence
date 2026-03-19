@@ -1228,6 +1228,14 @@ export function DataExtractionClient({
     setXeroLoading(true);
     setXeroError('');
     try {
+      // If already connected, skip status check and go straight to modal
+      if (xeroConnected && xeroAccounts.length > 0) {
+        setXeroCategory('');
+        setXeroSelectedCodes(new Set());
+        setXeroShowModal(true);
+        return;
+      }
+
       const statusRes = await fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`);
       const statusData = await statusRes.json();
       if (statusData.connected) {
