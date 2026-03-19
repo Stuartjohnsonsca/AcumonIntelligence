@@ -1336,20 +1336,13 @@ export function DataExtractionClient({
   useEffect(() => {
     if (selectedClient) {
       checkXeroRequestStatus();
-      // Check if Xero is already connected and pre-load accounts
+      // Check if Xero is already connected (don't pre-load accounts to avoid rate limits)
       fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.connected) {
             setXeroConnected(true);
             setXeroOrgName(data.orgName);
-            // Pre-load accounts so button click is instant
-            fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`)
-              .then(r => r.ok ? r.json() : null)
-              .then(accData => {
-                if (accData?.accounts) setXeroAccounts(accData.accounts);
-              })
-              .catch(() => { /* non-fatal */ });
           } else {
             setXeroConnected(false);
             setXeroOrgName(null);

@@ -43,19 +43,14 @@ export async function POST(req: Request) {
     try {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
 
-      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: 'Fetching transactions...' });
-
-      // Sequential to avoid overwhelming Xero rate limits
+      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: 'Fetching invoices...' });
       const transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
 
-      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: `${transactions.length} transactions. Fetching accounts & tax rates...` });
+      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: `${transactions.length} transactions fetched. Loading accounts...` });
+      const accounts = await getAccounts(clientId);
 
-      const [accounts, taxRateMap] = await Promise.all([
-        getAccounts(clientId),
-        getTaxRates(clientId),
-      ]);
-
-      await updateProgress({ phase: 'fetching', step: 2, totalSteps: 4, message: `Fetched ${transactions.length} transactions. Identifying contacts...` });
+      await updateProgress({ phase: 'fetching', step: 2, totalSteps: 4, message: 'Loading tax rates...' });
+      const taxRateMap = await getTaxRates(clientId);
 
       const accountMap = new Map<string, { name: string; description: string }>();
       for (const acc of accounts) {

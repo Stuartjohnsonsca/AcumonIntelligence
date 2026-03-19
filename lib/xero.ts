@@ -359,11 +359,9 @@ export async function getTransactions(
     `Date <= DateTime(${dateTo.replace(/-/g, ',')})`,
   ].join(' AND ');
 
-  // Fetch invoices and bank transactions in parallel
-  const [invoices, bankTxns] = await Promise.all([
-    fetchPaginated(`${XERO_API_BASE}/Invoices`, accessToken, tenantId, whereClause),
-    fetchPaginated(`${XERO_API_BASE}/BankTransactions`, accessToken, tenantId, whereClause),
-  ]);
+  // Fetch sequentially to avoid doubling API rate
+  const invoices = await fetchPaginated(`${XERO_API_BASE}/Invoices`, accessToken, tenantId, whereClause);
+  const bankTxns = await fetchPaginated(`${XERO_API_BASE}/BankTransactions`, accessToken, tenantId, whereClause);
 
   const allTxns = [...invoices, ...bankTxns];
 
@@ -588,11 +586,13 @@ async function xeroFetchWithRetry(
     if (attempt === maxRetries) return res;
 
     const retryAfter = res.headers.get('Retry-After');
-    const waitMs = retryAfter
-      ? parseInt(retryAfter, 10) * 1000
-      : Math.min(1000 * Math.pow(2, attempt), 30000);
+    const serverWaitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 0;
+    const backoffMs = Math.min(1000 * Math.pow(2, attempt), 10000);
+    // Use server hint but cap at 10s to avoid long hangs
+    const waitMs = Math.min(serverWaitMs || backoffMs, 10000);
 
-    console.log(`[Xero] 429 rate-limited on ${url}, retry ${attempt + 1}/${maxRetries} after ${waitMs}ms`);
+    const urlPath = url.replace(/^https?:\/\/[^/]+/, '');
+    console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${waitMs}ms (server said ${serverWaitMs}ms)`);
     await new Promise(resolve => setTimeout(resolve, waitMs));
   }
 
