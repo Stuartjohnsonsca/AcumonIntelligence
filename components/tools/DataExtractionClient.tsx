@@ -1363,31 +1363,25 @@ export function DataExtractionClient({
       accountsPreloadAbortRef.current = ctrl;
       const cid = selectedClient.id;
 
-      // Pre-load accounts via lightweight endpoint (15s timeout, 2 retries)
+      // Pre-load accounts from DB cache (fast — no Xero API call)
       (async () => {
-        const delays = [500, 5000, 15000];
-        for (let attempt = 0; attempt < delays.length; attempt++) {
-          if (ctrl.signal.aborted) return;
-          await new Promise(r => setTimeout(r, delays[attempt]));
-          if (ctrl.signal.aborted) return;
-          try {
-            console.log(`[Pre-load] Attempt ${attempt + 1}/3 for accounts...`);
-            const res = await fetch(`/api/accounting/xero/accounts?clientId=${cid}`, { signal: ctrl.signal });
-            if (res.ok) {
-              const data = await res.json();
-              if (data?.accounts?.length > 0) {
-                console.log(`[Pre-load] ✓ Loaded ${data.accounts.length} accounts (attempt ${attempt + 1})`);
-                setXeroAccounts(data.accounts);
-                return;
-              }
+        await new Promise(r => setTimeout(r, 300)); // Brief delay after status check
+        if (ctrl.signal.aborted) return;
+        try {
+          const res = await fetch(`/api/accounting/xero/accounts?clientId=${cid}`, { signal: ctrl.signal });
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.accounts?.length > 0) {
+              console.log(`[Pre-load] ✓ Loaded ${data.accounts.length} accounts from cache (cached: ${data.cachedAt ?? 'unknown'})`);
+              setXeroAccounts(data.accounts);
+            } else {
+              console.log('[Pre-load] No cached accounts — will populate on first Xero fetch');
             }
-            console.warn(`[Pre-load] Attempt ${attempt + 1} returned ${res.status}`);
-          } catch (err) {
-            if (ctrl.signal.aborted) return;
-            console.warn(`[Pre-load] Attempt ${attempt + 1} error:`, err);
           }
+        } catch (err) {
+          if (ctrl.signal.aborted) return;
+          console.warn('[Pre-load] Failed to load cached accounts:', err);
         }
-        console.warn('[Pre-load] All attempts failed — will load on button click');
       })();
 
       return () => { ctrl.abort(); };
