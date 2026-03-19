@@ -47,6 +47,7 @@ model User {
   extractionJobs        ExtractionJob[]
   managedClients        Client[]               @relation("PortfolioManagerClients")
   docSummaryJobs        DocSummaryJob[]
+  activityLogs          ActivityLog[]
 
   @@map("users")
 }
@@ -473,5 +474,49 @@ model DocSummaryFinding {
   @@index([jobId])
   @@index([fileId])
   @@map("doc_summary_findings")
+}
+
+// ─── Activity & Error Logging ───────────────────────────────────────────────
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  firmId    String?  @map("firm_id")
+  clientId  String?  @map("client_id")
+  action    String   // e.g. 'upload', 'analyse', 'export', 'login', 'xero_connect'
+  tool      String?  // e.g. 'doc-summary', 'data-extraction'
+  detail    String?  // JSON string with action-specific details
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([firmId])
+  @@index([clientId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model ErrorLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  route     String?  // e.g. '/api/doc-summary/analyse'
+  tool      String?  // e.g. 'doc-summary', 'data-extraction'
+  message   String
+  stack     String?
+  context   String?  // JSON string with request context
+  severity  String   @default("error") // 'error', 'warning', 'critical'
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([route])
+  @@index([severity])
+  @@index([createdAt])
+  @@index([resolved])
+  @@map("error_logs")
 }
 
