@@ -40,6 +40,25 @@ interface PdfParams {
   singleFileId?: string;
 }
 
+export interface PortfolioPdfParams {
+  jobId: string;
+  findings: Finding[];
+  files: FileInfo[];
+  clientName: string;
+  firmName: string;
+  userName: string;
+  exportDate: Date;
+  /** Files that failed analysis — shown in the Failed Analysis section */
+  failedFiles: FailedFileInfo[];
+}
+
+export interface FailedFileInfo {
+  originalName: string;
+  fileSize: number;
+  createdAt: string;
+  errorMessage: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -1006,6 +1025,672 @@ export async function generateDocSummaryPdf(params: PdfParams): Promise<Uint8Arr
   renderConclusion(ctx);
   renderAppendixA(ctx, files);
   renderAppendixB(ctx, findings, files);
+
+  // Draw footers on all numbered pages (TOC + content) with embedded logo
+  const allNumberedPages = [...tocPages, ...ctx.pages];
+  drawAllFooters(allNumberedPages, font, 0, logoImage);
+
+  const pdfBytes = await doc.save();
+  return pdfBytes;
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio Report — renderers
+// ---------------------------------------------------------------------------
+
+function renderPortfolioCoverPage(
+  doc: PDFDocument,
+  font: PDFFont,
+  fontBold: PDFFont,
+  params: PortfolioPdfParams,
+  logoImage: PDFImage,
+): PDFPage {
+  const page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+
+  // Logo in top-right corner
+  const logoDims = logoImage.scale(1);
+  const cornerLogoHeight = 30;
+  const cornerLogoScale = cornerLogoHeight / logoDims.height;
+  const cornerLogoWidth = logoDims.width * cornerLogoScale;
+  page.drawImage(logoImage, {
+    x: PAGE_WIDTH - MARGIN_RIGHT - cornerLogoWidth,
+    y: PAGE_HEIGHT - MARGIN_TOP,
+    width: cornerLogoWidth,
+    height: cornerLogoHeight,
+  });
+
+  const title = 'PORTFOLIO DOCUMENT';
+  const title2 = 'SUMMARY REPORT';
+  const titleWidth = fontBold.widthOfTextAtSize(title, 24);
+  const title2Width = fontBold.widthOfTextAtSize(title2, 24);
+  page.drawText(title, {
+    x: (PAGE_WIDTH - titleWidth) / 2,
+    y: PAGE_HEIGHT / 2 + 100,
+    size: 24,
+    font: fontBold,
+    color: COLOUR_BLACK,
+  });
+  page.drawText(title2, {
+    x: (PAGE_WIDTH - title2Width) / 2,
+    y: PAGE_HEIGHT / 2 + 70,
+    size: 24,
+    font: fontBold,
+    color: COLOUR_BLACK,
+  });
+
+  const clientWidth = font.widthOfTextAtSize(params.clientName, 18);
+  page.drawText(params.clientName, {
+    x: (PAGE_WIDTH - clientWidth) / 2,
+    y: PAGE_HEIGHT / 2 + 30,
+    size: 18,
+    font,
+    color: COLOUR_BLACK,
+  });
+
+  const prepText = `Prepared by: ${params.userName}`;
+  const prepWidth = font.widthOfTextAtSize(prepText, 12);
+  page.drawText(prepText, {
+    x: (PAGE_WIDTH - prepWidth) / 2,
+    y: PAGE_HEIGHT / 2 - 20,
+    size: 12,
+    font,
+    color: COLOUR_BLACK,
+  });
+
+  const dateText = `Date: ${formatDate(params.exportDate)}`;
+  const dateWidth = font.widthOfTextAtSize(dateText, 12);
+  page.drawText(dateText, {
+    x: (PAGE_WIDTH - dateWidth) / 2,
+    y: PAGE_HEIGHT / 2 - 40,
+    size: 12,
+    font,
+    color: COLOUR_BLACK,
+  });
+
+  // "Powered By" in small grey text above the logo
+  const poweredByText = 'Powered By';
+  const poweredByWidth = font.widthOfTextAtSize(poweredByText, 8);
+  page.drawText(poweredByText, {
+    x: (PAGE_WIDTH - poweredByWidth) / 2,
+    y: 82,
+    size: 8,
+    font,
+    color: COLOUR_GREY,
+  });
+
+  // Centred logo at bottom of cover
+  const coverLogoHeight = 20;
+  const coverLogoScale = coverLogoHeight / logoDims.height;
+  const coverLogoWidth = logoDims.width * coverLogoScale;
+  page.drawImage(logoImage, {
+    x: (PAGE_WIDTH - coverLogoWidth) / 2,
+    y: 58,
+    width: coverLogoWidth,
+    height: coverLogoHeight,
+  });
+
+  return page;
+}
+
+function renderPortfolioTOC(
+  doc: PDFDocument,
+  font: PDFFont,
+  fontBold: PDFFont,
+  sectionPages: Map<string, number>,
+  firmName: string,
+  clientName: string,
+  sections: string[],
+): PDFPage[] {
+  const tocPages: PDFPage[] = [];
+  let page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  tocPages.push(page);
+  drawHeader(page, font, firmName, clientName);
+
+  let y = PAGE_HEIGHT - MARGIN_TOP;
+  page.drawText('Contents', { x: MARGIN_LEFT, y, size: 18, font: fontBold, color: COLOUR_BLACK });
+  y -= 36;
+
+  for (const section of sections) {
+    if (y < MARGIN_BOTTOM + 30) {
+      page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      tocPages.push(page);
+      drawHeader(page, font, firmName, clientName);
+      y = PAGE_HEIGHT - MARGIN_TOP;
+    }
+
+    const pageNum = sectionPages.get(section) || 1;
+    const label = section;
+    const pageNumStr = String(pageNum);
+
+    const labelWidth = font.widthOfTextAtSize(label, 11);
+    const numWidth = font.widthOfTextAtSize(pageNumStr, 11);
+    const dotsWidth = CONTENT_WIDTH - labelWidth - numWidth - 10;
+    const dotChar = '.';
+    const dotWidth = font.widthOfTextAtSize(dotChar, 11);
+    const dotsCount = Math.max(0, Math.floor(dotsWidth / dotWidth));
+    const dots = dotChar.repeat(dotsCount);
+
+    page.drawText(label, { x: MARGIN_LEFT, y, size: 11, font, color: COLOUR_BLACK });
+    page.drawText(dots, { x: MARGIN_LEFT + labelWidth + 4, y, size: 11, font, color: COLOUR_LIGHT_GREY });
+    page.drawText(pageNumStr, { x: PAGE_WIDTH - MARGIN_RIGHT - numWidth, y, size: 11, font, color: COLOUR_BLACK });
+    y -= 22;
+  }
+
+  return tocPages;
+}
+
+function renderFailedAnalysis(ctx: PageContext, failedFiles: FailedFileInfo[]): void {
+  newPage(ctx);
+  drawSectionHeading(ctx, 'Failed Analysis');
+
+  if (failedFiles.length === 0) {
+    drawParagraph(ctx, 'All documents were analysed successfully.');
+    return;
+  }
+
+  drawParagraph(ctx, `The following ${failedFiles.length} document(s) could not be analysed and are excluded from the findings in this report.`);
+  ctx.y -= 4;
+
+  const columns: TableColumn[] = [
+    { header: '#', width: 25 },
+    { header: 'Document Name', width: 180 },
+    { header: 'Upload Date', width: 75 },
+    { header: 'File Size', width: 60 },
+    { header: 'Error', width: 155 },
+  ];
+
+  const rows: TableRow[] = failedFiles.map((f, i) => ({
+    cells: [
+      String(i + 1),
+      f.originalName,
+      formatDate(new Date(f.createdAt)),
+      formatFileSize(f.fileSize),
+      f.errorMessage || 'Unknown error',
+    ],
+  }));
+
+  drawTable(ctx, columns, rows);
+}
+
+function renderCombinedSummary(
+  ctx: PageContext,
+  findings: Finding[],
+  files: FileInfo[],
+  clientName: string,
+): void {
+  newPage(ctx);
+  drawSectionHeading(ctx, 'Combined Summary');
+
+  const totalFindings = findings.length;
+  const areas = new Set(findings.map((f) => f.area));
+  const riskFindings = findings.filter((f) => f.isSignificantRisk);
+  const riskCount = riskFindings.length;
+  const totalDocs = files.length;
+
+  const summaryText = `This portfolio report aggregates the findings from an AI-assisted analysis of ${totalDocs} document(s) uploaded for ${clientName}. Across all documents, the analysis identified ${totalFindings} matters spanning ${areas.size} categories, of which ${riskCount} were flagged as significant risks.`;
+  drawParagraph(ctx, summaryText);
+  ctx.y -= 4;
+
+  // Per-document summary paragraphs
+  const fileMap = new Map<string, FileInfo>();
+  for (const f of files) fileMap.set(f.id, f);
+
+  const grouped = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const list = grouped.get(f.fileId) || [];
+    list.push(f);
+    grouped.set(f.fileId, list);
+  }
+
+  for (let idx = 0; idx < files.length; idx++) {
+    const file = files[idx];
+    const fileFindings = grouped.get(file.id) || [];
+    const fileRisks = fileFindings.filter((f) => f.isSignificantRisk).length;
+    const fileAreas = new Set(fileFindings.map((f) => f.area));
+
+    const label = `(${idx + 1}) ${file.originalName}:`;
+    const text = `${fileFindings.length} finding(s) across ${fileAreas.size} categories, ${fileRisks} significant risk(s).`;
+    drawLabelledParagraph(ctx, label, text, 9, 10);
+  }
+}
+
+function renderCombinedKeyMatters(
+  ctx: PageContext,
+  findings: Finding[],
+  files: FileInfo[],
+): void {
+  newPage(ctx);
+  drawSectionHeading(ctx, 'Combined Key Matters');
+
+  const riskFindings = findings.filter((f) => f.isSignificantRisk);
+  if (riskFindings.length === 0) {
+    drawParagraph(ctx, 'No significant risks identified across any documents.');
+    return;
+  }
+
+  // Build file index lookup
+  const fileIndexMap = new Map<string, number>();
+  files.forEach((f, i) => fileIndexMap.set(f.id, i + 1));
+
+  // Group risk findings by fileId, preserving file order
+  const grouped = new Map<string, Finding[]>();
+  for (const f of riskFindings) {
+    const list = grouped.get(f.fileId) || [];
+    list.push(f);
+    grouped.set(f.fileId, list);
+  }
+
+  const form = ctx.isFinalPass ? ctx.doc.getForm() : null;
+
+  for (const file of files) {
+    const fileRisks = grouped.get(file.id);
+    if (!fileRisks || fileRisks.length === 0) continue;
+
+    const fileIdx = fileIndexMap.get(file.id) || 0;
+
+    // Sub-heading per document
+    ensureSpace(ctx, 40);
+    ctx.currentPage.drawText(`(${fileIdx}) ${file.originalName}`, {
+      x: MARGIN_LEFT,
+      y: ctx.y,
+      size: 13,
+      font: ctx.fontBold,
+      color: COLOUR_BLACK,
+    });
+    ctx.y -= 24;
+
+    for (const rf of fileRisks) {
+      ensureSpace(ctx, 100);
+
+      // Area name as bold heading
+      ctx.currentPage.drawText(rf.area, {
+        x: MARGIN_LEFT,
+        y: ctx.y,
+        size: 12,
+        font: ctx.fontBold,
+        color: COLOUR_BLACK,
+      });
+      ctx.y -= 16;
+
+      // Clause references
+      ctx.currentPage.drawText(rf.clauseReference, {
+        x: MARGIN_LEFT,
+        y: ctx.y,
+        size: 9,
+        font: ctx.font,
+        color: COLOUR_GREY,
+      });
+      ctx.y -= 16;
+
+      // Finding text
+      drawParagraph(ctx, rf.finding, 10);
+
+      // Response text field
+      ensureSpace(ctx, 110);
+      ctx.currentPage.drawText('Response:', {
+        x: MARGIN_LEFT,
+        y: ctx.y,
+        size: 9,
+        font: ctx.fontBold,
+        color: COLOUR_GREY,
+      });
+      ctx.y -= 14;
+
+      const boxHeight = 90;
+      const boxY = ctx.y - boxHeight;
+
+      if (form) {
+        const textField = form.createTextField(`pf_response_${rf.id}`);
+        textField.addToPage(ctx.currentPage, {
+          x: MARGIN_LEFT,
+          y: boxY,
+          width: CONTENT_WIDTH,
+          height: boxHeight,
+          borderColor: COLOUR_TABLE_BORDER,
+          borderWidth: 0.75,
+          backgroundColor: COLOUR_WHITE,
+        });
+        textField.enableMultiline();
+        if (rf.userResponse) {
+          textField.setText(rf.userResponse);
+        }
+      } else {
+        ctx.currentPage.drawRectangle({
+          x: MARGIN_LEFT,
+          y: boxY,
+          width: CONTENT_WIDTH,
+          height: boxHeight,
+          borderColor: COLOUR_TABLE_BORDER,
+          borderWidth: 0.75,
+          color: COLOUR_WHITE,
+        });
+      }
+      ctx.y = boxY - 8;
+
+      // Add to Testing checkbox
+      ensureSpace(ctx, 22);
+      const checkboxY = ctx.y;
+
+      if (form) {
+        const testingCb = form.createCheckBox(`pf_testing_${rf.id}`);
+        testingCb.addToPage(ctx.currentPage, {
+          x: MARGIN_LEFT,
+          y: checkboxY - 10,
+          width: 12,
+          height: 12,
+        });
+        if (rf.addToTesting) testingCb.check();
+      } else {
+        ctx.currentPage.drawRectangle({
+          x: MARGIN_LEFT,
+          y: checkboxY - 10,
+          width: 12,
+          height: 12,
+          borderColor: COLOUR_TABLE_BORDER,
+          borderWidth: 0.5,
+          color: COLOUR_WHITE,
+        });
+      }
+      ctx.currentPage.drawText('Add to Testing', {
+        x: MARGIN_LEFT + 16,
+        y: checkboxY - 7,
+        size: 9,
+        font: ctx.font,
+        color: COLOUR_BLACK,
+      });
+
+      // Reviewed checkbox + initials
+      const reviewedX = MARGIN_LEFT + 140;
+
+      if (form) {
+        const reviewedCb = form.createCheckBox(`pf_reviewed_${rf.id}`);
+        reviewedCb.addToPage(ctx.currentPage, {
+          x: reviewedX,
+          y: checkboxY - 10,
+          width: 12,
+          height: 12,
+        });
+        if (rf.reviewed) reviewedCb.check();
+      } else {
+        ctx.currentPage.drawRectangle({
+          x: reviewedX,
+          y: checkboxY - 10,
+          width: 12,
+          height: 12,
+          borderColor: COLOUR_TABLE_BORDER,
+          borderWidth: 0.5,
+          color: COLOUR_WHITE,
+        });
+      }
+      ctx.currentPage.drawText('Reviewed', {
+        x: reviewedX + 16,
+        y: checkboxY - 7,
+        size: 9,
+        font: ctx.font,
+        color: COLOUR_BLACK,
+      });
+
+      const initialsX = reviewedX + 80;
+      ctx.currentPage.drawText('Initials:', {
+        x: initialsX,
+        y: checkboxY - 7,
+        size: 9,
+        font: ctx.font,
+        color: COLOUR_GREY,
+      });
+
+      if (form) {
+        const initialsField = form.createTextField(`pf_initials_${rf.id}`);
+        initialsField.addToPage(ctx.currentPage, {
+          x: initialsX + 42,
+          y: checkboxY - 12,
+          width: 60,
+          height: 16,
+          borderColor: COLOUR_TABLE_BORDER,
+          borderWidth: 0.5,
+          backgroundColor: COLOUR_WHITE,
+        });
+      } else {
+        ctx.currentPage.drawRectangle({
+          x: initialsX + 42,
+          y: checkboxY - 12,
+          width: 60,
+          height: 16,
+          borderColor: COLOUR_TABLE_BORDER,
+          borderWidth: 0.5,
+          color: COLOUR_WHITE,
+        });
+      }
+
+      ctx.y = checkboxY - 30;
+    }
+  }
+}
+
+function renderPortfolioAppendixB(
+  ctx: PageContext,
+  findings: Finding[],
+  files: FileInfo[],
+): void {
+  const grouped = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const list = grouped.get(f.fileId) || [];
+    list.push(f);
+    grouped.set(f.fileId, list);
+  }
+
+  let appendixNum = 1;
+  for (const file of files) {
+    const fileFindings = grouped.get(file.id);
+    if (!fileFindings || fileFindings.length === 0) continue;
+
+    // Each appendix starts on a new page
+    newPage(ctx);
+    drawSectionHeading(ctx, `Appendix B${appendixNum} \u2014 ${file.originalName}`);
+
+    const columns: TableColumn[] = [
+      { header: 'Area', width: 75 },
+      { header: 'Finding', width: 185 },
+      { header: 'Clause Ref', width: 75 },
+      { header: 'AI Assessment', width: 75 },
+      { header: 'User Assessment', width: 85 },
+    ];
+
+    const rows: TableRow[] = fileFindings.map((f) => {
+      const bothFlagged = f.aiSignificantRisk && f.isSignificantRisk;
+      const eitherFlagged = f.aiSignificantRisk || f.isSignificantRisk;
+
+      let bgColor = COLOUR_WHITE;
+      if (bothFlagged) {
+        bgColor = COLOUR_RISK_HIGH_BG;
+      } else if (eitherFlagged) {
+        bgColor = COLOUR_RISK_BG;
+      }
+
+      return {
+        cells: [
+          f.area,
+          f.finding,
+          f.clauseReference,
+          f.aiSignificantRisk ? 'Significant' : 'Normal',
+          f.isSignificantRisk ? 'Significant' : 'Normal',
+        ],
+        bgColor,
+      };
+    });
+
+    drawTable(ctx, columns, rows);
+    appendixNum++;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio Report — main export
+// ---------------------------------------------------------------------------
+
+export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<Uint8Array> {
+  const { findings, files, failedFiles } = params;
+
+  // Load logo PNG bytes
+  const logoPngBytes = loadLogoPngBytes();
+
+  // Build the TOC section list (dynamic based on appendices)
+  const grouped = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const list = grouped.get(f.fileId) || [];
+    list.push(f);
+    grouped.set(f.fileId, list);
+  }
+
+  const tocSections: string[] = [
+    'Failed Analysis',
+    'Combined Summary',
+    'Combined Key Matters',
+    'Work Performed',
+    'Caveats',
+    'Conclusion',
+    'Appendix A',
+  ];
+
+  // Add Appendix B entries per file
+  let appendixNum = 1;
+  for (const file of files) {
+    const fileFindings = grouped.get(file.id);
+    if (fileFindings && fileFindings.length > 0) {
+      tocSections.push(`Appendix B${appendixNum} \u2014 ${file.originalName}`);
+      appendixNum++;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Pass 1: render all content sections to determine page numbers
+  // ------------------------------------------------------------------
+  const tmpDoc = await PDFDocument.create();
+  const tmpFont = await tmpDoc.embedFont(StandardFonts.Helvetica);
+  const tmpFontBold = await tmpDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const tmpCtx: PageContext = {
+    doc: tmpDoc,
+    pages: [],
+    currentPage: null as unknown as PDFPage,
+    y: 0,
+    font: tmpFont,
+    fontBold: tmpFontBold,
+    clientName: params.clientName,
+    firmName: params.firmName,
+    drawHeaderFooter: true,
+    isFinalPass: false,
+  };
+
+  const sectionStartPage = new Map<string, number>();
+
+  sectionStartPage.set('Failed Analysis', tmpCtx.pages.length + 1);
+  renderFailedAnalysis(tmpCtx, failedFiles);
+
+  sectionStartPage.set('Combined Summary', tmpCtx.pages.length + 1);
+  renderCombinedSummary(tmpCtx, findings, files, params.clientName);
+
+  sectionStartPage.set('Combined Key Matters', tmpCtx.pages.length + 1);
+  renderCombinedKeyMatters(tmpCtx, findings, files);
+
+  sectionStartPage.set('Work Performed', tmpCtx.pages.length + 1);
+  renderWorkPerformed(tmpCtx);
+
+  sectionStartPage.set('Caveats', tmpCtx.pages.length + 1);
+  renderCaveats(tmpCtx, params.firmName, params.clientName);
+
+  sectionStartPage.set('Conclusion', tmpCtx.pages.length + 1);
+  renderConclusion(tmpCtx);
+
+  sectionStartPage.set('Appendix A', tmpCtx.pages.length + 1);
+  renderAppendixA(tmpCtx, files);
+
+  // Track per-file appendix B start pages
+  let tmpAppNum = 1;
+  for (const file of files) {
+    const fileFindings = grouped.get(file.id);
+    if (fileFindings && fileFindings.length > 0) {
+      const sectionName = `Appendix B${tmpAppNum} \u2014 ${file.originalName}`;
+      sectionStartPage.set(sectionName, tmpCtx.pages.length + 1);
+      // Render just this file's appendix to measure pages
+      newPage(tmpCtx);
+      drawSectionHeading(tmpCtx, sectionName);
+
+      const columns: TableColumn[] = [
+        { header: 'Area', width: 75 },
+        { header: 'Finding', width: 185 },
+        { header: 'Clause Ref', width: 75 },
+        { header: 'AI Assessment', width: 75 },
+        { header: 'User Assessment', width: 85 },
+      ];
+      const rows: TableRow[] = fileFindings.map((ff) => ({
+        cells: [
+          ff.area,
+          ff.finding,
+          ff.clauseReference,
+          ff.aiSignificantRisk ? 'Significant' : 'Normal',
+          ff.isSignificantRisk ? 'Significant' : 'Normal',
+        ],
+        bgColor: (ff.aiSignificantRisk && ff.isSignificantRisk)
+          ? COLOUR_RISK_HIGH_BG
+          : (ff.aiSignificantRisk || ff.isSignificantRisk)
+            ? COLOUR_RISK_BG
+            : COLOUR_WHITE,
+      }));
+      drawTable(tmpCtx, columns, rows);
+
+      tmpAppNum++;
+    }
+  }
+
+  // Determine TOC page count — estimate based on section count
+  const tocPageCount = Math.max(1, Math.ceil(tocSections.length / 30));
+
+  // Compute absolute page numbers for the TOC
+  const sectionAbsolutePages = new Map<string, number>();
+  sectionStartPage.forEach((relPage, section) => {
+    sectionAbsolutePages.set(section, tocPageCount + relPage);
+  });
+
+  // ------------------------------------------------------------------
+  // Pass 2: build the final PDF with form fields
+  // ------------------------------------------------------------------
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const logoImage = await doc.embedPng(logoPngBytes);
+
+  // 1. Cover page
+  renderPortfolioCoverPage(doc, font, fontBold, params, logoImage);
+
+  // 2. TOC page(s)
+  const tocPages = renderPortfolioTOC(
+    doc, font, fontBold, sectionAbsolutePages,
+    params.firmName, params.clientName, tocSections,
+  );
+
+  // 3. Content pages
+  const ctx: PageContext = {
+    doc,
+    pages: [],
+    currentPage: null as unknown as PDFPage,
+    y: 0,
+    font,
+    fontBold,
+    clientName: params.clientName,
+    firmName: params.firmName,
+    drawHeaderFooter: true,
+    isFinalPass: true,
+  };
+
+  renderFailedAnalysis(ctx, failedFiles);
+  renderCombinedSummary(ctx, findings, files, params.clientName);
+  renderCombinedKeyMatters(ctx, findings, files);
+  renderWorkPerformed(ctx);
+  renderCaveats(ctx, params.firmName, params.clientName);
+  renderConclusion(ctx);
+  renderAppendixA(ctx, files);
+  renderPortfolioAppendixB(ctx, findings, files);
 
   // Draw footers on all numbered pages (TOC + content) with embedded logo
   const allNumberedPages = [...tocPages, ...ctx.pages];

@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload, FileText, Loader2, Download, ChevronLeft, ChevronRight,
-  Mail, CheckCircle2, XCircle, AlertCircle, Search
+  Mail, CheckCircle2, XCircle, AlertCircle, Search, BookOpen
 } from 'lucide-react';
 import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
 
@@ -327,6 +327,26 @@ export function DocSummaryClient({
       URL.revokeObjectURL(blobUrl);
     } catch {
       setError('Failed to download PDF');
+    }
+  }, [jobId]);
+
+  const downloadPortfolio = useCallback(async () => {
+    if (!jobId) return;
+    try {
+      const url = `/api/doc-summary/export-portfolio?jobId=${encodeURIComponent(jobId)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `portfolio-report-${jobId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      setError('Failed to download portfolio report');
     }
   }, [jobId]);
 
@@ -764,6 +784,14 @@ export function DocSummaryClient({
             >
               <Download className="h-4 w-4" />
               Download PDF
+            </button>
+            <button
+              onClick={downloadPortfolio}
+              disabled={files.filter(f => f.status === 'analysed').length < 2}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+            >
+              <BookOpen className="h-4 w-4" />
+              Portfolio Report
             </button>
             <button
               onClick={() => activeFile && downloadPdf(activeFile.id)}
