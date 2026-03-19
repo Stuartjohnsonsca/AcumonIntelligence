@@ -248,3 +248,63 @@ export async function analyseDocumentForAudit(
     throw new Error(`[doc-summary:${fileName}] Failed to parse AI response as JSON`);
   }
 }
+
+// ─── Vision-based analysis for scanned/image PDFs ────────────────────────────
+
+const VISION_MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
+
+export async function analyseDocumentFromImage(
+  base64Data: string,
+  fileName: string,
+  clientName: string,
+  mimeType: string,
+): Promise<DocSummaryResult> {
+  const prompt = buildAuditAnalysisPrompt(fileName, clientName);
+  const dataUri = `data:${mimeType};base64,${base64Data}`;
+
+  const result = await retryWithBackoff(
+    () => client.chat.completions.create({
+      model: VISION_MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: dataUri } },
+          ],
+        },
+      ],
+      max_tokens: 16384,
+    }),
+    `doc-summary-vision:${fileName}`,
+  );
+
+  console.log(`[DocSummary:Vision] Success | file=${fileName} | model=${VISION_MODEL}`);
+
+  const usage: DocSummaryUsage = {
+    promptTokens: result.usage?.prompt_tokens ?? 0,
+    completionTokens: result.usage?.completion_tokens ?? 0,
+    totalTokens: result.usage?.total_tokens ?? 0,
+  };
+
+  const responseText = result.choices[0]?.message?.content || '';
+  const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/) || responseText.match(/(\{[\s\S]*\})/);
+  const jsonText = jsonMatch ? jsonMatch[1] : responseText;
+
+  try {
+    const parsed = JSON.parse(jsonText.trim());
+    const findings: DocSummaryFinding[] = Array.isArray(parsed.findings)
+      ? parsed.findings.map((f: Record<string, unknown>) => ({
+          area: String(f.area || 'Unknown'),
+          finding: String(f.finding || ''),
+          clauseReference: String(f.clauseReference || 'Not specified'),
+          isSignificantRisk: Boolean(f.isSignificantRisk),
+        }))
+      : [];
+
+    return { findings, summary: String(parsed.summary || ''), usage, model: VISION_MODEL };
+  } catch {
+    console.error(`[DocSummary:Vision] JSON parse failed | file=${fileName} | snippet="${responseText.substring(0, 200)}"`);
+    throw new Error(`[doc-summary:${fileName}] Failed to parse vision AI response`);
+  }
+}

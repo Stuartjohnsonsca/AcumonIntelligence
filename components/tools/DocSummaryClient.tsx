@@ -65,6 +65,7 @@ export function DocSummaryClient({
   // Job state
   const [jobId, setJobId] = useState<string | null>(null);
   const [files, setFiles] = useState<DocFile[]>([]);
+  const [hiddenFileIds, setHiddenFileIds] = useState<Set<string>>(new Set());
   const [findings, setFindings] = useState<Record<string, Finding[]>>({});
   const [activeDocIndex, setActiveDocIndex] = useState(0);
 
@@ -88,7 +89,8 @@ export function DocSummaryClient({
 
   // ─── Derived ─────────────────────────────────────────────────────────────
 
-  const activeFile = files[activeDocIndex] ?? null;
+  const visibleFiles = files.filter(f => !hiddenFileIds.has(f.id));
+  const activeFile = visibleFiles[activeDocIndex] ?? null;
   const activeFindings = activeFile ? (findings[activeFile.id] ?? []) : [];
   const hasAnalysedDocs = files.some(f => f.status === 'analysed');
 
@@ -224,6 +226,32 @@ export function DocSummaryClient({
       setIsUploading(false);
     }
   }, [selectedClient, jobId, startPolling, addTask, updateTask]);
+
+  // ─── Remove file handler ────────────────────────────────────────────────
+  const handleRemoveFile = useCallback(async (fileId: string, fileStatus: string) => {
+    if (fileStatus === 'analysed' || fileStatus === 'failed') {
+      // Already processed — just hide from view, keep findings/data intact
+      setHiddenFileIds(prev => new Set(prev).add(fileId));
+      // Adjust active index if needed
+      const visibleAfter = files.filter(f => !hiddenFileIds.has(f.id) && f.id !== fileId);
+      if (activeDocIndex >= visibleAfter.length) {
+        setActiveDocIndex(Math.max(0, visibleAfter.length - 1));
+      }
+    } else {
+      // Not yet analysed — actually delete from DB and blob
+      try {
+        await fetch('/api/doc-summary/remove-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileId }),
+        });
+        setFiles(prev => prev.filter(f => f.id !== fileId));
+        setActiveDocIndex(prev => Math.max(0, prev - 1));
+      } catch {
+        // Silent fail — file will remain in list
+      }
+    }
+  }, [files, hiddenFileIds, activeDocIndex]);
 
   // ─── Risk toggle ─────────────────────────────────────────────────────────
 
@@ -531,30 +559,41 @@ export function DocSummaryClient({
               </div>
 
               {/* File list */}
-              {files.length > 0 && (
+              {visibleFiles.length > 0 && (
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="px-4 py-3 border-b border-slate-100">
                     <h3 className="text-sm font-semibold text-slate-800">
-                      Documents ({files.length})
+                      Documents ({visibleFiles.length})
                     </h3>
                   </div>
                   <div className="max-h-80 overflow-y-auto">
-                    {files.map((file, idx) => (
-                      <button
+                    {visibleFiles.map((file, idx) => (
+                      <div
                         key={file.id}
-                        onClick={() => setActiveDocIndex(idx)}
-                        className={`w-full text-left px-4 py-2.5 flex items-center gap-2.5 border-b border-slate-50 transition-colors ${
+                        className={`flex items-center border-b border-slate-50 transition-colors ${
                           fileStatusBg(file.status)
                         } ${idx === activeDocIndex ? 'ring-1 ring-inset ring-blue-400' : 'hover:brightness-95'}`}
                       >
-                        <span className="flex items-center justify-center h-5 w-5 rounded-full bg-white border border-slate-200 text-[10px] font-bold text-slate-600 flex-shrink-0">
-                          {idx + 1}
-                        </span>
-                        {fileStatusIcon(file.status)}
-                        <span className="text-xs text-slate-700 truncate flex-1" title={file.originalName}>
-                          {file.originalName}
-                        </span>
-                      </button>
+                        <button
+                          onClick={() => setActiveDocIndex(idx)}
+                          className="flex-1 text-left px-4 py-2.5 flex items-center gap-2.5 min-w-0"
+                        >
+                          <span className="flex items-center justify-center h-5 w-5 rounded-full bg-white border border-slate-200 text-[10px] font-bold text-slate-600 flex-shrink-0">
+                            {idx + 1}
+                          </span>
+                          {fileStatusIcon(file.status)}
+                          <span className="text-xs text-slate-700 truncate flex-1" title={file.originalName}>
+                            {file.originalName}
+                          </span>
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRemoveFile(file.id, file.status); }}
+                          className="px-2 py-1 mr-1 text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+                          title={file.status === 'analysed' || file.status === 'failed' ? 'Hide from list' : 'Remove file'}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -565,7 +604,7 @@ export function DocSummaryClient({
             <div className="flex-1 min-w-0">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 {/* Document navigation bar */}
-                {files.length > 0 && (
+                {visibleFiles.length > 0 && (
                   <div className="px-5 py-3 border-b border-slate-100">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -580,22 +619,22 @@ export function DocSummaryClient({
                           {activeFile?.originalName ?? 'No document selected'}
                         </h3>
                         <button
-                          onClick={() => setActiveDocIndex(Math.min(files.length - 1, activeDocIndex + 1))}
-                          disabled={activeDocIndex >= files.length - 1}
+                          onClick={() => setActiveDocIndex(Math.min(visibleFiles.length - 1, activeDocIndex + 1))}
+                          disabled={activeDocIndex >= visibleFiles.length - 1}
                           className="p-1 rounded hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                         >
                           <ChevronRight className="h-4 w-4 text-slate-600" />
                         </button>
                       </div>
                       <span className="text-xs text-slate-400">
-                        {files.length > 0 ? `${activeDocIndex + 1} of ${files.length}` : ''}
+                        {visibleFiles.length > 0 ? `${activeDocIndex + 1} of ${visibleFiles.length}` : ''}
                       </span>
                     </div>
 
                     {/* Navigation dots */}
-                    {files.length > 1 && (
+                    {visibleFiles.length > 1 && (
                       <div className="flex items-center gap-1.5 mt-2">
-                        {files.map((file, idx) => (
+                        {visibleFiles.map((file, idx) => (
                           <button
                             key={file.id}
                             onClick={() => setActiveDocIndex(idx)}
@@ -613,7 +652,7 @@ export function DocSummaryClient({
                 )}
 
                 {/* Table or empty state */}
-                {files.length === 0 ? (
+                {visibleFiles.length === 0 ? (
                   <div className="px-5 py-20 text-center">
                     <FileText className="h-10 w-10 mx-auto text-slate-300 mb-3" />
                     <p className="text-sm text-slate-500">Upload and analyse documents to see findings</p>
