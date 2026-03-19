@@ -67,12 +67,18 @@ export async function POST(req: Request) {
         // 2. Download from Azure Blob
         const pdfBuffer = await downloadBlob(file.storagePath, file.containerName);
 
-        // 3. Extract text using pdf-parse
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const pdfParse = require('pdf-parse');
-        const pdfResult = await pdfParse(pdfBuffer, { max: 500 });
-        const text = (pdfResult.text || '').trim();
-        const pageCount = pdfResult.numpages || 1;
+        // 3. Extract text using unpdf (Vercel-compatible, no native deps)
+        const { extractText, getMeta } = await import('unpdf');
+        const pdfData = new Uint8Array(pdfBuffer);
+        const pdfResult = await extractText(pdfData);
+        // unpdf returns { text: string[] } — one entry per page
+        const textPages = Array.isArray(pdfResult.text) ? pdfResult.text : [String(pdfResult.text || '')];
+        const text = textPages.join('\n').trim();
+        let pageCount = textPages.length || 1;
+        try {
+          const meta = await getMeta(pdfData);
+          pageCount = (meta.info as Record<string, unknown>)?.Pages as number || pageCount;
+        } catch { /* non-fatal */ }
 
         if (text.length < 50) {
           throw new Error('PDF contains insufficient extractable text (likely scanned/image-based)');

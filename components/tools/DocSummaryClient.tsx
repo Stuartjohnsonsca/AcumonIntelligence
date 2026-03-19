@@ -5,6 +5,7 @@ import {
   Upload, FileText, Loader2, Download, ChevronLeft, ChevronRight,
   Mail, CheckCircle2, XCircle, AlertCircle, Search
 } from 'lucide-react';
+import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -53,6 +54,8 @@ interface Props {
 export function DocSummaryClient({
   userName, firmName, assignedClients, unassignedClients,
 }: Props) {
+  const { addTask, updateTask } = useBackgroundTasks();
+
   // Client selector state
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [clientSearch, setClientSearch] = useState('');
@@ -68,6 +71,7 @@ export function DocSummaryClient({
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
+  const bgTaskIdRef = useRef<string | null>(null);
 
   // Email modal state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -120,12 +124,21 @@ export function DocSummaryClient({
         if (allDone) {
           stopPolling();
           setIsProcessing(false);
+          // Update background task dot
+          if (bgTaskIdRef.current) {
+            const hasFailed = data.files.some(f => f.status === 'failed');
+            updateTask(bgTaskIdRef.current, {
+              status: hasFailed ? 'error' : 'completed',
+              error: hasFailed ? 'Some files failed analysis' : undefined,
+            });
+            bgTaskIdRef.current = null;
+          }
         }
       } catch {
         // Silently retry on next interval
       }
     }, 2500);
-  }, [stopPolling]);
+  }, [stopPolling, updateTask]);
 
   useEffect(() => {
     return () => stopPolling();
@@ -164,7 +177,17 @@ export function DocSummaryClient({
       const uploadData = await uploadRes.json();
       const newJobId = uploadData.jobId as string;
       setJobId(newJobId);
-      setFiles(uploadData.files as DocFile[]);
+      setFiles(prev => [...prev, ...(uploadData.files as DocFile[])]);
+
+      // Register background task for status dots
+      const taskId = `doc-summary-${newJobId}`;
+      addTask({
+        id: taskId,
+        clientName: selectedClient.clientName,
+        activity: 'Document Summary',
+        status: 'running',
+        toolPath: '/tools/doc-summary',
+      });
 
       // Trigger analysis
       const analyseRes = await fetch('/api/doc-summary/analyse', {
@@ -175,16 +198,19 @@ export function DocSummaryClient({
 
       if (!analyseRes.ok) {
         const body = await analyseRes.json().catch(() => null);
+        updateTask(taskId, { status: 'error', error: body?.error || 'Analysis failed' });
         throw new Error(body?.error || 'Analysis failed to start');
       }
 
+      // Store taskId for polling updates
+      bgTaskIdRef.current = taskId;
       startPolling(newJobId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setIsUploading(false);
     }
-  }, [selectedClient, jobId, startPolling]);
+  }, [selectedClient, jobId, startPolling, addTask, updateTask]);
 
   // ─── Risk toggle ─────────────────────────────────────────────────────────
 
