@@ -4,7 +4,7 @@ import { getTransactions, getAccounts, batchFetchHistories, getTaxRates, batchFe
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
 
-export const maxDuration = 120;
+export const maxDuration = 300; // 5 minutes — large datasets with 429 retries need time
 
 export async function POST(req: Request) {
   const session = await auth();
