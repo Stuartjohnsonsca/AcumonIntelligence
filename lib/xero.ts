@@ -564,10 +564,9 @@ export function getXeroRateRemaining(): number {
 async function xeroFetchWithRetry(
   url: string,
   headers: Record<string, string>,
-  maxRetries = 15,
+  maxRetries = 20,
 ): Promise<Response> {
   const urlPath = url.replace(/^https?:\/\/[^/]+/, '');
-  let consecutiveFails = 0;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, { headers });
@@ -576,35 +575,28 @@ async function xeroFetchWithRetry(
     const remaining = res.headers.get('X-MinLimit-Remaining');
     if (remaining) xeroMinLimitRemaining = parseInt(remaining, 10);
 
-    if (res.status !== 429) {
-      consecutiveFails = 0;
-      return res;
+    if (res.status !== 429) return res;
+
+    if (attempt === maxRetries) {
+      // Exhausted all retries — throw so callers get a clear error
+      throw new Error(`Xero rate limit exceeded after ${maxRetries} retries on ${urlPath}. Please wait a minute and try again.`);
     }
-
-    consecutiveFails++;
-
-    // Only give up after 10 consecutive 429s
-    if (consecutiveFails >= 10) {
-      console.error(`[Xero] 10 consecutive 429s on ${urlPath}, giving up`);
-      return res;
-    }
-
-    if (attempt === maxRetries) return res;
 
     // Use Retry-After header if available, otherwise exponential backoff
     const retryAfter = res.headers.get('Retry-After');
     const serverWaitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 0;
-    const backoffMs = Math.min(3000 * Math.pow(1.5, attempt), 30000);
-    const waitMs = Math.max(serverWaitMs || backoffMs, 2000);
+    // Start at 5s, ramp up to 60s — Xero's minute window needs real waiting
+    const backoffMs = Math.min(5000 * Math.pow(1.3, attempt), 60000);
+    const waitMs = Math.max(serverWaitMs || backoffMs, 3000);
 
-    console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${waitMs}ms (remaining=${xeroMinLimitRemaining})`);
+    console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${Math.round(waitMs / 1000)}s (remaining=${xeroMinLimitRemaining})`);
     await new Promise(resolve => setTimeout(resolve, waitMs));
   }
 
   throw new Error('Unreachable');
 }
 
-const XERO_PAGE_DELAY_MS = 500; // Xero allows ~60 calls/min; 500ms between sequential calls
+const XERO_PAGE_DELAY_MS = 1200; // Xero allows ~60 calls/min; 1.2s between calls = ~50/min (safe margin)
 
 async function fetchPaginated(
   url: string,
