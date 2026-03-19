@@ -1240,7 +1240,7 @@ export function DataExtractionClient({
     setXeroLoading(true);
 
     try {
-      // If already connected, just need to ensure accounts are loaded
+      // If already connected with accounts loaded, open modal instantly
       if (xeroConnected) {
         if (xeroAccounts.length === 0) await loadXeroAccounts();
         setXeroCategory('');
@@ -1337,13 +1337,21 @@ export function DataExtractionClient({
   useEffect(() => {
     if (selectedClient) {
       checkXeroRequestStatus();
-      // Check if Xero is already connected (don't pre-load accounts to avoid rate limits)
+      // Check connection and pre-load account codes (single lightweight call)
       fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`)
         .then(r => r.ok ? r.json() : null)
-        .then(data => {
+        .then(async (data) => {
           if (data?.connected) {
             setXeroConnected(true);
             setXeroOrgName(data.orgName);
+            // Pre-load accounts so modal opens instantly
+            try {
+              const accRes = await fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`);
+              if (accRes.ok) {
+                const accData = await accRes.json();
+                if (accData.accounts) setXeroAccounts(accData.accounts);
+              }
+            } catch { /* non-fatal */ }
           } else {
             setXeroConnected(false);
             setXeroOrgName(null);

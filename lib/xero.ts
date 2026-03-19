@@ -576,7 +576,7 @@ export async function downloadAttachment(
 async function xeroFetchWithRetry(
   url: string,
   headers: Record<string, string>,
-  maxRetries = 5,
+  maxRetries = 8,
 ): Promise<Response> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, { headers });
@@ -585,14 +585,14 @@ async function xeroFetchWithRetry(
 
     if (attempt === maxRetries) return res;
 
+    // Wait with exponential backoff, capped at 15s
     const retryAfter = res.headers.get('Retry-After');
     const serverWaitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 0;
-    const backoffMs = Math.min(1000 * Math.pow(2, attempt), 10000);
-    // Use server hint but cap at 10s to avoid long hangs
-    const waitMs = Math.min(serverWaitMs || backoffMs, 10000);
+    const backoffMs = Math.min(2000 * Math.pow(1.5, attempt), 15000);
+    const waitMs = Math.min(serverWaitMs || backoffMs, 15000);
 
     const urlPath = url.replace(/^https?:\/\/[^/]+/, '');
-    console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${waitMs}ms (server said ${serverWaitMs}ms)`);
+    console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${waitMs}ms`);
     await new Promise(resolve => setTimeout(resolve, waitMs));
   }
 
