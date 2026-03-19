@@ -352,16 +352,15 @@ export async function getTransactions(
   dateFrom: string,
   dateTo: string,
 ): Promise<XeroTransaction[]> {
-  const { accessToken, tenantId } = await getValidAccessToken(clientId);
-
   const whereClause = [
     `Date >= DateTime(${dateFrom.replace(/-/g, ',')})`,
     `Date <= DateTime(${dateTo.replace(/-/g, ',')})`,
   ].join(' AND ');
 
   // Fetch sequentially to avoid doubling API rate
-  const invoices = await fetchPaginated(`${XERO_API_BASE}/Invoices`, accessToken, tenantId, whereClause);
-  const bankTxns = await fetchPaginated(`${XERO_API_BASE}/BankTransactions`, accessToken, tenantId, whereClause);
+  // Pass clientId so token is refreshed per-page if needed during long fetches
+  const invoices = await fetchPaginated(`${XERO_API_BASE}/Invoices`, clientId, whereClause);
+  const bankTxns = await fetchPaginated(`${XERO_API_BASE}/BankTransactions`, clientId, whereClause);
 
   const allTxns = [...invoices, ...bankTxns];
 
@@ -575,6 +574,11 @@ async function xeroFetchWithRetry(
     const remaining = res.headers.get('X-MinLimit-Remaining');
     if (remaining) xeroMinLimitRemaining = parseInt(remaining, 10);
 
+    if (res.status === 401) {
+      // Token expired mid-fetch — caller should get a fresh token and retry
+      throw new Error(`Xero token expired (401) on ${urlPath} — will refresh and retry`);
+    }
+
     if (res.status !== 429) return res;
 
     if (attempt === maxRetries) {
@@ -600,22 +604,24 @@ const XERO_PAGE_DELAY_MS = 1200; // Xero allows ~60 calls/min; 1.2s between call
 
 async function fetchPaginated(
   url: string,
-  accessToken: string,
-  tenantId: string,
+  clientId: string,
   where: string,
 ): Promise<XeroTransaction[]> {
   const results: XeroTransaction[] = [];
   let page = 1;
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    'Xero-Tenant-Id': tenantId,
-    Accept: 'application/json',
-  };
 
   while (true) {
     if (page > 1) {
       await new Promise(resolve => setTimeout(resolve, XERO_PAGE_DELAY_MS));
     }
+
+    // Get a fresh token each page — handles token expiry during long fetches with 429 retries
+    const { accessToken, tenantId } = await getValidAccessToken(clientId);
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      'Xero-Tenant-Id': tenantId,
+      Accept: 'application/json',
+    };
 
     const params = new URLSearchParams({ where, page: String(page) });
     const res = await xeroFetchWithRetry(`${url}?${params}`, headers);
