@@ -206,12 +206,10 @@ export interface XeroAccount {
 export async function getAccounts(clientId: string): Promise<XeroAccount[]> {
   const { accessToken, tenantId } = await getValidAccessToken(clientId);
 
-  const res = await fetch(`${XERO_API_BASE}/Accounts`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Xero-Tenant-Id': tenantId,
-      Accept: 'application/json',
-    },
+  const res = await xeroFetchWithRetry(`${XERO_API_BASE}/Accounts`, {
+    Authorization: `Bearer ${accessToken}`,
+    'Xero-Tenant-Id': tenantId,
+    Accept: 'application/json',
   });
 
   if (!res.ok) throw new Error(`Xero Accounts fetch failed (${res.status})`);
@@ -231,12 +229,10 @@ export interface XeroTaxRate {
 
 export async function getTaxRates(clientId: string): Promise<Map<string, number>> {
   const { accessToken, tenantId } = await getValidAccessToken(clientId);
-  const res = await fetch(`${XERO_API_BASE}/TaxRates`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Xero-Tenant-Id': tenantId,
-      Accept: 'application/json',
-    },
+  const res = await xeroFetchWithRetry(`${XERO_API_BASE}/TaxRates`, {
+    Authorization: `Bearer ${accessToken}`,
+    'Xero-Tenant-Id': tenantId,
+    Accept: 'application/json',
   });
   if (!res.ok) {
     console.warn(`Xero TaxRates fetch failed (${res.status})`);
@@ -442,16 +438,24 @@ export async function batchFetchHistories(
 
   const entries = Array.from(uniqueTxns.entries());
 
-  // Start slow (1 call, 1s delay), ramp up on success, back off on 429
+  // Start slow, ramp up. On 429: slow down and retry (don't skip).
+  // Only fail after 10 consecutive failures.
   let batchSize = 1;
   let batchDelayMs = 1000;
   let successStreak = 0;
-  let processed = 0;
+  let consecutiveFailures = 0;
+  let completed = 0;
+  const queue = [...entries];
 
-  for (let i = 0; i < entries.length; i += batchSize) {
-    const batch = entries.slice(i, i + batchSize);
+  while (queue.length > 0) {
+    if (consecutiveFailures >= 10) {
+      console.error(`[Xero] 10 consecutive failures — aborting history fetch. ${completed}/${entries.length} done.`);
+      break;
+    }
 
-    const promises = batch.map(async ([id, type]) => {
+    const batch = queue.splice(0, batchSize);
+
+    const batchResults = await Promise.all(batch.map(async ([id, type]) => {
       const endpoint = type === 'Invoice' ? 'Invoices' : 'BankTransactions';
       try {
         const history = await getTransactionHistory(clientId, endpoint, id);
@@ -467,36 +471,53 @@ export async function batchFetchHistories(
           }
         }
         results.set(id, { createdBy, approvedBy });
-        return 'ok';
+        return { status: 'ok' as const, entry: [id, type] as [string, 'Invoice' | 'BankTransaction'] };
       } catch (err) {
-        results.set(id, { createdBy: '', approvedBy: '' });
         const msg = err instanceof Error ? err.message : '';
-        if (msg.includes('429') || msg.includes('rate')) return 'rate-limited';
-        return 'error';
+        const isRateLimit = msg.includes('429') || msg.includes('rate');
+        if (!isRateLimit) {
+          // Non-rate-limit error: accept the failure, move on
+          results.set(id, { createdBy: '', approvedBy: '' });
+        }
+        return {
+          status: isRateLimit ? 'rate-limited' as const : 'error' as const,
+          entry: [id, type] as [string, 'Invoice' | 'BankTransaction'],
+        };
       }
-    });
+    }));
 
-    const batchResults = await Promise.all(promises);
-    processed += batch.length;
+    const rateLimited = batchResults.filter(r => r.status === 'rate-limited');
+    const succeeded = batchResults.filter(r => r.status === 'ok').length;
+    const errored = batchResults.filter(r => r.status === 'error').length;
 
-    if (batchResults.includes('rate-limited')) {
-      // Hit the ceiling — drop back down
+    // Put rate-limited items back at the front of the queue for retry
+    if (rateLimited.length > 0) {
+      queue.unshift(...rateLimited.map(r => r.entry));
+      consecutiveFailures += rateLimited.length;
       successStreak = 0;
+      // Slow down
       batchSize = Math.max(1, Math.floor(batchSize / 2));
       batchDelayMs = Math.min(batchDelayMs * 2, 10000);
-      console.warn(`[Xero] 429 rate limit — slowing: batch=${batchSize} delay=${batchDelayMs}ms`);
-    } else {
-      successStreak++;
-      // Ramp up: every 3 successful batches, increase batch size by 1 and reduce delay
-      if (successStreak % 3 === 0) {
-        batchSize = Math.min(batchSize + 1, 10);
-        batchDelayMs = Math.max(Math.round(batchDelayMs * 0.85), 300);
-      }
+      console.warn(`[Xero] ${rateLimited.length} rate-limited, retrying. batch=${batchSize} delay=${batchDelayMs}ms`);
     }
 
-    if (onProgress) onProgress(processed, entries.length);
+    if (succeeded > 0) {
+      consecutiveFailures = 0;
+      successStreak += succeeded;
+      completed += succeeded;
+    }
+    completed += errored; // count non-429 errors as done (won't retry)
 
-    if (i + batchSize < entries.length) {
+    // Ramp up: every 3 successes, go a bit faster
+    if (successStreak >= 3 && rateLimited.length === 0) {
+      batchSize = Math.min(batchSize + 1, 8);
+      batchDelayMs = Math.max(Math.round(batchDelayMs * 0.85), 400);
+      successStreak = 0;
+    }
+
+    if (onProgress) onProgress(completed, entries.length);
+
+    if (queue.length > 0) {
       await new Promise(resolve => setTimeout(resolve, batchDelayMs));
     }
   }

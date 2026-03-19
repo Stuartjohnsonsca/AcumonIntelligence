@@ -43,10 +43,14 @@ export async function POST(req: Request) {
     try {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
 
-      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: 'Fetching transactions, accounts & tax rates...' });
+      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: 'Fetching transactions...' });
 
-      const [transactions, accounts, taxRateMap] = await Promise.all([
-        getTransactions(clientId, codes, dateFrom, dateTo),
+      // Sequential to avoid overwhelming Xero rate limits
+      const transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
+
+      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: `${transactions.length} transactions. Fetching accounts & tax rates...` });
+
+      const [accounts, taxRateMap] = await Promise.all([
         getAccounts(clientId),
         getTaxRates(clientId),
       ]);
