@@ -1,19 +1,10 @@
 /**
  * Convert PDF pages to PNG images for vision model consumption.
- * Uses pdfjs-dist with node-canvas for server-side rendering.
+ * Uses pdfjs-dist with @napi-rs/canvas (Vercel serverless compatible).
  */
 
-import { createCanvas } from 'canvas';
-
-// pdfjs-dist requires dynamic import for Node.js ESM compatibility
-let pdfjsLib: typeof import('pdfjs-dist') | null = null;
-
-async function getPdfjs() {
-  if (!pdfjsLib) {
-    pdfjsLib = await import('pdfjs-dist');
-  }
-  return pdfjsLib;
-}
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { createCanvas } = require('@napi-rs/canvas');
 
 export interface PdfPage {
   pageNumber: number;
@@ -33,13 +24,12 @@ export async function pdfToImages(
   maxPages = 5,
   scale = 2.0,
 ): Promise<PdfPage[]> {
-  const pdfjs = await getPdfjs();
+  const pdfjs = await import('pdfjs-dist');
 
   const data = new Uint8Array(pdfBuffer);
   const doc = await pdfjs.getDocument({
     data,
     useSystemFonts: true,
-    // Disable worker for serverless — run in main thread
     isEvalSupported: false,
   }).promise;
 
@@ -50,23 +40,25 @@ export async function pdfToImages(
     const page = await doc.getPage(i);
     const viewport = page.getViewport({ scale });
 
-    const canvas = createCanvas(viewport.width, viewport.height);
+    const width = Math.round(viewport.width);
+    const height = Math.round(viewport.height);
+    const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
-    // pdfjs-dist v5 RenderParameters requires canvas + canvasContext
+    // pdfjs render — use any cast for cross-canvas compatibility
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await page.render({
+    await (page.render({
       canvasContext: ctx as any,
       viewport,
       canvas: canvas as any,
-    } as any).promise;
+    } as any)).promise;
 
-    const pngBuffer = canvas.toBuffer('image/png');
+    const pngBuffer: Buffer = canvas.toBuffer('image/png');
     pages.push({
       pageNumber: i,
       base64: pngBuffer.toString('base64'),
-      width: viewport.width,
-      height: viewport.height,
+      width,
+      height,
     });
   }
 

@@ -2150,8 +2150,8 @@ export function DataExtractionClient({
               </div>
 
               {/* Unified spreadsheet — contained scroll area */}
-              <div className="flex-1 overflow-y-auto overflow-x-scroll min-h-0">
-                <table className="text-[11px] border-collapse" style={{ tableLayout: 'fixed' }} onPaste={handlePaste}>
+              <div className="flex-1 overflow-scroll min-h-0">
+                <table className="text-[11px] border-collapse" style={{ tableLayout: 'fixed', minWidth: 'max-content' }} onPaste={handlePaste}>
                   <thead className="sticky top-0 z-20">
                     {/* Row 1: merged group headers */}
                     <tr className="bg-slate-100">
@@ -2177,9 +2177,9 @@ export function DataExtractionClient({
                       {filteredLeftColumns.map(col => (
                         <th key={`ac-${col}`}
                           style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
-                          className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 relative overflow-hidden text-ellipsis">
+                          className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 relative select-none">
                           {col}
-                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                          <div className="absolute -right-1 top-0 bottom-0 w-3 cursor-col-resize hover:bg-blue-400/50 active:bg-blue-500/50 z-10"
                             onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
@@ -2188,7 +2188,7 @@ export function DataExtractionClient({
                           style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
                           className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-green-50/30 relative overflow-hidden text-ellipsis">
                           {col}
-                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                          <div className="absolute -right-1 top-0 bottom-0 w-3 cursor-col-resize hover:bg-blue-400/50 active:bg-blue-500/50 z-10"
                             onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
@@ -2197,7 +2197,7 @@ export function DataExtractionClient({
                           style={{ width: columnWidths[col] || getDefaultWidth(col), minWidth: 40 }}
                           className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200 border-r border-slate-100 bg-amber-50/30 relative overflow-hidden text-ellipsis">
                           {col}
-                          <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 active:bg-blue-500"
+                          <div className="absolute -right-1 top-0 bottom-0 w-3 cursor-col-resize hover:bg-blue-400/50 active:bg-blue-500/50 z-10"
                             onMouseDown={e => handleColumnResizeStart(e, col)} />
                         </th>
                       ))}
