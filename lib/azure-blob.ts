@@ -78,6 +78,12 @@ export async function downloadBlob(blobName: string, containerName: string): Pro
   return Buffer.concat(chunks);
 }
 
+export async function deleteBlob(blobName: string, containerName: string): Promise<void> {
+  const containerClient = getContainerClient(containerName);
+  const blobClient = containerClient.getBlobClient(blobName);
+  await blobClient.deleteIfExists();
+}
+
 export async function getBlobAsBase64(blobName: string, containerName: string): Promise<string> {
   const buffer = await downloadBlob(blobName, containerName);
   return buffer.toString('base64');

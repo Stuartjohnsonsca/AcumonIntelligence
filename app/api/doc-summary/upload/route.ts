@@ -36,15 +36,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: access.reason || 'Forbidden' }, { status: 403 });
     }
 
-    // Reuse existing pending job for same client/user, or create a new one
-    let job = await prisma.docSummaryJob.findFirst({
-      where: {
-        clientId,
-        userId: session.user.id,
-        status: 'pending',
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    // Reuse existing job if jobId passed from client, or find recent one, or create new
+    const existingJobId = formData.get('jobId') as string | null;
+    let job = existingJobId
+      ? await prisma.docSummaryJob.findUnique({ where: { id: existingJobId } })
+      : await prisma.docSummaryJob.findFirst({
+          where: {
+            clientId,
+            userId: session.user.id,
+            status: { in: ['pending', 'complete'] },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
 
     if (!job) {
       const expiresAt = new Date(Date.now() + 121 * 24 * 60 * 60 * 1000);
@@ -81,11 +84,14 @@ export async function POST(req: Request) {
       uploadedFiles.push({ id: fileRecord.id, name: file.name, status: 'uploaded' });
     }
 
-    // Update job total files count
+    // Update job total files count and reset to pending if it was complete
     const totalFiles = await prisma.docSummaryFile.count({ where: { jobId: job.id } });
     await prisma.docSummaryJob.update({
       where: { id: job.id },
-      data: { totalFiles },
+      data: {
+        totalFiles,
+        status: job.status === 'complete' ? 'pending' : job.status,
+      },
     });
 
     // Return only the newly uploaded files (client appends to existing)

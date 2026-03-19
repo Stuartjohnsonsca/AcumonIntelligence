@@ -39,14 +39,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'No files to analyse' }, { status: 400 });
   }
 
-  // Set job to processing
+  // Set job to processing — keep total files count from upload, only reset processing counters
+  const totalAllFiles = await prisma.docSummaryFile.count({ where: { jobId } });
   await prisma.docSummaryJob.update({
     where: { id: jobId },
     data: {
       status: 'processing',
-      totalFiles: filesToProcess.length,
-      processedCount: 0,
-      failedCount: 0,
+      totalFiles: totalAllFiles,
     },
   });
 
@@ -80,12 +79,18 @@ export async function POST(req: Request) {
           pageCount = (meta.info as Record<string, unknown>)?.Pages as number || pageCount;
         } catch { /* non-fatal */ }
 
-        if (text.length < 50) {
-          throw new Error('PDF contains insufficient extractable text (likely scanned/image-based)');
-        }
+        let analysisResult;
 
-        // 4. Call AI analysis
-        const analysisResult = await analyseDocumentForAudit(text, file.originalName, clientName);
+        if (text.length < 50) {
+          // Scanned/image PDF — send raw PDF as base64 to vision model
+          console.log(`[DocSummary:Analyse] Text too short (${text.length} chars), using vision mode | file=${file.originalName}`);
+          const base64Pdf = Buffer.from(pdfBuffer).toString('base64');
+          const { analyseDocumentFromImage } = await import('@/lib/doc-summary-ai');
+          analysisResult = await analyseDocumentFromImage(base64Pdf, file.originalName, clientName, file.mimeType || 'application/pdf');
+        } else {
+          // 4. Call AI analysis with extracted text
+          analysisResult = await analyseDocumentForAudit(text, file.originalName, clientName);
+        }
 
         // 5. Save findings
         for (let i = 0; i < analysisResult.findings.length; i++) {
