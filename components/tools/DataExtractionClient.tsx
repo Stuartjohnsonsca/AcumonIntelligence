@@ -330,7 +330,7 @@ export function DataExtractionClient({
   const [xeroCategory, setXeroCategory] = useState('');
   const [xeroError, setXeroError] = useState('');
   const [xeroFetching, setXeroFetching] = useState(false);
-  const [xeroFetchProgress, setXeroFetchProgress] = useState<string | null>(null);
+  const [xeroFetchProgress, setXeroFetchProgress] = useState<{ message: string; step?: number; totalSteps?: number } | null>(null);
   const xeroFetchAbortRef = useRef(false);
 
   // Read Xero OAuth result from URL query params (set by callback redirect)
@@ -1477,8 +1477,12 @@ export function DataExtractionClient({
             const statusRes = await fetch(`/api/accounting/xero/fetch-background?taskId=${serverTaskId}`);
             const statusData = await statusRes.json();
 
-            if (statusData.progress?.message) {
-              setXeroFetchProgress(statusData.progress.message);
+            if (statusData.progress) {
+              setXeroFetchProgress({
+                message: statusData.progress.message || 'Working...',
+                step: statusData.progress.step,
+                totalSteps: statusData.progress.totalSteps,
+              });
             }
 
             if (statusData.status === 'completed') {
@@ -1986,7 +1990,11 @@ export function DataExtractionClient({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
-                        <span className="text-sm text-blue-800 font-medium">Fetching data...</span>
+                        <span className="text-sm text-blue-800 font-medium">
+                          {xeroFetchProgress?.step && xeroFetchProgress?.totalSteps
+                            ? `Step ${xeroFetchProgress.step}/${xeroFetchProgress.totalSteps}`
+                            : 'Fetching data...'}
+                        </span>
                       </div>
                       <button
                         onClick={handleCancelXeroFetch}
@@ -1996,10 +2004,13 @@ export function DataExtractionClient({
                       </button>
                     </div>
                     {xeroFetchProgress && (
-                      <p className="text-xs text-blue-600">{xeroFetchProgress}</p>
+                      <p className="text-xs text-blue-600">{xeroFetchProgress.message}</p>
                     )}
                     <div className="h-1.5 bg-blue-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '100%' }} />
+                      <div className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                        style={{ width: xeroFetchProgress?.step && xeroFetchProgress?.totalSteps
+                          ? `${(xeroFetchProgress.step / xeroFetchProgress.totalSteps) * 100}%`
+                          : '10%' }} />
                     </div>
                   </div>
                 )}
