@@ -1,0 +1,724 @@
+'use client';
+
+import { useState, useRef, useCallback, useEffect } from 'react';
+import {
+  Upload, FileText, Loader2, Download, ChevronLeft, ChevronRight,
+  Mail, CheckCircle2, XCircle, AlertCircle, Search
+} from 'lucide-react';
+
+// ─── Interfaces ──────────────────────────────────────────────────────────────
+
+interface Client {
+  id: string;
+  clientName: string;
+  software: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+}
+
+interface Finding {
+  id: string;
+  area: string;
+  finding: string;
+  clauseReference: string | null;
+  isSignificantRisk: boolean;
+}
+
+interface DocFile {
+  id: string;
+  originalName: string;
+  status: 'uploaded' | 'processing' | 'analysed' | 'failed';
+  errorMessage: string | null;
+}
+
+interface StatusResponse {
+  jobId: string;
+  files: DocFile[];
+  findings: Record<string, Finding[]>;
+  status: string;
+}
+
+interface Props {
+  userId: string;
+  userName: string;
+  firmName: string;
+  assignedClients: Client[];
+  unassignedClients: Client[];
+  isFirmAdmin: boolean;
+  isPortfolioOwner: boolean;
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
+export function DocSummaryClient({
+  userName, firmName, assignedClients, unassignedClients,
+}: Props) {
+  // Client selector state
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [clientSearch, setClientSearch] = useState('');
+  const [showUnassigned, setShowUnassigned] = useState(false);
+
+  // Job state
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [files, setFiles] = useState<DocFile[]>([]);
+  const [findings, setFindings] = useState<Record<string, Finding[]>>({});
+  const [activeDocIndex, setActiveDocIndex] = useState(0);
+
+  // Upload / processing state
+  const [isUploading, setIsUploading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState('');
+
+  // Email modal state
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailAddress, setEmailAddress] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+
+  // Drag state
+  const [isDragging, setIsDragging] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ─── Derived ─────────────────────────────────────────────────────────────
+
+  const activeFile = files[activeDocIndex] ?? null;
+  const activeFindings = activeFile ? (findings[activeFile.id] ?? []) : [];
+  const hasAnalysedDocs = files.some(f => f.status === 'analysed');
+
+  const filteredAssigned = assignedClients.filter(c =>
+    c.clientName.toLowerCase().includes(clientSearch.toLowerCase())
+  );
+  const filteredUnassigned = unassignedClients.filter(c =>
+    c.clientName.toLowerCase().includes(clientSearch.toLowerCase())
+  );
+
+  // ─── Polling ─────────────────────────────────────────────────────────────
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback((jId: string) => {
+    stopPolling();
+    setIsProcessing(true);
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/doc-summary/status?jobId=${encodeURIComponent(jId)}`);
+        if (!res.ok) return;
+        const data: StatusResponse = await res.json();
+
+        setFiles(data.files);
+        setFindings(data.findings);
+
+        const allDone = data.files.every(f => f.status === 'analysed' || f.status === 'failed');
+        if (allDone) {
+          stopPolling();
+          setIsProcessing(false);
+        }
+      } catch {
+        // Silently retry on next interval
+      }
+    }, 2500);
+  }, [stopPolling]);
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, [stopPolling]);
+
+  // ─── Upload flow ─────────────────────────────────────────────────────────
+
+  const handleUpload = useCallback(async (fileList: FileList | File[]) => {
+    if (!selectedClient) {
+      setError('Please select a client first.');
+      return;
+    }
+
+    const fileArr = Array.from(fileList);
+    if (fileArr.length === 0) return;
+
+    setError('');
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('clientId', selectedClient.id);
+      if (jobId) formData.append('jobId', jobId);
+      fileArr.forEach(f => formData.append('files', f));
+
+      const uploadRes = await fetch('/api/doc-summary/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!uploadRes.ok) {
+        const body = await uploadRes.json().catch(() => null);
+        throw new Error(body?.error || 'Upload failed');
+      }
+
+      const uploadData = await uploadRes.json();
+      const newJobId = uploadData.jobId as string;
+      setJobId(newJobId);
+      setFiles(uploadData.files as DocFile[]);
+
+      // Trigger analysis
+      const analyseRes = await fetch('/api/doc-summary/analyse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: newJobId }),
+      });
+
+      if (!analyseRes.ok) {
+        const body = await analyseRes.json().catch(() => null);
+        throw new Error(body?.error || 'Analysis failed to start');
+      }
+
+      startPolling(newJobId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setIsUploading(false);
+    }
+  }, [selectedClient, jobId, startPolling]);
+
+  // ─── Risk toggle ─────────────────────────────────────────────────────────
+
+  const toggleRisk = useCallback(async (findingId: string, currentValue: boolean) => {
+    // Optimistic update
+    setFindings(prev => {
+      const updated = { ...prev };
+      for (const fileId of Object.keys(updated)) {
+        updated[fileId] = updated[fileId].map(f =>
+          f.id === findingId ? { ...f, isSignificantRisk: !currentValue } : f
+        );
+      }
+      return updated;
+    });
+
+    try {
+      await fetch('/api/doc-summary/update-finding', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ findingId, isSignificantRisk: !currentValue }),
+      });
+    } catch {
+      // Revert on failure
+      setFindings(prev => {
+        const updated = { ...prev };
+        for (const fileId of Object.keys(updated)) {
+          updated[fileId] = updated[fileId].map(f =>
+            f.id === findingId ? { ...f, isSignificantRisk: currentValue } : f
+          );
+        }
+        return updated;
+      });
+    }
+  }, []);
+
+  // ─── Export actions ──────────────────────────────────────────────────────
+
+  const downloadPdf = useCallback(async () => {
+    if (!jobId) return;
+    try {
+      const res = await fetch(`/api/doc-summary/export-pdf?jobId=${encodeURIComponent(jobId)}`);
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `doc-summary-${jobId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError('Failed to download PDF');
+    }
+  }, [jobId]);
+
+  const sendEmail = useCallback(async () => {
+    if (!jobId || !emailAddress) return;
+    setEmailSending(true);
+    try {
+      const res = await fetch('/api/doc-summary/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId, email: emailAddress }),
+      });
+      if (!res.ok) throw new Error('Send failed');
+      setEmailSent(true);
+      setTimeout(() => {
+        setEmailModalOpen(false);
+        setEmailSent(false);
+        setEmailAddress('');
+      }, 1500);
+    } catch {
+      setError('Failed to send email');
+    } finally {
+      setEmailSending(false);
+    }
+  }, [jobId, emailAddress]);
+
+  // ─── Drag & drop handlers ───────────────────────────────────────────────
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files.length > 0) {
+      handleUpload(e.dataTransfer.files);
+    }
+  }, [handleUpload]);
+
+  // ─── File status helpers ─────────────────────────────────────────────────
+
+  function fileStatusBg(status: string): string {
+    switch (status) {
+      case 'uploaded': return 'bg-slate-100';
+      case 'processing': return 'bg-orange-100';
+      case 'analysed': return 'bg-green-100';
+      case 'failed': return 'bg-red-100';
+      default: return 'bg-slate-50';
+    }
+  }
+
+  function fileStatusIcon(status: string) {
+    switch (status) {
+      case 'analysed':
+        return <CheckCircle2 className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />;
+      case 'failed':
+        return <XCircle className="h-3.5 w-3.5 text-red-600 flex-shrink-0" />;
+      case 'processing':
+        return <Loader2 className="h-3.5 w-3.5 text-orange-600 animate-spin flex-shrink-0" />;
+      default:
+        return <FileText className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />;
+    }
+  }
+
+  // ─── Render ──────────────────────────────────────────────────────────────
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      {/* Header */}
+      <div className="bg-white border-b border-slate-200 px-6 py-4">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-slate-900">Document Summary</h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {firmName} &middot; {userName}
+            </p>
+          </div>
+          {selectedClient && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-600 font-medium">{selectedClient.clientName}</span>
+              <button
+                onClick={() => {
+                  setSelectedClient(null);
+                  setJobId(null);
+                  setFiles([]);
+                  setFindings({});
+                  setActiveDocIndex(0);
+                  stopPolling();
+                  setIsProcessing(false);
+                  setError('');
+                }}
+                className="text-xs text-slate-400 hover:text-slate-600 underline"
+              >
+                Change
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="max-w-[1600px] mx-auto px-6 pt-3">
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5 text-sm text-red-700">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <span>{error}</span>
+            <button onClick={() => setError('')} className="ml-auto text-red-400 hover:text-red-600 font-medium">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="max-w-[1600px] mx-auto px-6 py-6">
+        {/* Client selector (shown when no client selected) */}
+        {!selectedClient ? (
+          <div className="max-w-lg mx-auto">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100">
+                <h2 className="text-base font-semibold text-slate-900">Select Client</h2>
+                <p className="text-sm text-slate-500 mt-0.5">Choose a client to start analysing documents</p>
+              </div>
+
+              {/* Search */}
+              <div className="px-5 py-3 border-b border-slate-100">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search clients..."
+                    value={clientSearch}
+                    onChange={e => setClientSearch(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              {/* Assigned clients */}
+              <div className="max-h-72 overflow-y-auto">
+                {filteredAssigned.length === 0 && !showUnassigned && (
+                  <div className="px-5 py-8 text-center text-sm text-slate-400">
+                    No clients found
+                  </div>
+                )}
+                {filteredAssigned.map(client => (
+                  <button
+                    key={client.id}
+                    onClick={() => {
+                      setSelectedClient(client);
+                      setClientSearch('');
+                    }}
+                    className="w-full text-left px-5 py-3 hover:bg-slate-50 border-b border-slate-50 transition-colors"
+                  >
+                    <div className="text-sm font-medium text-slate-800">{client.clientName}</div>
+                    {client.contactName && (
+                      <div className="text-xs text-slate-400 mt-0.5">{client.contactName}</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/* Show unassigned toggle */}
+              {unassignedClients.length > 0 && (
+                <div className="border-t border-slate-200">
+                  <button
+                    onClick={() => setShowUnassigned(!showUnassigned)}
+                    className="w-full text-left px-5 py-2.5 text-xs text-slate-500 hover:bg-slate-50 transition-colors"
+                  >
+                    {showUnassigned ? 'Hide' : 'Show'} unassigned clients ({unassignedClients.length})
+                  </button>
+                  {showUnassigned && (
+                    <div className="max-h-48 overflow-y-auto border-t border-slate-100">
+                      {filteredUnassigned.map(client => (
+                        <button
+                          key={client.id}
+                          onClick={() => {
+                            setSelectedClient(client);
+                            setClientSearch('');
+                            setShowUnassigned(false);
+                          }}
+                          className="w-full text-left px-5 py-3 hover:bg-slate-50 border-b border-slate-50 transition-colors"
+                        >
+                          <div className="text-sm font-medium text-slate-600">{client.clientName}</div>
+                          {client.contactName && (
+                            <div className="text-xs text-slate-400 mt-0.5">{client.contactName}</div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* Main workspace (client selected) */
+          <div className="flex gap-6 items-start">
+            {/* ─── Left panel: Upload + File list ─────────────────────────── */}
+            <div className="w-72 flex-shrink-0 space-y-4">
+              {/* Upload zone */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100">
+                  <h3 className="text-sm font-semibold text-slate-800">Upload Documents</h3>
+                </div>
+
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`mx-4 my-3 border-2 border-dashed rounded-lg p-5 text-center transition-colors cursor-pointer ${
+                    isDragging
+                      ? 'border-blue-400 bg-blue-50'
+                      : 'border-slate-200 hover:border-slate-300 bg-slate-50'
+                  }`}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="h-6 w-6 mx-auto text-slate-400 mb-2" />
+                  <p className="text-xs text-slate-500">
+                    Drag files here or <span className="text-blue-600 font-medium">browse</span>
+                  </p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                    className="hidden"
+                    onChange={e => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        handleUpload(e.target.files);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                </div>
+
+                {isUploading && (
+                  <div className="px-4 pb-3 flex items-center gap-2 text-xs text-slate-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Uploading...
+                  </div>
+                )}
+              </div>
+
+              {/* File list */}
+              {files.length > 0 && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-100">
+                    <h3 className="text-sm font-semibold text-slate-800">
+                      Documents ({files.length})
+                    </h3>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {files.map((file, idx) => (
+                      <button
+                        key={file.id}
+                        onClick={() => setActiveDocIndex(idx)}
+                        className={`w-full text-left px-4 py-2.5 flex items-center gap-2.5 border-b border-slate-50 transition-colors ${
+                          fileStatusBg(file.status)
+                        } ${idx === activeDocIndex ? 'ring-1 ring-inset ring-blue-400' : 'hover:brightness-95'}`}
+                      >
+                        <span className="flex items-center justify-center h-5 w-5 rounded-full bg-white border border-slate-200 text-[10px] font-bold text-slate-600 flex-shrink-0">
+                          {idx + 1}
+                        </span>
+                        {fileStatusIcon(file.status)}
+                        <span className="text-xs text-slate-700 truncate flex-1" title={file.originalName}>
+                          {file.originalName}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ─── Center: Results table ───────────────────────────────────── */}
+            <div className="flex-1 min-w-0">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                {/* Document navigation bar */}
+                {files.length > 0 && (
+                  <div className="px-5 py-3 border-b border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setActiveDocIndex(Math.max(0, activeDocIndex - 1))}
+                          disabled={activeDocIndex === 0}
+                          className="p-1 rounded hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <ChevronLeft className="h-4 w-4 text-slate-600" />
+                        </button>
+                        <h3 className="text-sm font-semibold text-slate-800 truncate max-w-md" title={activeFile?.originalName}>
+                          {activeFile?.originalName ?? 'No document selected'}
+                        </h3>
+                        <button
+                          onClick={() => setActiveDocIndex(Math.min(files.length - 1, activeDocIndex + 1))}
+                          disabled={activeDocIndex >= files.length - 1}
+                          className="p-1 rounded hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <ChevronRight className="h-4 w-4 text-slate-600" />
+                        </button>
+                      </div>
+                      <span className="text-xs text-slate-400">
+                        {files.length > 0 ? `${activeDocIndex + 1} of ${files.length}` : ''}
+                      </span>
+                    </div>
+
+                    {/* Navigation dots */}
+                    {files.length > 1 && (
+                      <div className="flex items-center gap-1.5 mt-2">
+                        {files.map((file, idx) => (
+                          <button
+                            key={file.id}
+                            onClick={() => setActiveDocIndex(idx)}
+                            className={`h-2 w-2 rounded-full transition-colors ${
+                              idx === activeDocIndex
+                                ? 'bg-blue-600'
+                                : 'bg-slate-300 hover:bg-slate-400'
+                            }`}
+                            title={file.originalName}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Table or empty state */}
+                {files.length === 0 ? (
+                  <div className="px-5 py-20 text-center">
+                    <FileText className="h-10 w-10 mx-auto text-slate-300 mb-3" />
+                    <p className="text-sm text-slate-500">Upload and analyse documents to see findings</p>
+                  </div>
+                ) : activeFile && (activeFile.status === 'processing' || activeFile.status === 'uploaded') ? (
+                  <div className="px-5 py-20 text-center">
+                    <Loader2 className="h-8 w-8 mx-auto text-blue-500 animate-spin mb-3" />
+                    <p className="text-sm text-slate-500">Processing...</p>
+                    <p className="text-xs text-slate-400 mt-1">{activeFile.originalName}</p>
+                  </div>
+                ) : activeFile && activeFile.status === 'failed' ? (
+                  <div className="px-5 py-20 text-center">
+                    <XCircle className="h-8 w-8 mx-auto text-red-400 mb-3" />
+                    <p className="text-sm text-red-600">Analysis failed</p>
+                    <p className="text-xs text-slate-400 mt-1">{activeFile.errorMessage || 'Unknown error'}</p>
+                  </div>
+                ) : activeFindings.length === 0 ? (
+                  <div className="px-5 py-20 text-center">
+                    <CheckCircle2 className="h-8 w-8 mx-auto text-green-400 mb-3" />
+                    <p className="text-sm text-slate-500">No findings for this document</p>
+                  </div>
+                ) : (
+                  <div className="overflow-auto max-h-[calc(100vh-320px)]">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="text-left px-4 py-2.5 font-semibold text-slate-700 w-[20%]">Area</th>
+                          <th className="text-left px-4 py-2.5 font-semibold text-slate-700 w-[45%]">Finding</th>
+                          <th className="text-center px-4 py-2.5 font-semibold text-slate-700 w-[15%]">Clause Ref</th>
+                          <th className="text-center px-4 py-2.5 font-semibold text-slate-700 w-[10%]">Significant Risk</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activeFindings.map(finding => (
+                          <tr
+                            key={finding.id}
+                            className={`border-b border-slate-100 ${
+                              finding.isSignificantRisk ? 'bg-orange-100' : 'hover:bg-slate-50'
+                            }`}
+                          >
+                            <td className="px-4 py-2.5 text-slate-700 align-top">{finding.area}</td>
+                            <td className="px-4 py-2.5 text-slate-700 align-top whitespace-pre-wrap">{finding.finding}</td>
+                            <td className="px-4 py-2.5 text-slate-500 text-center align-top">{finding.clauseReference || '—'}</td>
+                            <td className="px-4 py-2.5 text-center align-top">
+                              <input
+                                type="checkbox"
+                                checked={finding.isSignificantRisk}
+                                onChange={() => toggleRisk(finding.id, finding.isSignificantRisk)}
+                                className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ─── Bottom action bar ───────────────────────────────────────────────── */}
+      {selectedClient && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 z-20">
+          <div className="max-w-[1600px] mx-auto flex items-center justify-end gap-3">
+            <button
+              onClick={downloadPdf}
+              disabled={!hasAnalysedDocs}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+            >
+              <Download className="h-4 w-4" />
+              Download PDF
+            </button>
+            <button
+              onClick={() => setEmailModalOpen(true)}
+              disabled={!hasAnalysedDocs}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+            >
+              <Mail className="h-4 w-4" />
+              Email PDF
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Email modal ─────────────────────────────────────────────────────── */}
+      {emailModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-sm mx-4">
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h3 className="text-base font-semibold text-slate-900">Email PDF Report</h3>
+            </div>
+            <div className="px-5 py-4">
+              {emailSent ? (
+                <div className="flex items-center gap-2 text-green-600 text-sm">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Email sent successfully
+                </div>
+              ) : (
+                <>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                    Recipient email
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="name@example.com"
+                    value={emailAddress}
+                    onChange={e => setEmailAddress(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setEmailModalOpen(false);
+                  setEmailAddress('');
+                  setEmailSent(false);
+                }}
+                className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              {!emailSent && (
+                <button
+                  onClick={sendEmail}
+                  disabled={!emailAddress || emailSending}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {emailSending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Mail className="h-3.5 w-3.5" />
+                  )}
+                  Send
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
