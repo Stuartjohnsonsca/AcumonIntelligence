@@ -79,14 +79,25 @@ export async function POST(req: Request) {
         }
       }
 
-      await updateProgress({ phase: 'enriching', step: 3, totalSteps: 4, message: `Enriching ${uniqueTxns.length} transactions (history & contact groups)...` });
-
       const uniqueContactIds = [...new Set(
         transactions.map(t => t.Contact?.ContactID).filter((id): id is string => !!id)
       )];
 
+      await updateProgress({ phase: 'enriching', step: 3, totalSteps: 4, message: `Enriching ${uniqueTxns.length} transactions (0/${uniqueTxns.length} history, 0/${uniqueContactIds.length} contacts)...` });
+
+      let historyDone = 0;
+      let contactsDone = 0;
+
+      const progressUpdate = () => updateProgress({
+        phase: 'enriching', step: 3, totalSteps: 4,
+        message: `Enriching: ${historyDone}/${uniqueTxns.length} history, ${contactsDone}/${uniqueContactIds.length} contacts`,
+      });
+
       const [historyMap, contactGroupMap] = await Promise.all([
-        batchFetchHistories(clientId, uniqueTxns).catch(err => {
+        batchFetchHistories(clientId, uniqueTxns, (done) => {
+          historyDone = done;
+          progressUpdate();
+        }).catch(err => {
           console.warn('History fetch failed (non-fatal):', err instanceof Error ? err.message : err);
           return new Map<string, { createdBy: string; approvedBy: string }>();
         }),

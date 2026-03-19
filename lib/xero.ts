@@ -432,6 +432,7 @@ export interface TransactionAuditInfo {
 export async function batchFetchHistories(
   clientId: string,
   transactions: { id: string; type: 'Invoice' | 'BankTransaction' }[],
+  onProgress?: (done: number, total: number) => void,
 ): Promise<Map<string, TransactionAuditInfo>> {
   const results = new Map<string, TransactionAuditInfo>();
   const uniqueTxns = new Map<string, 'Invoice' | 'BankTransaction'>();
@@ -481,8 +482,10 @@ export async function batchFetchHistories(
 
     await Promise.all(promises);
 
+    const done = Math.min(i + batchSize, entries.length);
+    if (onProgress) onProgress(done, entries.length);
+
     if (i + batchSize < entries.length) {
-      // Adaptive delay: reduce when successful, increase on rate limits
       if (consecutiveErrors === 0 && currentDelay > 200) {
         currentDelay = Math.max(200, Math.round(currentDelay * 0.8));
       }
