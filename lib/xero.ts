@@ -363,21 +363,11 @@ export async function getTransactions(
     `Date <= DateTime(${dateTo.replace(/-/g, ',')})`,
   ].join(' AND ');
 
-  const invoices = await fetchPaginated(
-    `${XERO_API_BASE}/Invoices`,
-    accessToken,
-    tenantId,
-    whereClause,
-  );
-
-  await new Promise(resolve => setTimeout(resolve, XERO_PAGE_DELAY_MS));
-
-  const bankTxns = await fetchPaginated(
-    `${XERO_API_BASE}/BankTransactions`,
-    accessToken,
-    tenantId,
-    whereClause,
-  );
+  // Fetch invoices and bank transactions in parallel
+  const [invoices, bankTxns] = await Promise.all([
+    fetchPaginated(`${XERO_API_BASE}/Invoices`, accessToken, tenantId, whereClause),
+    fetchPaginated(`${XERO_API_BASE}/BankTransactions`, accessToken, tenantId, whereClause),
+  ]);
 
   const allTxns = [...invoices, ...bankTxns];
 
@@ -449,11 +439,18 @@ export async function batchFetchHistories(
     if (t.id && !uniqueTxns.has(t.id)) uniqueTxns.set(t.id, t.type);
   }
 
-  const BATCH_SIZE = 5;
   const entries = Array.from(uniqueTxns.entries());
+  // Adaptive batch size: more transactions → larger batches to finish faster
+  // Xero allows ~60 calls/min; stay within limits while maximizing throughput
+  const batchSize = entries.length <= 20 ? 5
+    : entries.length <= 100 ? 10
+    : entries.length <= 300 ? 15
+    : 20;
+  let consecutiveErrors = 0;
+  let currentDelay = XERO_PAGE_DELAY_MS;
 
-  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-    const batch = entries.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < entries.length; i += batchSize) {
+    const batch = entries.slice(i, i + batchSize);
 
     const promises = batch.map(async ([id, type]) => {
       const endpoint = type === 'Invoice' ? 'Invoices' : 'BankTransactions';
@@ -471,15 +468,25 @@ export async function batchFetchHistories(
           }
         }
         results.set(id, { createdBy, approvedBy });
-      } catch {
+        consecutiveErrors = 0;
+      } catch (err) {
         results.set(id, { createdBy: '', approvedBy: '' });
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.includes('429') || msg.includes('rate')) {
+          consecutiveErrors++;
+          currentDelay = Math.min(currentDelay * 2, 5000); // Back off on rate limits
+        }
       }
     });
 
     await Promise.all(promises);
 
-    if (i + BATCH_SIZE < entries.length) {
-      await new Promise(resolve => setTimeout(resolve, XERO_PAGE_DELAY_MS));
+    if (i + batchSize < entries.length) {
+      // Adaptive delay: reduce when successful, increase on rate limits
+      if (consecutiveErrors === 0 && currentDelay > 200) {
+        currentDelay = Math.max(200, Math.round(currentDelay * 0.8));
+      }
+      await new Promise(resolve => setTimeout(resolve, currentDelay));
     }
   }
 
@@ -558,7 +565,7 @@ async function xeroFetchWithRetry(
   throw new Error('Unreachable');
 }
 
-const XERO_PAGE_DELAY_MS = 1200;
+const XERO_PAGE_DELAY_MS = 500; // Xero allows ~60 calls/min; 500ms is safe
 
 async function fetchPaginated(
   url: string,

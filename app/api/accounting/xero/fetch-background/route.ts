@@ -43,7 +43,7 @@ export async function POST(req: Request) {
     try {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
 
-      await updateProgress({ phase: 'fetching', message: 'Fetching transactions from Xero...' });
+      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: 'Fetching transactions, accounts & tax rates...' });
 
       const [transactions, accounts, taxRateMap] = await Promise.all([
         getTransactions(clientId, codes, dateFrom, dateTo),
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
         getTaxRates(clientId),
       ]);
 
-      await updateProgress({ phase: 'fetching', message: `Fetched ${transactions.length} transactions. Processing...` });
+      await updateProgress({ phase: 'fetching', step: 2, totalSteps: 4, message: `Fetched ${transactions.length} transactions. Identifying contacts...` });
 
       const accountMap = new Map<string, { name: string; description: string }>();
       for (const acc of accounts) {
@@ -79,7 +79,7 @@ export async function POST(req: Request) {
         }
       }
 
-      await updateProgress({ phase: 'histories', message: `Fetching audit history for ${uniqueTxns.length} transactions...` });
+      await updateProgress({ phase: 'enriching', step: 3, totalSteps: 4, message: `Enriching ${uniqueTxns.length} transactions (history & contact groups)...` });
 
       const uniqueContactIds = [...new Set(
         transactions.map(t => t.Contact?.ContactID).filter((id): id is string => !!id)
@@ -96,7 +96,7 @@ export async function POST(req: Request) {
         }),
       ]);
 
-      await updateProgress({ phase: 'processing', message: `Building ${transactions.length} rows...` });
+      await updateProgress({ phase: 'processing', step: 4, totalSteps: 4, message: `Building ${transactions.length} rows...` });
 
       const rows = [];
       for (const txn of transactions) {
