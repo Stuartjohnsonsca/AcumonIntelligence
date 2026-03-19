@@ -1434,17 +1434,6 @@ export function DataExtractionClient({
     setXeroFetchProgress({ message: 'Starting...' });
     xeroFetchAbortRef.current = false;
 
-    const taskId = `xero-${selectedClient.id}-${Date.now()}`;
-    const clientName = selectedClient.clientName;
-
-    addTask({
-      id: taskId,
-      clientName,
-      activity: `Fetching data from ${selectedClient.software || 'Xero'}`,
-      status: 'running',
-      toolPath: '/tools/data-extraction',
-    });
-
     try {
       const codes = Array.from(xeroSelectedCodes).join(',');
       const startRes = await fetch('/api/accounting/xero/fetch-background', {
@@ -1466,9 +1455,8 @@ export function DataExtractionClient({
       const poll = async () => {
         const maxPolls = 120;
         for (let i = 0; i < maxPolls; i++) {
-          await new Promise(r => setTimeout(r, 3000));
+          await new Promise(r => setTimeout(r, 1500));
           if (xeroFetchAbortRef.current) {
-            updateTask(taskId, { status: 'error', error: 'Cancelled by user', completedAt: Date.now() });
             setXeroFetching(false);
             setXeroFetchProgress(null);
             return;
@@ -1486,11 +1474,6 @@ export function DataExtractionClient({
             }
 
             if (statusData.status === 'completed') {
-              updateTask(taskId, {
-                status: 'completed',
-                completedAt: Date.now(),
-                result: statusData.data,
-              });
               if (selectedClient?.id === clientId_at_start) {
                 loadAccountingSystemData(statusData.data);
               }
@@ -1500,11 +1483,7 @@ export function DataExtractionClient({
             }
 
             if (statusData.status === 'error') {
-              updateTask(taskId, {
-                status: 'error',
-                error: statusData.error || 'Unknown error',
-                completedAt: Date.now(),
-              });
+              setXeroError(statusData.error || 'Unknown error');
               setXeroFetching(false);
               setXeroFetchProgress(null);
               return;
@@ -1513,7 +1492,7 @@ export function DataExtractionClient({
             /* network blip, keep polling */
           }
         }
-        updateTask(taskId, { status: 'error', error: 'Timed out waiting for data', completedAt: Date.now() });
+        setXeroError('Timed out waiting for data');
         setXeroFetching(false);
         setXeroFetchProgress(null);
       };
@@ -1522,11 +1501,7 @@ export function DataExtractionClient({
       poll();
 
     } catch (err) {
-      updateTask(taskId, {
-        status: 'error',
-        error: err instanceof Error ? err.message : 'Failed to start fetch',
-        completedAt: Date.now(),
-      });
+      setXeroError(err instanceof Error ? err.message : 'Failed to start fetch');
       setXeroFetching(false);
       setXeroFetchProgress(null);
     }
