@@ -72,6 +72,7 @@ export function DocSummaryClient({
 
   // Upload / processing state
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   const bgTaskIdRef = useRef<string | null>(null);
@@ -189,6 +190,37 @@ export function DocSummaryClient({
 
   // ─── Upload flow ─────────────────────────────────────────────────────────
 
+  /** Upload a single file to Azure Blob via SAS URL with progress tracking */
+  const uploadFileViaSas = useCallback(
+    (file: File, sasUrl: string): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', sasUrl, true);
+        xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob');
+        xhr.setRequestHeader('Content-Type', file.type || 'application/pdf');
+
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            setUploadProgress(prev => ({ ...prev, [file.name]: pct }));
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Azure upload failed (${xhr.status})`));
+          }
+        });
+
+        xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+        xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+        xhr.send(file);
+      }),
+    [],
+  );
+
   const handleUpload = useCallback(async (fileList: FileList | File[]) => {
     if (!selectedClient) {
       setError('Please select a client first.');
@@ -227,30 +259,58 @@ export function DocSummaryClient({
 
     setError('');
     setIsUploading(true);
+    setUploadProgress({});
+
+    let currentJobId = jobId;
+    const uploadedFiles: DocFile[] = [];
 
     try {
-      const formData = new FormData();
-      formData.append('clientId', selectedClient.id);
-      if (jobId) formData.append('jobId', jobId);
-      fileArr.forEach(f => formData.append('files', f));
+      for (const file of fileArr) {
+        // 1. Get SAS URL from the server
+        const urlRes = await fetch('/api/doc-summary/upload-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId: selectedClient.id,
+            fileName: file.name,
+            fileSize: file.size,
+            jobId: currentJobId ?? undefined,
+          }),
+        });
 
-      const uploadRes = await fetch('/api/doc-summary/upload', {
-        method: 'POST',
-        body: formData,
-      });
+        if (!urlRes.ok) {
+          const body = await urlRes.json().catch(() => null);
+          throw new Error(body?.error || `Failed to get upload URL for "${file.name}"`);
+        }
 
-      if (!uploadRes.ok) {
-        const body = await uploadRes.json().catch(() => null);
-        throw new Error(body?.error || 'Upload failed');
+        const { sasUrl, fileId, jobId: returnedJobId } = await urlRes.json();
+
+        // Keep jobId consistent across files
+        if (!currentJobId) currentJobId = returnedJobId;
+
+        // 2. Upload directly to Azure Blob via SAS URL
+        await uploadFileViaSas(file, sasUrl);
+
+        // 3. Notify server that upload is complete
+        const completeRes = await fetch('/api/doc-summary/upload-complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileId, jobId: returnedJobId }),
+        });
+
+        if (!completeRes.ok) {
+          const body = await completeRes.json().catch(() => null);
+          throw new Error(body?.error || `Failed to register upload for "${file.name}"`);
+        }
+
+        uploadedFiles.push({ id: fileId, originalName: file.name, status: 'uploaded', errorMessage: null });
       }
 
-      const uploadData = await uploadRes.json();
-      const newJobId = uploadData.jobId as string;
-      setJobId(newJobId);
-      setFiles(prev => [...prev, ...(uploadData.files as DocFile[])]);
+      setJobId(currentJobId);
+      setFiles(prev => [...prev, ...uploadedFiles]);
 
       // Register background task for status dots
-      const taskId = `doc-summary-${newJobId}`;
+      const taskId = `doc-summary-${currentJobId}`;
       addTask({
         id: taskId,
         clientName: selectedClient.clientName,
@@ -263,7 +323,7 @@ export function DocSummaryClient({
       const analyseRes = await fetch('/api/doc-summary/analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: newJobId }),
+        body: JSON.stringify({ jobId: currentJobId }),
       });
 
       if (!analyseRes.ok) {
@@ -274,13 +334,14 @@ export function DocSummaryClient({
 
       // Store taskId for polling updates
       bgTaskIdRef.current = taskId;
-      startPolling(newJobId);
+      startPolling(currentJobId!);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setIsUploading(false);
+      setUploadProgress({});
     }
-  }, [selectedClient, jobId, files, startPolling, addTask, updateTask, handleRemoveFile]);
+  }, [selectedClient, jobId, files, startPolling, addTask, updateTask, handleRemoveFile, uploadFileViaSas]);
 
   // ─── Risk toggle ─────────────────────────────────────────────────────────
 
@@ -610,9 +671,22 @@ export function DocSummaryClient({
                 </div>
 
                 {isUploading && (
-                  <div className="px-4 pb-3 flex items-center gap-2 text-xs text-slate-500">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Uploading...
+                  <div className="px-4 pb-3 space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Uploading...
+                    </div>
+                    {Object.entries(uploadProgress).map(([name, pct]) => (
+                      <div key={name} className="space-y-0.5">
+                        <div className="text-[10px] text-slate-400 truncate">{name}</div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-500 rounded-full transition-all duration-200"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
