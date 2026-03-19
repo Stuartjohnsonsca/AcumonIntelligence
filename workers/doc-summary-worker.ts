@@ -5,6 +5,11 @@
  * and processes them. Run with: npx tsx workers/doc-summary-worker.ts
  */
 
+import { execSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import {
   receiveMessages,
   deleteMessage,
@@ -150,16 +155,23 @@ async function processFile(
   let analysisResult;
 
   if (text.length < 50) {
-    // Scanned/image PDF — send raw PDF as base64 to vision model
+    // Scanned/image PDF — convert to page images via pdftoppm, then send to vision model
     console.log(
-      `[Worker] Text too short (${text.length} chars), using vision mode | file=${file.originalName}`,
+      `[Worker] Text too short (${text.length} chars), converting PDF to images | file=${file.originalName}`,
     );
-    const base64Pdf = Buffer.from(pdfBuffer).toString('base64');
+    let pageImages: string[];
+    try {
+      pageImages = convertPdfToImages(pdfBuffer);
+    } catch (convErr) {
+      const convMsg = convErr instanceof Error ? convErr.message : String(convErr);
+      console.error(`[Worker] PDF-to-image conversion failed | file=${file.originalName} | error=${convMsg}`);
+      throw new Error(`PDF-to-image conversion failed: ${convMsg}`);
+    }
+    console.log(`[Worker] Converted PDF to ${pageImages.length} page images`);
     analysisResult = await analyseDocumentFromImage(
-      base64Pdf,
+      pageImages,
       file.originalName,
       clientName,
-      file.mimeType || 'application/pdf',
     );
   } else {
     analysisResult = await analyseDocumentForAudit(text, file.originalName, clientName);
@@ -217,6 +229,42 @@ async function processFile(
     `[Worker] Analysis done | jobId=${jobId} | file=${file.originalName} | ` +
     `findings=${analysisResult.findings.length} | model=${analysisResult.model}`,
   );
+}
+
+// ─── PDF to image conversion ────────────────────────────────────────────────
+
+const MAX_PDF_PAGES = 20;
+
+function convertPdfToImages(pdfBuffer: Buffer): string[] {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf2img-'));
+  try {
+    const inputPath = path.join(tmpDir, 'input.pdf');
+    const outputPrefix = path.join(tmpDir, 'page');
+    fs.writeFileSync(inputPath, pdfBuffer);
+
+    execSync(
+      `pdftoppm -png -r 200 -l ${MAX_PDF_PAGES} "${inputPath}" "${outputPrefix}"`,
+      { timeout: 120_000, stdio: 'pipe' },
+    );
+
+    const pngFiles = fs.readdirSync(tmpDir)
+      .filter(f => f.startsWith('page') && f.endsWith('.png'))
+      .sort();
+
+    if (pngFiles.length === 0) {
+      throw new Error('pdftoppm produced no PNG output');
+    }
+
+    const images: string[] = [];
+    for (const pngFile of pngFiles) {
+      const pngData = fs.readFileSync(path.join(tmpDir, pngFile));
+      images.push(`data:image/png;base64,${pngData.toString('base64')}`);
+    }
+
+    return images;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

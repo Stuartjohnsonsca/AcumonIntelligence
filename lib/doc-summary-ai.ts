@@ -271,13 +271,19 @@ export async function analyseDocumentForAudit(
 const VISION_MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
 
 export async function analyseDocumentFromImage(
-  base64Data: string,
+  imageDataUris: string[],
   fileName: string,
   clientName: string,
-  mimeType: string,
 ): Promise<DocSummaryResult> {
   const prompt = buildAuditAnalysisPrompt(fileName, clientName);
-  const dataUri = `data:${mimeType};base64,${base64Data}`;
+
+  const contentParts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+    { type: 'text', text: prompt },
+    ...imageDataUris.map((uri): OpenAI.Chat.Completions.ChatCompletionContentPart => ({
+      type: 'image_url',
+      image_url: { url: uri },
+    })),
+  ];
 
   const result = await retryWithBackoff(
     () => client.chat.completions.create({
@@ -285,10 +291,7 @@ export async function analyseDocumentFromImage(
       messages: [
         {
           role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: dataUri } },
-          ],
+          content: contentParts,
         },
       ],
       max_tokens: 16384,
