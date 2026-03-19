@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { exchangeCodeForTokens, getConnectedTenants, encrypt, revokeConnection } from '@/lib/xero';
+import { exchangeCodeForTokens, getConnectedTenants, encrypt } from '@/lib/xero';
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -123,23 +123,16 @@ export async function GET(req: Request) {
 
     // Pick the most recently connected tenant — this is the one the user
     // just selected in Xero's org picker (newest createdDateUtc)
-    const sorted = [...tenants].sort((a, b) =>
-      new Date(b.createdDateUtc || 0).getTime() - new Date(a.createdDateUtc || 0).getTime()
-    );
-    const tenant = sorted[0];
+    // Note: DO NOT revoke other connections — the same user may legitimately
+    // have multiple clients each connected to different Xero orgs
+    const tenant = tenants.length > 1
+      ? [...tenants].sort((a, b) =>
+          new Date(b.createdDateUtc || 0).getTime() - new Date(a.createdDateUtc || 0).getTime()
+        )[0]
+      : tenants[0];
 
     if (tenants.length > 1) {
-      console.log(`[Xero] ${tenants.length} orgs connected. Selected: ${tenant?.tenantName}. Revoking ${tenants.length - 1} others.`);
-      // Revoke all other org connections so they don't accumulate
-      // Each client should only be connected to ONE Xero org
-      for (const other of sorted.slice(1)) {
-        try {
-          await revokeConnection(tokens.access_token, other.tenantId);
-          console.log(`[Xero] Revoked stale connection to ${other.tenantName} (${other.tenantId.substring(0, 8)}...)`);
-        } catch {
-          console.warn(`[Xero] Failed to revoke ${other.tenantName} (non-fatal)`);
-        }
-      }
+      console.log(`[Xero] ${tenants.length} orgs connected. Selected most recent: ${tenant?.tenantName} (${tenant?.tenantId?.substring(0, 8)}...)`);
     }
 
     if (!tenant) {
