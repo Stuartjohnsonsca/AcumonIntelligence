@@ -1709,7 +1709,7 @@ export function DataExtractionClient({
     setProgress(null);
   }
 
-  const isAnythingRunning = extractingAttachments || processing || uploading || xeroLoading || xeroFetching;
+  const isAnythingRunning = extractingAttachments || processing || uploading || xeroLoading;
 
   // ─── Client selection screen ──────────────────────────────────────────
 
@@ -2612,13 +2612,6 @@ export function DataExtractionClient({
                   : processing ? <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Processing...</>
                     : <><RefreshCw className="mr-1 h-3 w-3" />Upload & Extract</>}
               </Button>
-              {selectedClient.software && (
-                <Button className="w-full text-xs h-8" variant="outline" disabled={uploading || processing || xeroFetching} onClick={handleXeroButtonClick}>
-                  {xeroFetching
-                    ? <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Fetching from {selectedClient.software}...</>
-                    : <><Database className="mr-1 h-3 w-3" />Extract from {selectedClient.software}</>}
-                </Button>
-              )}
             </div>
 
             {/* Extraction details (compact) */}
