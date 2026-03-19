@@ -30,7 +30,7 @@ interface Finding {
 interface DocFile {
   id: string;
   originalName: string;
-  status: 'uploaded' | 'processing' | 'analysed' | 'failed';
+  status: 'uploading' | 'uploaded' | 'processing' | 'analysed' | 'failed';
   errorMessage: string | null;
 }
 
@@ -123,7 +123,14 @@ export function DocSummaryClient({
         if (!res.ok) return;
         const data: StatusResponse = await res.json();
 
-        setFiles(data.files);
+        const safeFiles = Array.isArray(data.files) ? data.files.map(f => ({
+          ...f,
+          errorMessage: f.errorMessage ?? null,
+          status: (['uploading', 'uploaded', 'processing', 'analysed', 'failed'].includes(f.status)
+            ? f.status : 'uploaded') as DocFile['status'],
+        })) : [];
+
+        if (safeFiles.length > 0) setFiles(safeFiles);
 
         // Group findings by fileId (API returns flat array)
         const rawFindings = data.findings;
@@ -138,7 +145,7 @@ export function DocSummaryClient({
           setFindings(rawFindings as Record<string, Finding[]>);
         }
 
-        const allDone = data.files.every(f => f.status === 'analysed' || f.status === 'failed');
+        const allDone = safeFiles.length > 0 && safeFiles.every(f => f.status === 'analysed' || f.status === 'failed');
         if (allDone) {
           stopPolling();
           setIsProcessing(false);
@@ -839,7 +846,7 @@ export function DocSummaryClient({
                                   onChange={() => toggleRisk(finding.id, finding.isSignificantRisk)}
                                   className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
                                 />
-                                {finding.aiSignificantRisk !== finding.isSignificantRisk && (
+                                {finding.aiSignificantRisk != null && finding.aiSignificantRisk !== finding.isSignificantRisk && (
                                   <span className="text-[10px] text-slate-400" title="AI original assessment">
                                     (AI: {finding.aiSignificantRisk ? 'Yes' : 'No'})
                                   </span>
