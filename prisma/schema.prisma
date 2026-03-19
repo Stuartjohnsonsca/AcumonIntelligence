@@ -46,6 +46,7 @@ model User {
   purchasedSubscriptions Subscription[]
   extractionJobs        ExtractionJob[]
   managedClients        Client[]               @relation("PortfolioManagerClients")
+  docSummaryJobs        DocSummaryJob[]
 
   @@map("users")
 }
@@ -107,6 +108,7 @@ model Client {
   accountingConnections  AccountingConnection[]
   xeroAuthRequests       XeroAuthRequest[]
   aiUsage                AiUsage[]
+  docSummaryJobs         DocSummaryJob[]
 
   @@map("clients")
 }
@@ -402,5 +404,71 @@ model BackgroundTask {
   @@index([userId, status])
   @@index([createdAt])
   @@map("background_tasks")
+}
+
+// ─── Document Summary Tool ──────────────────────────────────────────────────
+
+model DocSummaryJob {
+  id             String    @id @default(uuid())
+  clientId       String    @map("client_id")
+  userId         String    @map("user_id")
+  status         String    @default("pending") // pending | processing | complete | failed
+  totalFiles     Int       @default(0) @map("total_files")
+  processedCount Int       @default(0) @map("processed_count")
+  failedCount    Int       @default(0) @map("failed_count")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  expiresAt      DateTime? @map("expires_at")
+
+  client   Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user     User               @relation(fields: [userId], references: [id])
+  files    DocSummaryFile[]
+  findings DocSummaryFinding[]
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("doc_summary_jobs")
+}
+
+model DocSummaryFile {
+  id            String    @id @default(uuid())
+  jobId         String    @map("job_id")
+  originalName  String    @map("original_name")
+  storagePath   String    @map("storage_path")
+  containerName String    @default("upload-inbox") @map("container_name")
+  fileSize      Int       @map("file_size")
+  mimeType      String    @map("mime_type")
+  status        String    @default("uploaded") // uploaded | processing | analysed | failed
+  errorMessage  String?   @map("error_message")
+  pageCount     Int?      @map("page_count")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  job      DocSummaryJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  findings DocSummaryFinding[]
+
+  @@index([jobId])
+  @@map("doc_summary_files")
+}
+
+model DocSummaryFinding {
+  id                String   @id @default(uuid())
+  jobId             String   @map("job_id")
+  fileId            String   @map("file_id")
+  area              String   // e.g. "Parties", "Obligations", "Risks", or AI-identified area
+  finding           String   @db.Text
+  clauseReference   String   @map("clause_reference")
+  isSignificantRisk Boolean  @default(false) @map("is_significant_risk")
+  userResponse      String?  @map("user_response") @db.Text
+  addToTesting      Boolean  @default(false) @map("add_to_testing")
+  reviewed          Boolean  @default(false)
+  sortOrder         Int      @default(0) @map("sort_order")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  job  DocSummaryJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  file DocSummaryFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([fileId])
+  @@map("doc_summary_findings")
 }
 
