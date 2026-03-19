@@ -332,6 +332,7 @@ export function DataExtractionClient({
   const [xeroFetching, setXeroFetching] = useState(false);
   const [xeroFetchProgress, setXeroFetchProgress] = useState<{ message: string; step?: number; totalSteps?: number } | null>(null);
   const xeroFetchAbortRef = useRef(false);
+  const accountsPreloadAbortRef = useRef<AbortController | null>(null);
 
   // Read Xero OAuth result from URL query params (set by callback redirect)
   useEffect(() => {
@@ -1353,16 +1354,21 @@ export function DataExtractionClient({
         })
         .catch(() => { /* non-fatal */ });
 
-      // Pre-load accounts after a short delay (separate from status check to avoid 429)
-      setTimeout(async () => {
-        try {
-          const accRes = await fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`);
-          if (accRes.ok) {
-            const accData = await accRes.json();
-            if (accData?.accounts) setXeroAccounts(accData.accounts);
-          }
-        } catch { /* non-fatal — will load on button click if needed */ }
-      }, 1500);
+      // Pre-load accounts (cancellable — aborted if user starts a fetch first)
+      accountsPreloadAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      accountsPreloadAbortRef.current = ctrl;
+
+      // Wait 500ms after status check to avoid back-to-back Xero calls
+      const timer = setTimeout(() => {
+        if (ctrl.signal.aborted) return;
+        fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`, { signal: ctrl.signal })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (data?.accounts) setXeroAccounts(data.accounts); })
+          .catch(() => { /* aborted or failed */ });
+      }, 500);
+
+      return () => { clearTimeout(timer); ctrl.abort(); };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClient]);
@@ -1466,6 +1472,9 @@ export function DataExtractionClient({
     setXeroFetching(true);
     setXeroFetchProgress({ message: 'Starting...' });
     xeroFetchAbortRef.current = false;
+
+    // Cancel any in-flight accounts pre-load to free up Xero rate limit
+    accountsPreloadAbortRef.current?.abort();
 
     const bgTaskId = `xero-${selectedClient.id}-${Date.now()}`;
     addTask({
