@@ -1,12 +1,12 @@
 /**
- * PDF processing for AI extraction.
+ * PDF text extraction for AI document processing.
  *
- * Extracts text content from PDF pages using pdfjs-dist.
- * No native dependencies (canvas) needed — works on Vercel serverless.
- *
- * For scanned/image-only PDFs where text extraction yields nothing,
- * falls back to sending the raw PDF base64.
+ * Uses pdf-parse (lightweight, no native dependencies, serverless-safe).
+ * Extracts text content from PDFs so vision models aren't needed.
  */
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require('pdf-parse');
 
 export interface PdfContent {
   mode: 'text' | 'raw';
@@ -15,47 +15,30 @@ export interface PdfContent {
 }
 
 /**
- * Extract text content from PDF pages using pdfjs-dist (pure JS, no canvas).
+ * Extract text from a PDF buffer.
+ * Returns text mode if content found, raw mode otherwise.
  */
 export async function processPdf(
   pdfBuffer: Buffer,
   maxPages = 10,
 ): Promise<PdfContent> {
   try {
-    const pdfjs = await import('pdfjs-dist');
+    const result = await pdfParse(pdfBuffer, {
+      max: maxPages, // limit pages parsed
+    });
 
-    const data = new Uint8Array(pdfBuffer);
-    const doc = await pdfjs.getDocument({
-      data,
-      useSystemFonts: true,
-      isEvalSupported: false,
-    }).promise;
-
-    const numPages = Math.min(doc.numPages, maxPages);
-    const pageTexts: string[] = [];
-
-    for (let i = 1; i <= numPages; i++) {
-      const page = await doc.getPage(i);
-      const content = await page.getTextContent();
-      const pageText = content.items
-        .map((item) => ('str' in item ? item.str : '') || '')
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (pageText) pageTexts.push(`--- Page ${i} ---\n${pageText}`);
-    }
-
-    const text = pageTexts.join('\n\n');
+    const text = (result.text || '').trim();
+    const pageCount = result.numpages || 1;
 
     if (text.length > 50) {
-      console.log(`[PDF] Extracted ${text.length} chars of text from ${numPages} page(s)`);
-      return { mode: 'text', text, pageCount: doc.numPages };
+      console.log(`[PDF] Extracted ${text.length} chars from ${pageCount} page(s)`);
+      return { mode: 'text', text, pageCount };
     }
 
-    console.warn(`[PDF] Text extraction returned very little content (${text.length} chars) — likely a scanned PDF. Using raw mode.`);
-    return { mode: 'raw', pageCount: doc.numPages };
+    console.warn(`[PDF] Very little text extracted (${text.length} chars) — likely scanned. Using raw mode.`);
+    return { mode: 'raw', pageCount };
   } catch (err) {
-    console.warn(`[PDF] Text extraction failed: ${err instanceof Error ? err.message : err}. Using raw mode.`);
+    console.error(`[PDF] Text extraction failed: ${err instanceof Error ? err.message : err}`);
     return { mode: 'raw', pageCount: 1 };
   }
 }
