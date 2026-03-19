@@ -18,11 +18,19 @@ export async function POST(req: Request) {
     if (!clientId) return NextResponse.json({ error: 'clientId required' }, { status: 400 });
     if (!files.length) return NextResponse.json({ error: 'No files provided' }, { status: 400 });
 
-    // Only accept PDFs
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+
+    // Only accept PDFs, enforce size limit
     for (const file of files) {
       if (!file.name.toLowerCase().endsWith('.pdf')) {
         return NextResponse.json(
           { error: `Only PDF files are accepted. "${file.name}" is not a PDF.` },
+          { status: 400 },
+        );
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        return NextResponse.json(
+          { error: `"${file.name}" exceeds the 50 MB file size limit.` },
           { status: 400 },
         );
       }

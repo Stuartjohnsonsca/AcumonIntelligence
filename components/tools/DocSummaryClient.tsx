@@ -198,6 +198,15 @@ export function DocSummaryClient({
     let fileArr = Array.from(fileList);
     if (fileArr.length === 0) return;
 
+    // Enforce 50 MB per-file size limit
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+    for (const file of fileArr) {
+      if (file.size > MAX_FILE_SIZE) {
+        setError(`"${file.name}" exceeds the 50 MB file size limit.`);
+        return;
+      }
+    }
+
     // Check for duplicate file names against already-uploaded files
     const filesToUpload: File[] = [];
     for (const file of fileArr) {

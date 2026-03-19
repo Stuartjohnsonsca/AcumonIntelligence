@@ -460,6 +460,8 @@ model DocSummaryFinding {
   isSignificantRisk   Boolean  @default(false) @map("is_significant_risk")
   aiSignificantRisk   Boolean  @default(false) @map("ai_significant_risk")
   userResponse      String?  @map("user_response") @db.Text
+  accountingImpact  String?  @map("accounting_impact") @db.Text
+  auditImpact       String?  @map("audit_impact") @db.Text
   addToTesting      Boolean  @default(false) @map("add_to_testing")
   reviewed          Boolean  @default(false)
   sortOrder         Int      @default(0) @map("sort_order")

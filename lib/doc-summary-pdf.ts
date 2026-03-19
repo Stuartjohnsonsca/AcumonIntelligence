@@ -18,6 +18,8 @@ export interface Finding {
   reviewed: boolean;
   fileId: string;
   fileName: string;
+  accountingImpact: string | null;
+  auditImpact: string | null;
 }
 
 export interface FileInfo {
@@ -63,8 +65,17 @@ export interface FailedFileInfo {
 // Constants
 // ---------------------------------------------------------------------------
 
-const PAGE_WIDTH = 595.28; // A4
-const PAGE_HEIGHT = 841.89;
+// Portrait dimensions (cover pages only)
+const PORTRAIT_WIDTH = 595.28; // A4
+const PORTRAIT_HEIGHT = 841.89;
+
+// Landscape dimensions (all content pages)
+const LANDSCAPE_WIDTH = 841.89;
+const LANDSCAPE_HEIGHT = 595.28;
+
+// Default page dimensions = landscape (used by most pages)
+const PAGE_WIDTH = LANDSCAPE_WIDTH;
+const PAGE_HEIGHT = LANDSCAPE_HEIGHT;
 const MARGIN_LEFT = 50;
 const MARGIN_RIGHT = 50;
 const MARGIN_TOP = 70;
@@ -700,13 +711,13 @@ function renderAppendixA(ctx: PageContext, files: FileInfo[]): void {
   drawSectionHeading(ctx, 'Appendix A \u2014 Document Metadata');
 
   const columns: TableColumn[] = [
-    { header: '#', width: 25 },
-    { header: 'Document Name', width: 160 },
-    { header: 'Uploaded By', width: 80 },
-    { header: 'Upload Date', width: 70 },
-    { header: 'File Size', width: 55 },
-    { header: 'Pages', width: 40 },
-    { header: 'Acumon Ref', width: 65 },
+    { header: '#', width: 30 },
+    { header: 'Document Name', width: 270 },
+    { header: 'Uploaded By', width: 110 },
+    { header: 'Upload Date', width: 80 },
+    { header: 'File Size', width: 70 },
+    { header: 'Pages', width: 50 },
+    { header: 'Acumon Ref', width: 80 },
   ];
 
   const rows: TableRow[] = files.map((f, i) => ({
@@ -752,13 +763,15 @@ function renderAppendixB(ctx: PageContext, findings: Finding[], files: FileInfo[
     });
     ctx.y -= 20;
 
-    // 5 columns: Area | Finding | Clause Ref | AI Assessment | User Assessment
+    // 7 columns: Area | Finding | Clause Ref | Accounting Impact | Audit Impact | AI Risk Assessment | User Override
     const columns: TableColumn[] = [
-      { header: 'Area', width: 75 },
-      { header: 'Finding', width: 185 },
-      { header: 'Clause Ref', width: 75 },
-      { header: 'AI Assessment', width: 75 },
-      { header: 'User Assessment', width: 85 },
+      { header: 'Area', width: 80 },
+      { header: 'Finding', width: 250 },
+      { header: 'Clause Ref', width: 60 },
+      { header: 'Accounting Impact', width: 100 },
+      { header: 'Audit Impact', width: 100 },
+      { header: 'AI Risk', width: 75 },
+      { header: 'User Override', width: 77 },
     ];
 
     const rows: TableRow[] = fileFindings.map((f) => {
@@ -777,6 +790,8 @@ function renderAppendixB(ctx: PageContext, findings: Finding[], files: FileInfo[
           f.area,
           f.finding,
           f.clauseReference,
+          f.accountingImpact || '',
+          f.auditImpact || '',
           f.aiSignificantRisk ? 'Significant' : 'Normal',
           f.isSignificantRisk ? 'Significant' : 'Normal',
         ],
@@ -848,7 +863,10 @@ function renderTOC(
 // ---------------------------------------------------------------------------
 
 function renderCoverPage(doc: PDFDocument, font: PDFFont, fontBold: PDFFont, params: PdfParams, logoImage: PDFImage): PDFPage {
-  const page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  // Cover page is portrait
+  const pw = PORTRAIT_WIDTH;
+  const ph = PORTRAIT_HEIGHT;
+  const page = doc.addPage([pw, ph]);
 
   // Logo in top-right corner
   const logoDims = logoImage.scale(1);
@@ -856,8 +874,8 @@ function renderCoverPage(doc: PDFDocument, font: PDFFont, fontBold: PDFFont, par
   const cornerLogoScale = cornerLogoHeight / logoDims.height;
   const cornerLogoWidth = logoDims.width * cornerLogoScale;
   page.drawImage(logoImage, {
-    x: PAGE_WIDTH - MARGIN_RIGHT - cornerLogoWidth,
-    y: PAGE_HEIGHT - MARGIN_TOP,
+    x: pw - MARGIN_RIGHT - cornerLogoWidth,
+    y: ph - MARGIN_TOP,
     width: cornerLogoWidth,
     height: cornerLogoHeight,
   });
@@ -865,8 +883,8 @@ function renderCoverPage(doc: PDFDocument, font: PDFFont, fontBold: PDFFont, par
   const title = 'DOCUMENT SUMMARY REPORT';
   const titleWidth = fontBold.widthOfTextAtSize(title, 24);
   page.drawText(title, {
-    x: (PAGE_WIDTH - titleWidth) / 2,
-    y: PAGE_HEIGHT / 2 + 80,
+    x: (pw - titleWidth) / 2,
+    y: ph / 2 + 80,
     size: 24,
     font: fontBold,
     color: COLOUR_BLACK,
@@ -874,8 +892,8 @@ function renderCoverPage(doc: PDFDocument, font: PDFFont, fontBold: PDFFont, par
 
   const clientWidth = font.widthOfTextAtSize(params.clientName, 18);
   page.drawText(params.clientName, {
-    x: (PAGE_WIDTH - clientWidth) / 2,
-    y: PAGE_HEIGHT / 2 + 40,
+    x: (pw - clientWidth) / 2,
+    y: ph / 2 + 40,
     size: 18,
     font,
     color: COLOUR_BLACK,
@@ -884,8 +902,8 @@ function renderCoverPage(doc: PDFDocument, font: PDFFont, fontBold: PDFFont, par
   const prepText = `Prepared by: ${params.userName}`;
   const prepWidth = font.widthOfTextAtSize(prepText, 12);
   page.drawText(prepText, {
-    x: (PAGE_WIDTH - prepWidth) / 2,
-    y: PAGE_HEIGHT / 2 - 10,
+    x: (pw - prepWidth) / 2,
+    y: ph / 2 - 10,
     size: 12,
     font,
     color: COLOUR_BLACK,
@@ -894,8 +912,8 @@ function renderCoverPage(doc: PDFDocument, font: PDFFont, fontBold: PDFFont, par
   const dateText = `Date: ${formatDate(params.exportDate)}`;
   const dateWidth = font.widthOfTextAtSize(dateText, 12);
   page.drawText(dateText, {
-    x: (PAGE_WIDTH - dateWidth) / 2,
-    y: PAGE_HEIGHT / 2 - 30,
+    x: (pw - dateWidth) / 2,
+    y: ph / 2 - 30,
     size: 12,
     font,
     color: COLOUR_BLACK,
@@ -905,7 +923,7 @@ function renderCoverPage(doc: PDFDocument, font: PDFFont, fontBold: PDFFont, par
   const poweredByText = 'Powered By';
   const poweredByWidth = font.widthOfTextAtSize(poweredByText, 8);
   page.drawText(poweredByText, {
-    x: (PAGE_WIDTH - poweredByWidth) / 2,
+    x: (pw - poweredByWidth) / 2,
     y: 82,
     size: 8,
     font,
@@ -917,7 +935,7 @@ function renderCoverPage(doc: PDFDocument, font: PDFFont, fontBold: PDFFont, par
   const coverLogoScale = coverLogoHeight / logoDims.height;
   const coverLogoWidth = logoDims.width * coverLogoScale;
   page.drawImage(logoImage, {
-    x: (PAGE_WIDTH - coverLogoWidth) / 2,
+    x: (pw - coverLogoWidth) / 2,
     y: 58,
     width: coverLogoWidth,
     height: coverLogoHeight,
@@ -1050,7 +1068,10 @@ function renderPortfolioCoverPage(
   params: PortfolioPdfParams,
   logoImage: PDFImage,
 ): PDFPage {
-  const page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  // Cover page is portrait
+  const pw = PORTRAIT_WIDTH;
+  const ph = PORTRAIT_HEIGHT;
+  const page = doc.addPage([pw, ph]);
 
   // Logo in top-right corner
   const logoDims = logoImage.scale(1);
@@ -1058,8 +1079,8 @@ function renderPortfolioCoverPage(
   const cornerLogoScale = cornerLogoHeight / logoDims.height;
   const cornerLogoWidth = logoDims.width * cornerLogoScale;
   page.drawImage(logoImage, {
-    x: PAGE_WIDTH - MARGIN_RIGHT - cornerLogoWidth,
-    y: PAGE_HEIGHT - MARGIN_TOP,
+    x: pw - MARGIN_RIGHT - cornerLogoWidth,
+    y: ph - MARGIN_TOP,
     width: cornerLogoWidth,
     height: cornerLogoHeight,
   });
@@ -1069,15 +1090,15 @@ function renderPortfolioCoverPage(
   const titleWidth = fontBold.widthOfTextAtSize(title, 24);
   const title2Width = fontBold.widthOfTextAtSize(title2, 24);
   page.drawText(title, {
-    x: (PAGE_WIDTH - titleWidth) / 2,
-    y: PAGE_HEIGHT / 2 + 100,
+    x: (pw - titleWidth) / 2,
+    y: ph / 2 + 100,
     size: 24,
     font: fontBold,
     color: COLOUR_BLACK,
   });
   page.drawText(title2, {
-    x: (PAGE_WIDTH - title2Width) / 2,
-    y: PAGE_HEIGHT / 2 + 70,
+    x: (pw - title2Width) / 2,
+    y: ph / 2 + 70,
     size: 24,
     font: fontBold,
     color: COLOUR_BLACK,
@@ -1085,8 +1106,8 @@ function renderPortfolioCoverPage(
 
   const clientWidth = font.widthOfTextAtSize(params.clientName, 18);
   page.drawText(params.clientName, {
-    x: (PAGE_WIDTH - clientWidth) / 2,
-    y: PAGE_HEIGHT / 2 + 30,
+    x: (pw - clientWidth) / 2,
+    y: ph / 2 + 30,
     size: 18,
     font,
     color: COLOUR_BLACK,
@@ -1095,8 +1116,8 @@ function renderPortfolioCoverPage(
   const prepText = `Prepared by: ${params.userName}`;
   const prepWidth = font.widthOfTextAtSize(prepText, 12);
   page.drawText(prepText, {
-    x: (PAGE_WIDTH - prepWidth) / 2,
-    y: PAGE_HEIGHT / 2 - 20,
+    x: (pw - prepWidth) / 2,
+    y: ph / 2 - 20,
     size: 12,
     font,
     color: COLOUR_BLACK,
@@ -1105,8 +1126,8 @@ function renderPortfolioCoverPage(
   const dateText = `Date: ${formatDate(params.exportDate)}`;
   const dateWidth = font.widthOfTextAtSize(dateText, 12);
   page.drawText(dateText, {
-    x: (PAGE_WIDTH - dateWidth) / 2,
-    y: PAGE_HEIGHT / 2 - 40,
+    x: (pw - dateWidth) / 2,
+    y: ph / 2 - 40,
     size: 12,
     font,
     color: COLOUR_BLACK,
@@ -1116,7 +1137,7 @@ function renderPortfolioCoverPage(
   const poweredByText = 'Powered By';
   const poweredByWidth = font.widthOfTextAtSize(poweredByText, 8);
   page.drawText(poweredByText, {
-    x: (PAGE_WIDTH - poweredByWidth) / 2,
+    x: (pw - poweredByWidth) / 2,
     y: 82,
     size: 8,
     font,
@@ -1128,7 +1149,7 @@ function renderPortfolioCoverPage(
   const coverLogoScale = coverLogoHeight / logoDims.height;
   const coverLogoWidth = logoDims.width * coverLogoScale;
   page.drawImage(logoImage, {
-    x: (PAGE_WIDTH - coverLogoWidth) / 2,
+    x: (pw - coverLogoWidth) / 2,
     y: 58,
     width: coverLogoWidth,
     height: coverLogoHeight,
@@ -1197,11 +1218,11 @@ function renderFailedAnalysis(ctx: PageContext, failedFiles: FailedFileInfo[]): 
   ctx.y -= 4;
 
   const columns: TableColumn[] = [
-    { header: '#', width: 25 },
-    { header: 'Document Name', width: 180 },
-    { header: 'Upload Date', width: 75 },
-    { header: 'File Size', width: 60 },
-    { header: 'Error', width: 155 },
+    { header: '#', width: 30 },
+    { header: 'Document Name', width: 260 },
+    { header: 'Upload Date', width: 85 },
+    { header: 'File Size', width: 70 },
+    { header: 'Error', width: 297 },
   ];
 
   const rows: TableRow[] = failedFiles.map((f, i) => ({
@@ -1498,11 +1519,13 @@ function renderPortfolioAppendixB(
     drawSectionHeading(ctx, `Appendix B${appendixNum} \u2014 ${file.originalName}`);
 
     const columns: TableColumn[] = [
-      { header: 'Area', width: 75 },
-      { header: 'Finding', width: 185 },
-      { header: 'Clause Ref', width: 75 },
-      { header: 'AI Assessment', width: 75 },
-      { header: 'User Assessment', width: 85 },
+      { header: 'Area', width: 80 },
+      { header: 'Finding', width: 250 },
+      { header: 'Clause Ref', width: 60 },
+      { header: 'Accounting Impact', width: 100 },
+      { header: 'Audit Impact', width: 100 },
+      { header: 'AI Risk', width: 75 },
+      { header: 'User Override', width: 77 },
     ];
 
     const rows: TableRow[] = fileFindings.map((f) => {
@@ -1521,6 +1544,8 @@ function renderPortfolioAppendixB(
           f.area,
           f.finding,
           f.clauseReference,
+          f.accountingImpact || '',
+          f.auditImpact || '',
           f.aiSignificantRisk ? 'Significant' : 'Normal',
           f.isSignificantRisk ? 'Significant' : 'Normal',
         ],
@@ -1626,17 +1651,21 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
       drawSectionHeading(tmpCtx, sectionName);
 
       const columns: TableColumn[] = [
-        { header: 'Area', width: 75 },
-        { header: 'Finding', width: 185 },
-        { header: 'Clause Ref', width: 75 },
-        { header: 'AI Assessment', width: 75 },
-        { header: 'User Assessment', width: 85 },
+        { header: 'Area', width: 80 },
+        { header: 'Finding', width: 250 },
+        { header: 'Clause Ref', width: 60 },
+        { header: 'Accounting Impact', width: 100 },
+        { header: 'Audit Impact', width: 100 },
+        { header: 'AI Risk', width: 75 },
+        { header: 'User Override', width: 77 },
       ];
       const rows: TableRow[] = fileFindings.map((ff) => ({
         cells: [
           ff.area,
           ff.finding,
           ff.clauseReference,
+          ff.accountingImpact || '',
+          ff.auditImpact || '',
           ff.aiSignificantRisk ? 'Significant' : 'Normal',
           ff.isSignificantRisk ? 'Significant' : 'Normal',
         ],
