@@ -1339,27 +1339,30 @@ export function DataExtractionClient({
   useEffect(() => {
     if (selectedClient) {
       checkXeroRequestStatus();
-      // Check connection and pre-load account codes (single lightweight call)
+      // Check connection status (local DB, no Xero API call)
       fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`)
         .then(r => r.ok ? r.json() : null)
-        .then(async (data) => {
+        .then(data => {
           if (data?.connected) {
             setXeroConnected(true);
             setXeroOrgName(data.orgName);
-            // Pre-load accounts so modal opens instantly
-            try {
-              const accRes = await fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`);
-              if (accRes.ok) {
-                const accData = await accRes.json();
-                if (accData.accounts) setXeroAccounts(accData.accounts);
-              }
-            } catch { /* non-fatal */ }
           } else {
             setXeroConnected(false);
             setXeroOrgName(null);
           }
         })
         .catch(() => { /* non-fatal */ });
+
+      // Pre-load accounts after a short delay (separate from status check to avoid 429)
+      setTimeout(async () => {
+        try {
+          const accRes = await fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`);
+          if (accRes.ok) {
+            const accData = await accRes.json();
+            if (accData?.accounts) setXeroAccounts(accData.accounts);
+          }
+        } catch { /* non-fatal — will load on button click if needed */ }
+      }, 1500);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClient]);
