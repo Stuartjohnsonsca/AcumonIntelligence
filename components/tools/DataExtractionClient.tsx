@@ -330,7 +330,7 @@ export function DataExtractionClient({
   const [xeroCategory, setXeroCategory] = useState('');
   const [xeroError, setXeroError] = useState('');
   const [xeroFetching, setXeroFetching] = useState(false);
-  const [xeroFetchProgress, setXeroFetchProgress] = useState<{ message: string; step?: number; totalSteps?: number } | null>(null);
+  const [xeroFetchProgress, setXeroFetchProgress] = useState<{ message: string; step?: number; totalSteps?: number; recordCount?: number } | null>(null);
   const xeroFetchAbortRef = useRef(false);
   const accountsPreloadAbortRef = useRef<AbortController | null>(null);
 
@@ -1521,6 +1521,7 @@ export function DataExtractionClient({
                 message: statusData.progress.message || 'Working...',
                 step: statusData.progress.step,
                 totalSteps: statusData.progress.totalSteps,
+                recordCount: statusData.progress.recordCount,
               });
             }
 
@@ -2022,9 +2023,14 @@ export function DataExtractionClient({
                         <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
                         <span className="text-sm text-blue-800 font-medium">
                           {xeroFetchProgress?.step && xeroFetchProgress?.totalSteps
-                            ? `Step ${xeroFetchProgress.step}/${xeroFetchProgress.totalSteps}`
+                            ? `Step ${xeroFetchProgress.step} of ${xeroFetchProgress.totalSteps}`
                             : 'Fetching data...'}
                         </span>
+                        {xeroFetchProgress?.recordCount != null && (
+                          <span className="text-xs text-blue-500 ml-1">
+                            ({xeroFetchProgress.recordCount} records)
+                          </span>
+                        )}
                       </div>
                       <button
                         onClick={handleCancelXeroFetch}
@@ -2040,7 +2046,7 @@ export function DataExtractionClient({
                       <div className="h-full bg-blue-500 rounded-full transition-all duration-500"
                         style={{ width: xeroFetchProgress?.step && xeroFetchProgress?.totalSteps
                           ? `${(xeroFetchProgress.step / xeroFetchProgress.totalSteps) * 100}%`
-                          : '10%' }} />
+                          : '5%' }} />
                     </div>
                   </div>
                 )}
