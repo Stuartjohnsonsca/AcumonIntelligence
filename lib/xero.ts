@@ -442,11 +442,10 @@ export async function batchFetchHistories(
 
   const entries = Array.from(uniqueTxns.entries());
 
-  // Xero rate limit: ~60 calls/minute = 1 call/second
-  // Use batched parallel with a shared gate: N calls in parallel, then wait
-  // Start conservative, speed up if no 429s
-  let batchSize = 5;        // parallel calls per batch
-  let batchDelayMs = 1000;  // delay between batches (ensures ~5 calls/sec max)
+  // Start slow (1 call, 1s delay), ramp up on success, back off on 429
+  let batchSize = 1;
+  let batchDelayMs = 1000;
+  let successStreak = 0;
   let processed = 0;
 
   for (let i = 0; i < entries.length; i += batchSize) {
@@ -468,30 +467,31 @@ export async function batchFetchHistories(
           }
         }
         results.set(id, { createdBy, approvedBy });
-        return true; // success
+        return 'ok';
       } catch (err) {
         results.set(id, { createdBy: '', approvedBy: '' });
         const msg = err instanceof Error ? err.message : '';
         if (msg.includes('429') || msg.includes('rate')) return 'rate-limited';
-        return false;
+        return 'error';
       }
     });
 
     const batchResults = await Promise.all(promises);
     processed += batch.length;
 
-    const hitRateLimit = batchResults.includes('rate-limited');
-    const allSucceeded = batchResults.every(r => r === true);
-
-    if (hitRateLimit) {
-      // Back off: halve batch size, double delay
-      batchSize = Math.max(2, Math.floor(batchSize / 2));
+    if (batchResults.includes('rate-limited')) {
+      // Hit the ceiling — drop back down
+      successStreak = 0;
+      batchSize = Math.max(1, Math.floor(batchSize / 2));
       batchDelayMs = Math.min(batchDelayMs * 2, 10000);
-      console.warn(`[Xero] Rate limit hit, backing off: batch=${batchSize} delay=${batchDelayMs}ms`);
-    } else if (allSucceeded && processed > 20) {
-      // Speed up cautiously after sustained success
-      batchSize = Math.min(batchSize + 1, 8);
-      batchDelayMs = Math.max(Math.round(batchDelayMs * 0.85), 500);
+      console.warn(`[Xero] 429 rate limit — slowing: batch=${batchSize} delay=${batchDelayMs}ms`);
+    } else {
+      successStreak++;
+      // Ramp up: every 3 successful batches, increase batch size by 1 and reduce delay
+      if (successStreak % 3 === 0) {
+        batchSize = Math.min(batchSize + 1, 10);
+        batchDelayMs = Math.max(Math.round(batchDelayMs * 0.85), 300);
+      }
     }
 
     if (onProgress) onProgress(processed, entries.length);
