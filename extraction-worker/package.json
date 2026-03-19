@@ -1,0 +1,23 @@
+{
+  "name": "acumon-extraction-worker",
+  "version": "1.0.0",
+  "description": "Background extraction worker for Acumon Intelligence",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "npx prisma generate --schema=../prisma/schema.prisma && tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@azure/storage-blob": "^12.31.0",
+    "@prisma/client": "^5.22.0",
+    "openai": "^6.32.0",
+    "pdf-parse": "^2.4.5",
+    "prisma": "^5.22.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}
