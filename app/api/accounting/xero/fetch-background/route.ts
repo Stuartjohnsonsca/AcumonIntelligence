@@ -50,8 +50,34 @@ export async function POST(req: Request) {
       await updateProgress({ phase: 'fetching', step: 2, totalSteps, message: `${transactions.length} transactions fetched. Loading accounts... (2 of 5)`, recordCount: transactions.length });
       const accounts = await getAccounts(clientId);
 
-      // Cache accounts in DB so pre-load endpoint can serve them instantly
+      // Cache accounts in DB and detect changes from previous cache
       try {
+        const conn = await prisma.accountingConnection.findUnique({
+          where: { clientId_system: { clientId, system: 'xero' } },
+          select: { accountsCache: true },
+        });
+
+        const previousAccounts = (conn?.accountsCache as { Code: string; Name: string; Description?: string }[] | null) ?? [];
+        const prevMap = new Map(previousAccounts.map(a => [a.Code, a]));
+        const currMap = new Map(accounts.map(a => [a.Code, { Code: a.Code, Name: a.Name, Description: a.Description }]));
+
+        // Detect changes
+        const added = accounts.filter(a => !prevMap.has(a.Code));
+        const removed = previousAccounts.filter(a => !currMap.has(a.Code));
+        const changed = accounts.filter(a => {
+          const prev = prevMap.get(a.Code);
+          return prev && (prev.Name !== a.Name || (prev.Description || '') !== (a.Description || ''));
+        });
+
+        if (added.length || removed.length || changed.length) {
+          console.log(`[Fetch] Account changes detected: +${added.length} added, -${removed.length} removed, ~${changed.length} modified`);
+          if (added.length) console.log(`[Fetch]   Added: ${added.map(a => `${a.Code} (${a.Name})`).join(', ')}`);
+          if (removed.length) console.log(`[Fetch]   Removed: ${removed.map(a => `${a.Code} (${a.Name})`).join(', ')}`);
+          if (changed.length) console.log(`[Fetch]   Changed: ${changed.map(a => `${a.Code} (${a.Name})`).join(', ')}`);
+        } else if (previousAccounts.length > 0) {
+          console.log(`[Fetch] ${accounts.length} accounts unchanged`);
+        }
+
         await prisma.accountingConnection.update({
           where: { clientId_system: { clientId, system: 'xero' } },
           data: {
