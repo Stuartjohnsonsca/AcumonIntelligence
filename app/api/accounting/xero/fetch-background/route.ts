@@ -50,6 +50,20 @@ export async function POST(req: Request) {
       await updateProgress({ phase: 'fetching', step: 2, totalSteps, message: `${transactions.length} transactions fetched. Loading accounts... (2 of 5)`, recordCount: transactions.length });
       const accounts = await getAccounts(clientId);
 
+      // Cache accounts in DB so pre-load endpoint can serve them instantly
+      try {
+        await prisma.accountingConnection.update({
+          where: { clientId_system: { clientId, system: 'xero' } },
+          data: {
+            accountsCache: accounts as unknown as never,
+            accountsCachedAt: new Date(),
+          },
+        });
+        console.log(`[Fetch] Cached ${accounts.length} accounts for client ${clientId}`);
+      } catch (cacheErr) {
+        console.warn('[Fetch] Failed to cache accounts (non-fatal):', cacheErr);
+      }
+
       await updateProgress({ phase: 'fetching', step: 3, totalSteps, message: `Loading tax rates... (3 of 5)`, recordCount: transactions.length })
       const taxRateMap = await getTaxRates(clientId);
 

@@ -125,8 +125,15 @@ export async function exchangeCodeForTokens(
 }
 
 export async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
-  const clientId = process.env.XERO_CLIENT_ID!;
-  const clientSecret = process.env.XERO_CLIENT_SECRET!;
+  const clientId = process.env.XERO_CLIENT_ID;
+  const clientSecret = process.env.XERO_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error('XERO_CLIENT_ID or XERO_CLIENT_SECRET not set — cannot refresh token');
+  }
+
+  const start = Date.now();
+  console.log('[Xero] Refreshing access token...');
 
   const res = await fetch(XERO_TOKEN_URL, {
     method: 'POST',
@@ -140,11 +147,15 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenRes
     }),
   });
 
+  const elapsed = Date.now() - start;
+
   if (!res.ok) {
     const body = await res.text();
+    console.error(`[Xero] Token refresh failed in ${elapsed}ms: ${res.status} ${body.substring(0, 200)}`);
     throw new Error(`Xero token refresh failed (${res.status}): ${body}`);
   }
 
+  console.log(`[Xero] Token refreshed in ${elapsed}ms`);
   return res.json();
 }
 
@@ -162,21 +173,23 @@ export async function getConnectedTenants(accessToken: string): Promise<XeroTena
   return res.json();
 }
 
-// Exported as getValidToken for use by lightweight endpoints
-export { getValidAccessToken as getValidToken };
-
 async function getValidAccessToken(clientId: string): Promise<{ accessToken: string; tenantId: string }> {
+  const start = Date.now();
   const conn = await prisma.accountingConnection.findUnique({
     where: { clientId_system: { clientId, system: 'xero' } },
   });
+  console.log(`[Xero] DB lookup: ${Date.now() - start}ms`);
 
   if (!conn) throw new Error('No Xero connection found for this client');
-  if (new Date() > conn.expiresAt) throw new Error('Xero connection expired — please reconnect');
+  if (new Date() > conn.expiresAt) throw new Error(`Xero connection expired at ${conn.expiresAt.toISOString()} — please reconnect`);
 
   let accessToken = decrypt(conn.accessToken);
   let tenantId = conn.tenantId!;
 
-  if (new Date() >= conn.tokenExpiresAt) {
+  const now = new Date();
+  const tokenAge = Math.round((now.getTime() - conn.tokenExpiresAt.getTime()) / 1000);
+  if (now >= conn.tokenExpiresAt) {
+    console.log(`[Xero] Token expired ${Math.abs(tokenAge)}s ago, refreshing...`);
     const currentRefresh = decrypt(conn.refreshToken);
     const tokens = await refreshAccessToken(currentRefresh);
 
@@ -191,6 +204,9 @@ async function getValidAccessToken(clientId: string): Promise<{ accessToken: str
     });
 
     accessToken = tokens.access_token;
+    console.log(`[Xero] Token refresh + DB update: ${Date.now() - start}ms total`);
+  } else {
+    console.log(`[Xero] Token still valid for ${Math.abs(tokenAge)}s`);
   }
 
   return { accessToken, tenantId };
@@ -571,18 +587,27 @@ async function xeroFetchWithRetry(
   const urlPath = url.replace(/^https?:\/\/[^/]+/, '');
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const callStart = Date.now();
     const res = await fetch(url, { headers });
+    const callMs = Date.now() - callStart;
 
     // Track rate limit headers
     const remaining = res.headers.get('X-MinLimit-Remaining');
     if (remaining) xeroMinLimitRemaining = parseInt(remaining, 10);
 
     if (res.status === 401) {
-      // Token expired mid-fetch — caller should get a fresh token and retry
+      console.error(`[Xero] 401 on ${urlPath} in ${callMs}ms — token expired`);
       throw new Error(`Xero token expired (401) on ${urlPath} — will refresh and retry`);
     }
 
-    if (res.status !== 429) return res;
+    if (res.status !== 429) {
+      if (res.ok) {
+        console.log(`[Xero] ${res.status} on ${urlPath} in ${callMs}ms (remaining=${remaining ?? '?'})`);
+      } else {
+        console.warn(`[Xero] ${res.status} on ${urlPath} in ${callMs}ms`);
+      }
+      return res;
+    }
 
     if (attempt === maxRetries) {
       // Exhausted all retries — throw so callers get a clear error
