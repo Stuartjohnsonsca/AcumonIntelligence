@@ -26,7 +26,8 @@ export async function GET(req: Request) {
 
   try {
     if (type === 'accounts') {
-      const accounts = await getAccounts(clientId);
+      // Fast path: only 3 retries for pre-load (avoid 504 timeout)
+      const accounts = await getAccounts(clientId, 3);
       return NextResponse.json({ accounts });
     }
 

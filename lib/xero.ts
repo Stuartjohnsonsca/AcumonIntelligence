@@ -203,14 +203,14 @@ export interface XeroAccount {
   Status: string;
 }
 
-export async function getAccounts(clientId: string): Promise<XeroAccount[]> {
+export async function getAccounts(clientId: string, maxRetries?: number): Promise<XeroAccount[]> {
   const { accessToken, tenantId } = await getValidAccessToken(clientId);
 
   const res = await xeroFetchWithRetry(`${XERO_API_BASE}/Accounts`, {
     Authorization: `Bearer ${accessToken}`,
     'Xero-Tenant-Id': tenantId,
     Accept: 'application/json',
-  });
+  }, maxRetries);
 
   if (!res.ok) throw new Error(`Xero Accounts fetch failed (${res.status})`);
   const data = await res.json();
