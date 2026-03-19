@@ -69,6 +69,7 @@ export async function GET(req: Request) {
       finding: f.finding,
       clauseReference: f.clauseReference,
       isSignificantRisk: f.isSignificantRisk,
+      aiSignificantRisk: f.aiSignificantRisk,
       userResponse: f.userResponse,
       addToTesting: f.addToTesting,
       reviewed: f.reviewed,

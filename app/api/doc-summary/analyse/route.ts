@@ -103,6 +103,7 @@ export async function POST(req: Request) {
               finding: finding.finding,
               clauseReference: finding.clauseReference,
               isSignificantRisk: finding.isSignificantRisk,
+              aiSignificantRisk: finding.isSignificantRisk,
               sortOrder: i,
             },
           });

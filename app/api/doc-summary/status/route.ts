@@ -46,6 +46,7 @@ export async function GET(req: Request) {
             finding: true,
             clauseReference: true,
             isSignificantRisk: true,
+            aiSignificantRisk: true,
             userResponse: true,
             addToTesting: true,
             reviewed: true,

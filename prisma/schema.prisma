@@ -457,7 +457,8 @@ model DocSummaryFinding {
   area              String   // e.g. "Parties", "Obligations", "Risks", or AI-identified area
   finding           String   @db.Text
   clauseReference   String   @map("clause_reference")
-  isSignificantRisk Boolean  @default(false) @map("is_significant_risk")
+  isSignificantRisk   Boolean  @default(false) @map("is_significant_risk")
+  aiSignificantRisk   Boolean  @default(false) @map("ai_significant_risk")
   userResponse      String?  @map("user_response") @db.Text
   addToTesting      Boolean  @default(false) @map("add_to_testing")
   reviewed          Boolean  @default(false)
