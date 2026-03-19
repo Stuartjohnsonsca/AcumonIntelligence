@@ -1481,7 +1481,7 @@ export function DataExtractionClient({
       const serverTaskId = startData.taskId;
 
       const poll = async () => {
-        const maxPolls = 120;
+        const maxPolls = 240; // 240 * 1.5s = 6 minutes
         for (let i = 0; i < maxPolls; i++) {
           await new Promise(r => setTimeout(r, 1500));
           if (xeroFetchAbortRef.current) {
