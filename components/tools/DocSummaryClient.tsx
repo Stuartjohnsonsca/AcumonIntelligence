@@ -77,6 +77,7 @@ export function DocSummaryClient({
 
   // Email modal state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailRecipientName, setEmailRecipientName] = useState('');
   const [emailAddress, setEmailAddress] = useState('');
   const [emailSending, setEmailSending] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
@@ -315,21 +316,25 @@ export function DocSummaryClient({
       const res = await fetch('/api/doc-summary/send-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId, email: emailAddress }),
+        body: JSON.stringify({ jobId, recipientEmail: emailAddress, recipientName: emailRecipientName }),
       });
-      if (!res.ok) throw new Error('Send failed');
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || 'Send failed');
+      }
       setEmailSent(true);
       setTimeout(() => {
         setEmailModalOpen(false);
         setEmailSent(false);
         setEmailAddress('');
-      }, 1500);
-    } catch {
-      setError('Failed to send email');
+        setEmailRecipientName('');
+      }, 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send email');
     } finally {
       setEmailSending(false);
     }
-  }, [jobId, emailAddress]);
+  }, [jobId, emailAddress, emailRecipientName]);
 
   // ─── Drag & drop handlers ───────────────────────────────────────────────
 
@@ -754,18 +759,32 @@ export function DocSummaryClient({
                   Email sent successfully
                 </div>
               ) : (
-                <>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                    Recipient email
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="name@example.com"
-                    value={emailAddress}
-                    onChange={e => setEmailAddress(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                      Recipient name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="John Smith"
+                      value={emailRecipientName}
+                      onChange={e => setEmailRecipientName(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                      Recipient email
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="name@example.com"
+                      value={emailAddress}
+                      onChange={e => setEmailAddress(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
               )}
             </div>
             <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2">
@@ -773,6 +792,7 @@ export function DocSummaryClient({
                 onClick={() => {
                   setEmailModalOpen(false);
                   setEmailAddress('');
+                  setEmailRecipientName('');
                   setEmailSent(false);
                 }}
                 className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-800 transition-colors"
