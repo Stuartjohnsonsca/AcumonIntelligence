@@ -210,7 +210,7 @@ export function DocSummaryClient({
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve();
           } else {
-            reject(new Error(`Azure upload failed (${xhr.status})`));
+            reject(new Error(`Azure upload failed (${xhr.status}): ${xhr.responseText?.substring(0, 200)}`));
           }
         });
 
@@ -336,7 +336,9 @@ export function DocSummaryClient({
       bgTaskIdRef.current = taskId;
       startPolling(currentJobId!);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[DocSummary] Upload error:', msg);
+      setError(msg || 'Upload failed');
     } finally {
       setIsUploading(false);
       setUploadProgress({});
