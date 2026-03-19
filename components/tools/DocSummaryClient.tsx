@@ -19,6 +19,7 @@ interface Client {
 
 interface Finding {
   id: string;
+  fileId: string;
   area: string;
   finding: string;
   clauseReference: string | null;
@@ -35,7 +36,7 @@ interface DocFile {
 interface StatusResponse {
   jobId: string;
   files: DocFile[];
-  findings: Record<string, Finding[]>;
+  findings: Finding[];  // API returns flat array, client groups by fileId
   status: string;
 }
 
@@ -118,7 +119,19 @@ export function DocSummaryClient({
         const data: StatusResponse = await res.json();
 
         setFiles(data.files);
-        setFindings(data.findings);
+
+        // Group findings by fileId (API returns flat array)
+        const rawFindings = data.findings;
+        if (Array.isArray(rawFindings)) {
+          const grouped: Record<string, Finding[]> = {};
+          for (const f of rawFindings) {
+            if (!grouped[f.fileId]) grouped[f.fileId] = [];
+            grouped[f.fileId].push(f);
+          }
+          setFindings(grouped);
+        } else if (rawFindings && typeof rawFindings === 'object') {
+          setFindings(rawFindings as Record<string, Finding[]>);
+        }
 
         const allDone = data.files.every(f => f.status === 'analysed' || f.status === 'failed');
         if (allDone) {
