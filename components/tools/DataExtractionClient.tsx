@@ -1225,28 +1225,39 @@ export function DataExtractionClient({
 
   async function handleXeroButtonClick() {
     if (!selectedClient) return;
-    setXeroLoading(true);
     setXeroError('');
-    try {
-      // If already connected, skip status check and go straight to modal
-      if (xeroConnected && xeroAccounts.length > 0) {
-        setXeroCategory('');
-        setXeroSelectedCodes(new Set());
-        setXeroShowModal(true);
-        return;
-      }
 
+    // If already connected, open modal immediately (accounts pre-loaded on client selection)
+    if (xeroConnected) {
+      setXeroCategory('');
+      setXeroSelectedCodes(new Set());
+      setXeroShowModal(true);
+      // If accounts not loaded yet, fetch in background (modal shows loading)
+      if (xeroAccounts.length === 0) {
+        fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (data?.accounts) setXeroAccounts(data.accounts); })
+          .catch(() => {});
+      }
+      return;
+    }
+
+    // Not connected — check status
+    setXeroLoading(true);
+    try {
       const statusRes = await fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`);
       const statusData = await statusRes.json();
       if (statusData.connected) {
         setXeroConnected(true);
         setXeroOrgName(statusData.orgName);
-        const accRes = await fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`);
-        const accData = await accRes.json();
-        if (accData.accounts) setXeroAccounts(accData.accounts);
         setXeroCategory('');
         setXeroSelectedCodes(new Set());
         setXeroShowModal(true);
+        // Load accounts in background
+        fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (data?.accounts) setXeroAccounts(data.accounts); })
+          .catch(() => {});
       } else {
         await handleRequestXeroAccess();
       }
@@ -1325,13 +1336,20 @@ export function DataExtractionClient({
   useEffect(() => {
     if (selectedClient) {
       checkXeroRequestStatus();
-      // Check if Xero is already connected for this client
+      // Check if Xero is already connected and pre-load accounts
       fetch(`/api/accounting/xero/status?clientId=${selectedClient.id}`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.connected) {
             setXeroConnected(true);
             setXeroOrgName(data.orgName);
+            // Pre-load accounts so button click is instant
+            fetch(`/api/accounting/xero/data?clientId=${selectedClient.id}&type=accounts`)
+              .then(r => r.ok ? r.json() : null)
+              .then(accData => {
+                if (accData?.accounts) setXeroAccounts(accData.accounts);
+              })
+              .catch(() => { /* non-fatal */ });
           } else {
             setXeroConnected(false);
             setXeroOrgName(null);
