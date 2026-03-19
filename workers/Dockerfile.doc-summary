@@ -3,7 +3,7 @@ RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists
 WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
-RUN npm ci --production --ignore-scripts
+RUN npm ci --ignore-scripts
 RUN npx prisma generate
 COPY . .
 CMD ["npx", "tsx", "workers/doc-summary-worker.ts"]
