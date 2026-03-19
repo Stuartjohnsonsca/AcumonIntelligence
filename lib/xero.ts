@@ -564,8 +564,11 @@ export function getXeroRateRemaining(): number {
 async function xeroFetchWithRetry(
   url: string,
   headers: Record<string, string>,
-  maxRetries = 8,
+  maxRetries = 15,
 ): Promise<Response> {
+  const urlPath = url.replace(/^https?:\/\/[^/]+/, '');
+  let consecutiveFails = 0;
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, { headers });
 
@@ -573,16 +576,27 @@ async function xeroFetchWithRetry(
     const remaining = res.headers.get('X-MinLimit-Remaining');
     if (remaining) xeroMinLimitRemaining = parseInt(remaining, 10);
 
-    if (res.status !== 429) return res;
+    if (res.status !== 429) {
+      consecutiveFails = 0;
+      return res;
+    }
+
+    consecutiveFails++;
+
+    // Only give up after 10 consecutive 429s
+    if (consecutiveFails >= 10) {
+      console.error(`[Xero] 10 consecutive 429s on ${urlPath}, giving up`);
+      return res;
+    }
 
     if (attempt === maxRetries) return res;
 
+    // Use Retry-After header if available, otherwise exponential backoff
     const retryAfter = res.headers.get('Retry-After');
     const serverWaitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 0;
-    const backoffMs = Math.min(2000 * Math.pow(1.5, attempt), 15000);
-    const waitMs = Math.min(serverWaitMs || backoffMs, 15000);
+    const backoffMs = Math.min(3000 * Math.pow(1.5, attempt), 30000);
+    const waitMs = Math.max(serverWaitMs || backoffMs, 2000);
 
-    const urlPath = url.replace(/^https?:\/\/[^/]+/, '');
     console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${waitMs}ms (remaining=${xeroMinLimitRemaining})`);
     await new Promise(resolve => setTimeout(resolve, waitMs));
   }

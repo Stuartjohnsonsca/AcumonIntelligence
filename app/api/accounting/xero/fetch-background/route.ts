@@ -42,14 +42,15 @@ export async function POST(req: Request) {
 
     try {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
+      const totalSteps = 5;
 
-      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: 'Fetching invoices...' });
+      await updateProgress({ phase: 'fetching', step: 1, totalSteps, message: 'Fetching transactions from Xero... (1 of 5)' });
       const transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
 
-      await updateProgress({ phase: 'fetching', step: 1, totalSteps: 4, message: `${transactions.length} transactions fetched. Loading accounts...` });
+      await updateProgress({ phase: 'fetching', step: 2, totalSteps, message: `${transactions.length} transactions fetched. Loading accounts... (2 of 5)`, recordCount: transactions.length });
       const accounts = await getAccounts(clientId);
 
-      await updateProgress({ phase: 'fetching', step: 2, totalSteps: 4, message: 'Loading tax rates...' });
+      await updateProgress({ phase: 'fetching', step: 3, totalSteps, message: `Loading tax rates... (3 of 5)`, recordCount: transactions.length })
       const taxRateMap = await getTaxRates(clientId);
 
       const accountMap = new Map<string, { name: string; description: string }>();
@@ -82,8 +83,8 @@ export async function POST(req: Request) {
         transactions.map(t => t.Contact?.ContactID).filter((id): id is string => !!id)
       )];
 
-      // Step 3: Fetch contact groups (few calls, fast) — skip history on initial load
-      await updateProgress({ phase: 'enriching', step: 3, totalSteps: 4, message: `Loading contact groups (${uniqueContactIds.length} contacts)...` });
+      // Step 4: Fetch contact groups (few calls, fast) — skip history on initial load
+      await updateProgress({ phase: 'enriching', step: 4, totalSteps, message: `Loading contact groups for ${uniqueContactIds.length} contacts... (4 of 5)`, recordCount: transactions.length });
 
       const contactGroupMap = await batchFetchContactGroups(clientId, uniqueContactIds).catch(err => {
         console.warn('Contact group fetch failed (non-fatal):', err instanceof Error ? err.message : err);
@@ -94,7 +95,7 @@ export async function POST(req: Request) {
       // Created By / Approved By columns will be empty initially
       const historyMap = new Map<string, { createdBy: string; approvedBy: string }>();
 
-      await updateProgress({ phase: 'processing', step: 4, totalSteps: 4, message: `Building ${transactions.length} rows...` });
+      await updateProgress({ phase: 'processing', step: 5, totalSteps, message: `Building ${transactions.length} rows... (5 of 5)`, recordCount: transactions.length });
 
       const rows = [];
       for (const txn of transactions) {
