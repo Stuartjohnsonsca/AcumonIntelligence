@@ -6,6 +6,7 @@ import { verifySummaryJobAccess } from '@/lib/client-access';
 import { generateDocSummaryPdf, type Finding, type FileInfo } from '@/lib/doc-summary-pdf';
 import { uploadToInbox } from '@/lib/azure-blob';
 import { setPdfStatus } from '@/lib/redis';
+import { logActivity, logError, requestContext } from '@/lib/logger';
 
 const PDF_SIZE_THRESHOLD = 5 * 1024 * 1024; // 5 MB
 
@@ -102,6 +103,18 @@ export async function GET(req: Request) {
     const filename = `Document-Summary-${safeClientName}-${dateStr}.pdf`;
     const pdfBuffer = Buffer.from(pdfBytes);
 
+    // Non-blocking activity log
+    logActivity({
+      userId: session.user.id,
+      firmId: (session.user as { firmId?: string }).firmId,
+      clientId: job.clientId,
+      action: 'export_pdf',
+      tool: 'doc-summary',
+      detail: { jobId, singleFileId, pdfSize: pdfBuffer.length },
+      ipAddress: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || undefined,
+      userAgent: req.headers.get('user-agent') || undefined,
+    });
+
     // If the PDF is small enough, return it directly
     if (pdfBuffer.length < PDF_SIZE_THRESHOLD) {
       return new Response(pdfBuffer, {
@@ -128,6 +141,14 @@ export async function GET(req: Request) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[DocSummary:ExportPDF] Failed | jobId=${jobId} | error=${msg}`);
+    logError({
+      userId: session.user.id,
+      route: '/api/doc-summary/export-pdf',
+      tool: 'doc-summary',
+      message: msg,
+      stack: error instanceof Error ? error.stack : undefined,
+      context: requestContext(req),
+    });
     return NextResponse.json({ error: 'Failed to generate PDF' }, { status: 500 });
   }
 }

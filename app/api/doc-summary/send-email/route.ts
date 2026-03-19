@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { verifySummaryJobAccess } from '@/lib/client-access';
 import { sendEmail, type EmailAttachment } from '@/lib/email';
 import { generateDocSummaryPdf, type Finding, type FileInfo } from '@/lib/doc-summary-pdf';
+import { logActivity, logError, requestContext } from '@/lib/logger';
 
 export const maxDuration = 60;
 
@@ -145,10 +146,31 @@ export async function POST(req: Request) {
     });
 
     console.log(`[DocSummary:SendEmail] Sent | messageId=${result.messageId}`);
+
+    // Non-blocking activity log
+    logActivity({
+      userId: session.user.id,
+      firmId: (session.user as { firmId?: string }).firmId,
+      clientId: job.clientId,
+      action: 'send_email',
+      tool: 'doc-summary',
+      detail: { jobId, recipient: recipientEmail },
+      ipAddress: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || undefined,
+      userAgent: req.headers.get('user-agent') || undefined,
+    });
+
     return NextResponse.json({ success: true, messageId: result.messageId });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[DocSummary:SendEmail] Failed | jobId=${jobId} | error=${msg}`);
+    logError({
+      userId: session.user.id,
+      route: '/api/doc-summary/send-email',
+      tool: 'doc-summary',
+      message: msg,
+      stack: error instanceof Error ? error.stack : undefined,
+      context: requestContext(req),
+    });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
 import { CONTAINERS } from '@/lib/azure-blob';
+import { logActivity, logError, requestContext } from '@/lib/logger';
 import {
   BlobSASPermissions,
   generateBlobSASQueryParameters,
@@ -122,6 +123,18 @@ export async function POST(req: Request) {
 
     const sasUrl = generateWriteSasUrl(blobPath, CONTAINERS.INBOX, 30);
 
+    // Non-blocking activity log
+    logActivity({
+      userId: session.user.id,
+      firmId: (session.user as { firmId?: string }).firmId,
+      clientId,
+      action: 'upload',
+      tool: 'doc-summary',
+      detail: { fileName, fileSize, jobId: job.id, fileId: fileRecord.id },
+      ipAddress: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || undefined,
+      userAgent: req.headers.get('user-agent') || undefined,
+    });
+
     return NextResponse.json({
       sasUrl,
       blobPath,
@@ -131,6 +144,14 @@ export async function POST(req: Request) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[DocSummary:UploadUrl] Failed | error=${msg}`);
+    logError({
+      userId: session.user.id,
+      route: '/api/doc-summary/upload-url',
+      tool: 'doc-summary',
+      message: msg,
+      stack: error instanceof Error ? error.stack : undefined,
+      context: requestContext(req),
+    });
     return NextResponse.json({ error: 'Failed to generate upload URL' }, { status: 500 });
   }
 }
