@@ -436,22 +436,20 @@ export async function batchFetchHistories(
 
   const entries = Array.from(uniqueTxns.entries());
 
-  // Start slow, ramp up. On 429: slow down and retry (don't skip).
-  // Only fail after 10 consecutive failures.
-  let batchSize = 1;
-  let batchDelayMs = 1000;
-  let successStreak = 0;
+  // Xero limits: 60 calls/min, 5 concurrent.
+  // Use X-MinLimit-Remaining header to pace dynamically.
+  const BATCH = 5;
   let consecutiveFailures = 0;
   let completed = 0;
   const queue = [...entries];
 
   while (queue.length > 0) {
     if (consecutiveFailures >= 10) {
-      console.error(`[Xero] 10 consecutive failures — aborting history fetch. ${completed}/${entries.length} done.`);
+      console.error(`[Xero] 10 consecutive failures — stopping. ${completed}/${entries.length} done.`);
       break;
     }
 
-    const batch = queue.splice(0, batchSize);
+    const batch = queue.splice(0, BATCH);
 
     const batchResults = await Promise.all(batch.map(async ([id, type]) => {
       const endpoint = type === 'Invoice' ? 'Invoices' : 'BankTransactions';
@@ -469,54 +467,37 @@ export async function batchFetchHistories(
           }
         }
         results.set(id, { createdBy, approvedBy });
-        return { status: 'ok' as const, entry: [id, type] as [string, 'Invoice' | 'BankTransaction'] };
+        return 'ok';
       } catch (err) {
         const msg = err instanceof Error ? err.message : '';
-        const isRateLimit = msg.includes('429') || msg.includes('rate');
-        if (!isRateLimit) {
-          // Non-rate-limit error: accept the failure, move on
-          results.set(id, { createdBy: '', approvedBy: '' });
-        }
-        return {
-          status: isRateLimit ? 'rate-limited' as const : 'error' as const,
-          entry: [id, type] as [string, 'Invoice' | 'BankTransaction'],
-        };
+        if (msg.includes('429') || msg.includes('rate')) return 'rate-limited';
+        results.set(id, { createdBy: '', approvedBy: '' });
+        return 'error';
       }
     }));
 
-    const rateLimited = batchResults.filter(r => r.status === 'rate-limited');
-    const succeeded = batchResults.filter(r => r.status === 'ok').length;
-    const errored = batchResults.filter(r => r.status === 'error').length;
+    const rateLimitCount = batchResults.filter(r => r === 'rate-limited').length;
+    const okCount = batchResults.filter(r => r === 'ok').length;
 
-    // Put rate-limited items back at the front of the queue for retry
-    if (rateLimited.length > 0) {
-      queue.unshift(...rateLimited.map(r => r.entry));
-      consecutiveFailures += rateLimited.length;
-      successStreak = 0;
-      // Slow down
-      batchSize = Math.max(1, Math.floor(batchSize / 2));
-      batchDelayMs = Math.min(batchDelayMs * 2, 10000);
-      console.warn(`[Xero] ${rateLimited.length} rate-limited, retrying. batch=${batchSize} delay=${batchDelayMs}ms`);
-    }
-
-    if (succeeded > 0) {
+    if (rateLimitCount > 0) {
+      // Put failed items back and wait longer
+      const failedEntries = batch.slice(batch.length - rateLimitCount);
+      queue.unshift(...failedEntries);
+      consecutiveFailures += rateLimitCount;
+      console.warn(`[Xero] ${rateLimitCount} rate-limited, waiting 5s before retry`);
+      await new Promise(r => setTimeout(r, 5000));
+    } else {
       consecutiveFailures = 0;
-      successStreak += succeeded;
-      completed += succeeded;
-    }
-    completed += errored; // count non-429 errors as done (won't retry)
-
-    // Ramp up: every 3 successes, go a bit faster
-    if (successStreak >= 3 && rateLimited.length === 0) {
-      batchSize = Math.min(batchSize + 1, 8);
-      batchDelayMs = Math.max(Math.round(batchDelayMs * 0.85), 400);
-      successStreak = 0;
     }
 
+    completed += okCount + batchResults.filter(r => r === 'error').length;
     if (onProgress) onProgress(completed, entries.length);
 
-    if (queue.length > 0) {
-      await new Promise(resolve => setTimeout(resolve, batchDelayMs));
+    if (queue.length > 0 && rateLimitCount === 0) {
+      // Pace based on remaining quota: fast when plenty left, slow when running low
+      const remaining = getXeroRateRemaining();
+      const delayMs = remaining > 30 ? 500 : remaining > 10 ? 1500 : 3000;
+      await new Promise(r => setTimeout(r, delayMs));
     }
   }
 
@@ -573,6 +554,13 @@ export async function downloadAttachment(
   return { buffer: Buffer.from(arrayBuffer), mimeType };
 }
 
+// Track remaining API calls from Xero headers
+let xeroMinLimitRemaining = 60;
+
+export function getXeroRateRemaining(): number {
+  return xeroMinLimitRemaining;
+}
+
 async function xeroFetchWithRetry(
   url: string,
   headers: Record<string, string>,
@@ -581,18 +569,21 @@ async function xeroFetchWithRetry(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, { headers });
 
+    // Track rate limit headers
+    const remaining = res.headers.get('X-MinLimit-Remaining');
+    if (remaining) xeroMinLimitRemaining = parseInt(remaining, 10);
+
     if (res.status !== 429) return res;
 
     if (attempt === maxRetries) return res;
 
-    // Wait with exponential backoff, capped at 15s
     const retryAfter = res.headers.get('Retry-After');
     const serverWaitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 0;
     const backoffMs = Math.min(2000 * Math.pow(1.5, attempt), 15000);
     const waitMs = Math.min(serverWaitMs || backoffMs, 15000);
 
     const urlPath = url.replace(/^https?:\/\/[^/]+/, '');
-    console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${waitMs}ms`);
+    console.log(`[Xero] 429 on ${urlPath}, retry ${attempt + 1}/${maxRetries} in ${waitMs}ms (remaining=${xeroMinLimitRemaining})`);
     await new Promise(resolve => setTimeout(resolve, waitMs));
   }
 
