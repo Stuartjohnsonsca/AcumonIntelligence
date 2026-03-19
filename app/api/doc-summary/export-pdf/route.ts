@@ -12,6 +12,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const jobId = searchParams.get('jobId');
+  const singleFileId = searchParams.get('fileId') || undefined;
   if (!jobId) return NextResponse.json({ error: 'jobId required' }, { status: 400 });
 
   const jobAccess = await verifySummaryJobAccess(
@@ -86,6 +87,7 @@ export async function GET(req: Request) {
       firmName,
       userName,
       exportDate,
+      singleFileId,
     });
 
     const safeClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, '_');

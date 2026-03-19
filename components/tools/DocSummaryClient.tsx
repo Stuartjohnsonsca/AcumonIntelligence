@@ -24,6 +24,7 @@ interface Finding {
   finding: string;
   clauseReference: string | null;
   isSignificantRisk: boolean;
+  aiSignificantRisk: boolean;
 }
 
 interface DocFile {
@@ -160,6 +161,32 @@ export function DocSummaryClient({
     return () => stopPolling();
   }, [stopPolling]);
 
+  // ─── Remove file handler ────────────────────────────────────────────────
+  const handleRemoveFile = useCallback(async (fileId: string, fileStatus: string) => {
+    if (fileStatus === 'analysed' || fileStatus === 'failed') {
+      // Already processed — just hide from view, keep findings/data intact
+      setHiddenFileIds(prev => new Set(prev).add(fileId));
+      // Adjust active index if needed
+      const visibleAfter = files.filter(f => !hiddenFileIds.has(f.id) && f.id !== fileId);
+      if (activeDocIndex >= visibleAfter.length) {
+        setActiveDocIndex(Math.max(0, visibleAfter.length - 1));
+      }
+    } else {
+      // Not yet analysed — actually delete from DB and blob
+      try {
+        await fetch('/api/doc-summary/remove-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileId }),
+        });
+        setFiles(prev => prev.filter(f => f.id !== fileId));
+        setActiveDocIndex(prev => Math.max(0, prev - 1));
+      } catch {
+        // Silent fail — file will remain in list
+      }
+    }
+  }, [files, hiddenFileIds, activeDocIndex]);
+
   // ─── Upload flow ─────────────────────────────────────────────────────────
 
   const handleUpload = useCallback(async (fileList: FileList | File[]) => {
@@ -168,7 +195,25 @@ export function DocSummaryClient({
       return;
     }
 
-    const fileArr = Array.from(fileList);
+    let fileArr = Array.from(fileList);
+    if (fileArr.length === 0) return;
+
+    // Check for duplicate file names against already-uploaded files
+    const filesToUpload: File[] = [];
+    for (const file of fileArr) {
+      const existing = files.find(f => f.originalName === file.name);
+      if (existing) {
+        const replace = window.confirm(`File "${file.name}" already exists. Replace existing?`);
+        if (replace) {
+          await handleRemoveFile(existing.id, existing.status);
+          filesToUpload.push(file);
+        }
+        // If not replacing, skip this file
+      } else {
+        filesToUpload.push(file);
+      }
+    }
+    fileArr = filesToUpload;
     if (fileArr.length === 0) return;
 
     setError('');
@@ -226,33 +271,7 @@ export function DocSummaryClient({
     } finally {
       setIsUploading(false);
     }
-  }, [selectedClient, jobId, startPolling, addTask, updateTask]);
-
-  // ─── Remove file handler ────────────────────────────────────────────────
-  const handleRemoveFile = useCallback(async (fileId: string, fileStatus: string) => {
-    if (fileStatus === 'analysed' || fileStatus === 'failed') {
-      // Already processed — just hide from view, keep findings/data intact
-      setHiddenFileIds(prev => new Set(prev).add(fileId));
-      // Adjust active index if needed
-      const visibleAfter = files.filter(f => !hiddenFileIds.has(f.id) && f.id !== fileId);
-      if (activeDocIndex >= visibleAfter.length) {
-        setActiveDocIndex(Math.max(0, visibleAfter.length - 1));
-      }
-    } else {
-      // Not yet analysed — actually delete from DB and blob
-      try {
-        await fetch('/api/doc-summary/remove-file', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileId }),
-        });
-        setFiles(prev => prev.filter(f => f.id !== fileId));
-        setActiveDocIndex(prev => Math.max(0, prev - 1));
-      } catch {
-        // Silent fail — file will remain in list
-      }
-    }
-  }, [files, hiddenFileIds, activeDocIndex]);
+  }, [selectedClient, jobId, files, startPolling, addTask, updateTask, handleRemoveFile]);
 
   // ─── Risk toggle ─────────────────────────────────────────────────────────
 
@@ -290,20 +309,22 @@ export function DocSummaryClient({
 
   // ─── Export actions ──────────────────────────────────────────────────────
 
-  const downloadPdf = useCallback(async () => {
+  const downloadPdf = useCallback(async (fileId?: string) => {
     if (!jobId) return;
     try {
-      const res = await fetch(`/api/doc-summary/export-pdf?jobId=${encodeURIComponent(jobId)}`);
+      let url = `/api/doc-summary/export-pdf?jobId=${encodeURIComponent(jobId)}`;
+      if (fileId) url += `&fileId=${encodeURIComponent(fileId)}`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `doc-summary-${jobId}.pdf`;
+      a.href = blobUrl;
+      a.download = `doc-summary-${jobId}${fileId ? `-${fileId}` : ''}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(blobUrl);
     } catch {
       setError('Failed to download PDF');
     }
@@ -706,12 +727,19 @@ export function DocSummaryClient({
                             <td className="px-4 py-2.5 text-slate-700 align-top whitespace-pre-wrap">{finding.finding}</td>
                             <td className="px-4 py-2.5 text-slate-500 text-center align-top">{finding.clauseReference || '—'}</td>
                             <td className="px-4 py-2.5 text-center align-top">
-                              <input
-                                type="checkbox"
-                                checked={finding.isSignificantRisk}
-                                onChange={() => toggleRisk(finding.id, finding.isSignificantRisk)}
-                                className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
-                              />
+                              <div className="flex items-center justify-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  checked={finding.isSignificantRisk}
+                                  onChange={() => toggleRisk(finding.id, finding.isSignificantRisk)}
+                                  className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+                                />
+                                {finding.aiSignificantRisk !== finding.isSignificantRisk && (
+                                  <span className="text-[10px] text-slate-400" title="AI original assessment">
+                                    (AI: {finding.aiSignificantRisk ? 'Yes' : 'No'})
+                                  </span>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -730,12 +758,20 @@ export function DocSummaryClient({
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 z-20">
           <div className="max-w-[1600px] mx-auto flex items-center justify-end gap-3">
             <button
-              onClick={downloadPdf}
+              onClick={() => downloadPdf()}
               disabled={!hasAnalysedDocs}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
             >
               <Download className="h-4 w-4" />
               Download PDF
+            </button>
+            <button
+              onClick={() => activeFile && downloadPdf(activeFile.id)}
+              disabled={!activeFile || activeFile.status !== 'analysed'}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+            >
+              <Download className="h-4 w-4" />
+              Download This Document
             </button>
             <button
               onClick={() => setEmailModalOpen(true)}
@@ -773,7 +809,7 @@ export function DocSummaryClient({
                       placeholder="John Smith"
                       value={emailRecipientName}
                       onChange={e => setEmailRecipientName(e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 h-20 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
                   <div>
@@ -785,7 +821,7 @@ export function DocSummaryClient({
                       placeholder="name@example.com"
                       value={emailAddress}
                       onChange={e => setEmailAddress(e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 h-20 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
                   {emailError && (
