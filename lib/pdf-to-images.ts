@@ -38,7 +38,7 @@ export async function processPdf(
       const page = await doc.getPage(i);
       const content = await page.getTextContent();
       const pageText = content.items
-        .map((item: { str?: string }) => item.str || '')
+        .map((item) => ('str' in item ? item.str : '') || '')
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
