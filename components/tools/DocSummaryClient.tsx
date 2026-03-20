@@ -991,7 +991,16 @@ export function DocSummaryClient({
                   </div>
                 ) : (
                   <div className="overflow-auto max-h-[calc(100vh-320px)]">
-                    <table className="w-full text-sm">
+                    <table className="min-w-[1100px] w-full text-sm table-fixed">
+                      <colgroup>
+                        <col className="w-[100px]" />   {/* Area */}
+                        <col className="w-[240px]" />   {/* Finding */}
+                        <col className="w-[80px]" />    {/* Clause Ref */}
+                        <col className="w-[200px]" />   {/* Accounting Impact */}
+                        <col className="w-[200px]" />   {/* Audit Impact */}
+                        <col className="w-[60px]" />    {/* AI Flagged */}
+                        <col className="w-[60px]" />    {/* User Override */}
+                      </colgroup>
                       <thead className="sticky top-0 z-10">
                         <tr className="bg-slate-50 border-b border-slate-100">
                           <th className="text-left px-3 py-1.5 font-semibold text-slate-700" rowSpan={2}>Area</th>
@@ -1014,19 +1023,19 @@ export function DocSummaryClient({
                               finding.isSignificantRisk ? 'bg-orange-100' : 'hover:bg-slate-50'
                             }`}
                           >
-                            <td className="px-3 py-2 text-slate-700 align-top text-xs w-[12%]">{finding.area}</td>
-                            <td className="px-3 py-2 text-slate-700 align-top whitespace-pre-wrap text-xs w-[25%]">{finding.finding}</td>
-                            <td className="px-3 py-2 text-slate-500 text-center align-top text-xs w-[8%]">{finding.clauseReference || '—'}</td>
-                            <td className="px-3 py-2 text-slate-600 align-top text-xs w-[18%]">{finding.accountingImpact || 'None'}</td>
-                            <td className="px-3 py-2 text-slate-600 align-top text-xs w-[18%]">{finding.auditImpact || 'None'}</td>
-                            <td className="px-3 py-2 text-center align-top w-[5%]">
+                            <td className="px-3 py-2 text-slate-700 align-top text-xs">{finding.area}</td>
+                            <td className="px-3 py-2 text-slate-700 align-top whitespace-pre-wrap text-xs">{finding.finding}</td>
+                            <td className="px-3 py-2 text-slate-500 text-center align-top text-xs">{finding.clauseReference || '—'}</td>
+                            <td className="px-3 py-2 text-slate-600 align-top text-xs whitespace-pre-wrap">{finding.accountingImpact || 'None'}</td>
+                            <td className="px-3 py-2 text-slate-600 align-top text-xs whitespace-pre-wrap">{finding.auditImpact || 'None'}</td>
+                            <td className="px-3 py-2 text-center align-top">
                               {finding.aiSignificantRisk != null ? (
                                 <span className={`text-[10px] font-medium ${finding.aiSignificantRisk ? 'text-orange-600' : 'text-slate-400'}`}>
                                   {finding.aiSignificantRisk ? 'Yes' : 'No'}
                                 </span>
                               ) : '—'}
                             </td>
-                            <td className="px-3 py-2 text-center align-top w-[5%]">
+                            <td className="px-3 py-2 text-center align-top">
                               <input
                                 type="checkbox"
                                 checked={finding.isSignificantRisk}
