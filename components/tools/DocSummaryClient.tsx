@@ -787,9 +787,17 @@ export function DocSummaryClient({
               {visibleFiles.length > 0 && (
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="px-4 py-3 border-b border-slate-100">
-                    <h3 className="text-sm font-semibold text-slate-800">
-                      Documents ({visibleFiles.length})
-                    </h3>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-slate-800">
+                        Documents ({visibleFiles.length})
+                      </h3>
+                      {isProcessing && (
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          {files.filter(f => f.status === 'analysed').length}/{files.filter(f => !hiddenFileIds.has(f.id)).length} done
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="max-h-80 overflow-y-auto">
                     {visibleFiles.map((file, idx) => (
@@ -907,10 +915,68 @@ export function DocSummaryClient({
                     <p className="text-sm text-slate-500">Upload and analyse documents to see findings</p>
                   </div>
                 ) : activeFile && (activeFile.status === 'processing' || activeFile.status === 'uploaded') ? (
-                  <div className="px-5 py-20 text-center">
-                    <Loader2 className="h-8 w-8 mx-auto text-blue-500 animate-spin mb-3" />
-                    <p className="text-sm text-slate-500">Processing...</p>
-                    <p className="text-xs text-slate-400 mt-1">{activeFile.originalName}</p>
+                  <div className="px-5 py-12 text-center space-y-6">
+                    {/* Active file progress */}
+                    <div>
+                      <Loader2 className="h-8 w-8 mx-auto text-blue-500 animate-spin mb-3" />
+                      <p className="text-sm font-medium text-slate-700">{activeFile.originalName}</p>
+                      {activeFile.progress ? (
+                        <div className="mt-3 max-w-xs mx-auto space-y-1.5">
+                          <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-blue-500 rounded-full transition-all duration-700 ease-out"
+                              style={{ width: `${activeFile.progress.batchesTotal > 0 ? Math.round((activeFile.progress.batchesDone / activeFile.progress.batchesTotal) * 100) : 0}%` }}
+                            />
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            {activeFile.progress.message || `${activeFile.progress.pagesDone}/${activeFile.progress.pagesTotal} pages`}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 mt-1">
+                          {activeFile.status === 'uploaded' ? 'Queued — waiting for worker...' : 'Starting analysis...'}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Overall job progress */}
+                    {files.length > 1 && (
+                      <div className="max-w-sm mx-auto pt-4 border-t border-slate-100">
+                        <p className="text-xs font-medium text-slate-600 mb-2">Overall Progress</p>
+                        <div className="space-y-1">
+                          {files.filter(f => !hiddenFileIds.has(f.id)).map(f => {
+                            const pct = f.status === 'analysed' ? 100
+                              : f.status === 'failed' ? 100
+                              : f.progress?.batchesTotal ? Math.round((f.progress.batchesDone / f.progress.batchesTotal) * 100)
+                              : 0;
+                            return (
+                              <div key={f.id} className="flex items-center gap-2">
+                                <span className="text-[10px] text-slate-500 truncate w-28 text-right" title={f.originalName}>
+                                  {f.originalName}
+                                </span>
+                                <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-500 ${
+                                      f.status === 'analysed' ? 'bg-green-500'
+                                      : f.status === 'failed' ? 'bg-red-400'
+                                      : f.status === 'processing' ? 'bg-blue-500'
+                                      : 'bg-slate-300'
+                                    }`}
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-slate-400 w-8">
+                                  {f.status === 'analysed' ? '✓' : f.status === 'failed' ? '✗' : `${pct}%`}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-2">
+                          {files.filter(f => f.status === 'analysed').length}/{files.filter(f => !hiddenFileIds.has(f.id)).length} documents complete
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : activeFile && activeFile.status === 'failed' ? (
                   <div className="px-5 py-20 text-center">
