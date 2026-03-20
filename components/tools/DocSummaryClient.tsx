@@ -125,6 +125,7 @@ export function DocSummaryClient({
   const [perspective, setPerspective] = useState('');
   const [detectedParties, setDetectedParties] = useState<string[]>([]);
   const [detectingParties, setDetectingParties] = useState(false);
+  const [detectPartiesNote, setDetectPartiesNote] = useState('');
   const [pendingAnalysisJobId, setPendingAnalysisJobId] = useState<string | null>(null);
 
   // Portfolio modal state
@@ -561,8 +562,9 @@ export function DocSummaryClient({
 
       // Show perspective selection popup before starting analysis
       setPendingAnalysisJobId(currentJobId!);
-      setPerspective(selectedClient.clientName); // Default perspective = client name
+      setPerspective(''); // Leave blank — user must choose from detected parties
       setDetectedParties([]);
+      setDetectPartiesNote('');
 
       // Auto-detect parties from the first uploaded document
       setDetectingParties(true);
@@ -574,10 +576,13 @@ export function DocSummaryClient({
           body: JSON.stringify({ jobId: currentJobId }),
         });
         if (detectRes.ok) {
-          const { parties } = await detectRes.json();
+          const data = await detectRes.json();
+          const { parties, note } = data as { parties?: string[]; note?: string };
           if (Array.isArray(parties) && parties.length > 0) {
             setDetectedParties(parties);
+            // Don't auto-select — let user choose
           }
+          if (note) setDetectPartiesNote(note);
         }
       } catch { /* non-fatal */ }
       setDetectingParties(false);
@@ -1651,17 +1656,20 @@ export function DocSummaryClient({
               </p>
             </div>
             <div className="px-5 py-4 space-y-3">
-              {/* Detected parties */}
+              {/* Detected parties from document */}
               {detectingParties ? (
-                <div className="flex items-center gap-2 text-sm text-slate-500">
+                <div className="flex items-center gap-2 text-sm text-slate-500 py-2">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Detecting parties in document...
+                  Reading document to identify parties...
                 </div>
               ) : detectedParties.length > 0 ? (
                 <div>
                   <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">
-                    Parties found in document
+                    Parties identified in document
                   </label>
+                  <p className="text-xs text-slate-400 mb-2">
+                    Select the party whose perspective to analyse from:
+                  </p>
                   <div className="space-y-1.5">
                     {detectedParties.map((party, idx) => (
                       <button
@@ -1678,32 +1686,41 @@ export function DocSummaryClient({
                     ))}
                   </div>
                 </div>
+              ) : !detectingParties ? (
+                <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  {detectPartiesNote || 'Could not auto-detect parties from the document. Please enter the party name below.'}
+                </div>
               ) : null}
 
-              {/* Client name shortcut */}
-              {selectedClient && !detectedParties.includes(selectedClient.clientName) && (
-                <button
-                  onClick={() => setPerspective(selectedClient.clientName)}
-                  className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
-                    perspective === selectedClient.clientName
-                      ? 'border-blue-300 bg-blue-50 text-blue-800 font-medium'
-                      : 'border-slate-100 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  {selectedClient.clientName} <span className="text-xs text-slate-400">(client)</span>
-                </button>
+              {/* Client name shortcut — shown separately as it may not be a document party */}
+              {selectedClient && !detectingParties && !detectedParties.includes(selectedClient.clientName) && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">
+                    System client
+                  </label>
+                  <button
+                    onClick={() => setPerspective(selectedClient.clientName)}
+                    className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+                      perspective === selectedClient.clientName
+                        ? 'border-blue-300 bg-blue-50 text-blue-800 font-medium'
+                        : 'border-slate-100 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {selectedClient.clientName} <span className="text-xs text-slate-400">(may not be a document party)</span>
+                  </button>
+                </div>
               )}
 
               {/* Custom input */}
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">
-                  Or enter a party name
+                  Or type a party name
                 </label>
                 <input
                   type="text"
                   value={perspective}
                   onChange={(e) => setPerspective(e.target.value)}
-                  placeholder="Party name..."
+                  placeholder="Enter party name..."
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
