@@ -275,56 +275,78 @@ export async function analyseDocumentFromImage(
   fileName: string,
   clientName: string,
 ): Promise<DocSummaryResult> {
-  const prompt = buildAuditAnalysisPrompt(fileName, clientName);
+  const BATCH_SIZE = 5;
+  const allFindings: DocSummaryFinding[] = [];
+  const summaries: string[] = [];
+  const totalUsage: DocSummaryUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-  const contentParts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
-    { type: 'text', text: prompt },
-    ...imageDataUris.map((uri): OpenAI.Chat.Completions.ChatCompletionContentPart => ({
-      type: 'image_url',
-      image_url: { url: uri },
-    })),
-  ];
+  // Process pages in batches to avoid request size limits
+  for (let i = 0; i < imageDataUris.length; i += BATCH_SIZE) {
+    const batch = imageDataUris.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(imageDataUris.length / BATCH_SIZE);
+    const pageRange = `pages ${i + 1}-${Math.min(i + BATCH_SIZE, imageDataUris.length)}`;
 
-  const result = await retryWithBackoff(
-    () => client.chat.completions.create({
-      model: VISION_MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: contentParts,
-        },
-      ],
-      max_tokens: 16384,
-    }),
-    `doc-summary-vision:${fileName}`,
-  );
+    console.log(`[DocSummary:Vision] Processing batch ${batchNum}/${totalBatches} (${pageRange}) | file=${fileName}`);
 
-  console.log(`[DocSummary:Vision] Success | file=${fileName} | model=${VISION_MODEL}`);
+    const prompt = buildAuditAnalysisPrompt(fileName, clientName)
+      + `\n\nNote: You are analysing ${pageRange} of ${imageDataUris.length} total pages. Extract all findings from these pages.`;
 
-  const usage: DocSummaryUsage = {
-    promptTokens: result.usage?.prompt_tokens ?? 0,
-    completionTokens: result.usage?.completion_tokens ?? 0,
-    totalTokens: result.usage?.total_tokens ?? 0,
-  };
+    const contentParts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+      { type: 'text', text: prompt },
+      ...batch.map((uri): OpenAI.Chat.Completions.ChatCompletionContentPart => ({
+        type: 'image_url',
+        image_url: { url: uri },
+      })),
+    ];
 
-  const responseText = result.choices[0]?.message?.content || '';
-  const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/) || responseText.match(/(\{[\s\S]*\})/);
-  const jsonText = jsonMatch ? jsonMatch[1] : responseText;
+    const result = await retryWithBackoff(
+      () => client.chat.completions.create({
+        model: VISION_MODEL,
+        messages: [{ role: 'user', content: contentParts }],
+        max_tokens: 16384,
+      }),
+      `doc-summary-vision:${fileName}:batch${batchNum}`,
+    );
 
-  try {
-    const parsed = JSON.parse(jsonText.trim());
-    const findings: DocSummaryFinding[] = Array.isArray(parsed.findings)
-      ? parsed.findings.map((f: Record<string, unknown>) => ({
-          area: String(f.area || 'Unknown'),
-          finding: String(f.finding || ''),
-          clauseReference: String(f.clauseReference || 'Not specified'),
-          isSignificantRisk: Boolean(f.isSignificantRisk),
-        }))
-      : [];
+    totalUsage.promptTokens += result.usage?.prompt_tokens ?? 0;
+    totalUsage.completionTokens += result.usage?.completion_tokens ?? 0;
+    totalUsage.totalTokens += result.usage?.total_tokens ?? 0;
 
-    return { findings, summary: String(parsed.summary || ''), usage, model: VISION_MODEL };
-  } catch {
-    console.error(`[DocSummary:Vision] JSON parse failed | file=${fileName} | snippet="${responseText.substring(0, 200)}"`);
-    throw new Error(`[doc-summary:${fileName}] Failed to parse vision AI response`);
+    const responseText = result.choices[0]?.message?.content || '';
+    const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/) || responseText.match(/(\{[\s\S]*\})/);
+    const jsonText = jsonMatch ? jsonMatch[1] : responseText;
+
+    try {
+      const parsed = JSON.parse(jsonText.trim());
+      if (Array.isArray(parsed.findings)) {
+        for (const f of parsed.findings) {
+          allFindings.push({
+            area: String(f.area || 'Unknown'),
+            finding: String(f.finding || ''),
+            clauseReference: String(f.clauseReference || 'Not specified'),
+            isSignificantRisk: Boolean(f.isSignificantRisk),
+          });
+        }
+      }
+      if (parsed.summary) summaries.push(String(parsed.summary));
+    } catch {
+      console.error(`[DocSummary:Vision] JSON parse failed batch ${batchNum} | file=${fileName} | snippet="${responseText.substring(0, 200)}"`);
+      // Continue with other batches rather than failing entirely
+    }
   }
+
+  console.log(`[DocSummary:Vision] Complete | file=${fileName} | ${allFindings.length} findings from ${Math.ceil(imageDataUris.length / BATCH_SIZE)} batches`);
+
+  // Deduplicate findings by area+finding content (batches may have overlap)
+  const seen = new Set<string>();
+  const uniqueFindings = allFindings.filter(f => {
+    const key = `${f.area}::${f.finding.substring(0, 100)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const combinedSummary = summaries.join(' ').trim();
+  return { findings: uniqueFindings, summary: combinedSummary, usage: totalUsage, model: VISION_MODEL };
 }
