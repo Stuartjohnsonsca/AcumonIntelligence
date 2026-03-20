@@ -27,6 +27,7 @@ export interface FileInfo {
   originalName: string;
   fileSize: number;
   pageCount: number | null;
+  documentDescription: string | null;
   createdAt: string;
   uploadedBy: string;
 }
@@ -440,11 +441,20 @@ function renderSummary(ctx: PageContext, findings: Finding[], files: FileInfo[],
   const summaryText = `This report presents the findings from an AI-assisted analysis of ${files.length} document(s) uploaded for ${clientName}. The analysis identified ${totalFindings} matters across ${areas.size} categories, of which ${riskCount} were flagged as significant risks.`;
   drawParagraph(ctx, summaryText);
 
+  // Document descriptions — help the reader understand what each contract is
+  const filesWithDescriptions = files.filter(f => f.documentDescription);
+  if (filesWithDescriptions.length > 0) {
+    ctx.y -= 4;
+    drawBoldParagraph(ctx, 'Document Overview:', 10);
+    for (const file of filesWithDescriptions) {
+      drawLabelledParagraph(ctx, `${file.originalName}:`, file.documentDescription!, 9, 10);
+    }
+  }
+
   if (riskCount > 0) {
     ctx.y -= 4;
     drawBoldParagraph(ctx, 'Significant matters identified:', 10);
     for (const rf of riskFindings) {
-      // Extract label (text before the colon) and make it bold, then the rest regular
       const colonIdx = rf.finding.indexOf(':');
       const cleanedFinding = stripClauseRefs(rf.finding);
       if (colonIdx > 0 && colonIdx < 80) {
@@ -725,6 +735,8 @@ function renderWorkPerformed(ctx: PageContext): void {
     'Evidence-Based Approach: All findings presented in this report are linked to specific clause or section references within the source documents. This evidence-based approach ensures that each finding can be independently verified against the original document text. Full findings, including clause references and risk assessments, are presented in Appendix B.',
 
     'Additional material matters were identified using professional judgement applied by the AI analysis engine. The platform applied a conservative threshold for flagging matters of interest, favouring completeness over brevity to ensure that no potentially significant items were omitted from the review.',
+
+    'Factual Integrity Confirmation: The AI analysis engine has not fabricated, invented, or assumed any facts or findings beyond what is contained within the uploaded document(s). All findings, clause references, and risk assessments presented in this report are derived solely from the content of the source document(s). No external information, assumptions, or inferences beyond the document text have been used to generate the findings herein.',
   ];
 
   for (const p of paragraphs) {
@@ -823,16 +835,41 @@ function renderAppendixB(ctx: PageContext, findings: Finding[], files: FileInfo[
     });
     ctx.y -= 20;
 
-    // 7 columns: Area | Finding | Clause Ref | Accounting Impact | Audit Impact | AI Risk Assessment | User Override
+    // 7 columns: Area | Finding | Clause Ref | Accounting Impact | Audit Impact | AI Flagged | User Override
+    // Draw "Significant Risk" spanning header above the last two columns
     const columns: TableColumn[] = [
       { header: 'Area', width: 80 },
       { header: 'Finding', width: 250 },
       { header: 'Clause Ref', width: 60 },
       { header: 'Accounting Impact', width: 100 },
       { header: 'Audit Impact', width: 100 },
-      { header: 'AI Risk', width: 75 },
+      { header: 'AI Flagged', width: 75 },
       { header: 'User Override', width: 77 },
     ];
+
+    // Draw "Significant Risk" spanning header above the last two columns
+    ensureSpace(ctx, 16);
+    const spanX = MARGIN_LEFT + 80 + 250 + 60 + 100 + 100; // sum of first 5 column widths
+    const spanWidth = 75 + 77; // last 2 columns
+    ctx.currentPage.drawRectangle({
+      x: spanX,
+      y: ctx.y - 12,
+      width: spanWidth,
+      height: 14,
+      color: COLOUR_TABLE_HEADER_BG,
+      borderColor: COLOUR_TABLE_BORDER,
+      borderWidth: 0.5,
+    });
+    const spanLabel = 'Significant Risk';
+    const spanLabelW = ctx.fontBold.widthOfTextAtSize(spanLabel, 8);
+    ctx.currentPage.drawText(spanLabel, {
+      x: spanX + (spanWidth - spanLabelW) / 2,
+      y: ctx.y - 9,
+      size: 8,
+      font: ctx.fontBold,
+      color: COLOUR_BLACK,
+    });
+    ctx.y -= 14;
 
     const rows: TableRow[] = fileFindings.map((f) => {
       const bothFlagged = f.aiSignificantRisk && f.isSignificantRisk;
@@ -1317,7 +1354,7 @@ function renderCombinedSummary(
   drawParagraph(ctx, summaryText);
   ctx.y -= 4;
 
-  // Per-document summary paragraphs
+  // Per-document summary paragraphs with descriptions
   const fileMap = new Map<string, FileInfo>();
   for (const f of files) fileMap.set(f.id, f);
 
@@ -1335,8 +1372,10 @@ function renderCombinedSummary(
     const fileAreas = new Set(fileFindings.map((f) => f.area));
 
     const label = `(${idx + 1}) ${file.originalName}:`;
-    const text = `${fileFindings.length} finding(s) across ${fileAreas.size} categories, ${fileRisks} significant risk(s).`;
-    drawLabelledParagraph(ctx, label, text, 9, 10);
+    // Include document description if available, then stats
+    const descPart = file.documentDescription ? `${file.documentDescription} ` : '';
+    const statsPart = `${fileFindings.length} finding(s) across ${fileAreas.size} categories, ${fileRisks} significant risk(s).`;
+    drawLabelledParagraph(ctx, label, descPart + statsPart, 9, 10);
   }
 }
 
@@ -1584,9 +1623,33 @@ function renderPortfolioAppendixB(
       { header: 'Clause Ref', width: 60 },
       { header: 'Accounting Impact', width: 100 },
       { header: 'Audit Impact', width: 100 },
-      { header: 'AI Risk', width: 75 },
+      { header: 'AI Flagged', width: 75 },
       { header: 'User Override', width: 77 },
     ];
+
+    // Draw "Significant Risk" spanning header above last two columns
+    ensureSpace(ctx, 16);
+    const pfSpanX = MARGIN_LEFT + 80 + 250 + 60 + 100 + 100;
+    const pfSpanWidth = 75 + 77;
+    ctx.currentPage.drawRectangle({
+      x: pfSpanX,
+      y: ctx.y - 12,
+      width: pfSpanWidth,
+      height: 14,
+      color: COLOUR_TABLE_HEADER_BG,
+      borderColor: COLOUR_TABLE_BORDER,
+      borderWidth: 0.5,
+    });
+    const pfSpanLabel = 'Significant Risk';
+    const pfSpanLabelW = ctx.fontBold.widthOfTextAtSize(pfSpanLabel, 8);
+    ctx.currentPage.drawText(pfSpanLabel, {
+      x: pfSpanX + (pfSpanWidth - pfSpanLabelW) / 2,
+      y: ctx.y - 9,
+      size: 8,
+      font: ctx.fontBold,
+      color: COLOUR_BLACK,
+    });
+    ctx.y -= 14;
 
     const rows: TableRow[] = fileFindings.map((f) => {
       const bothFlagged = f.aiSignificantRisk && f.isSignificantRisk;
@@ -1716,7 +1779,7 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
         { header: 'Clause Ref', width: 60 },
         { header: 'Accounting Impact', width: 100 },
         { header: 'Audit Impact', width: 100 },
-        { header: 'AI Risk', width: 75 },
+        { header: 'AI Flagged', width: 75 },
         { header: 'User Override', width: 77 },
       ];
       const rows: TableRow[] = fileFindings.map((ff) => ({

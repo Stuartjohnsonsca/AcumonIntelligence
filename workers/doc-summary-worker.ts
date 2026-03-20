@@ -230,10 +230,14 @@ async function processFile(
     },
   });
 
-  // 9. Update file status to analysed
+  // 9. Update file status to analysed + save document description
   await prisma.docSummaryFile.update({
     where: { id: fileId },
-    data: { status: 'analysed', pageCount },
+    data: {
+      status: 'analysed',
+      pageCount,
+      documentDescription: analysisResult.documentDescription || null,
+    },
   });
   await setFileStatus(jobId, fileId, 'analysed');
 
