@@ -53,11 +53,12 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { clientId, fileName, fileSize, jobId: existingJobId } = body as {
+    const { clientId, fileName, fileSize, jobId: existingJobId, forceNew } = body as {
       clientId: string;
       fileName: string;
       fileSize: number;
       jobId?: string;
+      forceNew?: boolean;
     };
 
     if (!clientId) return NextResponse.json({ error: 'clientId required' }, { status: 400 });
@@ -81,17 +82,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: access.reason || 'Forbidden' }, { status: 403 });
     }
 
-    // Reuse existing job or find/create one (same logic as upload route)
+    // Reuse existing job or find/create one
+    // forceNew=true skips the lookup so a fresh job is always created
     let job = existingJobId
       ? await prisma.docSummaryJob.findUnique({ where: { id: existingJobId } })
-      : await prisma.docSummaryJob.findFirst({
-          where: {
-            clientId,
-            userId: session.user.id,
-            status: { in: ['pending', 'complete'] },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
+      : forceNew
+        ? null
+        : await prisma.docSummaryJob.findFirst({
+            where: {
+              clientId,
+              userId: session.user.id,
+              status: { in: ['pending', 'complete'] },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
 
     if (!job) {
       const expiresAt = new Date(Date.now() + 121 * 24 * 60 * 60 * 1000);
