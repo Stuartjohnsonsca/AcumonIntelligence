@@ -123,21 +123,14 @@ export async function GET(req: Request) {
 
     if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    // Build file status map from DB
-    const fileStatusMap: Record<string, string> = {};
-    for (const f of job.files) {
-      fileStatusMap[f.id] = f.status;
-    }
-
+    // Return same shape as Redis path — files as array of objects
     return NextResponse.json({
       jobId: job.id,
       status: job.status,
-      totalFiles: job.totalFiles,
-      processedCount: job.processedCount,
-      failedCount: job.failedCount,
-      files: fileStatusMap,
-      // Include full data for DB fallback path
-      fileDetails: job.files,
+      totalFiles: job.files.length,
+      processedCount: job.files.filter(f => f.status === 'analysed').length,
+      failedCount: job.files.filter(f => f.status === 'failed').length,
+      files: job.files,
       findings: job.findings,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,

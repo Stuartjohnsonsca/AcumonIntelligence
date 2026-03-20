@@ -3,7 +3,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload, FileText, Loader2, Download, ChevronLeft, ChevronRight,
-  Mail, CheckCircle2, XCircle, AlertCircle, Search, BookOpen, RefreshCw
+  Mail, CheckCircle2, XCircle, AlertCircle, Search, BookOpen, RefreshCw,
+  Plus, Clock, ChevronDown
 } from 'lucide-react';
 import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
 
@@ -53,6 +54,15 @@ interface StatusResponse {
   status: string;
 }
 
+interface JobSummary {
+  id: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  _count: { files: number; findings: number };
+  files: { originalName: string }[];
+}
+
 interface Props {
   userId: string;
   userName: string;
@@ -98,6 +108,12 @@ export function DocSummaryClient({
   const [emailAddress, setEmailAddress] = useState('');
   const [emailSending, setEmailSending] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+
+  // Job history & session state
+  const [jobHistory, setJobHistory] = useState<JobSummary[]>([]);
+  const [isLoadingJob, setIsLoadingJob] = useState(false);
+  const [forceNewSession, setForceNewSession] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   // Drag state
   const [isDragging, setIsDragging] = useState(false);
@@ -190,6 +206,93 @@ export function DocSummaryClient({
   useEffect(() => {
     return () => stopPolling();
   }, [stopPolling]);
+
+  // ─── Load job by ID (shared by auto-load + history click) ──────────────
+  const loadJob = useCallback(async (jId: string) => {
+    stopPolling();
+    setIsProcessing(false);
+    setError('');
+    setIsLoadingJob(true);
+    try {
+      const res = await fetch(`/api/doc-summary/status?jobId=${encodeURIComponent(jId)}`);
+      if (!res.ok) { setError('Failed to load session'); return; }
+      const data: StatusResponse = await res.json();
+
+      setJobId(data.jobId);
+
+      // Hydrate files
+      const safeFiles = Array.isArray(data.files) ? data.files
+        .map((f: DocFile & { hidden?: boolean }) => ({
+          ...f,
+          errorMessage: f.errorMessage ?? null,
+          status: (['uploading', 'uploaded', 'processing', 'analysed', 'failed'].includes(f.status)
+            ? f.status : 'uploaded') as DocFile['status'],
+        })) : [];
+      setFiles(safeFiles);
+      setHiddenFileIds(new Set(safeFiles.filter((f: DocFile & { hidden?: boolean }) => f.hidden).map((f: DocFile) => f.id)));
+      setActiveDocIndex(0);
+
+      // Hydrate findings
+      const rawFindings = data.findings;
+      if (Array.isArray(rawFindings)) {
+        const grouped: Record<string, Finding[]> = {};
+        for (const f of rawFindings) {
+          if (!grouped[f.fileId]) grouped[f.fileId] = [];
+          grouped[f.fileId].push(f);
+        }
+        setFindings(grouped);
+      }
+
+      // Resume polling if still processing
+      if (data.status === 'processing') {
+        startPolling(data.jobId);
+      }
+    } finally {
+      setIsLoadingJob(false);
+    }
+  }, [stopPolling, startPolling]);
+
+  // ─── Auto-load most recent job when client is selected ─────────────────
+  const fetchJobHistory = useCallback(async (clientId: string) => {
+    try {
+      const res = await fetch(`/api/doc-summary/jobs?clientId=${encodeURIComponent(clientId)}`);
+      if (!res.ok) return [];
+      const jobs: JobSummary[] = await res.json();
+      setJobHistory(jobs);
+      return jobs;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedClient) return;
+    let aborted = false;
+
+    (async () => {
+      // Reset state for new client
+      stopPolling();
+      setJobId(null);
+      setFiles([]);
+      setFindings({});
+      setActiveDocIndex(0);
+      setIsProcessing(false);
+      setError('');
+      setForceNewSession(false);
+
+      const jobs = await fetchJobHistory(selectedClient.id);
+      if (aborted || jobs.length === 0) return;
+
+      // Load most relevant job: processing first, then complete, then most recent
+      const activeJob = jobs.find(j => j.status === 'processing')
+        || jobs.find(j => j.status === 'complete')
+        || jobs[0];
+      if (activeJob) await loadJob(activeJob.id);
+    })();
+
+    return () => { aborted = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClient]);
 
   // ─── Remove file handler ────────────────────────────────────────────────
   const handleRemoveFile = useCallback(async (fileId: string, fileStatus: string) => {
@@ -314,6 +417,7 @@ export function DocSummaryClient({
             fileName: file.name,
             fileSize: file.size,
             jobId: currentJobId ?? undefined,
+            forceNew: !currentJobId && forceNewSession,
           }),
         });
 
@@ -325,7 +429,10 @@ export function DocSummaryClient({
         const { sasUrl, fileId, jobId: returnedJobId } = await urlRes.json();
 
         // Keep jobId consistent across files
-        if (!currentJobId) currentJobId = returnedJobId;
+        if (!currentJobId) {
+          currentJobId = returnedJobId;
+          setForceNewSession(false); // Only needed for first file
+        }
 
         // 2. Upload directly to Azure Blob via SAS URL
         await uploadFileViaSas(file, sasUrl);
@@ -381,6 +488,9 @@ export function DocSummaryClient({
       // Store taskId for polling updates
       bgTaskIdRef.current = taskId;
       startPolling(currentJobId!);
+
+      // Refresh job history to include this new job
+      if (selectedClient) fetchJobHistory(selectedClient.id);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[DocSummary] Upload error:', msg);
@@ -389,7 +499,7 @@ export function DocSummaryClient({
       setIsUploading(false);
       setUploadProgress({});
     }
-  }, [selectedClient, jobId, files, startPolling, addTask, updateTask, handleRemoveFile, uploadFileViaSas, accountingFramework]);
+  }, [selectedClient, jobId, files, startPolling, addTask, updateTask, handleRemoveFile, uploadFileViaSas, accountingFramework, forceNewSession, fetchJobHistory]);
 
   // ─── Risk toggle ─────────────────────────────────────────────────────────
 
@@ -617,11 +727,30 @@ export function DocSummaryClient({
                   stopPolling();
                   setIsProcessing(false);
                   setError('');
+                  setJobHistory([]);
                 }}
                 className="text-xs text-slate-400 hover:text-slate-600 underline"
               >
                 Change
               </button>
+              {jobId && (
+                <button
+                  onClick={() => {
+                    stopPolling();
+                    setJobId(null);
+                    setFiles([]);
+                    setFindings({});
+                    setActiveDocIndex(0);
+                    setIsProcessing(false);
+                    setError('');
+                    setForceNewSession(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New Session
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -855,6 +984,58 @@ export function DocSummaryClient({
                   </div>
                 </div>
               )}
+
+              {/* Previous Sessions */}
+              {jobHistory.length > 1 && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-3">
+                  <button
+                    onClick={() => setShowHistory(!showHistory)}
+                    className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5 text-slate-400" />
+                      <span className="text-xs font-semibold text-slate-600">Previous Sessions</span>
+                      <span className="text-[10px] text-slate-400">({jobHistory.length})</span>
+                    </div>
+                    <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform ${showHistory ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showHistory && (
+                    <div className="border-t border-slate-100 max-h-48 overflow-y-auto">
+                      {jobHistory.map(job => (
+                        <button
+                          key={job.id}
+                          onClick={() => loadJob(job.id)}
+                          className={`w-full text-left px-4 py-2 border-b border-slate-50 hover:bg-slate-50 transition-colors ${
+                            job.id === jobId ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-slate-600">
+                              {new Date(job.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </span>
+                            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
+                              job.status === 'complete' ? 'bg-green-100 text-green-700'
+                              : job.status === 'processing' ? 'bg-blue-100 text-blue-700'
+                              : job.status === 'failed' ? 'bg-red-100 text-red-700'
+                              : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {job.status}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            {job._count.files} file{job._count.files !== 1 ? 's' : ''} &middot; {job._count.findings} finding{job._count.findings !== 1 ? 's' : ''}
+                          </div>
+                          {job.files.length > 0 && (
+                            <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                              {job.files.map(f => f.originalName).join(', ')}
+                            </div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* ─── Center: Results table ───────────────────────────────────── */}
@@ -909,7 +1090,12 @@ export function DocSummaryClient({
                 )}
 
                 {/* Table or empty state */}
-                {visibleFiles.length === 0 ? (
+                {isLoadingJob ? (
+                  <div className="px-5 py-20 text-center">
+                    <Loader2 className="h-8 w-8 mx-auto text-blue-500 animate-spin mb-3" />
+                    <p className="text-sm text-slate-500">Loading session...</p>
+                  </div>
+                ) : visibleFiles.length === 0 ? (
                   <div className="px-5 py-20 text-center">
                     <FileText className="h-10 w-10 mx-auto text-slate-300 mb-3" />
                     <p className="text-sm text-slate-500">Upload and analyse documents to see findings</p>
