@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifySummaryJobAccess } from '@/lib/client-access';
-import { getJobStatus, getFileStatuses } from '@/lib/redis';
+import { getJobStatus, getFileStatuses, getFileProgress } from '@/lib/redis';
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -36,18 +36,49 @@ export async function GET(req: Request) {
     }
 
     if (redisStatus && Object.keys(redisFiles).length > 0) {
-      // Count statuses from Redis file map
-      const fileEntries = Object.entries(redisFiles);
-      const processedCount = fileEntries.filter(([, s]) => s === 'analysed').length;
-      const failedCount = fileEntries.filter(([, s]) => s === 'failed').length;
+      // Get progress data for active files
+      let fileProgress: Record<string, { batchesDone: number; batchesTotal: number; pagesDone: number; pagesTotal: number; message?: string }> = {};
+      try { fileProgress = await getFileProgress(jobId); } catch { /* ignore */ }
+
+      // We need file details from DB to return proper file objects
+      const dbFiles = await prisma.docSummaryFile.findMany({
+        where: { jobId },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, originalName: true, status: true, errorMessage: true },
+      });
+
+      // Override status from Redis (more current)
+      const files = dbFiles.map(f => ({
+        ...f,
+        status: redisFiles[f.id] || f.status,
+        progress: fileProgress[f.id] || null,
+      }));
+
+      const processedCount = files.filter(f => f.status === 'analysed').length;
+      const failedCount = files.filter(f => f.status === 'failed').length;
+
+      // If all done, fetch findings too
+      const allDone = files.every(f => f.status === 'analysed' || f.status === 'failed');
+      let findings: unknown[] = [];
+      if (allDone) {
+        const dbFindings = await prisma.docSummaryFinding.findMany({
+          where: { jobId },
+          orderBy: [{ fileId: 'asc' }, { sortOrder: 'asc' }],
+          select: { id: true, fileId: true, area: true, finding: true, clauseReference: true,
+            isSignificantRisk: true, aiSignificantRisk: true, userResponse: true,
+            addToTesting: true, reviewed: true, sortOrder: true },
+        });
+        findings = dbFindings;
+      }
 
       return NextResponse.json({
         jobId,
         status: redisStatus,
-        totalFiles: fileEntries.length,
+        totalFiles: files.length,
         processedCount,
         failedCount,
-        files: redisFiles,
+        files,
+        findings,
       });
     }
 

@@ -25,7 +25,7 @@ import {
   calculateDocSummaryCost,
 } from '../lib/doc-summary-ai';
 import { getKeyForJob, getDocSummaryKeyConfig, type KeyConfig } from '../lib/ai-key-manager';
-import { setJobStatus, setFileStatus, closeRedis } from '../lib/redis';
+import { setJobStatus, setFileStatus, setFileProgress, closeRedis } from '../lib/redis';
 
 const POLL_INTERVAL_MS = 2000;
 const VISIBILITY_TIMEOUT_SECONDS = 300;
@@ -168,13 +168,27 @@ async function processFile(
       throw new Error(`PDF-to-image conversion failed: ${convMsg}`);
     }
     console.log(`[Worker] Converted PDF to ${pageImages.length} page images`);
+    // Set initial progress
+    await setFileProgress(jobId, fileId, {
+      batchesDone: 0, batchesTotal: Math.ceil(pageImages.length / 5),
+      pagesDone: 0, pagesTotal: pageImages.length,
+      message: 'Analysing pages...',
+    });
+
     analysisResult = await analyseDocumentFromImage(
       pageImages,
       file.originalName,
       clientName,
+      async (batchesDone, batchesTotal, pagesDone, pagesTotal) => {
+        await setFileProgress(jobId, fileId, { batchesDone, batchesTotal, pagesDone, pagesTotal,
+          message: `Analysed ${pagesDone}/${pagesTotal} pages (batch ${batchesDone}/${batchesTotal})`,
+        });
+      },
     );
   } else {
+    await setFileProgress(jobId, fileId, { batchesDone: 0, batchesTotal: 1, pagesDone: 0, pagesTotal: 1, message: 'Analysing text...' });
     analysisResult = await analyseDocumentForAudit(text, file.originalName, clientName);
+    await setFileProgress(jobId, fileId, { batchesDone: 1, batchesTotal: 1, pagesDone: 1, pagesTotal: 1, message: 'Complete' });
   }
 
   // 7. Save findings
