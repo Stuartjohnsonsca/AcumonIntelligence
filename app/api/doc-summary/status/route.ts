@@ -44,7 +44,7 @@ export async function GET(req: Request) {
       const dbFiles = await prisma.docSummaryFile.findMany({
         where: { jobId },
         orderBy: { createdAt: 'asc' },
-        select: { id: true, originalName: true, status: true, errorMessage: true },
+        select: { id: true, originalName: true, status: true, errorMessage: true, hidden: true },
       });
 
       // Override status from Redis (more current)
@@ -95,6 +95,7 @@ export async function GET(req: Request) {
             errorMessage: true,
             pageCount: true,
             fileSize: true,
+            hidden: true,
             createdAt: true,
           },
         },

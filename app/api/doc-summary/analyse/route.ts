@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
   }
 
-  const { jobId } = await req.json();
+  const { jobId, accountingFramework } = await req.json();
   if (!jobId) return NextResponse.json({ error: 'jobId required' }, { status: 400 });
 
   const jobAccess = await verifySummaryJobAccess(
@@ -67,6 +67,7 @@ export async function POST(req: Request) {
         clientName,
         userId,
         clientId,
+        accountingFramework: accountingFramework || 'FRS 102',
       });
     }
 

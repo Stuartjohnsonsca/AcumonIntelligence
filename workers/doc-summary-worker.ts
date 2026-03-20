@@ -66,7 +66,7 @@ async function main(): Promise<void> {
 
       for (const received of messages) {
         const { message, messageId, popReceipt, dequeueCount } = received;
-        const { jobId, fileId, clientName, userId, clientId } = message;
+        const { jobId, fileId, clientName, userId, clientId, accountingFramework } = message;
 
         console.log(
           `[Worker] Processing | jobId=${jobId} fileId=${fileId} dequeueCount=${dequeueCount}`,
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
         }
 
         try {
-          await processFile(jobId, fileId, clientName, userId, clientId, keyConfig);
+          await processFile(jobId, fileId, clientName, userId, clientId, keyConfig, accountingFramework);
           await deleteMessage(QUEUES.DOC_SUMMARY_ANALYSIS, messageId, popReceipt);
           console.log(`[Worker] File complete | jobId=${jobId} fileId=${fileId}`);
         } catch (err) {
@@ -119,6 +119,7 @@ async function processFile(
   userId: string,
   clientId: string,
   keyConfig: KeyConfig,
+  accountingFramework?: string,
 ): Promise<void> {
   // 1. Get the file record
   const file = await prisma.docSummaryFile.findUnique({ where: { id: fileId } });
@@ -184,10 +185,11 @@ async function processFile(
           message: `Analysed ${pagesDone}/${pagesTotal} pages (batch ${batchesDone}/${batchesTotal})`,
         });
       },
+      accountingFramework || 'FRS 102',
     );
   } else {
     await setFileProgress(jobId, fileId, { batchesDone: 0, batchesTotal: 1, pagesDone: 0, pagesTotal: 1, message: 'Analysing text...' });
-    analysisResult = await analyseDocumentForAudit(text, file.originalName, clientName);
+    analysisResult = await analyseDocumentForAudit(text, file.originalName, clientName, accountingFramework || 'FRS 102');
     await setFileProgress(jobId, fileId, { batchesDone: 1, batchesTotal: 1, pagesDone: 1, pagesTotal: 1, message: 'Complete' });
   }
 
@@ -203,6 +205,8 @@ async function processFile(
         clauseReference: finding.clauseReference,
         isSignificantRisk: finding.isSignificantRisk,
         aiSignificantRisk: finding.isSignificantRisk,
+        accountingImpact: finding.accountingImpact || null,
+        auditImpact: finding.auditImpact || null,
         sortOrder: i,
       },
     });
