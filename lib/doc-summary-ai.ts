@@ -131,8 +131,11 @@ function isModelUnavailableError(err: unknown): boolean {
 
 // ─── Prompt ─────────────────────────────────────────────────────────────────
 
-function buildAuditAnalysisPrompt(fileName: string, clientName: string, accountingFramework: string = 'FRS 102'): string {
-  return `You are a senior audit professional analysing a legal or commercial document for audit purposes. The document belongs to the client "${clientName}". The applicable accounting framework is ${accountingFramework}.
+function buildAuditAnalysisPrompt(fileName: string, clientName: string, accountingFramework: string = 'FRS 102', perspective?: string): string {
+  const perspectiveParty = perspective || clientName;
+  return `You are a senior audit professional analysing a legal or commercial document for audit purposes. The document belongs to the client "${clientName}". You MUST analyse this document from the perspective of "${perspectiveParty}". The applicable accounting framework is ${accountingFramework}.
+
+CRITICAL — PERSPECTIVE: All analysis, risk assessment, accounting impact, and audit impact MUST be from the perspective of "${perspectiveParty}". When identifying obligations, risks, and financial impacts, evaluate what they mean for "${perspectiveParty}" specifically — not for the counterparty or any other party to the document.
 
 Analyse this document thoroughly for the following MINIMUM areas:
 1. **Parties** — Identify all parties to the document and their roles
@@ -173,7 +176,7 @@ You MUST assess significant risk from the perspective of an auditor evaluating t
 When in doubt about whether something is a significant risk, ERR ON THE SIDE OF FLAGGING IT. Auditors prefer to assess and dismiss a flagged risk rather than miss one entirely.
 
 ACCOUNTING IMPACT ASSESSMENT (accountingImpact):
-For EACH finding, assess the accounting impact under ${accountingFramework} ONLY from the perspective of the client "${clientName}". Do NOT assess the accounting treatment of any counterparty, landlord, customer, supplier, or other party — only the client's own accounting treatment matters. Reference the relevant clause from the document AND specific sections/paragraphs of ${accountingFramework} where applicable. If a finding has no accounting impact for the client, set accountingImpact to "None".
+For EACH finding, assess the accounting impact under ${accountingFramework} ONLY from the perspective of "${perspectiveParty}". Do NOT assess the accounting treatment of any counterparty, landlord, customer, supplier, or other party — only "${perspectiveParty}"'s own accounting treatment matters. Reference the relevant clause from the document AND specific sections/paragraphs of ${accountingFramework} where applicable. If a finding has no accounting impact for "${perspectiveParty}", set accountingImpact to "None".
 
 AUDIT IMPACT ASSESSMENT (auditImpact):
 For EACH finding, assess the audit impact — what should the auditor do in response to this finding? Reference the relevant clause from the document. If a finding has no audit implications, set auditImpact to "None".
@@ -204,8 +207,9 @@ export async function analyseDocumentForAudit(
   fileName: string,
   clientName: string,
   accountingFramework: string = 'FRS 102',
+  perspective?: string,
 ): Promise<DocSummaryResult> {
-  const prompt = buildAuditAnalysisPrompt(fileName, clientName, accountingFramework);
+  const prompt = buildAuditAnalysisPrompt(fileName, clientName, accountingFramework, perspective);
   const models = [PRIMARY_MODEL, FALLBACK_MODEL];
   let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
   let usedModel = models[0];
@@ -305,6 +309,7 @@ export async function analyseDocumentFromImage(
   clientName: string,
   onBatchProgress?: BatchProgressCallback,
   accountingFramework: string = 'FRS 102',
+  perspective?: string,
 ): Promise<DocSummaryResult> {
   const BATCH_SIZE = 5;
   const allFindings: DocSummaryFinding[] = [];
@@ -321,7 +326,7 @@ export async function analyseDocumentFromImage(
 
     console.log(`[DocSummary:Vision] Processing batch ${batchNum}/${totalBatches} (${pageRange}) | file=${fileName}`);
 
-    const prompt = buildAuditAnalysisPrompt(fileName, clientName, accountingFramework)
+    const prompt = buildAuditAnalysisPrompt(fileName, clientName, accountingFramework, perspective)
       + `\n\nNote: You are analysing ${pageRange} of ${imageDataUris.length} total pages. Extract all findings from these pages.`;
 
     const contentParts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [

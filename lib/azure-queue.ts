@@ -42,6 +42,8 @@ export interface DocSummaryMessage {
   userId: string;
   clientId: string;
   accountingFramework?: string;
+  /** The party whose perspective the analysis should be conducted from (defaults to clientName) */
+  perspective?: string;
 }
 
 export interface PdfGenerationMessage {

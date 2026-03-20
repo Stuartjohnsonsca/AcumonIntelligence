@@ -45,6 +45,8 @@ interface DocFile {
   errorMessage: string | null;
   progress?: FileProgress | null;
   hidden?: boolean;
+  /** The job ID this file belongs to (for cross-session imports) */
+  sourceJobId?: string;
 }
 
 interface StatusResponse {
@@ -114,6 +116,16 @@ export function DocSummaryClient({
   const [isLoadingJob, setIsLoadingJob] = useState(false);
   const [forceNewSession, setForceNewSession] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+
+  // Imported sessions — extra jobIds whose files are merged into current view
+  const [importedJobIds, setImportedJobIds] = useState<Set<string>>(new Set());
+
+  // Perspective state
+  const [perspectiveModalOpen, setPerspectiveModalOpen] = useState(false);
+  const [perspective, setPerspective] = useState('');
+  const [detectedParties, setDetectedParties] = useState<string[]>([]);
+  const [detectingParties, setDetectingParties] = useState(false);
+  const [pendingAnalysisJobId, setPendingAnalysisJobId] = useState<string | null>(null);
 
   // Portfolio modal state
   const [portfolioModalOpen, setPortfolioModalOpen] = useState(false);
@@ -262,6 +274,77 @@ export function DocSummaryClient({
       setIsLoadingJob(false);
     }
   }, [stopPolling, startPolling]);
+
+  // ─── Import job (merge old session docs into current view) ─────────────
+  const importJob = useCallback(async (jId: string) => {
+    // Don't re-import if already loaded
+    if (jId === jobId || importedJobIds.has(jId)) return;
+
+    setIsLoadingJob(true);
+    try {
+      const res = await fetch(`/api/doc-summary/status?jobId=${encodeURIComponent(jId)}`);
+      if (!res.ok) { setError('Failed to import session'); return; }
+      const data: StatusResponse = await res.json();
+
+      // Add sourceJobId to each file so we can track which job it came from
+      const importedFiles = (Array.isArray(data.files) ? data.files : [])
+        .filter((f: DocFile & { hidden?: boolean }) => !f.hidden && f.status !== 'failed')
+        .map((f: DocFile) => ({
+          ...f,
+          errorMessage: f.errorMessage ?? null,
+          status: (['uploading', 'uploaded', 'processing', 'analysed', 'failed'].includes(f.status)
+            ? f.status : 'uploaded') as DocFile['status'],
+          sourceJobId: jId,
+        }));
+
+      // Merge files — append to existing, avoid duplicates by file id
+      setFiles(prev => {
+        const existingIds = new Set(prev.map(f => f.id));
+        const newFiles = importedFiles.filter((f: DocFile) => !existingIds.has(f.id));
+        return [...prev, ...newFiles];
+      });
+
+      // Merge findings
+      if (Array.isArray(data.findings)) {
+        setFindings(prev => {
+          const updated = { ...prev };
+          for (const f of data.findings) {
+            if (!updated[f.fileId]) updated[f.fileId] = [];
+            // Avoid duplicates
+            if (!updated[f.fileId].some(existing => existing.id === f.id)) {
+              updated[f.fileId] = [...updated[f.fileId], f];
+            }
+          }
+          return updated;
+        });
+      }
+
+      // Track this as an imported job
+      setImportedJobIds(prev => new Set([...prev, jId]));
+    } finally {
+      setIsLoadingJob(false);
+    }
+  }, [jobId, importedJobIds]);
+
+  // ─── Remove imported session ───────────────────────────────────────────
+  const removeImportedJob = useCallback((jId: string) => {
+    // Remove files from this job
+    setFiles(prev => prev.filter(f => f.sourceJobId !== jId));
+    // Remove findings for those files
+    setFindings(prev => {
+      const updated = { ...prev };
+      for (const fileId of Object.keys(updated)) {
+        // We can't easily know which fileId belongs to which job, so just remove orphaned findings
+      }
+      return updated;
+    });
+    setImportedJobIds(prev => {
+      const next = new Set(prev);
+      next.delete(jId);
+      return next;
+    });
+    setActiveDocIndex(0);
+  }, []);
 
   // ─── Auto-load most recent job when client is selected ─────────────────
   const fetchJobHistory = useCallback(async (clientId: string) => {
@@ -473,35 +556,31 @@ export function DocSummaryClient({
         return updated;
       });
 
-      // Register background task for status dots
-      const taskId = `doc-summary-${currentJobId}`;
-      addTask({
-        id: taskId,
-        clientName: selectedClient.clientName,
-        activity: 'Document Summary',
-        status: 'running',
-        toolPath: '/tools/doc-summary',
-      });
-
-      // Trigger analysis
-      const analyseRes = await fetch('/api/doc-summary/analyse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: currentJobId, accountingFramework }),
-      });
-
-      if (!analyseRes.ok) {
-        const body = await analyseRes.json().catch(() => null);
-        updateTask(taskId, { status: 'error', error: body?.error || 'Analysis failed' });
-        throw new Error(body?.error || 'Analysis failed to start');
-      }
-
-      // Store taskId for polling updates
-      bgTaskIdRef.current = taskId;
-      startPolling(currentJobId!);
-
       // Refresh job history to include this new job
       if (selectedClient) fetchJobHistory(selectedClient.id);
+
+      // Show perspective selection popup before starting analysis
+      setPendingAnalysisJobId(currentJobId!);
+      setPerspective(selectedClient.clientName); // Default perspective = client name
+      setDetectedParties([]);
+
+      // Auto-detect parties from the first uploaded document
+      setDetectingParties(true);
+      setPerspectiveModalOpen(true);
+      try {
+        const detectRes = await fetch('/api/doc-summary/detect-parties', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId: currentJobId }),
+        });
+        if (detectRes.ok) {
+          const { parties } = await detectRes.json();
+          if (Array.isArray(parties) && parties.length > 0) {
+            setDetectedParties(parties);
+          }
+        }
+      } catch { /* non-fatal */ }
+      setDetectingParties(false);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[DocSummary] Upload error:', msg);
@@ -513,6 +592,51 @@ export function DocSummaryClient({
   }, [selectedClient, jobId, files, startPolling, addTask, updateTask, handleRemoveFile, uploadFileViaSas, accountingFramework, forceNewSession, fetchJobHistory]);
 
   // ─── Risk toggle ─────────────────────────────────────────────────────────
+
+  // ─── Start analysis (called from perspective modal) ─────────────────────
+  const startAnalysis = useCallback(async () => {
+    const analysisJobId = pendingAnalysisJobId;
+    if (!analysisJobId || !selectedClient) return;
+
+    setPerspectiveModalOpen(false);
+
+    // Register background task
+    const taskId = `doc-summary-${analysisJobId}`;
+    addTask({
+      id: taskId,
+      clientName: selectedClient.clientName,
+      activity: 'Document Summary',
+      status: 'running',
+      toolPath: '/tools/doc-summary',
+    });
+
+    try {
+      const analyseRes = await fetch('/api/doc-summary/analyse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: analysisJobId,
+          accountingFramework,
+          perspective: perspective || selectedClient.clientName,
+        }),
+      });
+
+      if (!analyseRes.ok) {
+        const body = await analyseRes.json().catch(() => null);
+        updateTask(taskId, { status: 'error', error: body?.error || 'Analysis failed' });
+        setError(body?.error || 'Analysis failed to start');
+        return;
+      }
+
+      bgTaskIdRef.current = taskId;
+      startPolling(analysisJobId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    }
+
+    setPendingAnalysisJobId(null);
+  }, [pendingAnalysisJobId, selectedClient, accountingFramework, perspective, addTask, updateTask, startPolling]);
 
   const toggleRisk = useCallback(async (findingId: string, currentValue: boolean) => {
     // Optimistic update
@@ -577,9 +701,13 @@ export function DocSummaryClient({
   // ─── Export actions ──────────────────────────────────────────────────────
 
   const downloadPdf = useCallback(async (fileId?: string) => {
-    if (!jobId) return;
+    // Use the file's source job ID if it was imported from another session
+    const fileJobId = fileId
+      ? (files.find(f => f.id === fileId)?.sourceJobId || jobId)
+      : jobId;
+    if (!fileJobId) return;
     try {
-      let url = `/api/doc-summary/export-pdf?jobId=${encodeURIComponent(jobId)}`;
+      let url = `/api/doc-summary/export-pdf?jobId=${encodeURIComponent(fileJobId)}`;
       if (fileId) url += `&fileId=${encodeURIComponent(fileId)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Download failed');
@@ -595,7 +723,7 @@ export function DocSummaryClient({
     } catch {
       setError('Failed to download PDF');
     }
-  }, [jobId]);
+  }, [jobId, files]);
 
   const downloadPortfolio = useCallback(async (selectedFileIds?: string[]) => {
     if (!jobId) return;
@@ -603,10 +731,11 @@ export function DocSummaryClient({
     setPortfolioError('');
     try {
       const url = `/api/doc-summary/export-portfolio?jobId=${encodeURIComponent(jobId)}`;
+      const extraJobIds = Array.from(importedJobIds);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileIds: selectedFileIds }),
+        body: JSON.stringify({ fileIds: selectedFileIds, jobIds: extraJobIds }),
       });
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
@@ -639,6 +768,7 @@ export function DocSummaryClient({
           recipientEmail: portfolioEmailAddr,
           recipientName: portfolioEmailName,
           fileIds: selectedFileIds,
+          jobIds: Array.from(importedJobIds),
         }),
       });
       if (!res.ok) {
@@ -799,6 +929,7 @@ export function DocSummaryClient({
                     setIsProcessing(false);
                     setError('');
                     setForceNewSession(true);
+                    setImportedJobIds(new Set());
                   }}
                   className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
                 >
@@ -1056,37 +1187,61 @@ export function DocSummaryClient({
                   </button>
                   {showHistory && (
                     <div className="border-t border-slate-100 max-h-48 overflow-y-auto">
-                      {jobHistory.map(job => (
-                        <button
-                          key={job.id}
-                          onClick={() => loadJob(job.id)}
-                          className={`w-full text-left px-4 py-2 border-b border-slate-50 hover:bg-slate-50 transition-colors ${
-                            job.id === jobId ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] text-slate-600">
-                              {new Date(job.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                            </span>
-                            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
-                              job.status === 'complete' ? 'bg-green-100 text-green-700'
-                              : job.status === 'processing' ? 'bg-blue-100 text-blue-700'
-                              : job.status === 'failed' ? 'bg-red-100 text-red-700'
-                              : 'bg-slate-100 text-slate-500'
-                            }`}>
-                              {job.status}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            {job._count.files} file{job._count.files !== 1 ? 's' : ''} &middot; {job._count.findings} finding{job._count.findings !== 1 ? 's' : ''}
-                          </div>
-                          {job.files.length > 0 && (
-                            <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {job.files.map(f => f.originalName).join(', ')}
+                      {jobHistory.map(job => {
+                        const isCurrent = job.id === jobId;
+                        const isImported = importedJobIds.has(job.id);
+                        return (
+                          <div
+                            key={job.id}
+                            className={`w-full text-left px-4 py-2 border-b border-slate-50 transition-colors ${
+                              isCurrent ? 'bg-blue-50 border-l-2 border-l-blue-500'
+                              : isImported ? 'bg-green-50 border-l-2 border-l-green-500'
+                              : 'hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-slate-600">
+                                {new Date(job.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {isImported && (
+                                  <button
+                                    onClick={() => removeImportedJob(job.id)}
+                                    className="text-[9px] text-red-500 hover:text-red-700 font-medium"
+                                    title="Remove from current view"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                                <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
+                                  job.status === 'complete' ? 'bg-green-100 text-green-700'
+                                  : job.status === 'processing' ? 'bg-blue-100 text-blue-700'
+                                  : job.status === 'failed' ? 'bg-red-100 text-red-700'
+                                  : 'bg-slate-100 text-slate-500'
+                                }`}>
+                                  {isCurrent ? 'current' : isImported ? 'imported' : job.status}
+                                </span>
+                              </div>
                             </div>
-                          )}
-                        </button>
-                      ))}
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              {job._count.files} file{job._count.files !== 1 ? 's' : ''} &middot; {job._count.findings} finding{job._count.findings !== 1 ? 's' : ''}
+                            </div>
+                            {job.files.length > 0 && (
+                              <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                                {job.files.map(f => f.originalName).join(', ')}
+                              </div>
+                            )}
+                            {!isCurrent && !isImported && job.status === 'complete' && (
+                              <button
+                                onClick={() => importJob(job.id)}
+                                className="mt-1 text-[10px] text-blue-600 hover:text-blue-800 font-medium"
+                              >
+                                + Import into current session
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1480,6 +1635,97 @@ export function DocSummaryClient({
                   Send
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Perspective selection modal ──────────────────────────────────────── */}
+      {perspectiveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-sm mx-4">
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h3 className="text-base font-semibold text-slate-900">Analysis Perspective</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Select the party whose perspective the analysis should be conducted from.
+              </p>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {/* Detected parties */}
+              {detectingParties ? (
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Detecting parties in document...
+                </div>
+              ) : detectedParties.length > 0 ? (
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">
+                    Parties found in document
+                  </label>
+                  <div className="space-y-1.5">
+                    {detectedParties.map((party, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setPerspective(party)}
+                        className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+                          perspective === party
+                            ? 'border-blue-300 bg-blue-50 text-blue-800 font-medium'
+                            : 'border-slate-100 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        {party}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Client name shortcut */}
+              {selectedClient && !detectedParties.includes(selectedClient.clientName) && (
+                <button
+                  onClick={() => setPerspective(selectedClient.clientName)}
+                  className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+                    perspective === selectedClient.clientName
+                      ? 'border-blue-300 bg-blue-50 text-blue-800 font-medium'
+                      : 'border-slate-100 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  {selectedClient.clientName} <span className="text-xs text-slate-400">(client)</span>
+                </button>
+              )}
+
+              {/* Custom input */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">
+                  Or enter a party name
+                </label>
+                <input
+                  type="text"
+                  value={perspective}
+                  onChange={(e) => setPerspective(e.target.value)}
+                  placeholder="Party name..."
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setPerspectiveModalOpen(false);
+                  setPendingAnalysisJobId(null);
+                }}
+                className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={startAnalysis}
+                disabled={!perspective.trim()}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Search className="h-3.5 w-3.5" />
+                Analyse
+              </button>
             </div>
           </div>
         </div>
