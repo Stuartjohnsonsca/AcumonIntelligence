@@ -1,9 +1,20 @@
 import OpenAI from 'openai';
 
-const client = new OpenAI({
-  apiKey: process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY!,
-  baseURL: 'https://api.together.xyz/v1',
-});
+// Lazy-initialised client — reads the current env var on each call.
+// This supports the worker's per-job key rotation (process.env is updated at runtime).
+let _client: OpenAI | null = null;
+let _clientKey: string | undefined;
+
+function getClient(): OpenAI {
+  const key = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
+  if (!key) throw new Error('No Together AI key: set TOGETHER_DOC_SUMMARY_KEY or TOGETHER_API_KEY');
+  // Re-create client if the key changed (multi-key rotation)
+  if (!_client || _clientKey !== key) {
+    _client = new OpenAI({ apiKey: key, baseURL: 'https://api.together.xyz/v1' });
+    _clientKey = key;
+  }
+  return _client;
+}
 
 const PRIMARY_MODEL = 'Qwen/Qwen3.5-397B-A17B';
 const FALLBACK_MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
@@ -204,7 +215,7 @@ export async function analyseDocumentForAudit(
     usedModel = modelId;
     try {
       result = await retryWithBackoff(
-        () => client.chat.completions.create({
+        () => getClient().chat.completions.create({
           model: modelId,
           messages: [
             { role: 'user', content: `${prompt}\n\n--- DOCUMENT TEXT ---\n\n${text}` },
@@ -322,7 +333,7 @@ export async function analyseDocumentFromImage(
     ];
 
     const result = await retryWithBackoff(
-      () => client.chat.completions.create({
+      () => getClient().chat.completions.create({
         model: VISION_MODEL,
         messages: [{ role: 'user', content: contentParts }],
         max_tokens: 16384,
