@@ -1,4 +1,4 @@
-import { PDFDocument, PDFPage, PDFFont, PDFImage, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, PDFPage, PDFFont, PDFImage, StandardFonts, rgb, PDFName } from 'pdf-lib';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -53,6 +53,8 @@ export interface PortfolioPdfParams {
   exportDate: Date;
   /** Files that failed analysis — shown in the Failed Analysis section */
   failedFiles: FailedFileInfo[];
+  /** If provided, only include these file IDs in the report */
+  selectedFileIds?: string[];
 }
 
 export interface FailedFileInfo {
@@ -60,6 +62,16 @@ export interface FailedFileInfo {
   fileSize: number;
   createdAt: string;
   errorMessage: string | null;
+}
+
+/** Metadata for a TOC entry — used to add clickable link annotations after all pages exist */
+interface TocEntryInfo {
+  page: PDFPage;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  sectionName: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +206,10 @@ interface PageContext {
   drawHeaderFooter: boolean;
   /** Whether this is the final (Pass 2) render — only create form fields in Pass 2 */
   isFinalPass: boolean;
+  /** Map of page index (within ctx.pages) → document filename, for portfolio footer */
+  pageDocMap?: Map<number, string>;
+  /** Currently rendering document name — newPage records this into pageDocMap */
+  currentDocName?: string;
 }
 
 function newPage(ctx: PageContext): PDFPage {
@@ -203,6 +219,10 @@ function newPage(ctx: PageContext): PDFPage {
   ctx.y = PAGE_HEIGHT - MARGIN_TOP;
   if (ctx.drawHeaderFooter) {
     drawHeader(page, ctx.font, ctx.firmName, ctx.clientName);
+  }
+  // Track which document this page belongs to (for portfolio footer)
+  if (ctx.currentDocName && ctx.pageDocMap) {
+    ctx.pageDocMap.set(ctx.pages.length - 1, ctx.currentDocName);
   }
   return page;
 }
@@ -225,13 +245,23 @@ function drawHeader(page: PDFPage, font: PDFFont, firmName: string, clientName: 
   });
 }
 
-function drawAllFooters(pages: PDFPage[], font: PDFFont, startIndex: number, logoImage: PDFImage): void {
+function drawAllFooters(
+  pages: PDFPage[],
+  font: PDFFont,
+  startIndex: number,
+  logoImage: PDFImage,
+  /** Optional map of page index (relative to the pages array) → document filename for centre footer */
+  pageDocNames?: Map<number, string>,
+  /** Offset to apply to pageDocNames keys (e.g. number of TOC pages prepended) */
+  docNameOffset?: number,
+): void {
   const total = pages.length;
   // Scale logo to ~15px height
   const logoDims = logoImage.scale(1);
   const logoTargetHeight = 15;
   const logoScale = logoTargetHeight / logoDims.height;
   const logoWidth = logoDims.width * logoScale;
+  const offset = docNameOffset || 0;
 
   for (let i = startIndex; i < total; i++) {
     const page = pages[i];
@@ -242,6 +272,17 @@ function drawAllFooters(pages: PDFPage[], font: PDFFont, startIndex: number, log
       width: logoWidth,
       height: logoTargetHeight,
     });
+
+    // Centre: document name (if available for this page)
+    if (pageDocNames) {
+      const docName = pageDocNames.get(i - offset);
+      if (docName) {
+        const docNameW = font.widthOfTextAtSize(docName, 8);
+        const centerX = (PAGE_WIDTH - docNameW) / 2;
+        page.drawText(docName, { x: centerX, y: FOOTER_Y, size: 8, font, color: COLOUR_GREY });
+      }
+    }
+
     const pageNumText = `Page ${i - startIndex + 1} of ${total - startIndex}`;
     const numW = font.widthOfTextAtSize(pageNumText, 8);
     page.drawText(pageNumText, { x: PAGE_WIDTH - MARGIN_RIGHT - numW, y: FOOTER_Y, size: 8, font, color: COLOUR_GREY });
@@ -912,8 +953,9 @@ function renderTOC(
   sectionPages: Map<string, number>,
   firmName: string,
   clientName: string,
-): PDFPage[] {
+): { pages: PDFPage[]; entries: TocEntryInfo[] } {
   const tocPages: PDFPage[] = [];
+  const entries: TocEntryInfo[] = [];
   const page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   tocPages.push(page);
   drawHeader(page, font, firmName, clientName);
@@ -949,10 +991,20 @@ function renderTOC(
     page.drawText(label, { x: MARGIN_LEFT, y, size: 11, font, color: COLOUR_BLACK });
     page.drawText(dots, { x: MARGIN_LEFT + labelWidth + 4, y, size: 11, font, color: COLOUR_LIGHT_GREY });
     page.drawText(pageNumStr, { x: PAGE_WIDTH - MARGIN_RIGHT - numWidth, y, size: 11, font, color: COLOUR_BLACK });
+
+    entries.push({
+      page,
+      x: MARGIN_LEFT,
+      y: y - 4,
+      width: CONTENT_WIDTH,
+      height: 18,
+      sectionName: section,
+    });
+
     y -= 22;
   }
 
-  return tocPages;
+  return { pages: tocPages, entries };
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,7 +1174,7 @@ export async function generateDocSummaryPdf(params: PdfParams): Promise<Uint8Arr
   renderCoverPage(doc, font, fontBold, params, logoImage);
 
   // 2. TOC page(s)
-  const tocPages = renderTOC(doc, font, fontBold, sectionAbsolutePages, params.firmName, params.clientName);
+  const { pages: tocPages, entries: tocEntries } = renderTOC(doc, font, fontBold, sectionAbsolutePages, params.firmName, params.clientName);
 
   // 3. Content pages
   const ctx: PageContext = {
@@ -1145,6 +1197,9 @@ export async function generateDocSummaryPdf(params: PdfParams): Promise<Uint8Arr
   renderConclusion(ctx);
   renderAppendixA(ctx, files);
   renderAppendixB(ctx, findings, files);
+
+  // 4. Add clickable TOC link annotations
+  addTocLinkAnnotations(doc, tocEntries, sectionStartPage, ctx.pages);
 
   // Draw footers on all numbered pages (TOC + content) with embedded logo
   const allNumberedPages = [...tocPages, ...ctx.pages];
@@ -1263,8 +1318,9 @@ function renderPortfolioTOC(
   firmName: string,
   clientName: string,
   sections: string[],
-): PDFPage[] {
+): { pages: PDFPage[]; entries: TocEntryInfo[] } {
   const tocPages: PDFPage[] = [];
+  const entries: TocEntryInfo[] = [];
   let page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   tocPages.push(page);
   drawHeader(page, font, firmName, clientName);
@@ -1296,10 +1352,21 @@ function renderPortfolioTOC(
     page.drawText(label, { x: MARGIN_LEFT, y, size: 11, font, color: COLOUR_BLACK });
     page.drawText(dots, { x: MARGIN_LEFT + labelWidth + 4, y, size: 11, font, color: COLOUR_LIGHT_GREY });
     page.drawText(pageNumStr, { x: PAGE_WIDTH - MARGIN_RIGHT - numWidth, y, size: 11, font, color: COLOUR_BLACK });
+
+    // Save entry metadata for clickable link annotation
+    entries.push({
+      page,
+      x: MARGIN_LEFT,
+      y: y - 4,          // bottom of clickable area
+      width: CONTENT_WIDTH,
+      height: 18,         // covers the text line
+      sectionName: section,
+    });
+
     y -= 22;
   }
 
-  return tocPages;
+  return { pages: tocPages, entries };
 }
 
 function renderFailedAnalysis(ctx: PageContext, failedFiles: FailedFileInfo[]): void {
@@ -1413,16 +1480,23 @@ function renderCombinedKeyMatters(
 
     const fileIdx = fileIndexMap.get(file.id) || 0;
 
-    // Sub-heading per document
-    ensureSpace(ctx, 40);
-    ctx.currentPage.drawText(`(${fileIdx}) ${file.originalName}`, {
+    // Track document name for footer
+    ctx.currentDocName = file.originalName;
+
+    // Start each document's key matters on a new page with heading
+    newPage(ctx);
+    drawSectionHeading(ctx, file.originalName);
+
+    // Sub-heading with index
+    ensureSpace(ctx, 30);
+    ctx.currentPage.drawText(`Document ${fileIdx} of ${files.length}`, {
       x: MARGIN_LEFT,
       y: ctx.y,
-      size: 13,
-      font: ctx.fontBold,
-      color: COLOUR_BLACK,
+      size: 10,
+      font: ctx.font,
+      color: COLOUR_GREY,
     });
-    ctx.y -= 24;
+    ctx.y -= 20;
 
     for (const rf of fileRisks) {
       ensureSpace(ctx, 100);
@@ -1593,6 +1667,9 @@ function renderCombinedKeyMatters(
 
       ctx.y = checkboxY - 30;
     }
+
+    // Clear document name tracking after this file's section
+    ctx.currentDocName = undefined;
   }
 }
 
@@ -1612,6 +1689,9 @@ function renderPortfolioAppendixB(
   for (const file of files) {
     const fileFindings = grouped.get(file.id);
     if (!fileFindings || fileFindings.length === 0) continue;
+
+    // Track document name for footer
+    ctx.currentDocName = file.originalName;
 
     // Each appendix starts on a new page
     newPage(ctx);
@@ -1677,7 +1757,39 @@ function renderPortfolioAppendixB(
     });
 
     drawTable(ctx, columns, rows);
+    ctx.currentDocName = undefined;
     appendixNum++;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Clickable TOC link helper
+// ---------------------------------------------------------------------------
+
+function addTocLinkAnnotations(
+  doc: PDFDocument,
+  entries: TocEntryInfo[],
+  sectionStartPage: Map<string, number>,
+  contentPages: PDFPage[],
+): void {
+  for (const entry of entries) {
+    const relPage = sectionStartPage.get(entry.sectionName);
+    if (relPage === undefined || relPage < 1) continue;
+    const targetPage = contentPages[relPage - 1];
+    if (!targetPage) continue;
+
+    // Create GoTo link annotation pointing to the target content page
+    const dest = doc.context.obj([targetPage.ref, PDFName.of('Fit')]);
+    const annot = doc.context.register(
+      doc.context.obj({
+        Type: PDFName.of('Annot'),
+        Subtype: PDFName.of('Link'),
+        Rect: [entry.x, entry.y, entry.x + entry.width, entry.y + entry.height],
+        Dest: dest,
+        Border: [0, 0, 0],
+      }),
+    );
+    entry.page.node.addAnnot(annot);
   }
 }
 
@@ -1686,7 +1798,16 @@ function renderPortfolioAppendixB(
 // ---------------------------------------------------------------------------
 
 export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<Uint8Array> {
-  const { findings, files, failedFiles } = params;
+  let { findings, files, failedFiles } = params;
+
+  // If selectedFileIds is provided, filter files and findings
+  if (params.selectedFileIds && params.selectedFileIds.length > 0) {
+    const selectedSet = new Set(params.selectedFileIds);
+    files = files.filter((f) => selectedSet.has(f.id));
+    findings = findings.filter((f) => selectedSet.has(f.fileId));
+    // Only keep failed files that are in the selection (match by name since failed files don't have IDs in the params)
+    // Actually failed files aren't selectable — keep them all for reference
+  }
 
   // Load logo PNG bytes
   const logoPngBytes = loadLogoPngBytes();
@@ -1825,12 +1946,13 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
   renderPortfolioCoverPage(doc, font, fontBold, params, logoImage);
 
   // 2. TOC page(s)
-  const tocPages = renderPortfolioTOC(
+  const { pages: tocPages, entries: tocEntries } = renderPortfolioTOC(
     doc, font, fontBold, sectionAbsolutePages,
     params.firmName, params.clientName, tocSections,
   );
 
-  // 3. Content pages
+  // 3. Content pages — with document name tracking for footers
+  const pageDocMap = new Map<number, string>();
   const ctx: PageContext = {
     doc,
     pages: [],
@@ -1842,6 +1964,7 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
     firmName: params.firmName,
     drawHeaderFooter: true,
     isFinalPass: true,
+    pageDocMap,
   };
 
   renderFailedAnalysis(ctx, failedFiles);
@@ -1853,9 +1976,12 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
   renderAppendixA(ctx, files);
   renderPortfolioAppendixB(ctx, findings, files);
 
-  // Draw footers on all numbered pages (TOC + content) with embedded logo
+  // 4. Add clickable TOC link annotations now that all pages exist
+  addTocLinkAnnotations(doc, tocEntries, sectionStartPage, ctx.pages);
+
+  // 5. Draw footers on all numbered pages (TOC + content) with document names
   const allNumberedPages = [...tocPages, ...ctx.pages];
-  drawAllFooters(allNumberedPages, font, 0, logoImage);
+  drawAllFooters(allNumberedPages, font, 0, logoImage, pageDocMap, tocPages.length);
 
   const pdfBytes = await doc.save();
   return pdfBytes;
