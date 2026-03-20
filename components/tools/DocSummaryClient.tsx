@@ -115,6 +115,17 @@ export function DocSummaryClient({
   const [forceNewSession, setForceNewSession] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
+  // Portfolio modal state
+  const [portfolioModalOpen, setPortfolioModalOpen] = useState(false);
+  const [portfolioSelectedIds, setPortfolioSelectedIds] = useState<Set<string>>(new Set());
+  const [portfolioGenerating, setPortfolioGenerating] = useState(false);
+  const [portfolioEmailMode, setPortfolioEmailMode] = useState(false);
+  const [portfolioEmailName, setPortfolioEmailName] = useState('');
+  const [portfolioEmailAddr, setPortfolioEmailAddr] = useState('');
+  const [portfolioEmailSending, setPortfolioEmailSending] = useState(false);
+  const [portfolioEmailSent, setPortfolioEmailSent] = useState(false);
+  const [portfolioError, setPortfolioError] = useState('');
+
   // Drag state
   const [isDragging, setIsDragging] = useState(false);
 
@@ -586,11 +597,17 @@ export function DocSummaryClient({
     }
   }, [jobId]);
 
-  const downloadPortfolio = useCallback(async () => {
+  const downloadPortfolio = useCallback(async (selectedFileIds?: string[]) => {
     if (!jobId) return;
+    setPortfolioGenerating(true);
+    setPortfolioError('');
     try {
       const url = `/api/doc-summary/export-portfolio?jobId=${encodeURIComponent(jobId)}`;
-      const res = await fetch(url);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds: selectedFileIds }),
+      });
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
@@ -601,10 +618,48 @@ export function DocSummaryClient({
       a.click();
       a.remove();
       URL.revokeObjectURL(blobUrl);
+      setPortfolioModalOpen(false);
     } catch {
-      setError('Failed to download portfolio report');
+      setPortfolioError('Failed to download portfolio report');
+    } finally {
+      setPortfolioGenerating(false);
     }
   }, [jobId]);
+
+  const sendPortfolioEmail = useCallback(async (selectedFileIds?: string[]) => {
+    if (!jobId || !portfolioEmailAddr) return;
+    setPortfolioEmailSending(true);
+    setPortfolioError('');
+    try {
+      const res = await fetch('/api/doc-summary/send-portfolio-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          recipientEmail: portfolioEmailAddr,
+          recipientName: portfolioEmailName,
+          fileIds: selectedFileIds,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || 'Send failed');
+      }
+      setPortfolioEmailSent(true);
+      setTimeout(() => {
+        setPortfolioModalOpen(false);
+        setPortfolioEmailSent(false);
+        setPortfolioEmailMode(false);
+        setPortfolioEmailAddr('');
+        setPortfolioEmailName('');
+        setPortfolioError('');
+      }, 2000);
+    } catch (err) {
+      setPortfolioError(err instanceof Error ? err.message : 'Failed to send email');
+    } finally {
+      setPortfolioEmailSending(false);
+    }
+  }, [jobId, portfolioEmailAddr, portfolioEmailName]);
 
   const [emailError, setEmailError] = useState('');
 
@@ -1246,84 +1301,129 @@ export function DocSummaryClient({
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 z-20">
           <div className="max-w-[1600px] mx-auto flex items-center justify-end gap-3">
             <button
-              onClick={() => downloadPdf()}
-              disabled={!hasAnalysedDocs}
+              onClick={() => activeFile && downloadPdf(activeFile.id)}
+              disabled={!activeFile || activeFile.status !== 'analysed'}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
             >
               <Download className="h-4 w-4" />
               Download PDF
             </button>
             <button
-              onClick={downloadPortfolio}
-              disabled={files.filter(f => f.status === 'analysed').length < 2}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
-            >
-              <BookOpen className="h-4 w-4" />
-              Portfolio Report
-            </button>
-            <button
-              onClick={() => activeFile && downloadPdf(activeFile.id)}
-              disabled={!activeFile || activeFile.status !== 'analysed'}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
-            >
-              <Download className="h-4 w-4" />
-              Download This Document
-            </button>
-            <button
-              onClick={() => setEmailModalOpen(true)}
+              onClick={() => {
+                // Pre-select all analysed files
+                const analysedIds = files.filter(f => f.status === 'analysed').map(f => f.id);
+                setPortfolioSelectedIds(new Set(analysedIds));
+                setPortfolioEmailMode(false);
+                setPortfolioError('');
+                setPortfolioModalOpen(true);
+              }}
               disabled={!hasAnalysedDocs}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
             >
-              <Mail className="h-4 w-4" />
-              Email PDF
+              <BookOpen className="h-4 w-4" />
+              Portfolio Report
             </button>
           </div>
         </div>
       )}
 
-      {/* ─── Email modal ─────────────────────────────────────────────────────── */}
-      {emailModalOpen && (
+      {/* ─── Portfolio Report modal ─────────────────────────────────────────── */}
+      {portfolioModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-sm mx-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md mx-4">
             <div className="px-5 py-4 border-b border-slate-100">
-              <h3 className="text-base font-semibold text-slate-900">Email PDF Report</h3>
+              <h3 className="text-base font-semibold text-slate-900">Portfolio Report</h3>
+              <p className="text-xs text-slate-500 mt-1">Select documents to include in the report</p>
             </div>
-            <div className="px-5 py-4">
-              {emailSent ? (
+            <div className="px-5 py-4 max-h-[50vh] overflow-y-auto">
+              {portfolioEmailSent ? (
                 <div className="flex items-center gap-2 text-green-600 text-sm">
                   <CheckCircle2 className="h-4 w-4" />
                   Email sent successfully
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                      Recipient name
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="John Smith"
-                      value={emailRecipientName}
-                      onChange={e => setEmailRecipientName(e.target.value)}
-                      className="w-full px-3 py-2 h-20 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
+                  {/* Document selection list */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Documents</span>
+                      <button
+                        onClick={() => {
+                          const analysedIds = files.filter(f => f.status === 'analysed').map(f => f.id);
+                          if (portfolioSelectedIds.size === analysedIds.length) {
+                            setPortfolioSelectedIds(new Set());
+                          } else {
+                            setPortfolioSelectedIds(new Set(analysedIds));
+                          }
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        {portfolioSelectedIds.size === files.filter(f => f.status === 'analysed').length
+                          ? 'Deselect All' : 'Select All'}
+                      </button>
+                    </div>
+                    {files.filter(f => f.status === 'analysed').map((f) => (
+                      <label
+                        key={f.id}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+                          portfolioSelectedIds.has(f.id)
+                            ? 'border-blue-200 bg-blue-50'
+                            : 'border-slate-100 bg-slate-50 hover:bg-slate-100'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={portfolioSelectedIds.has(f.id)}
+                          onChange={() => {
+                            setPortfolioSelectedIds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(f.id)) next.delete(f.id);
+                              else next.add(f.id);
+                              return next;
+                            });
+                          }}
+                          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-slate-700 truncate">{f.originalName}</div>
+                          <div className="text-xs text-slate-400">
+                            {(findings[f.id] || []).length} finding(s)
+                          </div>
+                        </div>
+                      </label>
+                    ))}
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                      Recipient email
-                    </label>
-                    <input
-                      type="email"
-                      placeholder="name@example.com"
-                      value={emailAddress}
-                      onChange={e => setEmailAddress(e.target.value)}
-                      className="w-full px-3 py-2 h-20 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  {emailError && (
+
+                  {/* Email fields — shown when user clicks Email */}
+                  {portfolioEmailMode && (
+                    <div className="space-y-3 pt-3 border-t border-slate-100">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Recipient name</label>
+                        <input
+                          type="text"
+                          placeholder="John Smith"
+                          value={portfolioEmailName}
+                          onChange={e => setPortfolioEmailName(e.target.value)}
+                          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Recipient email</label>
+                        <input
+                          type="email"
+                          placeholder="name@example.com"
+                          value={portfolioEmailAddr}
+                          onChange={e => setPortfolioEmailAddr(e.target.value)}
+                          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {portfolioError && (
                     <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                       <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                      <span>{emailError}</span>
+                      <span>{portfolioError}</span>
                     </div>
                   )}
                 </div>
@@ -1332,23 +1432,47 @@ export function DocSummaryClient({
             <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2">
               <button
                 onClick={() => {
-                  setEmailModalOpen(false);
-                  setEmailAddress('');
-                  setEmailRecipientName('');
-                  setEmailSent(false);
-                  setEmailError('');
+                  setPortfolioModalOpen(false);
+                  setPortfolioEmailMode(false);
+                  setPortfolioEmailAddr('');
+                  setPortfolioEmailName('');
+                  setPortfolioError('');
                 }}
                 className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-800 transition-colors"
               >
                 Cancel
               </button>
-              {!emailSent && (
+              {!portfolioEmailSent && !portfolioEmailMode && (
+                <>
+                  <button
+                    onClick={() => setPortfolioEmailMode(true)}
+                    disabled={portfolioSelectedIds.size === 0 || portfolioGenerating}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Mail className="h-3.5 w-3.5" />
+                    Email
+                  </button>
+                  <button
+                    onClick={() => downloadPortfolio(Array.from(portfolioSelectedIds))}
+                    disabled={portfolioSelectedIds.size === 0 || portfolioGenerating}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {portfolioGenerating ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
+                    Download
+                  </button>
+                </>
+              )}
+              {portfolioEmailMode && !portfolioEmailSent && (
                 <button
-                  onClick={sendEmail}
-                  disabled={!emailAddress || emailSending}
+                  onClick={() => sendPortfolioEmail(Array.from(portfolioSelectedIds))}
+                  disabled={!portfolioEmailAddr || portfolioEmailSending || portfolioSelectedIds.size === 0}
                   className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
-                  {emailSending ? (
+                  {portfolioEmailSending ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Mail className="h-3.5 w-3.5" />
