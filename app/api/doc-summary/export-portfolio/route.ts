@@ -40,6 +40,7 @@ export async function GET(req: Request) {
             originalName: true,
             fileSize: true,
             pageCount: true,
+            documentDescription: true,
             status: true,
             errorMessage: true,
             createdAt: true,
@@ -67,6 +68,7 @@ export async function GET(req: Request) {
       originalName: f.originalName,
       fileSize: f.fileSize,
       pageCount: f.pageCount,
+      documentDescription: f.documentDescription || null,
       createdAt: f.createdAt.toISOString(),
       uploadedBy: userName,
     }));

@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload, FileText, Loader2, Download, ChevronLeft, ChevronRight,
-  Mail, CheckCircle2, XCircle, AlertCircle, Search, BookOpen
+  Mail, CheckCircle2, XCircle, AlertCircle, Search, BookOpen, RefreshCw
 } from 'lucide-react';
 import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
 
@@ -25,6 +25,8 @@ interface Finding {
   clauseReference: string | null;
   isSignificantRisk: boolean;
   aiSignificantRisk: boolean;
+  accountingImpact: string | null;
+  auditImpact: string | null;
 }
 
 interface FileProgress {
@@ -105,7 +107,7 @@ export function DocSummaryClient({
 
   // ─── Derived ─────────────────────────────────────────────────────────────
 
-  const visibleFiles = files.filter(f => !hiddenFileIds.has(f.id));
+  const visibleFiles = files.filter(f => !hiddenFileIds.has(f.id) && f.status !== 'failed');
   const activeFile = visibleFiles[activeDocIndex] ?? null;
   const activeFindings = activeFile ? (findings[activeFile.id] ?? []) : [];
   const hasAnalysedDocs = files.some(f => f.status === 'analysed');
@@ -145,7 +147,12 @@ export function DocSummaryClient({
               ? f.status : 'uploaded') as DocFile['status'],
           })) : [];
 
-        if (safeFiles.length > 0) setFiles(safeFiles);
+        if (safeFiles.length > 0) {
+          setFiles(safeFiles);
+          // Clamp activeDocIndex if visible files shrunk (e.g. failed files filtered out)
+          const newVisible = safeFiles.filter(f => f.status !== 'failed' && !f.hidden);
+          setActiveDocIndex(prev => prev >= newVisible.length ? Math.max(0, newVisible.length - 1) : prev);
+        }
 
         // Group findings by fileId (API returns flat array)
         const rawFindings = data.findings;
@@ -339,7 +346,14 @@ export function DocSummaryClient({
       }
 
       setJobId(currentJobId);
-      setFiles(prev => [...prev, ...uploadedFiles]);
+      setFiles(prev => {
+        const updated = [...prev, ...uploadedFiles];
+        // Default to the first newly uploaded file
+        const newVisibleFiles = updated.filter(f => !hiddenFileIds.has(f.id) && f.status !== 'failed');
+        const firstNewIdx = newVisibleFiles.findIndex(f => f.id === uploadedFiles[0]?.id);
+        if (firstNewIdx >= 0) setActiveDocIndex(firstNewIdx);
+        return updated;
+      });
 
       // Register background task for status dots
       const taskId = `doc-summary-${currentJobId}`;
@@ -410,6 +424,34 @@ export function DocSummaryClient({
       });
     }
   }, []);
+
+  // ─── Reprocess handler ──────────────────────────────────────────────────
+
+  const handleReprocess = useCallback(async (fileId: string) => {
+    if (!jobId) return;
+    try {
+      const res = await fetch('/api/doc-summary/reprocess', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId, fileId, accountingFramework }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || 'Reprocess failed');
+      }
+      // Update local state: reset file status to processing, unhide it
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, status: 'processing' as const, errorMessage: null, hidden: false } : f));
+      setHiddenFileIds(prev => { const next = new Set(prev); next.delete(fileId); return next; });
+      // Clear findings for this file
+      setFindings(prev => { const updated = { ...prev }; delete updated[fileId]; return updated; });
+      // Start polling for updates
+      startPolling(jobId);
+      setIsProcessing(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    }
+  }, [jobId, accountingFramework, startPolling]);
 
   // ─── Export actions ──────────────────────────────────────────────────────
 
@@ -549,19 +591,22 @@ export function DocSummaryClient({
           {selectedClient && (
             <div className="flex items-center gap-3">
               <span className="text-sm text-slate-600 font-medium">{selectedClient.clientName}</span>
-              <select
-                value={accountingFramework}
-                onChange={(e) => setAccountingFramework(e.target.value)}
-                className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-              >
-                <option value="IFRS">IFRS</option>
-                <option value="FRS 101">FRS 101</option>
-                <option value="FRS 102">FRS 102</option>
-                <option value="FRS 102 Section 1A">FRS 102 Section 1A</option>
-                <option value="FRS 103">FRS 103</option>
-                <option value="FRS 104">FRS 104</option>
-                <option value="FRS 105">FRS 105</option>
-              </select>
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+                <label className="text-xs font-medium text-slate-500 whitespace-nowrap">Framework:</label>
+                <select
+                  value={accountingFramework}
+                  onChange={(e) => setAccountingFramework(e.target.value)}
+                  className="text-sm font-medium border-0 bg-transparent text-slate-800 focus:outline-none focus:ring-0 cursor-pointer"
+                >
+                  <option value="IFRS">IFRS</option>
+                  <option value="FRS 101">FRS 101</option>
+                  <option value="FRS 102">FRS 102</option>
+                  <option value="FRS 102 Section 1A">FRS 102 Section 1A</option>
+                  <option value="FRS 103">FRS 103</option>
+                  <option value="FRS 104">FRS 104</option>
+                  <option value="FRS 105">FRS 105</option>
+                </select>
+              </div>
               <button
                 onClick={() => {
                   setSelectedClient(null);
@@ -781,10 +826,19 @@ export function DocSummaryClient({
                             )}
                           </span>
                         </button>
+                        {file.status === 'analysed' && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleReprocess(file.id); }}
+                            className="px-1.5 py-1 text-slate-400 hover:text-blue-600 transition-colors flex-shrink-0"
+                            title="Reprocess document"
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); handleRemoveFile(file.id, file.status); }}
-                          className="px-2 py-1 mr-1 text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
-                          title={file.status === 'analysed' || file.status === 'failed' ? 'Hide from list' : 'Remove file'}
+                          className="px-1.5 py-1 mr-1 text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+                          title={file.status === 'analysed' ? 'Hide from list' : 'Remove file'}
                         >
                           <XCircle className="h-3.5 w-3.5" />
                         </button>
@@ -873,11 +927,17 @@ export function DocSummaryClient({
                   <div className="overflow-auto max-h-[calc(100vh-320px)]">
                     <table className="w-full text-sm">
                       <thead className="sticky top-0 z-10">
+                        <tr className="bg-slate-50 border-b border-slate-100">
+                          <th className="text-left px-3 py-1.5 font-semibold text-slate-700" rowSpan={2}>Area</th>
+                          <th className="text-left px-3 py-1.5 font-semibold text-slate-700" rowSpan={2}>Finding</th>
+                          <th className="text-center px-3 py-1.5 font-semibold text-slate-700" rowSpan={2}>Clause Ref</th>
+                          <th className="text-left px-3 py-1.5 font-semibold text-slate-700" rowSpan={2}>Accounting Impact</th>
+                          <th className="text-left px-3 py-1.5 font-semibold text-slate-700" rowSpan={2}>Audit Impact</th>
+                          <th className="text-center px-3 py-1.5 font-semibold text-slate-700 border-b border-slate-200" colSpan={2}>Significant Risk</th>
+                        </tr>
                         <tr className="bg-slate-50 border-b border-slate-200">
-                          <th className="text-left px-4 py-2.5 font-semibold text-slate-700 w-[20%]">Area</th>
-                          <th className="text-left px-4 py-2.5 font-semibold text-slate-700 w-[45%]">Finding</th>
-                          <th className="text-center px-4 py-2.5 font-semibold text-slate-700 w-[15%]">Clause Ref</th>
-                          <th className="text-center px-4 py-2.5 font-semibold text-slate-700 w-[10%]">Significant Risk</th>
+                          <th className="text-center px-2 py-1 text-[10px] font-medium text-slate-500">AI Flagged</th>
+                          <th className="text-center px-2 py-1 text-[10px] font-medium text-slate-500">User Override</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -888,23 +948,25 @@ export function DocSummaryClient({
                               finding.isSignificantRisk ? 'bg-orange-100' : 'hover:bg-slate-50'
                             }`}
                           >
-                            <td className="px-4 py-2.5 text-slate-700 align-top">{finding.area}</td>
-                            <td className="px-4 py-2.5 text-slate-700 align-top whitespace-pre-wrap">{finding.finding}</td>
-                            <td className="px-4 py-2.5 text-slate-500 text-center align-top">{finding.clauseReference || '—'}</td>
-                            <td className="px-4 py-2.5 text-center align-top">
-                              <div className="flex items-center justify-center gap-1">
-                                <input
-                                  type="checkbox"
-                                  checked={finding.isSignificantRisk}
-                                  onChange={() => toggleRisk(finding.id, finding.isSignificantRisk)}
-                                  className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
-                                />
-                                {finding.aiSignificantRisk != null && finding.aiSignificantRisk !== finding.isSignificantRisk && (
-                                  <span className="text-[10px] text-slate-400" title="AI original assessment">
-                                    (AI: {finding.aiSignificantRisk ? 'Yes' : 'No'})
-                                  </span>
-                                )}
-                              </div>
+                            <td className="px-3 py-2 text-slate-700 align-top text-xs w-[12%]">{finding.area}</td>
+                            <td className="px-3 py-2 text-slate-700 align-top whitespace-pre-wrap text-xs w-[25%]">{finding.finding}</td>
+                            <td className="px-3 py-2 text-slate-500 text-center align-top text-xs w-[8%]">{finding.clauseReference || '—'}</td>
+                            <td className="px-3 py-2 text-slate-600 align-top text-xs w-[18%]">{finding.accountingImpact || 'None'}</td>
+                            <td className="px-3 py-2 text-slate-600 align-top text-xs w-[18%]">{finding.auditImpact || 'None'}</td>
+                            <td className="px-3 py-2 text-center align-top w-[5%]">
+                              {finding.aiSignificantRisk != null ? (
+                                <span className={`text-[10px] font-medium ${finding.aiSignificantRisk ? 'text-orange-600' : 'text-slate-400'}`}>
+                                  {finding.aiSignificantRisk ? 'Yes' : 'No'}
+                                </span>
+                              ) : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-center align-top w-[5%]">
+                              <input
+                                type="checkbox"
+                                checked={finding.isSignificantRisk}
+                                onChange={() => toggleRisk(finding.id, finding.isSignificantRisk)}
+                                className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+                              />
                             </td>
                           </tr>
                         ))}

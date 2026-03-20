@@ -66,7 +66,8 @@ export async function GET(req: Request) {
           orderBy: [{ fileId: 'asc' }, { sortOrder: 'asc' }],
           select: { id: true, fileId: true, area: true, finding: true, clauseReference: true,
             isSignificantRisk: true, aiSignificantRisk: true, userResponse: true,
-            addToTesting: true, reviewed: true, sortOrder: true },
+            addToTesting: true, reviewed: true, sortOrder: true,
+            accountingImpact: true, auditImpact: true },
         });
         findings = dbFindings;
       }
@@ -113,6 +114,8 @@ export async function GET(req: Request) {
             addToTesting: true,
             reviewed: true,
             sortOrder: true,
+            accountingImpact: true,
+            auditImpact: true,
           },
         },
       },

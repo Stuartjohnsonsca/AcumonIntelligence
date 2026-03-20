@@ -32,6 +32,7 @@ export interface DocSummaryUsage {
 export interface DocSummaryResult {
   findings: DocSummaryFinding[];
   summary: string;
+  documentDescription: string;
   usage: DocSummaryUsage;
   model: string;
 }
@@ -161,10 +162,10 @@ You MUST assess significant risk from the perspective of an auditor evaluating t
 When in doubt about whether something is a significant risk, ERR ON THE SIDE OF FLAGGING IT. Auditors prefer to assess and dismiss a flagged risk rather than miss one entirely.
 
 ACCOUNTING IMPACT ASSESSMENT (accountingImpact):
-For EACH finding, assess the accounting impact under ${accountingFramework}. Reference specific sections/paragraphs of the framework where applicable. For example: "Under ${accountingFramework}, this lease creates a right-of-use asset and lease liability requiring recognition on the balance sheet" or "Under ${accountingFramework}, this provision requires measurement at the best estimate of the expenditure required to settle the present obligation."
+For EACH finding, assess the accounting impact under ${accountingFramework} ONLY from the perspective of the client "${clientName}". Do NOT assess the accounting treatment of any counterparty, landlord, customer, supplier, or other party — only the client's own accounting treatment matters. Reference the relevant clause from the document AND specific sections/paragraphs of ${accountingFramework} where applicable. If a finding has no accounting impact for the client, set accountingImpact to "None".
 
 AUDIT IMPACT ASSESSMENT (auditImpact):
-For EACH finding, assess the audit impact — what should the auditor do in response to this finding? For example: "Auditor should verify lease liability calculation, test for completeness of lease disclosures under ${accountingFramework}" or "Auditor should obtain management's estimate and assess the reasonableness of key assumptions."
+For EACH finding, assess the audit impact — what should the auditor do in response to this finding? Reference the relevant clause from the document. If a finding has no audit implications, set auditImpact to "None".
 
 File name: ${fileName}
 
@@ -176,11 +177,12 @@ Return ONLY valid JSON with this exact structure:
       "finding": "string — detailed description of the finding",
       "clauseReference": "string — specific clause/section/paragraph reference",
       "isSignificantRisk": false,
-      "accountingImpact": "string — accounting impact under ${accountingFramework}",
-      "auditImpact": "string — recommended audit procedures and considerations"
+      "accountingImpact": "string — accounting impact under ${accountingFramework} from the client's perspective only, or 'None'",
+      "auditImpact": "string — recommended audit procedures and considerations, or 'None'"
     }
   ],
-  "summary": "string — a concise executive summary of the document and its key audit implications (2-4 sentences)"
+  "documentDescription": "string — one or two paragraphs describing what this document is (e.g. 'This is a commercial lease agreement between X and Y for premises at Z, commencing on [date] for a term of [n] years at an annual rent of £[amount].'). This helps the reader understand the type and nature of the contract before reviewing findings.",
+  "summary": "string — a concise executive summary of the key audit implications (2-4 sentences, separate from the document description)"
 }`;
 }
 
@@ -266,6 +268,7 @@ export async function analyseDocumentForAudit(
     return {
       findings,
       summary: String(parsed.summary || ''),
+      documentDescription: String(parsed.documentDescription || ''),
       usage,
       model: usedModel,
     };
@@ -295,6 +298,7 @@ export async function analyseDocumentFromImage(
   const BATCH_SIZE = 5;
   const allFindings: DocSummaryFinding[] = [];
   const summaries: string[] = [];
+  const descriptions: string[] = [];
   const totalUsage: DocSummaryUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   // Process pages in batches to avoid request size limits
@@ -354,6 +358,7 @@ export async function analyseDocumentFromImage(
         }
       }
       if (parsed.summary) summaries.push(String(parsed.summary));
+      if (parsed.documentDescription) descriptions.push(String(parsed.documentDescription));
     } catch {
       console.error(`[DocSummary:Vision] JSON parse failed batch ${batchNum} | file=${fileName} | snippet="${responseText.substring(0, 200)}"`);
       // Continue with other batches rather than failing entirely
@@ -372,5 +377,6 @@ export async function analyseDocumentFromImage(
   });
 
   const combinedSummary = summaries.join(' ').trim();
-  return { findings: uniqueFindings, summary: combinedSummary, usage: totalUsage, model: VISION_MODEL };
+  const combinedDescription = descriptions.join(' ').trim();
+  return { findings: uniqueFindings, summary: combinedSummary, documentDescription: combinedDescription, usage: totalUsage, model: VISION_MODEL };
 }

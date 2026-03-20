@@ -46,6 +46,7 @@ export async function POST(req: Request) {
             originalName: true,
             fileSize: true,
             pageCount: true,
+            documentDescription: true,
             createdAt: true,
           },
         },
@@ -68,6 +69,7 @@ export async function POST(req: Request) {
       originalName: f.originalName,
       fileSize: f.fileSize,
       pageCount: f.pageCount,
+      documentDescription: f.documentDescription || null,
       createdAt: f.createdAt.toISOString(),
       uploadedBy: userName,
     }));

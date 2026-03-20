@@ -441,9 +441,10 @@ model DocSummaryFile {
   mimeType      String    @map("mime_type")
   status        String    @default("uploaded") // uploaded | processing | analysed | failed
   errorMessage  String?   @map("error_message")
-  pageCount     Int?      @map("page_count")
-  hidden        Boolean   @default(false)
-  createdAt     DateTime  @default(now()) @map("created_at")
+  pageCount            Int?      @map("page_count")
+  hidden               Boolean   @default(false)
+  documentDescription  String?   @map("document_description") @db.Text
+  createdAt            DateTime  @default(now()) @map("created_at")
 
   job      DocSummaryJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
   findings DocSummaryFinding[]
