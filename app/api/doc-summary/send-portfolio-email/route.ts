@@ -24,6 +24,7 @@ export async function POST(req: Request) {
     recipientEmail?: string;
     recipientName?: string;
     fileIds?: string[];
+    jobIds?: string[];
   };
   try {
     body = await req.json();
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { jobId, recipientEmail, recipientName, fileIds } = body;
+  const { jobId, recipientEmail, recipientName, fileIds, jobIds: extraJobIds } = body;
   if (!jobId) return NextResponse.json({ error: 'jobId required' }, { status: 400 });
   if (!recipientEmail) return NextResponse.json({ error: 'recipientEmail required' }, { status: 400 });
 
@@ -44,80 +45,85 @@ export async function POST(req: Request) {
   }
 
   try {
-    const job = await prisma.docSummaryJob.findUnique({
-      where: { id: jobId },
-      include: {
-        client: { select: { clientName: true } },
-        user: { select: { name: true, firm: { select: { name: true } } } },
-        files: {
-          orderBy: { createdAt: 'asc' },
-          select: {
-            id: true,
-            originalName: true,
-            fileSize: true,
-            pageCount: true,
-            documentDescription: true,
-            status: true,
-            errorMessage: true,
-            createdAt: true,
+    // Collect all job IDs (primary + imported)
+    const allJobIds = [jobId, ...(extraJobIds || [])];
+    const uniqueJobIds = [...new Set(allJobIds)];
+
+    // Verify access to all jobs
+    for (const jid of uniqueJobIds.slice(1)) {
+      const access = await verifySummaryJobAccess(
+        session.user as { id: string; firmId: string; isSuperAdmin?: boolean },
+        jid,
+      );
+      if (!access.allowed) {
+        return NextResponse.json({ error: `Forbidden: ${access.reason}` }, { status: 403 });
+      }
+    }
+
+    const jobs = await Promise.all(
+      uniqueJobIds.map((jid) =>
+        prisma.docSummaryJob.findUnique({
+          where: { id: jid },
+          include: {
+            client: { select: { clientName: true } },
+            user: { select: { name: true, firm: { select: { name: true } } } },
+            files: {
+              orderBy: { createdAt: 'asc' },
+              select: {
+                id: true, originalName: true, fileSize: true, pageCount: true,
+                documentDescription: true, status: true, errorMessage: true, createdAt: true,
+              },
+            },
+            findings: { orderBy: [{ fileId: 'asc' }, { sortOrder: 'asc' }] },
           },
-        },
-        findings: {
-          orderBy: [{ fileId: 'asc' }, { sortOrder: 'asc' }],
-        },
-      },
-    });
+        }),
+      ),
+    );
 
-    if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const primaryJob = jobs[0];
+    if (!primaryJob) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    const clientName = job.client.clientName;
-    const firmName = job.user.firm.name;
-    const userName = job.user.name;
+    const clientName = primaryJob.client.clientName;
+    const firmName = primaryJob.user.firm.name;
+    const userName = primaryJob.user.name;
     const exportDate = new Date();
 
-    // Separate analysed files from failed files
-    const analysedDbFiles = job.files.filter((f) => f.status === 'analysed');
-    const failedDbFiles = job.files.filter((f) => f.status === 'failed');
+    // Merge files and findings from all jobs
+    const files: FileInfo[] = [];
+    const failedFiles: FailedFileInfo[] = [];
+    const findings: Finding[] = [];
 
-    const files: FileInfo[] = analysedDbFiles.map((f) => ({
-      id: f.id,
-      originalName: f.originalName,
-      fileSize: f.fileSize,
-      pageCount: f.pageCount,
-      documentDescription: f.documentDescription || null,
-      createdAt: f.createdAt.toISOString(),
-      uploadedBy: userName,
-    }));
+    for (const job of jobs) {
+      if (!job) continue;
+      const fnMap = new Map(job.files.map((f) => [f.id, f.originalName]));
+      const analysed = job.files.filter((f) => f.status === 'analysed');
+      const failed = job.files.filter((f) => f.status === 'failed');
+      for (const f of analysed) {
+        files.push({
+          id: f.id, originalName: f.originalName, fileSize: f.fileSize,
+          pageCount: f.pageCount, documentDescription: f.documentDescription || null,
+          createdAt: f.createdAt.toISOString(), uploadedBy: userName,
+        });
+      }
+      for (const f of failed) {
+        failedFiles.push({
+          originalName: f.originalName, fileSize: f.fileSize,
+          createdAt: f.createdAt.toISOString(), errorMessage: f.errorMessage,
+        });
+      }
+      const analysedIds = new Set(analysed.map((f) => f.id));
+      for (const f of job.findings) {
+        if (!analysedIds.has(f.fileId)) continue;
+        findings.push({
+          id: f.id, area: f.area, finding: f.finding, clauseReference: f.clauseReference,
+          isSignificantRisk: f.isSignificantRisk, aiSignificantRisk: f.aiSignificantRisk,
+          userResponse: f.userResponse, addToTesting: f.addToTesting, reviewed: f.reviewed,
+          fileId: f.fileId, fileName: fnMap.get(f.fileId) || 'Unknown',
+          accountingImpact: f.accountingImpact ?? null, auditImpact: f.auditImpact ?? null,
+        });
+      }
+    }
 
-    const failedFiles: FailedFileInfo[] = failedDbFiles.map((f) => ({
-      originalName: f.originalName,
-      fileSize: f.fileSize,
-      createdAt: f.createdAt.toISOString(),
-      errorMessage: f.errorMessage,
-    }));
-
-    const fileNameMap = new Map(job.files.map((f) => [f.id, f.originalName]));
-    const analysedFileIds = new Set(analysedDbFiles.map((f) => f.id));
-
-    const findings: Finding[] = job.findings
-      .filter((f) => analysedFileIds.has(f.fileId))
-      .map((f) => ({
-        id: f.id,
-        area: f.area,
-        finding: f.finding,
-        clauseReference: f.clauseReference,
-        isSignificantRisk: f.isSignificantRisk,
-        aiSignificantRisk: f.aiSignificantRisk,
-        userResponse: f.userResponse,
-        addToTesting: f.addToTesting,
-        reviewed: f.reviewed,
-        fileId: f.fileId,
-        fileName: fileNameMap.get(f.fileId) || 'Unknown',
-        accountingImpact: f.accountingImpact ?? null,
-        auditImpact: f.auditImpact ?? null,
-      }));
-
-    // Generate portfolio PDF with optional file selection
     const pdfBytes = await generatePortfolioPdf({
       jobId,
       findings,
@@ -179,7 +185,7 @@ export async function POST(req: Request) {
     logActivity({
       userId: session.user.id,
       firmId: (session.user as { firmId?: string }).firmId,
-      clientId: job.clientId,
+      clientId: primaryJob.clientId,
       action: 'send_portfolio_email',
       tool: 'doc-summary',
       detail: { jobId, recipient: recipientEmail, fileIds },
