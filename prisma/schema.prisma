@@ -40,14 +40,15 @@ model User {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  firm                  Firm                   @relation(fields: [firmId], references: [id])
-  twoFactorCodes        TwoFactorCode[]
-  clientAssignments     UserClientAssignment[]
-  purchasedSubscriptions Subscription[]
-  extractionJobs        ExtractionJob[]
-  managedClients        Client[]               @relation("PortfolioManagerClients")
-  docSummaryJobs        DocSummaryJob[]
-  activityLogs          ActivityLog[]
+  firm                       Firm                       @relation(fields: [firmId], references: [id])
+  twoFactorCodes             TwoFactorCode[]
+  clientAssignments          UserClientAssignment[]
+  purchasedSubscriptions     Subscription[]
+  extractionJobs             ExtractionJob[]
+  managedClients             Client[]                   @relation("PortfolioManagerClients")
+  docSummaryJobs             DocSummaryJob[]
+  activityLogs               ActivityLog[]
+  periodProductAssignments   PeriodProductAssignment[]
 
   @@map("users")
 }
@@ -97,6 +98,7 @@ model Client {
   contactEmail        String?  @map("contact_email")
   portfolioManagerId  String?  @map("portfolio_manager_id")
   isActive            Boolean  @default(true) @map("is_active")
+  readOnly            Boolean  @default(false) @map("read_only")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
@@ -110,6 +112,7 @@ model Client {
   xeroAuthRequests       XeroAuthRequest[]
   aiUsage                AiUsage[]
   docSummaryJobs         DocSummaryJob[]
+  periods                ClientPeriod[]
 
   @@map("clients")
 }
@@ -476,6 +479,38 @@ model DocSummaryFinding {
   @@index([jobId])
   @@index([fileId])
   @@map("doc_summary_findings")
+}
+
+// ─── Client Periods & Product Assignments ────────────────────────────────
+
+model ClientPeriod {
+  id        String   @id @default(uuid())
+  clientId  String   @map("client_id")
+  startDate DateTime @map("start_date")
+  endDate   DateTime @map("end_date")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  client             Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  productAssignments PeriodProductAssignment[]
+
+  @@unique([clientId, startDate])
+  @@map("client_periods")
+}
+
+model PeriodProductAssignment {
+  id         String   @id @default(uuid())
+  periodId   String   @map("period_id")
+  productKey String   @map("product_key")
+  category   String
+  userId     String   @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  period ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([periodId, productKey, userId])
+  @@map("period_product_assignments")
 }
 
 // ─── Activity & Error Logging ───────────────────────────────────────────────
