@@ -54,6 +54,34 @@ export async function getFileStatuses(jobId: string): Promise<Record<string, str
   return r.hgetall(`job:${jobId}:files`);
 }
 
+export async function setFileProgress(jobId: string, fileId: string, progress: {
+  batchesDone: number;
+  batchesTotal: number;
+  pagesDone: number;
+  pagesTotal: number;
+  message?: string;
+}): Promise<void> {
+  const r = getRedis();
+  await r.hset(`job:${jobId}:progress`, fileId, JSON.stringify(progress));
+  await r.expire(`job:${jobId}:progress`, 86400);
+}
+
+export async function getFileProgress(jobId: string): Promise<Record<string, {
+  batchesDone: number;
+  batchesTotal: number;
+  pagesDone: number;
+  pagesTotal: number;
+  message?: string;
+}>> {
+  const r = getRedis();
+  const raw = await r.hgetall(`job:${jobId}:progress`);
+  const result: Record<string, { batchesDone: number; batchesTotal: number; pagesDone: number; pagesTotal: number; message?: string }> = {};
+  for (const [fId, json] of Object.entries(raw)) {
+    try { result[fId] = JSON.parse(json); } catch { /* skip */ }
+  }
+  return result;
+}
+
 // ─── AI Key Management ───────────────────────────────────────────────────────
 
 export async function assignKeyToJob(jobId: string, keyIndex: number): Promise<void> {

@@ -270,10 +270,13 @@ export async function analyseDocumentForAudit(
 
 const VISION_MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
 
+export type BatchProgressCallback = (batchesDone: number, batchesTotal: number, pagesDone: number, pagesTotal: number) => void;
+
 export async function analyseDocumentFromImage(
   imageDataUris: string[],
   fileName: string,
   clientName: string,
+  onBatchProgress?: BatchProgressCallback,
 ): Promise<DocSummaryResult> {
   const BATCH_SIZE = 5;
   const allFindings: DocSummaryFinding[] = [];
@@ -312,6 +315,11 @@ export async function analyseDocumentFromImage(
     totalUsage.promptTokens += result.usage?.prompt_tokens ?? 0;
     totalUsage.completionTokens += result.usage?.completion_tokens ?? 0;
     totalUsage.totalTokens += result.usage?.total_tokens ?? 0;
+
+    // Report progress
+    if (onBatchProgress) {
+      onBatchProgress(batchNum, totalBatches, Math.min(i + BATCH_SIZE, imageDataUris.length), imageDataUris.length);
+    }
 
     const responseText = result.choices[0]?.message?.content || '';
     const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/) || responseText.match(/(\{[\s\S]*\})/);

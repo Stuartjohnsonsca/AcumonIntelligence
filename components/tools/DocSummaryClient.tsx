@@ -27,11 +27,20 @@ interface Finding {
   aiSignificantRisk: boolean;
 }
 
+interface FileProgress {
+  batchesDone: number;
+  batchesTotal: number;
+  pagesDone: number;
+  pagesTotal: number;
+  message?: string;
+}
+
 interface DocFile {
   id: string;
   originalName: string;
   status: 'uploading' | 'uploaded' | 'processing' | 'analysed' | 'failed';
   errorMessage: string | null;
+  progress?: FileProgress | null;
 }
 
 interface StatusResponse {
@@ -726,6 +735,21 @@ export function DocSummaryClient({
                           {fileStatusIcon(file.status)}
                           <span className="text-xs text-slate-700 truncate flex-1" title={file.originalName}>
                             {file.originalName}
+                            {file.status === 'processing' && file.progress && (
+                              <span className="block mt-1">
+                                <span className="flex items-center gap-1.5">
+                                  <span className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                    <span
+                                      className="block h-full bg-orange-400 rounded-full transition-all duration-500"
+                                      style={{ width: `${file.progress.batchesTotal > 0 ? Math.round((file.progress.batchesDone / file.progress.batchesTotal) * 100) : 0}%` }}
+                                    />
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 whitespace-nowrap">
+                                    {file.progress.pagesDone}/{file.progress.pagesTotal} pages
+                                  </span>
+                                </span>
+                              </span>
+                            )}
                           </span>
                         </button>
                         <button
