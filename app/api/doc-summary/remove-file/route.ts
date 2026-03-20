@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { fileId } = await req.json();
+    const { fileId, hide } = await req.json();
     if (!fileId) return NextResponse.json({ error: 'fileId required' }, { status: 400 });
 
     // Get the file and verify ownership via job
@@ -22,6 +22,15 @@ export async function POST(req: Request) {
     if (!file) return NextResponse.json({ error: 'File not found' }, { status: 404 });
     if (file.job.userId !== session.user.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    // Hide mode: mark file as hidden in DB (for analysed/failed files)
+    if (hide) {
+      await prisma.docSummaryFile.update({
+        where: { id: fileId },
+        data: { hidden: true },
+      });
+      return NextResponse.json({ ok: true });
     }
 
     // Only allow deletion if file hasn't been analysed

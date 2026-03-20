@@ -19,6 +19,8 @@ export interface DocSummaryFinding {
   finding: string;
   clauseReference: string;
   isSignificantRisk: boolean;
+  accountingImpact?: string;
+  auditImpact?: string;
 }
 
 export interface DocSummaryUsage {
@@ -117,8 +119,8 @@ function isModelUnavailableError(err: unknown): boolean {
 
 // ─── Prompt ─────────────────────────────────────────────────────────────────
 
-function buildAuditAnalysisPrompt(fileName: string, clientName: string): string {
-  return `You are a senior audit professional analysing a legal or commercial document for audit purposes. The document belongs to the client "${clientName}".
+function buildAuditAnalysisPrompt(fileName: string, clientName: string, accountingFramework: string = 'FRS 102'): string {
+  return `You are a senior audit professional analysing a legal or commercial document for audit purposes. The document belongs to the client "${clientName}". The applicable accounting framework is ${accountingFramework}.
 
 Analyse this document thoroughly for the following MINIMUM areas:
 1. **Parties** — Identify all parties to the document and their roles
@@ -158,6 +160,12 @@ You MUST assess significant risk from the perspective of an auditor evaluating t
 - Has **vacant possession, surrender, or reinstatement obligations** — these are almost always significant risks as the cost is uncertain and potentially material
 When in doubt about whether something is a significant risk, ERR ON THE SIDE OF FLAGGING IT. Auditors prefer to assess and dismiss a flagged risk rather than miss one entirely.
 
+ACCOUNTING IMPACT ASSESSMENT (accountingImpact):
+For EACH finding, assess the accounting impact under ${accountingFramework}. Reference specific sections/paragraphs of the framework where applicable. For example: "Under ${accountingFramework}, this lease creates a right-of-use asset and lease liability requiring recognition on the balance sheet" or "Under ${accountingFramework}, this provision requires measurement at the best estimate of the expenditure required to settle the present obligation."
+
+AUDIT IMPACT ASSESSMENT (auditImpact):
+For EACH finding, assess the audit impact — what should the auditor do in response to this finding? For example: "Auditor should verify lease liability calculation, test for completeness of lease disclosures under ${accountingFramework}" or "Auditor should obtain management's estimate and assess the reasonableness of key assumptions."
+
 File name: ${fileName}
 
 Return ONLY valid JSON with this exact structure:
@@ -167,7 +175,9 @@ Return ONLY valid JSON with this exact structure:
       "area": "string — the analysis area (e.g. 'Parties', 'Risks for each party', or your own identified area)",
       "finding": "string — detailed description of the finding",
       "clauseReference": "string — specific clause/section/paragraph reference",
-      "isSignificantRisk": false
+      "isSignificantRisk": false,
+      "accountingImpact": "string — accounting impact under ${accountingFramework}",
+      "auditImpact": "string — recommended audit procedures and considerations"
     }
   ],
   "summary": "string — a concise executive summary of the document and its key audit implications (2-4 sentences)"
@@ -180,8 +190,9 @@ export async function analyseDocumentForAudit(
   text: string,
   fileName: string,
   clientName: string,
+  accountingFramework: string = 'FRS 102',
 ): Promise<DocSummaryResult> {
-  const prompt = buildAuditAnalysisPrompt(fileName, clientName);
+  const prompt = buildAuditAnalysisPrompt(fileName, clientName, accountingFramework);
   const models = [PRIMARY_MODEL, FALLBACK_MODEL];
   let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
   let usedModel = models[0];
@@ -242,6 +253,8 @@ export async function analyseDocumentForAudit(
           finding: String(f.finding || ''),
           clauseReference: String(f.clauseReference || 'Not specified'),
           isSignificantRisk: Boolean(f.isSignificantRisk),
+          accountingImpact: String(f.accountingImpact || ''),
+          auditImpact: String(f.auditImpact || ''),
         }))
       : [];
 
@@ -277,6 +290,7 @@ export async function analyseDocumentFromImage(
   fileName: string,
   clientName: string,
   onBatchProgress?: BatchProgressCallback,
+  accountingFramework: string = 'FRS 102',
 ): Promise<DocSummaryResult> {
   const BATCH_SIZE = 5;
   const allFindings: DocSummaryFinding[] = [];
@@ -292,7 +306,7 @@ export async function analyseDocumentFromImage(
 
     console.log(`[DocSummary:Vision] Processing batch ${batchNum}/${totalBatches} (${pageRange}) | file=${fileName}`);
 
-    const prompt = buildAuditAnalysisPrompt(fileName, clientName)
+    const prompt = buildAuditAnalysisPrompt(fileName, clientName, accountingFramework)
       + `\n\nNote: You are analysing ${pageRange} of ${imageDataUris.length} total pages. Extract all findings from these pages.`;
 
     const contentParts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
@@ -334,6 +348,8 @@ export async function analyseDocumentFromImage(
             finding: String(f.finding || ''),
             clauseReference: String(f.clauseReference || 'Not specified'),
             isSignificantRisk: Boolean(f.isSignificantRisk),
+            accountingImpact: String(f.accountingImpact || ''),
+            auditImpact: String(f.auditImpact || ''),
           });
         }
       }

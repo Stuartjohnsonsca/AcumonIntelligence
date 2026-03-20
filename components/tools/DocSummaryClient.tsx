@@ -41,6 +41,7 @@ interface DocFile {
   status: 'uploading' | 'uploaded' | 'processing' | 'analysed' | 'failed';
   errorMessage: string | null;
   progress?: FileProgress | null;
+  hidden?: boolean;
 }
 
 interface StatusResponse {
@@ -78,6 +79,9 @@ export function DocSummaryClient({
   const [hiddenFileIds, setHiddenFileIds] = useState<Set<string>>(new Set());
   const [findings, setFindings] = useState<Record<string, Finding[]>>({});
   const [activeDocIndex, setActiveDocIndex] = useState(0);
+
+  // Accounting framework
+  const [accountingFramework, setAccountingFramework] = useState('FRS 102');
 
   // Upload / processing state
   const [isUploading, setIsUploading] = useState(false);
@@ -132,12 +136,14 @@ export function DocSummaryClient({
         if (!res.ok) return;
         const data: StatusResponse = await res.json();
 
-        const safeFiles = Array.isArray(data.files) ? data.files.map(f => ({
-          ...f,
-          errorMessage: f.errorMessage ?? null,
-          status: (['uploading', 'uploaded', 'processing', 'analysed', 'failed'].includes(f.status)
-            ? f.status : 'uploaded') as DocFile['status'],
-        })) : [];
+        const safeFiles = Array.isArray(data.files) ? data.files
+          .filter((f: DocFile & { hidden?: boolean }) => !f.hidden)
+          .map(f => ({
+            ...f,
+            errorMessage: f.errorMessage ?? null,
+            status: (['uploading', 'uploaded', 'processing', 'analysed', 'failed'].includes(f.status)
+              ? f.status : 'uploaded') as DocFile['status'],
+          })) : [];
 
         if (safeFiles.length > 0) setFiles(safeFiles);
 
@@ -181,12 +187,22 @@ export function DocSummaryClient({
   // ─── Remove file handler ────────────────────────────────────────────────
   const handleRemoveFile = useCallback(async (fileId: string, fileStatus: string) => {
     if (fileStatus === 'analysed' || fileStatus === 'failed') {
-      // Already processed — just hide from view, keep findings/data intact
+      // Already processed — hide from view via API (persists in DB) + local state
       setHiddenFileIds(prev => new Set(prev).add(fileId));
       // Adjust active index if needed
       const visibleAfter = files.filter(f => !hiddenFileIds.has(f.id) && f.id !== fileId);
       if (activeDocIndex >= visibleAfter.length) {
         setActiveDocIndex(Math.max(0, visibleAfter.length - 1));
+      }
+      // Persist hide in DB
+      try {
+        await fetch('/api/doc-summary/remove-file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileId, hide: true }),
+        });
+      } catch {
+        // Silent fail — local hide still applies for this session
       }
     } else {
       // Not yet analysed — actually delete from DB and blob
@@ -339,7 +355,7 @@ export function DocSummaryClient({
       const analyseRes = await fetch('/api/doc-summary/analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: currentJobId }),
+        body: JSON.stringify({ jobId: currentJobId, accountingFramework }),
       });
 
       if (!analyseRes.ok) {
@@ -359,7 +375,7 @@ export function DocSummaryClient({
       setIsUploading(false);
       setUploadProgress({});
     }
-  }, [selectedClient, jobId, files, startPolling, addTask, updateTask, handleRemoveFile, uploadFileViaSas]);
+  }, [selectedClient, jobId, files, startPolling, addTask, updateTask, handleRemoveFile, uploadFileViaSas, accountingFramework]);
 
   // ─── Risk toggle ─────────────────────────────────────────────────────────
 
@@ -531,8 +547,21 @@ export function DocSummaryClient({
             </p>
           </div>
           {selectedClient && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <span className="text-sm text-slate-600 font-medium">{selectedClient.clientName}</span>
+              <select
+                value={accountingFramework}
+                onChange={(e) => setAccountingFramework(e.target.value)}
+                className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              >
+                <option value="IFRS">IFRS</option>
+                <option value="FRS 101">FRS 101</option>
+                <option value="FRS 102">FRS 102</option>
+                <option value="FRS 102 Section 1A">FRS 102 Section 1A</option>
+                <option value="FRS 103">FRS 103</option>
+                <option value="FRS 104">FRS 104</option>
+                <option value="FRS 105">FRS 105</option>
+              </select>
               <button
                 onClick={() => {
                   setSelectedClient(null);

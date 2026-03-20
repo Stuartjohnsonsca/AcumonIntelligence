@@ -545,6 +545,66 @@ function renderKeyMatters(ctx: PageContext, findings: Finding[]): void {
     }
     ctx.y = boxY - 8;
 
+    // Accounting Impact + Audit Impact (side by side)
+    const halfWidth = CONTENT_WIDTH / 2 - 4;
+    const impactLabelSize = 9;
+    const impactTextSize = 9;
+
+    const acctImpact = rf.accountingImpact || '';
+    const auditImpact = rf.auditImpact || '';
+
+    if (acctImpact || auditImpact) {
+      ensureSpace(ctx, 50);
+
+      // Accounting Impact — left side
+      ctx.currentPage.drawText('Accounting Impact:', {
+        x: MARGIN_LEFT,
+        y: ctx.y,
+        size: impactLabelSize,
+        font: ctx.fontBold,
+        color: COLOUR_GREY,
+      });
+      const acctTextY = ctx.y - 12;
+      const acctLines = wrapText(acctImpact, ctx.font, impactTextSize, halfWidth);
+      let acctY = acctTextY;
+      for (const line of acctLines) {
+        if (acctY < MARGIN_BOTTOM) { newPage(ctx); acctY = ctx.y; }
+        ctx.currentPage.drawText(line, {
+          x: MARGIN_LEFT,
+          y: acctY,
+          size: impactTextSize,
+          font: ctx.font,
+          color: COLOUR_BLACK,
+        });
+        acctY -= 12;
+      }
+
+      // Audit Impact — right side
+      const rightX = MARGIN_LEFT + halfWidth + 8;
+      ctx.currentPage.drawText('Audit Impact:', {
+        x: rightX,
+        y: ctx.y,
+        size: impactLabelSize,
+        font: ctx.fontBold,
+        color: COLOUR_GREY,
+      });
+      const auditLines = wrapText(auditImpact, ctx.font, impactTextSize, halfWidth);
+      let auditY = acctTextY;
+      for (const line of auditLines) {
+        if (auditY < MARGIN_BOTTOM) { newPage(ctx); auditY = ctx.y; }
+        ctx.currentPage.drawText(line, {
+          x: rightX,
+          y: auditY,
+          size: impactTextSize,
+          font: ctx.font,
+          color: COLOUR_BLACK,
+        });
+        auditY -= 12;
+      }
+
+      ctx.y = Math.min(acctY, auditY) - 6;
+    }
+
     // Add to Testing checkbox
     ensureSpace(ctx, 22);
     const checkboxY = ctx.y;

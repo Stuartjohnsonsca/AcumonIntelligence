@@ -41,6 +41,7 @@ export interface DocSummaryMessage {
   clientName: string;
   userId: string;
   clientId: string;
+  accountingFramework?: string;
 }
 
 export interface PdfGenerationMessage {
