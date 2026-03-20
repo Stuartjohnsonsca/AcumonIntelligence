@@ -7,7 +7,7 @@ import { useSession, signOut } from 'next-auth/react';
 import { useState } from 'react';
 import { Menu, X, ChevronDown, LogIn, LogOut, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { STATUTORY_AUDIT_PRODUCTS, ASSURANCE_PRODUCTS } from '@/lib/products';
+import { STATUTORY_AUDIT_PRODUCTS, ASSURANCE_PRODUCTS, FINANCIAL_ACCOUNTS_ITEMS } from '@/lib/products';
 import { cn } from '@/lib/utils';
 import { BackgroundTaskDots } from '@/components/BackgroundTaskDots';
 
@@ -17,6 +17,8 @@ export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [assuranceOpen, setAssuranceOpen] = useState(false);
+  const [financialOpen, setFinancialOpen] = useState(false);
+  const [clientsOpen, setClientsOpen] = useState(false);
 
   const isAuthenticated = session?.user && session.user.twoFactorVerified;
 
@@ -119,6 +121,80 @@ export function Navbar() {
               )}
             </div>
 
+            {/* Financial Accounts Dropdown */}
+            <div
+              className="relative"
+              onMouseEnter={() => setFinancialOpen(true)}
+              onMouseLeave={() => setFinancialOpen(false)}
+            >
+              <button
+                onClick={() => setFinancialOpen(!financialOpen)}
+                className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+              >
+                <span>Financial Accounts</span>
+                <ChevronDown className={cn('h-4 w-4 transition-transform', financialOpen && 'rotate-180')} />
+              </button>
+              {financialOpen && (
+                <div className="absolute top-full left-0 pt-1 w-56 z-50">
+                  <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                    {FINANCIAL_ACCOUNTS_ITEMS.map((item) => (
+                      <button
+                        key={item.urlPrefix}
+                        onClick={() => { setFinancialOpen(false); handleProductClick(item.urlPrefix); }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      >
+                        {item.navLabel}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Clients Dropdown */}
+            {isAuthenticated && (
+              <div
+                className="relative"
+                onMouseEnter={() => setClientsOpen(true)}
+                onMouseLeave={() => setClientsOpen(false)}
+              >
+                <button
+                  onClick={() => setClientsOpen(!clientsOpen)}
+                  className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                >
+                  <span>Clients</span>
+                  <ChevronDown className={cn('h-4 w-4 transition-transform', clientsOpen && 'rotate-180')} />
+                </button>
+                {clientsOpen && (
+                  <div className="absolute top-full left-0 pt-1 w-52 z-50">
+                    <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                      <Link
+                        href="/clients/add-delete"
+                        onClick={() => setClientsOpen(false)}
+                        className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      >
+                        Add / Delete
+                      </Link>
+                      <Link
+                        href="/clients/manage"
+                        onClick={() => setClientsOpen(false)}
+                        className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      >
+                        Manage
+                      </Link>
+                      <Link
+                        href="/clients/new-period"
+                        onClick={() => setClientsOpen(false)}
+                        className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      >
+                        Create New Period
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <Link
               href="/my-account"
               className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
@@ -189,6 +265,24 @@ export function Navbar() {
               </button>
             ))}
           </div>
+
+          <div>
+            <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Financial Accounts</p>
+            {FINANCIAL_ACCOUNTS_ITEMS.map((item) => (
+              <button key={item.urlPrefix} onClick={() => { setMobileOpen(false); handleProductClick(item.urlPrefix); }} className="w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md">
+                {item.navLabel}
+              </button>
+            ))}
+          </div>
+
+          {isAuthenticated && (
+            <div>
+              <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Clients</p>
+              <Link href="/clients/add-delete" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Add / Delete</Link>
+              <Link href="/clients/manage" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Manage</Link>
+              <Link href="/clients/new-period" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Create New Period</Link>
+            </div>
+          )}
 
           <Link href="/my-account" className="block px-3 py-2 text-sm font-medium text-slate-700 hover:bg-blue-50 rounded-md" onClick={() => setMobileOpen(false)}>My Account</Link>
 
