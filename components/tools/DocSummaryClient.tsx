@@ -38,6 +38,17 @@ interface FileProgress {
   message?: string;
 }
 
+interface KeyTerm {
+  term: string;
+  value: string;
+  clauseReference: string;
+}
+
+interface MissingInfoItem {
+  item: string;
+  reason: string;
+}
+
 interface DocFile {
   id: string;
   originalName: string;
@@ -45,6 +56,8 @@ interface DocFile {
   errorMessage: string | null;
   progress?: FileProgress | null;
   hidden?: boolean;
+  keyTerms?: KeyTerm[] | null;
+  missingInformation?: MissingInfoItem[] | null;
   /** The job ID this file belongs to (for cross-session imports) */
   sourceJobId?: string;
 }
@@ -1448,6 +1461,65 @@ export function DocSummaryClient({
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+
+                {/* ─── Key Commercial Terms ──────────────────────────────── */}
+                {activeFile && activeFile.status === 'analysed' && Array.isArray(activeFile.keyTerms) && activeFile.keyTerms.length > 0 && (
+                  <div className="mt-4 px-4">
+                    <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">
+                      Key Commercial Terms
+                    </h4>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 border-b border-slate-200">
+                          <tr>
+                            <th className="text-left px-3 py-1.5 text-xs font-semibold text-slate-600">Term</th>
+                            <th className="text-left px-3 py-1.5 text-xs font-semibold text-slate-600">Value</th>
+                            <th className="text-left px-3 py-1.5 text-xs font-semibold text-slate-600">Clause</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(activeFile.keyTerms as KeyTerm[]).map((t, i) => (
+                            <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                              <td className="px-3 py-2 font-medium text-slate-800">{t.term}</td>
+                              <td className="px-3 py-2 text-slate-700">{t.value}</td>
+                              <td className="px-3 py-2 text-slate-500 text-xs">{t.clauseReference}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── Missing Information ────────────────────────────────── */}
+                {activeFile && activeFile.status === 'analysed' && Array.isArray(activeFile.missingInformation) && activeFile.missingInformation.length > 0 && (
+                  <div className="mt-4 px-4 mb-4">
+                    <h4 className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-2">
+                      Missing Information
+                    </h4>
+                    <p className="text-xs text-slate-500 mb-2">
+                      The following information would typically be expected in this type of document but was not found.
+                    </p>
+                    <div className="overflow-x-auto rounded-lg border border-amber-200">
+                      <table className="w-full text-sm">
+                        <thead className="bg-amber-50 border-b border-amber-200">
+                          <tr>
+                            <th className="text-left px-3 py-1.5 text-xs font-semibold text-amber-800">Missing Item</th>
+                            <th className="text-left px-3 py-1.5 text-xs font-semibold text-amber-800">Why This Is Expected</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-amber-100">
+                          {(activeFile.missingInformation as MissingInfoItem[]).map((m, i) => (
+                            <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-amber-50/50'}>
+                              <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{m.item}</td>
+                              <td className="px-3 py-2 text-slate-600">{m.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>

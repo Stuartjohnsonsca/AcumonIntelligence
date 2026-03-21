@@ -232,13 +232,15 @@ async function processFile(
     },
   });
 
-  // 9. Update file status to analysed + save document description
+  // 9. Update file status to analysed + save document description, key terms, missing info
   await prisma.docSummaryFile.update({
     where: { id: fileId },
     data: {
       status: 'analysed',
       pageCount,
       documentDescription: analysisResult.documentDescription || null,
+      keyTerms: analysisResult.keyTerms?.length ? JSON.parse(JSON.stringify(analysisResult.keyTerms)) : undefined,
+      missingInformation: analysisResult.missingInformation?.length ? JSON.parse(JSON.stringify(analysisResult.missingInformation)) : undefined,
     },
   });
   await setFileStatus(jobId, fileId, 'analysed');

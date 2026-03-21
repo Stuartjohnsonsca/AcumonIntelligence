@@ -43,6 +43,8 @@ export async function GET(req: Request) {
             fileSize: true,
             pageCount: true,
             documentDescription: true,
+            keyTerms: true,
+            missingInformation: true,
             createdAt: true,
           },
         },
@@ -65,6 +67,8 @@ export async function GET(req: Request) {
       fileSize: f.fileSize,
       pageCount: f.pageCount,
       documentDescription: f.documentDescription || null,
+      keyTerms: (f.keyTerms as FileInfo['keyTerms']) || null,
+      missingInformation: (f.missingInformation as FileInfo['missingInformation']) || null,
       createdAt: f.createdAt.toISOString(),
       uploadedBy: userName,
     }));

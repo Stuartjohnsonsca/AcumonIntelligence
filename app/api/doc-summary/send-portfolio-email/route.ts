@@ -71,7 +71,7 @@ export async function POST(req: Request) {
               orderBy: { createdAt: 'asc' },
               select: {
                 id: true, originalName: true, fileSize: true, pageCount: true,
-                documentDescription: true, status: true, errorMessage: true, createdAt: true,
+                documentDescription: true, keyTerms: true, missingInformation: true, status: true, errorMessage: true, createdAt: true,
               },
             },
             findings: { orderBy: [{ fileId: 'asc' }, { sortOrder: 'asc' }] },
@@ -102,6 +102,8 @@ export async function POST(req: Request) {
         files.push({
           id: f.id, originalName: f.originalName, fileSize: f.fileSize,
           pageCount: f.pageCount, documentDescription: f.documentDescription || null,
+          keyTerms: (f.keyTerms as FileInfo['keyTerms']) || null,
+          missingInformation: (f.missingInformation as FileInfo['missingInformation']) || null,
           createdAt: f.createdAt.toISOString(), uploadedBy: userName,
         });
       }
