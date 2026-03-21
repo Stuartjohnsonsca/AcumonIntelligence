@@ -139,6 +139,7 @@ export function DocSummaryClient({
   const [detectedParties, setDetectedParties] = useState<string[]>([]);
   const [detectingParties, setDetectingParties] = useState(false);
   const [detectPartiesNote, setDetectPartiesNote] = useState('');
+  const [partiesPending, setPartiesPending] = useState(false);
   const [pendingAnalysisJobId, setPendingAnalysisJobId] = useState<string | null>(null);
 
   // Portfolio modal state
@@ -241,6 +242,27 @@ export function DocSummaryClient({
               error: hasFailed ? 'Some files failed analysis' : undefined,
             });
             bgTaskIdRef.current = null;
+          }
+          // Re-detect parties if initial detection was pending (scanned PDF)
+          if (partiesPending && perspectiveModalOpen && detectedParties.length === 0) {
+            setDetectingParties(true);
+            setPartiesPending(false);
+            setDetectPartiesNote('');
+            try {
+              const reDetect = await fetch('/api/doc-summary/detect-parties', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jobId: jId }),
+              });
+              if (reDetect.ok) {
+                const rd = await reDetect.json();
+                if (Array.isArray(rd.parties) && rd.parties.length > 0) {
+                  setDetectedParties(rd.parties);
+                }
+                if (rd.note) setDetectPartiesNote(rd.note);
+              }
+            } catch { /* non-fatal */ }
+            setDetectingParties(false);
           }
         }
       } catch {
@@ -599,12 +621,12 @@ export function DocSummaryClient({
         });
         if (detectRes.ok) {
           const data = await detectRes.json();
-          const { parties, note } = data as { parties?: string[]; note?: string };
+          const { parties, note, pending } = data as { parties?: string[]; note?: string; pending?: boolean };
           if (Array.isArray(parties) && parties.length > 0) {
             setDetectedParties(parties);
-            // Don't auto-select — let user choose
           }
           if (note) setDetectPartiesNote(note);
+          if (pending) setPartiesPending(true);
         }
       } catch { /* non-fatal */ }
       setDetectingParties(false);
@@ -1967,8 +1989,19 @@ export function DocSummaryClient({
                   </div>
                 </div>
               ) : !detectingParties ? (
-                <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  {detectPartiesNote || 'Could not auto-detect parties from the document. Please enter the party name below.'}
+                <div className={`text-sm rounded-lg p-3 ${
+                  partiesPending
+                    ? 'text-blue-700 bg-blue-50 border border-blue-200'
+                    : 'text-amber-700 bg-amber-50 border border-amber-200'
+                }`}>
+                  {partiesPending ? (
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                      <span>This document appears to be scanned. Parties will be identified once OCR processing completes. You can enter a party name manually or wait.</span>
+                    </div>
+                  ) : (
+                    detectPartiesNote || 'Could not auto-detect parties from the document. Please enter the party name below.'
+                  )}
                 </div>
               ) : null}
 
