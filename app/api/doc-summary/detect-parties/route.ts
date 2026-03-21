@@ -6,11 +6,19 @@ import OpenAI from 'openai';
 
 export const maxDuration = 45;
 
-const VISION_MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
+const PARTY_PROMPT = `Extract ALL parties to this legal/commercial document. For each party, provide their name if available, or their role if no name is given.
+
+Rules:
+- Include BOTH named parties (e.g. "ABC Ltd", "John Smith") AND role-only parties (e.g. "the Tenant", "the Landlord", "the Borrower")
+- If a party has both a name and a role, format as "Name (Role)" — e.g. "ABC Ltd (Tenant)"
+- Do NOT include law firms, agents, witnesses, or signatories who are not parties
+- Only include actual parties to the agreement or transaction
+
+Return ONLY valid JSON: {"parties": ["Party A", "Party B", ...]}`;
 
 /**
- * Quick party extraction from the first uploaded file in a job.
- * Tries text extraction first; falls back to vision model for scanned PDFs.
+ * Party extraction from the first uploaded file in a job.
+ * Priority: 1) stored extractedText (from OCR/analysis), 2) live text extraction, 3) wait message
  */
 export async function POST(req: Request) {
   const session = await auth();
@@ -32,30 +40,21 @@ export async function POST(req: Request) {
   try {
     // Get the first uploaded file for the job
     const file = await prisma.docSummaryFile.findFirst({
-      where: { jobId, status: { in: ['uploaded', 'analysed'] } },
+      where: { jobId, status: { in: ['uploaded', 'processing', 'analysed'] } },
       orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        originalName: true,
+        storagePath: true,
+        containerName: true,
+        status: true,
+        extractedText: true,
+      },
     });
 
     if (!file) {
       return NextResponse.json({ parties: [] });
     }
-
-    // Download PDF from Blob
-    const { BlobServiceClient } = await import('@azure/storage-blob');
-    const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING;
-    if (!connStr) {
-      return NextResponse.json({ parties: [] });
-    }
-
-    const blobClient = BlobServiceClient.fromConnectionString(connStr);
-    const containerClient = blobClient.getContainerClient(file.containerName);
-    const blob = containerClient.getBlobClient(file.storagePath);
-    const downloadResponse = await blob.download();
-    const chunks: Buffer[] = [];
-    for await (const chunk of downloadResponse.readableStreamBody as AsyncIterable<Buffer>) {
-      chunks.push(chunk);
-    }
-    const pdfBuffer = Buffer.concat(chunks);
 
     const apiKey = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
     if (!apiKey) {
@@ -63,88 +62,74 @@ export async function POST(req: Request) {
     }
 
     const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
+    let sampleText = '';
 
-    // Try text extraction first
-    const { extractText } = await import('unpdf');
-    const pdfData = new Uint8Array(pdfBuffer);
-    const pdfResult = await extractText(pdfData);
-    const textPages = Array.isArray(pdfResult.text) ? pdfResult.text : [String(pdfResult.text || '')];
-    const sampleText = textPages.slice(0, 3).join('\n').slice(0, 4000);
+    // Priority 1: Use stored extracted text (available after worker processes the file, including OCR)
+    if (file.extractedText && file.extractedText.length >= 20) {
+      sampleText = file.extractedText.slice(0, 4000);
+      console.log(`[DocSummary:DetectParties] Using stored extractedText (${file.extractedText.length} chars) for ${file.originalName}`);
+    } else {
+      // Priority 2: Try live text extraction from PDF
+      try {
+        const { BlobServiceClient } = await import('@azure/storage-blob');
+        const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING;
+        if (connStr) {
+          const blobClient = BlobServiceClient.fromConnectionString(connStr);
+          const containerClient = blobClient.getContainerClient(file.containerName);
+          const blob = containerClient.getBlobClient(file.storagePath);
+          const downloadResponse = await blob.download();
+          const chunks: Buffer[] = [];
+          for await (const chunk of downloadResponse.readableStreamBody as AsyncIterable<Buffer>) {
+            chunks.push(chunk);
+          }
+          const pdfBuffer = Buffer.concat(chunks);
 
-    const partyPrompt = `Extract ONLY the names of all parties (companies, individuals, or entities) that are parties to or mentioned as key stakeholders in this legal/commercial document. Return ONLY valid JSON: {"parties": ["Party A name", "Party B name", ...]}
+          const { extractText } = await import('unpdf');
+          const pdfData = new Uint8Array(pdfBuffer);
+          const pdfResult = await extractText(pdfData);
+          const textPages = Array.isArray(pdfResult.text) ? pdfResult.text : [String(pdfResult.text || '')];
+          sampleText = textPages.slice(0, 3).join('\n').slice(0, 4000);
+        }
+      } catch (err) {
+        console.error('[DocSummary:DetectParties] PDF extraction error:', err instanceof Error ? err.message : err);
+      }
+    }
 
-Do NOT include law firms, agents, or witnesses — only actual parties to the agreement or transaction.`;
-
-    let content = '';
-
+    // If we have enough text, detect parties via AI
     if (sampleText.length >= 20) {
-      // Text-based extraction
       const result = await client.chat.completions.create({
         model: 'Qwen/Qwen3-235B-A22B',
         messages: [
-          { role: 'user', content: `${partyPrompt}\n\n--- DOCUMENT TEXT (first pages) ---\n${sampleText}` },
+          { role: 'user', content: `${PARTY_PROMPT}\n\n--- DOCUMENT TEXT ---\n${sampleText}` },
         ],
         max_tokens: 500,
         temperature: 0.1,
       });
-      content = result.choices?.[0]?.message?.content?.trim() || '';
-    } else {
-      // Scanned PDF — use vision model with first page image
-      console.log(`[DocSummary:DetectParties] Text too short (${sampleText.length} chars), using vision model for ${file.originalName}`);
+      const content = result.choices?.[0]?.message?.content?.trim() || '';
 
-      // Convert first page to image using pdf-lib + canvas-like approach
-      // Use pdfjs-dist to render first page as PNG
-      try {
-        const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
-        const doc = await getDocument({ data: pdfData }).promise;
-        const page = await doc.getPage(1);
-        const viewport = page.getViewport({ scale: 2.0 });
-
-        // Create a minimal canvas-like object for Node.js rendering
-        // Since we're on Vercel (Node.js), use the page text content as fallback
-        // Actually, pdfjs needs a canvas which isn't available on serverless
-        // Fall back to sending the raw PDF page info we have
-        await doc.destroy();
-      } catch {
-        // pdfjs rendering not available on serverless — expected
-      }
-
-      // Use the vision model with the PDF rendered as base64
-      // Since we can't render to canvas on serverless, encode the first ~500KB of PDF
-      // and let the vision model process it directly
-      // Actually, vision models need images, not PDFs.
-      // Best approach: extract whatever text pdfjs-dist DID get and combine with a note
-      const minimalText = textPages.slice(0, 1).join('\n').trim();
-      if (minimalText.length > 5) {
-        const result = await client.chat.completions.create({
-          model: 'Qwen/Qwen3-235B-A22B',
-          messages: [
-            { role: 'user', content: `${partyPrompt}\n\n--- DOCUMENT TEXT (partial, may be incomplete) ---\n${minimalText}` },
-          ],
-          max_tokens: 500,
-          temperature: 0.1,
-        });
-        content = result.choices?.[0]?.message?.content?.trim() || '';
-      }
-
-      // If still nothing, return empty with a helpful note
-      if (!content) {
-        return NextResponse.json({
-          parties: [],
-          note: 'This document appears to be scanned. Party detection will complete once OCR processing finishes. Please enter party names manually or wait.',
-        });
+      // Parse JSON from response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const parties: string[] = Array.isArray(parsed.parties) ? parsed.parties : [];
+        return NextResponse.json({ parties, fileName: file.originalName });
       }
     }
 
-    // Parse JSON from response
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      const parties: string[] = Array.isArray(parsed.parties) ? parsed.parties : [];
-      return NextResponse.json({ parties, fileName: file.originalName });
+    // Priority 3: Not enough text yet — scanned PDF still processing
+    if (file.status === 'uploaded' || file.status === 'processing') {
+      return NextResponse.json({
+        parties: [],
+        pending: true,
+        note: 'This document appears to be scanned. Parties will be identified once OCR processing completes.',
+      });
     }
 
-    return NextResponse.json({ parties: [] });
+    // Analysed but still no usable text — very unusual
+    return NextResponse.json({
+      parties: [],
+      note: 'Could not identify parties from this document. Please enter the party name manually.',
+    });
   } catch (error) {
     console.error('[DocSummary:DetectParties] Error:', error instanceof Error ? error.message : error);
     return NextResponse.json({ parties: [] });
