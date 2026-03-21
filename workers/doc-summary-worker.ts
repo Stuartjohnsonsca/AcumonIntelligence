@@ -232,13 +232,42 @@ async function processFile(
     },
   });
 
-  // 9. Update file status to analysed + save document description, key terms, missing info
+  // 9. Build extracted text for Q&A use
+  // For text-based PDFs: use the raw extracted text
+  // For OCR/vision PDFs: reconstruct from analysis results so Q&A can work
+  let extractedText = text;
+  if (text.length < 50 && analysisResult) {
+    // Vision/OCR path — reconstruct searchable text from findings
+    const parts: string[] = [];
+    if (analysisResult.documentDescription) {
+      parts.push(`DOCUMENT DESCRIPTION:\n${analysisResult.documentDescription}`);
+    }
+    if (analysisResult.summary) {
+      parts.push(`SUMMARY:\n${analysisResult.summary}`);
+    }
+    if (analysisResult.keyTerms?.length) {
+      parts.push('KEY TERMS:\n' + analysisResult.keyTerms.map(t => `${t.term}: ${t.value} (${t.clauseReference})`).join('\n'));
+    }
+    if (analysisResult.findings.length > 0) {
+      parts.push('FINDINGS:\n' + analysisResult.findings.map(f =>
+        `[${f.area}] ${f.finding} (Clause: ${f.clauseReference})${f.accountingImpact ? `\nAccounting Impact: ${f.accountingImpact}` : ''}${f.auditImpact ? `\nAudit Impact: ${f.auditImpact}` : ''}`
+      ).join('\n\n'));
+    }
+    if (analysisResult.missingInformation?.length) {
+      parts.push('MISSING INFORMATION:\n' + analysisResult.missingInformation.map(m => `${m.item}: ${m.reason}`).join('\n'));
+    }
+    extractedText = parts.join('\n\n');
+    console.log(`[Worker] Reconstructed ${extractedText.length} chars of text from OCR analysis for Q&A | file=${file.originalName}`);
+  }
+
+  // 10. Update file status to analysed + save document description, key terms, missing info, extracted text
   await prisma.docSummaryFile.update({
     where: { id: fileId },
     data: {
       status: 'analysed',
       pageCount,
       documentDescription: analysisResult.documentDescription || null,
+      extractedText: extractedText || null,
       keyTerms: analysisResult.keyTerms?.length ? JSON.parse(JSON.stringify(analysisResult.keyTerms)) : undefined,
       missingInformation: analysisResult.missingInformation?.length ? JSON.parse(JSON.stringify(analysisResult.missingInformation)) : undefined,
     },

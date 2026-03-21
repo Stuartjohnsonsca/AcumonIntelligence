@@ -38,37 +38,56 @@ export async function POST(req: Request) {
   }
 
   try {
-    // 1. Get file metadata for all selected files
+    // 1. Get file metadata for all selected files (including stored extracted text)
     const dbFiles = await prisma.docSummaryFile.findMany({
       where: { id: { in: fileIds } },
-      select: { id: true, jobId: true, storagePath: true, containerName: true, originalName: true },
+      select: { id: true, jobId: true, storagePath: true, containerName: true, originalName: true, extractedText: true, status: true },
     });
 
     if (dbFiles.length === 0) {
       return NextResponse.json({ error: 'No files found' }, { status: 404 });
     }
 
-    // 2. Download and extract text from all selected files
+    // 2. Get text for each file — prefer stored extractedText, fall back to live extraction
     const { extractText } = await import('unpdf');
     const documentParts: string[] = [];
     const fileNames: string[] = [];
+    const pendingFiles: string[] = [];
 
     for (const file of dbFiles) {
-      const pdfBuffer = await downloadBlob(file.storagePath, file.containerName);
-      const pdfData = new Uint8Array(pdfBuffer);
-      const pdfResult = await extractText(pdfData);
-      const textPages = Array.isArray(pdfResult.text) ? pdfResult.text : [String(pdfResult.text || '')];
-      const text = textPages.join('\n').trim();
-
-      if (text.length >= 20) {
-        documentParts.push(`=== ${file.originalName} ===\n${text}`);
+      // First: check if we have stored extracted text (covers both text PDFs and OCR results)
+      if (file.extractedText && file.extractedText.length >= 20) {
+        documentParts.push(`=== ${file.originalName} ===\n${file.extractedText}`);
         fileNames.push(file.originalName);
+        continue;
+      }
+
+      // Second: try live extraction from the PDF
+      try {
+        const pdfBuffer = await downloadBlob(file.storagePath, file.containerName);
+        const pdfData = new Uint8Array(pdfBuffer);
+        const pdfResult = await extractText(pdfData);
+        const textPages = Array.isArray(pdfResult.text) ? pdfResult.text : [String(pdfResult.text || '')];
+        const text = textPages.join('\n').trim();
+
+        if (text.length >= 20) {
+          documentParts.push(`=== ${file.originalName} ===\n${text}`);
+          fileNames.push(file.originalName);
+          continue;
+        }
+      } catch { /* extraction failed — check if still processing */ }
+
+      // Neither stored text nor live extraction worked
+      if (file.status === 'uploaded' || file.status === 'processing') {
+        pendingFiles.push(file.originalName);
       }
     }
 
     if (documentParts.length === 0) {
-      // All files are scanned PDFs — persist the message and return
-      const pendingAnswer = 'Unable to extract readable text from the selected document(s). They may be scanned PDFs — OCR processing has commenced. Please wait for the analysis to complete, then try again.';
+      // No readable text from any file
+      const pendingAnswer = pendingFiles.length > 0
+        ? `The selected document${pendingFiles.length > 1 ? 's are' : ' is'} still being processed by OCR. Please wait for the analysis to complete — your question will be answerable once processing finishes.`
+        : 'Unable to extract readable text from the selected document(s). Please wait for the analysis to complete.';
       const primaryFileId = fileIds[0];
       const lastTurn = await prisma.docSummaryQA.count({ where: { fileId: primaryFileId } });
       const [, assistantMsg] = await prisma.$transaction([
