@@ -22,12 +22,25 @@ export interface Finding {
   auditImpact: string | null;
 }
 
+export interface KeyTerm {
+  term: string;
+  value: string;
+  clauseReference: string;
+}
+
+export interface MissingInfoItem {
+  item: string;
+  reason: string;
+}
+
 export interface FileInfo {
   id: string;
   originalName: string;
   fileSize: number;
   pageCount: number | null;
   documentDescription: string | null;
+  keyTerms?: KeyTerm[] | null;
+  missingInformation?: MissingInfoItem[] | null;
   createdAt: string;
   uploadedBy: string;
 }
@@ -506,6 +519,156 @@ function renderSummary(ctx: PageContext, findings: Finding[], files: FileInfo[],
         drawLabelledParagraph(ctx, `${rf.area}:`, cleanedFinding, 9, 10);
       }
     }
+  }
+}
+
+function renderKeyTerms(ctx: PageContext, files: FileInfo[]): void {
+  // Collect key terms from all files
+  const allTerms: { fileName: string; terms: KeyTerm[] }[] = [];
+  for (const file of files) {
+    const terms = Array.isArray(file.keyTerms) ? file.keyTerms as KeyTerm[] : [];
+    if (terms.length > 0) allTerms.push({ fileName: file.originalName, terms });
+  }
+  if (allTerms.length === 0) return;
+
+  newPage(ctx);
+  drawSectionHeading(ctx, 'Key Commercial Terms');
+
+  drawParagraph(ctx, 'The following key commercial terms were extracted from the document(s). These represent the principal financial and operational terms that may have accounting or audit significance.');
+  ctx.y -= 4;
+
+  for (const { fileName, terms } of allTerms) {
+    if (allTerms.length > 1) {
+      ensureSpace(ctx, 60);
+      drawBoldParagraph(ctx, fileName, 10);
+    }
+
+    // Draw table header
+    ensureSpace(ctx, 40);
+    const tableX = MARGIN_LEFT;
+    const colWidths = [150, 250, 110]; // Term, Value, Clause Ref
+    const tableW = colWidths[0] + colWidths[1] + colWidths[2];
+
+    // Header row
+    const headerH = 18;
+    ctx.currentPage.drawRectangle({
+      x: tableX, y: ctx.y - headerH, width: tableW, height: headerH,
+      color: rgb(0.2, 0.35, 0.55),
+    });
+    const headers = ['Term', 'Value', 'Clause Reference'];
+    let colX = tableX;
+    for (let i = 0; i < headers.length; i++) {
+      ctx.currentPage.drawText(headers[i], {
+        x: colX + 4, y: ctx.y - headerH + 5, size: 8, font: ctx.fontBold, color: rgb(1, 1, 1),
+      });
+      colX += colWidths[i];
+    }
+    ctx.y -= headerH;
+
+    // Data rows
+    for (let r = 0; r < terms.length; r++) {
+      const t = terms[r];
+      const rowH = 16;
+      ensureSpace(ctx, rowH + 2);
+
+      if (r % 2 === 0) {
+        ctx.currentPage.drawRectangle({
+          x: tableX, y: ctx.y - rowH, width: tableW, height: rowH,
+          color: rgb(0.96, 0.97, 0.98),
+        });
+      }
+
+      colX = tableX;
+      const rowTexts = [t.term, t.value, t.clauseReference];
+      for (let i = 0; i < rowTexts.length; i++) {
+        const text = rowTexts[i] || '';
+        // Truncate if too long for column
+        const maxChars = Math.floor(colWidths[i] / 4.5);
+        const displayText = text.length > maxChars ? text.substring(0, maxChars - 2) + '...' : text;
+        ctx.currentPage.drawText(displayText, {
+          x: colX + 4, y: ctx.y - rowH + 5, size: 7.5, font: ctx.font, color: rgb(0.15, 0.15, 0.15),
+        });
+        colX += colWidths[i];
+      }
+      ctx.y -= rowH;
+    }
+    ctx.y -= 8;
+  }
+}
+
+function renderMissingInformation(ctx: PageContext, files: FileInfo[]): void {
+  // Collect missing info from all files
+  const allMissing: { fileName: string; items: MissingInfoItem[] }[] = [];
+  for (const file of files) {
+    const items = Array.isArray(file.missingInformation) ? file.missingInformation as MissingInfoItem[] : [];
+    if (items.length > 0) allMissing.push({ fileName: file.originalName, items });
+  }
+  if (allMissing.length === 0) return;
+
+  newPage(ctx);
+  drawSectionHeading(ctx, 'Missing Information');
+
+  drawParagraph(ctx, 'The following information would typically be expected in this type of document but was not found or not clearly specified. The absence of these items may warrant further enquiry.');
+  ctx.y -= 4;
+
+  for (const { fileName, items } of allMissing) {
+    if (allMissing.length > 1) {
+      ensureSpace(ctx, 60);
+      drawBoldParagraph(ctx, fileName, 10);
+    }
+
+    // Draw table header
+    ensureSpace(ctx, 40);
+    const tableX = MARGIN_LEFT;
+    const colWidths = [170, 340]; // Missing Item, Reason
+    const tableW = colWidths[0] + colWidths[1];
+
+    const headerH = 18;
+    ctx.currentPage.drawRectangle({
+      x: tableX, y: ctx.y - headerH, width: tableW, height: headerH,
+      color: rgb(0.55, 0.35, 0.2),
+    });
+    const headers = ['Missing Item', 'Why This Is Expected'];
+    let colX = tableX;
+    for (let i = 0; i < headers.length; i++) {
+      ctx.currentPage.drawText(headers[i], {
+        x: colX + 4, y: ctx.y - headerH + 5, size: 8, font: ctx.fontBold, color: rgb(1, 1, 1),
+      });
+      colX += colWidths[i];
+    }
+    ctx.y -= headerH;
+
+    // Data rows
+    for (let r = 0; r < items.length; r++) {
+      const item = items[r];
+      // Wrap reason text into multiple lines if needed
+      const reasonLines = wrapText(item.reason, ctx.font, 7.5, 340 - 8);
+      const rowH = Math.max(16, reasonLines.length * 10 + 6);
+      ensureSpace(ctx, rowH + 2);
+
+      if (r % 2 === 0) {
+        ctx.currentPage.drawRectangle({
+          x: tableX, y: ctx.y - rowH, width: tableW, height: rowH,
+          color: rgb(0.98, 0.96, 0.94),
+        });
+      }
+
+      // Missing item name
+      ctx.currentPage.drawText(item.item, {
+        x: tableX + 4, y: ctx.y - 12, size: 7.5, font: ctx.fontBold, color: rgb(0.15, 0.15, 0.15),
+      });
+
+      // Reason text (wrapped)
+      let lineY = ctx.y - 12;
+      for (const line of reasonLines) {
+        ctx.currentPage.drawText(line, {
+          x: tableX + colWidths[0] + 4, y: lineY, size: 7.5, font: ctx.font, color: rgb(0.25, 0.25, 0.25),
+        });
+        lineY -= 10;
+      }
+      ctx.y -= rowH;
+    }
+    ctx.y -= 8;
   }
 }
 
@@ -1135,6 +1298,19 @@ export async function generateDocSummaryPdf(params: PdfParams): Promise<Uint8Arr
   sectionStartPage.set('Summary', tmpCtx.pages.length + 1);
   renderSummary(tmpCtx, findings, files, params.clientName);
 
+  const hasKeyTerms = files.some(f => Array.isArray(f.keyTerms) && f.keyTerms.length > 0);
+  const hasMissing = files.some(f => Array.isArray(f.missingInformation) && (f.missingInformation as MissingInfoItem[]).length > 0);
+
+  if (hasKeyTerms) {
+    sectionStartPage.set('Key Commercial Terms', tmpCtx.pages.length + 1);
+    renderKeyTerms(tmpCtx, files);
+  }
+
+  if (hasMissing) {
+    sectionStartPage.set('Missing Information', tmpCtx.pages.length + 1);
+    renderMissingInformation(tmpCtx, files);
+  }
+
   sectionStartPage.set('Key Matters', tmpCtx.pages.length + 1);
   renderKeyMatters(tmpCtx, findings);
 
@@ -1191,10 +1367,11 @@ export async function generateDocSummaryPdf(params: PdfParams): Promise<Uint8Arr
   };
 
   renderSummary(ctx, findings, files, params.clientName);
+  if (hasKeyTerms) renderKeyTerms(ctx, files);
+  if (hasMissing) renderMissingInformation(ctx, files);
   renderKeyMatters(ctx, findings);
   renderWorkPerformed(ctx);
   renderCaveats(ctx, params.firmName, params.clientName);
-  renderConclusion(ctx);
   renderAppendixA(ctx, files);
   renderAppendixB(ctx, findings, files);
 
@@ -1820,9 +1997,14 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
     grouped.set(f.fileId, list);
   }
 
+  const pHasKeyTerms = files.some(f => Array.isArray(f.keyTerms) && f.keyTerms.length > 0);
+  const pHasMissing = files.some(f => Array.isArray(f.missingInformation) && (f.missingInformation as MissingInfoItem[]).length > 0);
+
   const tocSections: string[] = [
     'Failed Analysis',
     'Combined Summary',
+    ...(pHasKeyTerms ? ['Key Commercial Terms'] : []),
+    ...(pHasMissing ? ['Missing Information'] : []),
     'Combined Key Matters',
     'Work Performed',
     'Caveats',
@@ -1867,6 +2049,16 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
 
   sectionStartPage.set('Combined Summary', tmpCtx.pages.length + 1);
   renderCombinedSummary(tmpCtx, findings, files, params.clientName);
+
+  if (pHasKeyTerms) {
+    sectionStartPage.set('Key Commercial Terms', tmpCtx.pages.length + 1);
+    renderKeyTerms(tmpCtx, files);
+  }
+
+  if (pHasMissing) {
+    sectionStartPage.set('Missing Information', tmpCtx.pages.length + 1);
+    renderMissingInformation(tmpCtx, files);
+  }
 
   sectionStartPage.set('Combined Key Matters', tmpCtx.pages.length + 1);
   renderCombinedKeyMatters(tmpCtx, findings, files);
@@ -1969,6 +2161,8 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
 
   renderFailedAnalysis(ctx, failedFiles);
   renderCombinedSummary(ctx, findings, files, params.clientName);
+  if (pHasKeyTerms) renderKeyTerms(ctx, files);
+  if (pHasMissing) renderMissingInformation(ctx, files);
   renderCombinedKeyMatters(ctx, findings, files);
   renderWorkPerformed(ctx);
   renderCaveats(ctx, params.firmName, params.clientName);

@@ -40,10 +40,23 @@ export interface DocSummaryUsage {
   totalTokens: number;
 }
 
+export interface DocSummaryKeyTerm {
+  term: string;
+  value: string;
+  clauseReference: string;
+}
+
+export interface DocSummaryMissingItem {
+  item: string;
+  reason: string;
+}
+
 export interface DocSummaryResult {
   findings: DocSummaryFinding[];
   summary: string;
   documentDescription: string;
+  keyTerms: DocSummaryKeyTerm[];
+  missingInformation: DocSummaryMissingItem[];
   usage: DocSummaryUsage;
   model: string;
 }
@@ -181,6 +194,22 @@ For EACH finding, assess the accounting impact under ${accountingFramework} ONLY
 AUDIT IMPACT ASSESSMENT (auditImpact):
 For EACH finding, assess the audit impact — what should the auditor do in response to this finding? Reference the relevant clause from the document. If a finding has no audit implications, set auditImpact to "None".
 
+KEY COMMERCIAL TERMS EXTRACTION (keyTerms):
+After completing your analysis, extract ALL key commercial terms from the document. Consider what information a reader would expect to find for this type of document. For example:
+- For a lease: annual rent, rent review dates, lease start date, lease end/expiry date, break clause dates, deposit amount, service charge, permitted use, repair obligations, insurance requirements
+- For a loan: principal amount, interest rate, repayment schedule, maturity date, security/collateral, covenants, default triggers
+- For a service agreement: contract value/fees, payment terms, service commencement date, term/duration, renewal terms, notice period, SLA commitments
+- For a sale/purchase agreement: purchase price, completion date, deposit, conditions precedent, warranties period, indemnity caps, retention amounts
+- For employment: salary, bonus/commission, start date, notice period, restrictive covenants duration, pension contributions, benefits
+Extract the actual values found in the document. Each term must cite the specific clause reference where it appears.
+
+MISSING INFORMATION ASSESSMENT (missingInformation):
+After extracting key terms, consider what information would NORMALLY be expected in this type of document but is MISSING or NOT SPECIFIED. For each missing item, explain why it would typically be expected and why its absence matters. For example:
+- A lease with no rent review mechanism — "Rent review mechanism: typically included to protect the landlord against inflation and to establish market rent at intervals"
+- A loan with no stated maturity date — "Maturity/repayment date: essential for determining the classification of the liability as current or non-current"
+- A contract with no termination clause — "Termination provisions: needed to understand exit options and potential penalties"
+Only include genuinely missing items that would be expected for this document type. Do NOT list items that are present in the document.
+
 File name: ${fileName}
 
 Return ONLY valid JSON with this exact structure:
@@ -193,6 +222,19 @@ Return ONLY valid JSON with this exact structure:
       "isSignificantRisk": false,
       "accountingImpact": "string — accounting impact under ${accountingFramework} from the client's perspective only, or 'None'",
       "auditImpact": "string — recommended audit procedures and considerations, or 'None'"
+    }
+  ],
+  "keyTerms": [
+    {
+      "term": "string — name of the commercial term (e.g. 'Annual Rent', 'Effective Date', 'Contract Value')",
+      "value": "string — the actual value extracted from the document (e.g. '£50,000 per annum', '1 January 2025', '36 months')",
+      "clauseReference": "string — clause/section reference where this term is found"
+    }
+  ],
+  "missingInformation": [
+    {
+      "item": "string — what is missing (e.g. 'Rent Review Mechanism', 'Termination Notice Period')",
+      "reason": "string — why this would typically be expected in this type of document and why its absence is noteworthy"
     }
   ],
   "documentDescription": "string — one or two paragraphs describing what this document is (e.g. 'This is a commercial lease agreement between X and Y for premises at Z, commencing on [date] for a term of [n] years at an annual rent of £[amount].'). This helps the reader understand the type and nature of the contract before reviewing findings.",
@@ -275,13 +317,31 @@ export async function analyseDocumentForAudit(
         }))
       : [];
 
+    const keyTerms: DocSummaryKeyTerm[] = Array.isArray(parsed.keyTerms)
+      ? parsed.keyTerms.map((t: Record<string, unknown>) => ({
+          term: String(t.term || ''),
+          value: String(t.value || ''),
+          clauseReference: String(t.clauseReference || ''),
+        }))
+      : [];
+
+    const missingInformation: DocSummaryMissingItem[] = Array.isArray(parsed.missingInformation)
+      ? parsed.missingInformation.map((m: Record<string, unknown>) => ({
+          item: String(m.item || ''),
+          reason: String(m.reason || ''),
+        }))
+      : [];
+
     console.log(
       `[DocSummary:AI] Parsed | file=${fileName} | findings=${findings.length} | ` +
+      `keyTerms=${keyTerms.length} | missing=${missingInformation.length} | ` +
       `risks=${findings.filter(f => f.isSignificantRisk).length} | model=${usedModel}`,
     );
 
     return {
       findings,
+      keyTerms,
+      missingInformation,
       summary: String(parsed.summary || ''),
       documentDescription: String(parsed.documentDescription || ''),
       usage,
@@ -313,6 +373,8 @@ export async function analyseDocumentFromImage(
 ): Promise<DocSummaryResult> {
   const BATCH_SIZE = 5;
   const allFindings: DocSummaryFinding[] = [];
+  const allKeyTerms: DocSummaryKeyTerm[] = [];
+  const allMissingInfo: DocSummaryMissingItem[] = [];
   const summaries: string[] = [];
   const descriptions: string[] = [];
   const totalUsage: DocSummaryUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -373,6 +435,23 @@ export async function analyseDocumentFromImage(
           });
         }
       }
+      if (Array.isArray(parsed.keyTerms)) {
+        for (const t of parsed.keyTerms) {
+          allKeyTerms.push({
+            term: String(t.term || ''),
+            value: String(t.value || ''),
+            clauseReference: String(t.clauseReference || ''),
+          });
+        }
+      }
+      if (Array.isArray(parsed.missingInformation)) {
+        for (const m of parsed.missingInformation) {
+          allMissingInfo.push({
+            item: String(m.item || ''),
+            reason: String(m.reason || ''),
+          });
+        }
+      }
       if (parsed.summary) summaries.push(String(parsed.summary));
       if (parsed.documentDescription) descriptions.push(String(parsed.documentDescription));
     } catch {
@@ -392,7 +471,25 @@ export async function analyseDocumentFromImage(
     return true;
   });
 
+  // Deduplicate key terms by term name
+  const seenTerms = new Set<string>();
+  const uniqueKeyTerms = allKeyTerms.filter(t => {
+    const key = t.term.toLowerCase();
+    if (seenTerms.has(key)) return false;
+    seenTerms.add(key);
+    return true;
+  });
+
+  // Deduplicate missing info by item name
+  const seenMissing = new Set<string>();
+  const uniqueMissing = allMissingInfo.filter(m => {
+    const key = m.item.toLowerCase();
+    if (seenMissing.has(key)) return false;
+    seenMissing.add(key);
+    return true;
+  });
+
   const combinedSummary = summaries.join(' ').trim();
   const combinedDescription = descriptions.join(' ').trim();
-  return { findings: uniqueFindings, summary: combinedSummary, documentDescription: combinedDescription, usage: totalUsage, model: VISION_MODEL };
+  return { findings: uniqueFindings, keyTerms: uniqueKeyTerms, missingInformation: uniqueMissing, summary: combinedSummary, documentDescription: combinedDescription, usage: totalUsage, model: VISION_MODEL };
 }

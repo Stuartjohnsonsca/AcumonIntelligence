@@ -58,6 +58,8 @@ async function handlePortfolioExport(req: Request, selectedFileIds?: string[], e
                 fileSize: true,
                 pageCount: true,
                 documentDescription: true,
+                keyTerms: true,
+                missingInformation: true,
                 status: true,
                 errorMessage: true,
                 createdAt: true,
@@ -97,6 +99,8 @@ async function handlePortfolioExport(req: Request, selectedFileIds?: string[], e
           fileSize: f.fileSize,
           pageCount: f.pageCount,
           documentDescription: f.documentDescription || null,
+          keyTerms: (f.keyTerms as FileInfo['keyTerms']) || null,
+          missingInformation: (f.missingInformation as FileInfo['missingInformation']) || null,
           createdAt: f.createdAt.toISOString(),
           uploadedBy: userName,
         });
