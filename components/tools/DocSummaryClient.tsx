@@ -158,6 +158,7 @@ export function DocSummaryClient({
   const [qaInput, setQaInput] = useState('');
   const [qaLoading, setQaLoading] = useState(false);
   const [qaOpen, setQaOpen] = useState(false);
+  const [qaSelectedFileIds, setQaSelectedFileIds] = useState<Set<string>>(new Set());
   const qaScrollRef = useRef<HTMLDivElement>(null);
 
   // Drag state
@@ -846,16 +847,23 @@ export function DocSummaryClient({
   }, [qaMessages, activeFile?.id]);
 
   const sendQuestion = useCallback(async () => {
-    if (!activeFile || !jobId || !qaInput.trim() || qaLoading) return;
+    if (!jobId || !qaInput.trim() || qaLoading) return;
+    // Use selected files, or fall back to active file
+    const selectedIds = qaSelectedFileIds.size > 0
+      ? Array.from(qaSelectedFileIds)
+      : activeFile ? [activeFile.id] : [];
+    if (selectedIds.length === 0) return;
+
     const question = qaInput.trim();
-    const fileJobId = activeFile.sourceJobId || jobId;
-    const fId = activeFile.id;
+    const primaryFileId = selectedIds[0];
+    const primaryFile = files.find(f => f.id === primaryFileId);
+    const fileJobId = primaryFile?.sourceJobId || jobId;
 
     // Optimistically add user message
     const tempUserMsg: QAMessage = { id: `temp-${Date.now()}`, role: 'user', content: question };
     setQaMessages(prev => ({
       ...prev,
-      [fId]: [...(prev[fId] || []), tempUserMsg],
+      [primaryFileId]: [...(prev[primaryFileId] || []), tempUserMsg],
     }));
     setQaInput('');
     setQaLoading(true);
@@ -864,7 +872,7 @@ export function DocSummaryClient({
       const res = await fetch('/api/doc-summary/ask-question', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: fileJobId, fileId: fId, question }),
+        body: JSON.stringify({ jobId: fileJobId, fileIds: selectedIds, question }),
       });
 
       if (!res.ok) {
@@ -877,18 +885,18 @@ export function DocSummaryClient({
 
       setQaMessages(prev => ({
         ...prev,
-        [fId]: [...(prev[fId] || []).filter(m => m.id !== tempUserMsg.id), { ...tempUserMsg, id: `user-${Date.now()}` }, assistantMsg],
+        [primaryFileId]: [...(prev[primaryFileId] || []).filter(m => m.id !== tempUserMsg.id), { ...tempUserMsg, id: `user-${Date.now()}` }, assistantMsg],
       }));
     } catch (err) {
       const errorMsg: QAMessage = { id: `err-${Date.now()}`, role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'Failed to get answer'}` };
       setQaMessages(prev => ({
         ...prev,
-        [fId]: [...(prev[fId] || []), errorMsg],
+        [primaryFileId]: [...(prev[primaryFileId] || []), errorMsg],
       }));
     } finally {
       setQaLoading(false);
     }
-  }, [activeFile, jobId, qaInput, qaLoading]);
+  }, [activeFile, files, jobId, qaInput, qaLoading, qaSelectedFileIds]);
 
   const [emailError, setEmailError] = useState('');
 
@@ -1221,9 +1229,26 @@ export function DocSummaryClient({
                           fileStatusBg(file.status)
                         } ${idx === activeDocIndex ? 'ring-1 ring-inset ring-blue-400' : 'hover:brightness-95'}`}
                       >
+                        {/* Q&A selection checkbox */}
+                        <div className="pl-2 flex-shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={qaSelectedFileIds.has(file.id)}
+                            onChange={() => {
+                              setQaSelectedFileIds(prev => {
+                                const next = new Set(prev);
+                                if (next.has(file.id)) next.delete(file.id);
+                                else next.add(file.id);
+                                return next;
+                              });
+                            }}
+                            className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            title="Select for Q&A"
+                          />
+                        </div>
                         <button
                           onClick={() => setActiveDocIndex(idx)}
-                          className="flex-1 text-left px-4 py-2.5 flex items-center gap-2.5 min-w-0"
+                          className="flex-1 text-left px-3 py-2.5 flex items-center gap-2.5 min-w-0"
                         >
                           <span className="flex items-center justify-center h-5 w-5 rounded-full bg-white border border-slate-200 text-[10px] font-bold text-slate-600 flex-shrink-0">
                             {idx + 1}
@@ -1341,6 +1366,106 @@ export function DocSummaryClient({
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ─── Document Q&A Panel (bottom of left column) ──────────── */}
+              {visibleFiles.length > 0 && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <button
+                    onClick={() => setQaOpen(o => !o)}
+                    className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <MessageCircle className="h-3.5 w-3.5 text-blue-500" />
+                      <span className="text-xs font-semibold text-slate-700">Ask about documents</span>
+                      {qaSelectedFileIds.size > 0 && (
+                        <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">
+                          {qaSelectedFileIds.size} selected
+                        </span>
+                      )}
+                    </div>
+                    <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform ${qaOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {qaOpen && (
+                    <div className="border-t border-slate-100">
+                      {/* Selected docs indicator */}
+                      {qaSelectedFileIds.size === 0 && (
+                        <div className="px-3 py-2 bg-amber-50 border-b border-amber-100">
+                          <p className="text-[10px] text-amber-700">
+                            Tick documents above to select which to query. If none selected, the active document will be used.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Message history */}
+                      <div
+                        ref={qaScrollRef}
+                        className="max-h-[240px] overflow-y-auto p-3 space-y-2"
+                      >
+                        {(() => {
+                          const primaryId = qaSelectedFileIds.size > 0
+                            ? Array.from(qaSelectedFileIds)[0]
+                            : activeFile?.id;
+                          const msgs = primaryId ? (qaMessages[primaryId] || []) : [];
+                          if (msgs.length === 0 && !qaLoading) {
+                            return (
+                              <p className="text-xs text-slate-400 text-center py-4">
+                                Ask a question — the AI answers using only the document content.
+                              </p>
+                            );
+                          }
+                          return msgs.map((msg) => (
+                            <div
+                              key={msg.id}
+                              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                            >
+                              <div
+                                className={`max-w-[85%] rounded-lg px-3 py-2 text-xs ${
+                                  msg.role === 'user'
+                                    ? 'bg-blue-600 text-white'
+                                    : msg.content.startsWith('Error:') || msg.content.includes('Unable to extract')
+                                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                      : 'bg-slate-50 text-slate-700 border border-slate-200'
+                                }`}
+                              >
+                                <div className="whitespace-pre-wrap">{msg.content}</div>
+                              </div>
+                            </div>
+                          ));
+                        })()}
+                        {qaLoading && (
+                          <div className="flex justify-start">
+                            <div className="bg-slate-50 text-slate-500 border border-slate-200 rounded-lg px-3 py-2 text-xs flex items-center gap-2">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Reading document{qaSelectedFileIds.size > 1 ? 's' : ''}...
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Input area */}
+                      <div className="border-t border-slate-200 p-2 flex items-center gap-1.5 bg-white">
+                        <input
+                          type="text"
+                          value={qaInput}
+                          onChange={(e) => setQaInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); } }}
+                          placeholder="Ask a question..."
+                          disabled={qaLoading}
+                          className="flex-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                        />
+                        <button
+                          onClick={sendQuestion}
+                          disabled={!qaInput.trim() || qaLoading}
+                          className="p-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1604,81 +1729,7 @@ export function DocSummaryClient({
                   </div>
                 )}
 
-                {/* ─── Document Q&A Panel ─────────────────────────────────── */}
-                {activeFile && (activeFile.status === 'uploaded' || activeFile.status === 'processing' || activeFile.status === 'analysed') && (
-                  <div className="mt-4 px-4 mb-4">
-                    <button
-                      onClick={() => setQaOpen(o => !o)}
-                      className="flex items-center gap-2 text-xs font-semibold text-slate-600 uppercase tracking-wider hover:text-slate-800 transition-colors"
-                    >
-                      <MessageCircle className="h-3.5 w-3.5" />
-                      Ask about this document
-                      <ChevronDown className={`h-3 w-3 transition-transform ${qaOpen ? 'rotate-180' : ''}`} />
-                    </button>
-
-                    {qaOpen && (
-                      <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
-                        {/* Message history */}
-                        <div
-                          ref={qaScrollRef}
-                          className="max-h-[300px] overflow-y-auto p-3 space-y-2"
-                        >
-                          {(qaMessages[activeFile.id] || []).length === 0 && !qaLoading && (
-                            <p className="text-xs text-slate-400 text-center py-4">
-                              Ask a question about this document. The AI will answer using only the document content.
-                            </p>
-                          )}
-                          {(qaMessages[activeFile.id] || []).map((msg) => (
-                            <div
-                              key={msg.id}
-                              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                            >
-                              <div
-                                className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                                  msg.role === 'user'
-                                    ? 'bg-blue-600 text-white'
-                                    : msg.content.startsWith('Error:')
-                                      ? 'bg-red-50 text-red-700 border border-red-200'
-                                      : 'bg-white text-slate-700 border border-slate-200'
-                                }`}
-                              >
-                                <div className="whitespace-pre-wrap">{msg.content}</div>
-                              </div>
-                            </div>
-                          ))}
-                          {qaLoading && (
-                            <div className="flex justify-start">
-                              <div className="bg-white text-slate-500 border border-slate-200 rounded-lg px-3 py-2 text-sm flex items-center gap-2">
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                Reading document...
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Input area */}
-                        <div className="border-t border-slate-200 p-2 flex items-center gap-2 bg-white">
-                          <input
-                            type="text"
-                            value={qaInput}
-                            onChange={(e) => setQaInput(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); } }}
-                            placeholder="Ask a question about this document..."
-                            disabled={qaLoading}
-                            className="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-                          />
-                          <button
-                            onClick={sendQuestion}
-                            disabled={!qaInput.trim() || qaLoading}
-                            className="p-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                          >
-                            <Send className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* Q&A panel moved to fixed bottom-left */}
               </div>
             </div>
           </div>
