@@ -448,6 +448,7 @@ model DocSummaryFile {
   pageCount            Int?      @map("page_count")
   hidden               Boolean   @default(false)
   documentDescription  String?   @map("document_description") @db.Text
+  extractedText        String?   @map("extracted_text") @db.Text
   keyTerms             Json?     @map("key_terms")
   missingInformation   Json?     @map("missing_information")
   createdAt            DateTime  @default(now()) @map("created_at")
