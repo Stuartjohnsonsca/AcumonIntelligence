@@ -428,6 +428,7 @@ model DocSummaryJob {
   user     User               @relation(fields: [userId], references: [id])
   files    DocSummaryFile[]
   findings DocSummaryFinding[]
+  qaMessages DocSummaryQA[]
 
   @@index([clientId])
   @@index([userId])
@@ -451,8 +452,9 @@ model DocSummaryFile {
   missingInformation   Json?     @map("missing_information")
   createdAt            DateTime  @default(now()) @map("created_at")
 
-  job      DocSummaryJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  findings DocSummaryFinding[]
+  job        DocSummaryJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  findings   DocSummaryFinding[]
+  qaMessages DocSummaryQA[]
 
   @@index([jobId])
   @@map("doc_summary_files")
@@ -481,6 +483,23 @@ model DocSummaryFinding {
   @@index([jobId])
   @@index([fileId])
   @@map("doc_summary_findings")
+}
+
+model DocSummaryQA {
+  id        String   @id @default(uuid())
+  jobId     String   @map("job_id")
+  fileId    String   @map("file_id")
+  role      String   // "user" | "assistant"
+  content   String   @db.Text
+  turnOrder Int      @map("turn_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  job  DocSummaryJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  file DocSummaryFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([fileId])
+  @@index([jobId])
+  @@map("doc_summary_qa")
 }
 
 // ─── Client Periods & Product Assignments ────────────────────────────────

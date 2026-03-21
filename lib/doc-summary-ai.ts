@@ -493,3 +493,206 @@ export async function analyseDocumentFromImage(
   const combinedDescription = descriptions.join(' ').trim();
   return { findings: uniqueFindings, keyTerms: uniqueKeyTerms, missingInformation: uniqueMissing, summary: combinedSummary, documentDescription: combinedDescription, usage: totalUsage, model: VISION_MODEL };
 }
+
+// ─── Document Q&A — answer questions grounded in document text ────────────
+
+const QA_SYSTEM_PROMPT = `You are a professional document analyst. You answer questions ONLY using information found in the provided document. You must follow these rules strictly:
+
+1. Answer ONLY from the document content provided. Do NOT use any external or prior knowledge.
+2. If the answer is not in the document, state explicitly: "This information is not contained in the document."
+3. Cite specific clause, section, paragraph, or page references where possible.
+4. If you are uncertain about the answer, say so clearly rather than guessing.
+5. Be concise, accurate, and professional in your responses.
+6. If the question is ambiguous, explain what you found that may be relevant and ask for clarification.`;
+
+const CHUNK_SIZE = 25000; // characters per chunk
+
+function chunkText(text: string): string[] {
+  if (text.length <= CHUNK_SIZE) return [text];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = start + CHUNK_SIZE;
+    // Try to break at a paragraph or sentence boundary
+    if (end < text.length) {
+      const lastPara = text.lastIndexOf('\n\n', end);
+      if (lastPara > start + CHUNK_SIZE * 0.7) end = lastPara;
+      else {
+        const lastSentence = text.lastIndexOf('. ', end);
+        if (lastSentence > start + CHUNK_SIZE * 0.7) end = lastSentence + 1;
+      }
+    }
+    chunks.push(text.slice(start, end));
+    start = end;
+  }
+  return chunks;
+}
+
+export interface QAConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export async function askDocumentQuestion(
+  documentText: string,
+  question: string,
+  fileName: string,
+  conversationHistory: QAConversationMessage[] = [],
+): Promise<{ answer: string; usage: DocSummaryUsage; model: string }> {
+  const chunks = chunkText(documentText);
+  const totalUsage: DocSummaryUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+  const models = [PRIMARY_MODEL, FALLBACK_MODEL];
+
+  // Build conversation context from history (last 10 turns max to fit context)
+  const recentHistory = conversationHistory.slice(-10);
+
+  if (chunks.length === 1) {
+    // Single chunk — direct Q&A
+    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+      { role: 'system', content: QA_SYSTEM_PROMPT },
+      { role: 'user', content: `Document: "${fileName}"\n\n--- DOCUMENT TEXT ---\n${chunks[0]}\n--- END DOCUMENT ---` },
+    ];
+    // Add conversation history
+    for (const msg of recentHistory) {
+      messages.push({ role: msg.role, content: msg.content });
+    }
+    // Add the new question
+    messages.push({ role: 'user', content: question });
+
+    let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+    let usedModel = models[0];
+
+    for (const modelId of models) {
+      usedModel = modelId;
+      try {
+        result = await retryWithBackoff(
+          () => getClient().chat.completions.create({
+            model: modelId,
+            messages,
+            max_tokens: 4096,
+          }),
+          `doc-qa:${fileName}`,
+        );
+        break;
+      } catch (err) {
+        if (isModelUnavailableError(err)) continue;
+        throw err;
+      }
+    }
+
+    if (!result) throw new Error(`[doc-qa:${fileName}] All models failed`);
+
+    totalUsage.promptTokens = result.usage?.prompt_tokens ?? 0;
+    totalUsage.completionTokens = result.usage?.completion_tokens ?? 0;
+    totalUsage.totalTokens = result.usage?.total_tokens ?? 0;
+
+    const answer = result.choices[0]?.message?.content?.trim() || 'Unable to generate a response.';
+    console.log(`[DocSummary:QA] Single-chunk | file=${fileName} | model=${usedModel} | tokens=${totalUsage.totalTokens}`);
+    return { answer, usage: totalUsage, model: usedModel };
+  }
+
+  // Multi-chunk — process each chunk then synthesise
+  console.log(`[DocSummary:QA] Multi-chunk (${chunks.length} chunks) | file=${fileName}`);
+  const partialAnswers: string[] = [];
+  let usedModel = models[0];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkLabel = `[Part ${i + 1}/${chunks.length}]`;
+    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+      { role: 'system', content: QA_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: `Document: "${fileName}" ${chunkLabel}\n\n--- DOCUMENT TEXT (section ${i + 1} of ${chunks.length}) ---\n${chunks[i]}\n--- END SECTION ---`,
+      },
+    ];
+    // Include recent history for context
+    for (const msg of recentHistory) {
+      messages.push({ role: msg.role, content: msg.content });
+    }
+    messages.push({
+      role: 'user',
+      content: `${question}\n\nNote: You are reading section ${i + 1} of ${chunks.length} of the document. Answer based on what you find in THIS section. If this section does not contain relevant information, say "No relevant information in this section."`,
+    });
+
+    let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+    for (const modelId of models) {
+      usedModel = modelId;
+      try {
+        result = await retryWithBackoff(
+          () => getClient().chat.completions.create({
+            model: modelId,
+            messages,
+            max_tokens: 2048,
+          }),
+          `doc-qa:${fileName}:chunk${i + 1}`,
+        );
+        break;
+      } catch (err) {
+        if (isModelUnavailableError(err)) continue;
+        throw err;
+      }
+    }
+
+    if (result) {
+      totalUsage.promptTokens += result.usage?.prompt_tokens ?? 0;
+      totalUsage.completionTokens += result.usage?.completion_tokens ?? 0;
+      totalUsage.totalTokens += result.usage?.total_tokens ?? 0;
+      const partial = result.choices[0]?.message?.content?.trim() || '';
+      if (partial && !partial.toLowerCase().includes('no relevant information in this section')) {
+        partialAnswers.push(`${chunkLabel} ${partial}`);
+      }
+    }
+  }
+
+  if (partialAnswers.length === 0) {
+    return {
+      answer: 'This information is not contained in the document.',
+      usage: totalUsage,
+      model: usedModel,
+    };
+  }
+
+  // Synthesise partial answers into a coherent response
+  const synthMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+    {
+      role: 'system',
+      content: 'You are a professional document analyst. Synthesise the following partial answers from different sections of a document into a single, coherent response. Remove any duplicates and cite clause/section references where available.',
+    },
+    {
+      role: 'user',
+      content: `Original question: "${question}"\n\nPartial answers from different document sections:\n\n${partialAnswers.join('\n\n')}\n\nPlease synthesise these into one clear, complete answer.`,
+    },
+  ];
+
+  let synthResult: OpenAI.Chat.Completions.ChatCompletion | null = null;
+  for (const modelId of models) {
+    usedModel = modelId;
+    try {
+      synthResult = await retryWithBackoff(
+        () => getClient().chat.completions.create({
+          model: modelId,
+          messages: synthMessages,
+          max_tokens: 4096,
+        }),
+        `doc-qa:${fileName}:synth`,
+      );
+      break;
+    } catch (err) {
+      if (isModelUnavailableError(err)) continue;
+      throw err;
+    }
+  }
+
+  if (synthResult) {
+    totalUsage.promptTokens += synthResult.usage?.prompt_tokens ?? 0;
+    totalUsage.completionTokens += synthResult.usage?.completion_tokens ?? 0;
+    totalUsage.totalTokens += synthResult.usage?.total_tokens ?? 0;
+  }
+
+  const finalAnswer = synthResult?.choices[0]?.message?.content?.trim()
+    || partialAnswers.join('\n\n');
+
+  console.log(`[DocSummary:QA] Multi-chunk complete | file=${fileName} | model=${usedModel} | chunks=${chunks.length} | tokens=${totalUsage.totalTokens}`);
+  return { answer: finalAnswer, usage: totalUsage, model: usedModel };
+}

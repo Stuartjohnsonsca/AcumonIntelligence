@@ -45,6 +45,13 @@ export interface FileInfo {
   uploadedBy: string;
 }
 
+export interface QAMessage {
+  id: string;
+  role: string;
+  content: string;
+  createdAt: string;
+}
+
 interface PdfParams {
   jobId: string;
   findings: Finding[];
@@ -54,6 +61,7 @@ interface PdfParams {
   userName: string;
   exportDate: Date;
   singleFileId?: string;
+  qaMessages?: Record<string, QAMessage[]>;
 }
 
 export interface PortfolioPdfParams {
@@ -68,6 +76,7 @@ export interface PortfolioPdfParams {
   failedFiles: FailedFileInfo[];
   /** If provided, only include these file IDs in the report */
   selectedFileIds?: string[];
+  qaMessages?: Record<string, QAMessage[]>;
 }
 
 export interface FailedFileInfo {
@@ -1106,6 +1115,73 @@ function renderAppendixB(ctx: PageContext, findings: Finding[], files: FileInfo[
 }
 
 // ---------------------------------------------------------------------------
+// Appendix C — Document Q&A conversations
+// ---------------------------------------------------------------------------
+
+function renderAppendixC(ctx: PageContext, qaMessages: Record<string, QAMessage[]>, files: FileInfo[]): void {
+  // Check if there are any Q&A messages
+  const filesWithQA = files.filter(f => qaMessages[f.id]?.length > 0);
+  if (filesWithQA.length === 0) return;
+
+  newPage(ctx);
+  drawSectionHeading(ctx, 'Appendix C \u2014 Document Q&A');
+
+  drawParagraph(ctx, 'The following questions were asked about the uploaded documents during the review. The AI responded using only the document content as its knowledge source.');
+  ctx.y -= 6;
+
+  for (const file of filesWithQA) {
+    const messages = qaMessages[file.id] || [];
+    if (messages.length === 0) continue;
+
+    ensureSpace(ctx, 60);
+    drawBoldParagraph(ctx, file.originalName, 11);
+    ctx.y -= 2;
+
+    for (const msg of messages) {
+      ensureSpace(ctx, 30);
+      if (msg.role === 'user') {
+        // Question — bold blue label
+        drawLabelledParagraph(ctx, 'Q:', msg.content, 9, 4);
+      } else {
+        // Answer — normal text with slight indent
+        drawLabelledParagraph(ctx, 'A:', msg.content, 9, 4);
+        ctx.y -= 6; // Space between Q&A pairs
+      }
+    }
+    ctx.y -= 8;
+  }
+}
+
+function renderPortfolioAppendixC(ctx: PageContext, qaMessages: Record<string, QAMessage[]>, files: FileInfo[]): void {
+  const filesWithQA = files.filter(f => qaMessages[f.id]?.length > 0);
+  if (filesWithQA.length === 0) return;
+
+  let cNum = 1;
+  for (const file of filesWithQA) {
+    const messages = qaMessages[file.id] || [];
+    if (messages.length === 0) continue;
+
+    newPage(ctx);
+    const sectionTitle = `Appendix C${cNum} \u2014 ${file.originalName}`;
+    drawSectionHeading(ctx, sectionTitle);
+
+    drawParagraph(ctx, 'Questions and answers about this document, grounded solely in the document content.');
+    ctx.y -= 6;
+
+    for (const msg of messages) {
+      ensureSpace(ctx, 30);
+      if (msg.role === 'user') {
+        drawLabelledParagraph(ctx, 'Q:', msg.content, 9, 4);
+      } else {
+        drawLabelledParagraph(ctx, 'A:', msg.content, 9, 4);
+        ctx.y -= 6;
+      }
+    }
+    cNum++;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // TOC renderer
 // ---------------------------------------------------------------------------
 
@@ -1329,6 +1405,13 @@ export async function generateDocSummaryPdf(params: PdfParams): Promise<Uint8Arr
   sectionStartPage.set('Appendix B', tmpCtx.pages.length + 1);
   renderAppendixB(tmpCtx, findings, files);
 
+  const qaData = params.qaMessages || {};
+  const hasQA = files.some(f => (qaData[f.id] || []).length > 0);
+  if (hasQA) {
+    sectionStartPage.set('Appendix C', tmpCtx.pages.length + 1);
+    renderAppendixC(tmpCtx, qaData, files);
+  }
+
   // Determine TOC page count — assume 1 page
   const tocPageCount = 1;
 
@@ -1374,6 +1457,7 @@ export async function generateDocSummaryPdf(params: PdfParams): Promise<Uint8Arr
   renderCaveats(ctx, params.firmName, params.clientName);
   renderAppendixA(ctx, files);
   renderAppendixB(ctx, findings, files);
+  if (hasQA) renderAppendixC(ctx, qaData, files);
 
   // 4. Add clickable TOC link annotations
   addTocLinkAnnotations(doc, tocEntries, sectionStartPage, ctx.pages);
@@ -2022,6 +2106,16 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
     }
   }
 
+  // Add Appendix C entries per file (Q&A)
+  const tocQaData = params.qaMessages || {};
+  let tocCNum = 1;
+  for (const file of files) {
+    if ((tocQaData[file.id] || []).length > 0) {
+      tocSections.push(`Appendix C${tocCNum} \u2014 ${file.originalName}`);
+      tocCNum++;
+    }
+  }
+
   // ------------------------------------------------------------------
   // Pass 1: render all content sections to determine page numbers
   // ------------------------------------------------------------------
@@ -2117,6 +2211,23 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
     }
   }
 
+  // Track per-file appendix C (Q&A) start pages
+  const portfolioQaData = params.qaMessages || {};
+  const portfolioFilesWithQA = files.filter(f => (portfolioQaData[f.id] || []).length > 0);
+  let tmpCNum = 1;
+  for (const file of portfolioFilesWithQA) {
+    const sectionName = `Appendix C${tmpCNum} \u2014 ${file.originalName}`;
+    sectionStartPage.set(sectionName, tmpCtx.pages.length + 1);
+    newPage(tmpCtx);
+    drawSectionHeading(tmpCtx, sectionName);
+    // Rough measure — just render the messages
+    for (const msg of portfolioQaData[file.id]) {
+      ensureSpace(tmpCtx, 30);
+      drawLabelledParagraph(tmpCtx, msg.role === 'user' ? 'Q:' : 'A:', msg.content, 9, 4);
+    }
+    tmpCNum++;
+  }
+
   // Determine TOC page count — estimate based on section count
   const tocPageCount = Math.max(1, Math.ceil(tocSections.length / 30));
 
@@ -2169,6 +2280,10 @@ export async function generatePortfolioPdf(params: PortfolioPdfParams): Promise<
   renderConclusion(ctx);
   renderAppendixA(ctx, files);
   renderPortfolioAppendixB(ctx, findings, files);
+
+  const pQaData = params.qaMessages || {};
+  const pHasQA = files.some(f => (pQaData[f.id] || []).length > 0);
+  if (pHasQA) renderPortfolioAppendixC(ctx, pQaData, files);
 
   // 4. Add clickable TOC link annotations now that all pages exist
   addTocLinkAnnotations(doc, tocEntries, sectionStartPage, ctx.pages);

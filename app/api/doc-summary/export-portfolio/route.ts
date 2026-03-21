@@ -7,6 +7,7 @@ import {
   type Finding,
   type FileInfo,
   type FailedFileInfo,
+  type QAMessage,
 } from '@/lib/doc-summary-pdf';
 import { logActivity, logError, requestContext } from '@/lib/logger';
 
@@ -136,6 +137,18 @@ async function handlePortfolioExport(req: Request, selectedFileIds?: string[], e
       }
     }
 
+    // Fetch Q&A messages from all jobs
+    const qaRows = await prisma.docSummaryQA.findMany({
+      where: { jobId: { in: allJobIds } },
+      orderBy: [{ fileId: 'asc' }, { turnOrder: 'asc' }],
+      select: { id: true, fileId: true, role: true, content: true, createdAt: true },
+    });
+    const qaMessages: Record<string, QAMessage[]> = {};
+    for (const row of qaRows) {
+      if (!qaMessages[row.fileId]) qaMessages[row.fileId] = [];
+      qaMessages[row.fileId].push({ id: row.id, role: row.role, content: row.content, createdAt: row.createdAt.toISOString() });
+    }
+
     const exportDate = new Date();
     const pdfBytes = await generatePortfolioPdf({
       jobId: primaryJobId,
@@ -147,6 +160,7 @@ async function handlePortfolioExport(req: Request, selectedFileIds?: string[], e
       exportDate,
       failedFiles: allFailedFiles,
       selectedFileIds,
+      qaMessages,
     });
 
     const safeClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, '_');

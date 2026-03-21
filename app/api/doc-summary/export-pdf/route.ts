@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifySummaryJobAccess } from '@/lib/client-access';
-import { generateDocSummaryPdf, type Finding, type FileInfo } from '@/lib/doc-summary-pdf';
+import { generateDocSummaryPdf, type Finding, type FileInfo, type QAMessage } from '@/lib/doc-summary-pdf';
 import { uploadToInbox } from '@/lib/azure-blob';
 import { setPdfStatus } from '@/lib/redis';
 import { logActivity, logError, requestContext } from '@/lib/logger';
@@ -92,6 +92,18 @@ export async function GET(req: Request) {
       auditImpact: f.auditImpact ?? null,
     }));
 
+    // Fetch Q&A messages
+    const qaRows = await prisma.docSummaryQA.findMany({
+      where: { jobId },
+      orderBy: [{ fileId: 'asc' }, { turnOrder: 'asc' }],
+      select: { id: true, fileId: true, role: true, content: true, createdAt: true },
+    });
+    const qaMessages: Record<string, QAMessage[]> = {};
+    for (const row of qaRows) {
+      if (!qaMessages[row.fileId]) qaMessages[row.fileId] = [];
+      qaMessages[row.fileId].push({ id: row.id, role: row.role, content: row.content, createdAt: row.createdAt.toISOString() });
+    }
+
     const exportDate = new Date();
     const pdfBytes = await generateDocSummaryPdf({
       jobId,
@@ -102,6 +114,7 @@ export async function GET(req: Request) {
       userName,
       exportDate,
       singleFileId,
+      qaMessages,
     });
 
     const safeClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, '_');
