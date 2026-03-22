@@ -397,16 +397,16 @@ export default function DistributionAnalysisModal({
 
   if (!open) return null;
 
-  const fmt = (n: number) => `${currency} ${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  const fmt = (n: unknown) => { const v = Number(n); return isNaN(v) ? String(n) : `${currency} ${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`; };
   const fmtPct = (n: number) => `${n.toFixed(1)}%`;
-  const fmtAxis = (v: number) => v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : v >= 1000 ? `${(v/1000).toFixed(0)}k` : v.toFixed(0);
+  const fmtAxis = (v: unknown) => { const n = Number(v); if (isNaN(n)) return String(v); return n >= 1000000 ? `${(n/1000000).toFixed(1)}M` : n >= 1000 ? `${(n/1000).toFixed(0)}k` : n.toFixed(0); };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[90vw] h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <h3 className="text-base font-semibold text-slate-900">Distribution Analysis</h3>
+          <h3 className="text-base font-semibold text-slate-900">(D) Distribution Analysis</h3>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
         </div>
 
@@ -554,7 +554,7 @@ export default function DistributionAnalysisModal({
                   <h4 className="text-xs font-semibold text-slate-600 text-center mb-2">Items by Stratum</h4>
                   <ResponsiveContainer width="100%" height={240}>
                     <PieChart><Pie data={strataItemData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={90}
-                      label={(props: PieLabelRenderProps) => `${props.name} ${((props.percent as number) * 100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                      label={(props: PieLabelRenderProps) => `${props.name} ${(((props.percent as number) || 0) * 100).toFixed(0)}%`} labelLine={false} fontSize={10}>
                       {strataItemData.map((d, i) => <Cell key={i} fill={STRATA_COLORS[d.level] || '#94a3b8'} />)}
                     </Pie><Tooltip formatter={(value) => [String(value), 'Items']} /></PieChart>
                   </ResponsiveContainer>
@@ -563,7 +563,7 @@ export default function DistributionAnalysisModal({
                   <h4 className="text-xs font-semibold text-slate-600 text-center mb-2">Value by Stratum</h4>
                   <ResponsiveContainer width="100%" height={240}>
                     <PieChart><Pie data={strataValueData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={90}
-                      label={(props: PieLabelRenderProps) => `${props.name} ${((props.percent as number) * 100).toFixed(0)}%`} labelLine={false} fontSize={10}>
+                      label={(props: PieLabelRenderProps) => `${props.name} ${(((props.percent as number) || 0) * 100).toFixed(0)}%`} labelLine={false} fontSize={10}>
                       {strataValueData.map((d, i) => <Cell key={i} fill={STRATA_COLORS[d.level] || '#94a3b8'} />)}
                     </Pie><Tooltip formatter={(value) => [fmt(Number(value)), 'Value']} /></PieChart>
                   </ResponsiveContainer>
