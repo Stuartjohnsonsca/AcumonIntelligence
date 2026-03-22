@@ -11,6 +11,7 @@ import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
 import AISuggestStratification, { type AISuggestion } from '@/components/tools/sampling/AISuggestStratification';
 import DistributionAnalysisModal from '@/components/tools/sampling/DistributionAnalysisModal';
 import XeroFetchPopulation from '@/components/tools/sampling/XeroFetchPopulation';
+import SampleActionsPopup from '@/components/tools/sampling/SampleActionsPopup';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -241,6 +242,7 @@ export function SamplingCalculatorClient({
   const [runId, setRunId] = useState<string | null>(null);
   const [selectionSeed, setSelectionSeed] = useState<number | null>(null);
   const [planningRationale, setPlanningRationale] = useState('');
+  const [showSampleActions, setShowSampleActions] = useState(false);
   const [fullPopulationData, setFullPopulationData] = useState<Record<string, unknown>[]>([]);
   const [showRationalePopup, setShowRationalePopup] = useState(false);
   const [detailedAuditTrail, setDetailedAuditTrail] = useState<Record<string, unknown> | null>(null);
@@ -2246,9 +2248,17 @@ export function SamplingCalculatorClient({
               <p className="text-sm text-slate-800">{new Date().toLocaleDateString('en-GB')}</p>
             </div>
             {runLocked && (
-              <div className="ml-auto flex items-center gap-1 text-green-600">
-                <Lock className="h-4 w-4" />
-                <span className="text-xs font-medium">Locked</span>
+              <div className="ml-auto flex items-center gap-3">
+                <div className="flex items-center gap-1 text-green-600">
+                  <Lock className="h-4 w-4" />
+                  <span className="text-xs font-medium">Locked</span>
+                </div>
+                <button
+                  onClick={() => setShowSampleActions(true)}
+                  className="px-3 py-1 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  Sample Actions
+                </button>
               </div>
             )}
           </div>
@@ -2578,6 +2588,25 @@ export function SamplingCalculatorClient({
           setCoverage(populationTotal > 0 ? (total / populationTotal) * 100 : 0);
         }}
       />
+
+      {/* Sample Actions Popup (after lock) */}
+      {runId && selectedClient && selectedPeriod && (
+        <SampleActionsPopup
+          open={showSampleActions}
+          onClose={() => setShowSampleActions(false)}
+          selectedIndices={selectedIndices}
+          fullPopulationData={fullPopulationData}
+          uploadedColumns={uploadedColumns}
+          columnMapping={columnMapping}
+          currency={auditData.functionalCurrency}
+          clientId={selectedClient.id}
+          clientName={selectedClient.clientName}
+          periodId={selectedPeriod.id}
+          runId={runId}
+          clientContactEmail={selectedClient.contactEmail}
+          clientContactName={selectedClient.contactName}
+        />
+      )}
     </div>
   );
 }
