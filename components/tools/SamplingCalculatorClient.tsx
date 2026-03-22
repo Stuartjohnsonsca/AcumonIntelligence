@@ -317,10 +317,35 @@ export function SamplingCalculatorClient({
     setBankStatementMeta(null);
 
     try {
+      // Ensure engagement exists before uploading
+      let eid = engagementId;
+      if (!eid && selectedClient && selectedPeriod) {
+        const engRes = await fetch('/api/sampling/engagement', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId: selectedClient.id,
+            periodId: selectedPeriod.id,
+            auditArea: auditData.dataType,
+            testingType: 'test_of_details',
+            auditData,
+          }),
+        });
+        if (!engRes.ok) {
+          const err = await engRes.json().catch(() => null);
+          throw new Error(err?.error || 'Failed to create engagement');
+        }
+        const eng = await engRes.json();
+        eid = eng.id;
+        setEngagementId(eng.id);
+      }
+
+      if (!eid) throw new Error('Please select a client and period first');
+
       // Step 1: Upload to blob + enqueue for async worker processing
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('engagementId', engagementId || '');
+      formData.append('engagementId', eid);
 
       const uploadRes = await fetch('/api/sampling/upload-bank-statement', {
         method: 'POST',
