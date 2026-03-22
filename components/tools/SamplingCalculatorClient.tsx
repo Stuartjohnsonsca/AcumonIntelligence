@@ -361,7 +361,7 @@ export function SamplingCalculatorClient({
 
       // Step 2: Poll for worker completion
       let attempts = 0;
-      const maxAttempts = 120; // 2 minutes at 1s intervals
+      const maxAttempts = 200; // 5 minutes at 1.5s intervals
       while (attempts < maxAttempts) {
         await new Promise(r => setTimeout(r, 1500));
         attempts++;
