@@ -58,9 +58,25 @@ export async function POST(req: Request) {
     const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING;
     if (!connStr) return NextResponse.json({ error: 'Storage not configured' }, { status: 500 });
 
+    // Extract account name for logging
+    const accountMatch = connStr.match(/AccountName=([^;]+)/);
+    const accountName = accountMatch?.[1] || 'unknown';
+    action.info('Using storage account', { accountName, containerName, storagePath });
+
     const blobService = BlobServiceClient.fromConnectionString(connStr);
     const container = blobService.getContainerClient(containerName);
-    await container.createIfNotExists();
+
+    // Ensure container exists — log any errors
+    try {
+      await container.createIfNotExists();
+    } catch (containerErr) {
+      action.warn('createIfNotExists failed, trying upload anyway', {
+        error: containerErr instanceof Error ? containerErr.message : String(containerErr),
+        accountName,
+        containerName,
+      });
+    }
+
     const blob = container.getBlockBlobClient(storagePath);
     await blob.uploadData(buffer, {
       blobHTTPHeaders: { blobContentType: 'application/pdf' },
