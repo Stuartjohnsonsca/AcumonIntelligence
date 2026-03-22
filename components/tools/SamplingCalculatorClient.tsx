@@ -187,6 +187,16 @@ export function SamplingCalculatorClient({
   const [populationTotal, setPopulationTotal] = useState(0);
   const [populationCount, setPopulationCount] = useState(0);
 
+  // ─── Sampling results ───────────────────────────────────────────────────
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  const [sampleTotal, setSampleTotal] = useState<number | null>(null);
+  const [coverage, setCoverage] = useState<number | null>(null);
+  const [runningSelection, setRunningSelection] = useState(false);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [selectionSeed, setSelectionSeed] = useState<number | null>(null);
+  const [planningRationale, setPlanningRationale] = useState('');
+  const [fullPopulationData, setFullPopulationData] = useState<Record<string, unknown>[]>([]);
+
   // ─── Engagement ────────────────────────────────────────────────────────────
   const [engagementId, setEngagementId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -265,7 +275,7 @@ export function SamplingCalculatorClient({
       setUploadedPreview(rows.slice(0, 5));
       setUploadedFileName(file.name);
       setPopulationCount(rows.length);
-      // Compute population total if we can guess the amount column
+      setFullPopulationData(rows);
       applyAutoMapping(columns);
       setStep('map');
     } catch (err) {
@@ -319,6 +329,7 @@ export function SamplingCalculatorClient({
       setUploadedPreview(dataRows.slice(0, 5));
       setUploadedFileName('Pasted data');
       setPopulationCount(dataRows.length);
+      setFullPopulationData(dataRows);
       applyAutoMapping(headers);
       setStep('map');
     }
@@ -367,6 +378,7 @@ export function SamplingCalculatorClient({
     setUploadedPreview(dataRows.slice(0, 5));
     setUploadedFileName('Pasted data');
     setPopulationCount(dataRows.length);
+    setFullPopulationData(dataRows);
     applyAutoMapping(headers);
     setStep('map');
   }
@@ -517,6 +529,79 @@ export function SamplingCalculatorClient({
 
     setError('');
     setStep('method');
+  }
+
+  // ─── Run Auto Select ────────────────────────────────────────────────────
+
+  async function runAutoSelect() {
+    if (!selectedClient || !selectedPeriod || fullPopulationData.length === 0) return;
+    setRunningSelection(true);
+    setError('');
+
+    try {
+      // Create engagement if needed
+      let eid = engagementId;
+      if (!eid) {
+        const engRes = await fetch('/api/sampling/engagement', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId: selectedClient.id,
+            periodId: selectedPeriod.id,
+            auditArea: auditData.dataType,
+            testingType: 'test_of_details',
+            auditData,
+          }),
+        });
+        if (!engRes.ok) {
+          const err = await engRes.json().catch(() => null);
+          throw new Error(err?.error || 'Failed to create engagement');
+        }
+        const eng = await engRes.json();
+        eid = eng.id;
+        setEngagementId(eng.id);
+      }
+
+      // Run sampling
+      const runRes = await fetch('/api/sampling/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          engagementId: eid,
+          populationData: fullPopulationData,
+          columnMapping,
+          method: samplingMethod,
+          stratification,
+          errorMetric: randomBasis,
+          sampleSizeStrategy,
+          sampleSize: fixedSampleSize,
+          confidence: (firmConfig?.confidenceLevel || 95) / 100,
+          tolerableMisstatement: auditData.tolerableMisstatement,
+        }),
+      });
+
+      if (!runRes.ok) {
+        const err = await runRes.json().catch(() => null);
+        throw new Error(err?.error || 'Sampling failed');
+      }
+
+      const result = await runRes.json();
+      setRunId(result.runId);
+      setSelectedIndices(new Set(result.selectedIndices as number[]));
+      setSampleTotal(result.sampleTotal);
+      setCoverage(result.coverage);
+      setSelectionSeed(result.seed);
+      setPlanningRationale(result.planningRationale || '');
+      setPopulationTotal(result.populationTotal);
+
+      // Update the fixed sample size display to match actual
+      if (sampleSizeStrategy !== 'fixed') {
+        setFixedSampleSize(result.sampleSize);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Auto Select failed');
+    }
+    setRunningSelection(false);
   }
 
   // ─── Render helpers ────────────────────────────────────────────────────────
@@ -768,16 +853,21 @@ export function SamplingCalculatorClient({
                   </p>
                 </div>
                 <div className="p-2.5 bg-blue-50 rounded-lg border border-blue-100">
-                  <span className="text-[10px] text-blue-600 uppercase tracking-wider">Sample Size</span>
+                  <span className="text-[10px] text-blue-600 uppercase tracking-wider">Sample Total</span>
                   <p className="text-base font-bold text-blue-800">
-                    {sampleSizeStrategy === 'fixed' ? fixedSampleSize.toLocaleString() : '—'}
+                    {sampleTotal !== null
+                      ? `${auditData.functionalCurrency} ${sampleTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      : 'Unknown'}
+                  </p>
+                  <p className="text-[10px] text-blue-400">
+                    {selectedIndices.size > 0 ? `${selectedIndices.size} items` : 'Pending selection'}
                   </p>
                 </div>
                 <div className="p-2.5 bg-slate-50 rounded-lg">
                   <span className="text-[10px] text-slate-500 uppercase tracking-wider">Coverage %</span>
                   <p className="text-base font-bold text-slate-800">
-                    {sampleSizeStrategy === 'fixed' && populationCount > 0
-                      ? ((fixedSampleSize / populationCount) * 100).toFixed(2) + '%'
+                    {coverage !== null
+                      ? coverage.toFixed(2) + '%'
                       : '—'}
                   </p>
                 </div>
@@ -1059,45 +1149,99 @@ export function SamplingCalculatorClient({
             </div>
           )}
 
-          {/* Method step — population totals + auto select */}
+          {/* Method step — auto select + results */}
           {step === 'method' && (
             <div className="space-y-4">
-              {/* Population / Sample Totals */}
-              <div className="bg-white rounded-lg border border-slate-200 p-5">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="p-3 bg-slate-50 rounded-lg">
-                    <span className="text-xs text-slate-500">Population Total</span>
-                    <p className="text-lg font-bold text-slate-800">
-                      {auditData.functionalCurrency} {populationTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </p>
-                    <p className="text-xs text-slate-400">{populationCount.toLocaleString()} items</p>
-                  </div>
-                  <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
-                    <span className="text-xs text-blue-600">Sample Total</span>
-                    <p className="text-lg font-bold text-blue-800">Unknown</p>
-                    <p className="text-xs text-blue-400">Pending sample selection</p>
-                  </div>
-                  <div className="p-3 bg-slate-50 rounded-lg">
-                    <span className="text-xs text-slate-500">Coverage %</span>
-                    <p className="text-lg font-bold text-slate-800">—</p>
-                    <p className="text-xs text-slate-400">Sample ÷ Population</p>
+              {/* Auto Select button */}
+              {selectedIndices.size === 0 && (
+                <div className="bg-white rounded-lg border border-slate-200 p-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm text-slate-500">
+                      <BarChart3 className="h-5 w-5" />
+                      <span>Configure sampling method on the right, then run selection.</span>
+                    </div>
+                    <button
+                      onClick={runAutoSelect}
+                      disabled={runningSelection}
+                      className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                    >
+                      {runningSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
+                      Auto Select
+                    </button>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* Auto Select */}
-              <div className="bg-white rounded-lg border border-slate-200 p-5">
-                <div className="flex items-center gap-2 text-sm text-slate-500">
-                  <BarChart3 className="h-5 w-5" />
-                  <span>Configure sampling method on the right, then click <strong>Auto Select</strong> to run.</span>
-                </div>
-                <button
-                  disabled
-                  className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white opacity-40 cursor-not-allowed"
-                >
-                  Auto Select (Phase 4)
-                </button>
-              </div>
+              {/* Results — selected sample table */}
+              {selectedIndices.size > 0 && (
+                <>
+                  {/* Planning rationale */}
+                  {planningRationale && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">
+                      <strong>Selection rationale:</strong> {planningRationale}
+                      {selectionSeed !== null && <span className="ml-2 text-blue-400">(Seed: {selectionSeed})</span>}
+                    </div>
+                  )}
+
+                  {/* Sample table */}
+                  <div className="bg-white rounded-lg border border-slate-200">
+                    <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-slate-700">
+                        Sample Selected — {selectedIndices.size} items
+                      </h3>
+                      <button
+                        onClick={() => {
+                          // Export selected items as CSV
+                          const headers = uploadedColumns.join(',');
+                          const rows = fullPopulationData
+                            .filter((_, i) => selectedIndices.has(i))
+                            .map(row => uploadedColumns.map(col => `"${String(row[col] || '').replace(/"/g, '""')}"`).join(','));
+                          const csv = [headers, ...rows].join('\n');
+                          const blob = new Blob([csv], { type: 'text/csv' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url; a.download = `sample_${selectedClient?.clientName || 'export'}.csv`;
+                          a.click(); URL.revokeObjectURL(url);
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-700"
+                      >
+                        Export Sample CSV
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-8">#</th>
+                            <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-8">Sel</th>
+                            {uploadedColumns.slice(0, 8).map(col => (
+                              <th key={col} className="px-2 py-1.5 text-left font-semibold text-slate-600 truncate max-w-[120px]">{col}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {fullPopulationData.map((row, i) => {
+                            const isSelected = selectedIndices.has(i);
+                            return (
+                              <tr key={i} className={isSelected ? 'bg-green-50' : ''}>
+                                <td className="px-2 py-1 text-slate-400">{i + 1}</td>
+                                <td className="px-2 py-1">
+                                  {isSelected && <span className="inline-block w-3.5 h-3.5 rounded-full bg-green-500" />}
+                                </td>
+                                {uploadedColumns.slice(0, 8).map(col => (
+                                  <td key={col} className={`px-2 py-1 truncate max-w-[120px] ${isSelected ? 'text-green-800 font-medium' : 'text-slate-500'}`}>
+                                    {String(row[col] ?? '')}
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
