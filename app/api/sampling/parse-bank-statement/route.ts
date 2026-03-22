@@ -304,7 +304,12 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
-    console.error('[Sampling:ParseBankStatement] Error:', error instanceof Error ? error.message : error);
-    return NextResponse.json({ error: 'Failed to parse bank statement' }, { status: 500 });
+    const msg = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack?.split('\n').slice(0, 3).join('\n') : '';
+    console.error('[Sampling:ParseBankStatement] Error:', msg, stack);
+    return NextResponse.json({
+      error: `Failed to parse bank statement: ${msg}`,
+      debug: process.env.NODE_ENV !== 'production' ? stack : undefined,
+    }, { status: 500 });
   }
 }
