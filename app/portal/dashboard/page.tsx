@@ -174,7 +174,7 @@ export default function PortalDashboardPage() {
             <tbody className="divide-y divide-slate-100">
               {requests.map(req => {
                 const allDone = EVIDENCE_COLUMNS.every(col => {
-                  if (!(req as Record<string, unknown>)[col.key]) return true;
+                  if (!(req as unknown as Record<string, unknown>)[col.key]) return true;
                   return req.uploads.some(u => u.evidenceType === col.key && (u.aiVerified || u.firmAccepted));
                 });
                 return (
@@ -193,7 +193,7 @@ export default function PortalDashboardPage() {
                             if (!file) return;
                             // Find first required but not-yet-uploaded type
                             const neededType = EVIDENCE_COLUMNS.find(col =>
-                              (req as Record<string, unknown>)[col.key] &&
+                              (req as unknown as Record<string, unknown>)[col.key] &&
                               !req.uploads.some(u => u.evidenceType === col.key && (u.aiVerified !== false))
                             );
                             if (neededType) handleUpload(req.id, neededType.key, file);
@@ -310,7 +310,7 @@ export default function PortalDashboardPage() {
                     const req = requests.find(r => r.id === bf.mappedRequestId);
                     if (!req) continue;
                     const neededType = EVIDENCE_COLUMNS.find(col =>
-                      (req as Record<string, unknown>)[col.key] &&
+                      (req as unknown as Record<string, unknown>)[col.key] &&
                       !req.uploads.some(u => u.evidenceType === col.key)
                     );
                     if (neededType) await handleUpload(bf.mappedRequestId, neededType.key, bf.file);
