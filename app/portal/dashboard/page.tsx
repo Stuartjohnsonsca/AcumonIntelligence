@@ -104,7 +104,7 @@ export default function PortalDashboardPage() {
 
   // ─── Get status dot color ─────────────────────────────────────────────
   const getStatusColor = (request: EvidenceRequest, key: string) => {
-    if (!(request as Record<string, unknown>)[key]) return 'bg-slate-200'; // Not required
+    if (!(request as unknown as Record<string, unknown>)[key]) return 'bg-slate-200'; // Not required
     const uploads = request.uploads.filter(u => u.evidenceType === key);
     if (uploads.length === 0) return 'bg-slate-300'; // Required but not uploaded
     const latest = uploads[uploads.length - 1];
