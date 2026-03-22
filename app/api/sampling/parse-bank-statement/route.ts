@@ -138,13 +138,103 @@ export async function POST(req: Request) {
         responseContent = JSON.stringify({ ...metadata, transactions: allTransactions });
       }
     } else {
-      // Scanned PDF — use vision model on first pages
-      // Convert PDF pages to base64 images for vision model
-      // For now, return an error suggesting the user try a text-based PDF
-      return NextResponse.json({
-        error: 'This bank statement appears to be scanned/image-based. Please try uploading a text-based PDF, or use the Paste Data option to enter transactions manually.',
-        scanned: true,
-      }, { status: 422 });
+      // Scanned PDF — convert pages to images and use vision model
+      console.log('[Sampling:ParseBankStatement] Text too short, using vision model for OCR');
+
+      try {
+        const { execSync } = await import('child_process');
+        const { writeFileSync, readFileSync, mkdirSync, readdirSync, unlinkSync, rmdirSync } = await import('fs');
+        const { join } = await import('path');
+        const os = await import('os');
+
+        const tmpDir = join(os.tmpdir(), `bank-stmt-${Date.now()}`);
+        mkdirSync(tmpDir, { recursive: true });
+        const pdfPath = join(tmpDir, 'statement.pdf');
+        writeFileSync(pdfPath, buffer);
+
+        // Convert PDF pages to images using pdftoppm (from poppler)
+        try {
+          execSync(`pdftoppm -jpeg -r 200 "${pdfPath}" "${join(tmpDir, 'page')}"`, { timeout: 30000 });
+        } catch {
+          // pdftoppm may not be available on serverless — fall back to error
+          return NextResponse.json({
+            error: 'This bank statement appears to be scanned. OCR processing is not available on this server. Please use the Paste Data option to enter transactions manually.',
+            scanned: true,
+          }, { status: 422 });
+        }
+
+        // Read generated page images
+        const pageFiles = readdirSync(tmpDir)
+          .filter(f => f.startsWith('page') && f.endsWith('.jpg'))
+          .sort();
+
+        if (pageFiles.length === 0) {
+          return NextResponse.json({ error: 'Could not convert PDF pages to images' }, { status: 422 });
+        }
+
+        // Send each page to vision model (max 5 pages for bank statements)
+        const allTransactions: Record<string, unknown>[] = [];
+        let metadata: Record<string, unknown> = {};
+        const maxPages = Math.min(pageFiles.length, 5);
+
+        for (let pi = 0; pi < maxPages; pi++) {
+          const imgData = readFileSync(join(tmpDir, pageFiles[pi]));
+          const base64 = imgData.toString('base64');
+
+          const visionPrompt = pi === 0
+            ? EXTRACTION_PROMPT
+            : 'Continue extracting transactions from this bank statement page. Same JSON format as before.';
+
+          const result = await client.chat.completions.create({
+            model: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'text', text: visionPrompt },
+                { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
+              ],
+            }],
+            max_tokens: 8000,
+            temperature: 0.1,
+          });
+
+          const content = result.choices?.[0]?.message?.content?.trim() || '';
+          const jsonMatch = content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (pi === 0) {
+                metadata = { ...parsed };
+                delete metadata.transactions;
+              }
+              if (Array.isArray(parsed.transactions)) {
+                allTransactions.push(...parsed.transactions);
+              }
+            } catch { /* skip malformed */ }
+          }
+        }
+
+        // Cleanup temp files
+        try {
+          readdirSync(tmpDir).forEach(f => unlinkSync(join(tmpDir, f)));
+          rmdirSync(tmpDir);
+        } catch { /* non-fatal */ }
+
+        if (allTransactions.length === 0) {
+          return NextResponse.json({
+            error: 'Could not extract transactions from the scanned bank statement. Please try the Paste Data option.',
+            scanned: true,
+          }, { status: 422 });
+        }
+
+        responseContent = JSON.stringify({ ...metadata, transactions: allTransactions });
+      } catch (ocrErr) {
+        console.error('[Sampling:ParseBankStatement] OCR error:', ocrErr instanceof Error ? ocrErr.message : ocrErr);
+        return NextResponse.json({
+          error: 'Failed to process scanned bank statement. Please use the Paste Data option to enter transactions manually.',
+          scanned: true,
+        }, { status: 422 });
+      }
     }
 
     // Parse the AI response

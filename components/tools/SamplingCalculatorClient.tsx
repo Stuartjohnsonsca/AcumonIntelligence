@@ -637,6 +637,11 @@ export function SamplingCalculatorClient({
           kFactor: firmConfig?.riskMatrix
             ? firmConfig.riskMatrix[['Low', 'Medium', 'High'].indexOf(inherentRisk)]?.[['Low', 'Medium', 'High'].indexOf(specificRisk)] || 20
             : 20,
+          // Method-specific params
+          systematicBasis,
+          confidenceFactor: 3.0, // Default moderate; will use firm config in future
+          compositeThreshold,
+          compositeResidualMethod,
         }),
       });
 
