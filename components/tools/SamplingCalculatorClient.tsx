@@ -4,7 +4,7 @@ import { useState, useCallback, useRef } from 'react';
 import {
   Upload, FileSpreadsheet, Loader2, ChevronDown, AlertCircle,
   CheckCircle2, Search, Lock, ArrowLeft, Plus, BarChart3,
-  Link2, Grid3X3, MessageSquare,
+  Link2, Grid3X3, MessageSquare, Info, Printer, Download, X,
 } from 'lucide-react';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -196,6 +196,9 @@ export function SamplingCalculatorClient({
   const [selectionSeed, setSelectionSeed] = useState<number | null>(null);
   const [planningRationale, setPlanningRationale] = useState('');
   const [fullPopulationData, setFullPopulationData] = useState<Record<string, unknown>[]>([]);
+  const [showRationalePopup, setShowRationalePopup] = useState(false);
+  const [detailedAuditTrail, setDetailedAuditTrail] = useState<Record<string, unknown> | null>(null);
+  const rationaleRef = useRef<HTMLDivElement>(null);
 
   // ─── Engagement ────────────────────────────────────────────────────────────
   const [engagementId, setEngagementId] = useState<string | null>(null);
@@ -596,6 +599,7 @@ export function SamplingCalculatorClient({
       setSelectionSeed(result.seed);
       setPlanningRationale(result.planningRationale || '');
       setPopulationTotal(result.populationTotal);
+      setDetailedAuditTrail(result.auditTrail || null);
 
       // Update the fixed sample size display to match actual
       if (sampleSizeStrategy !== 'fixed') {
@@ -1152,99 +1156,112 @@ export function SamplingCalculatorClient({
             </div>
           )}
 
-          {/* Method step — auto select + results */}
-          {step === 'method' && (
+          {/* ─── Data table — always visible once data is loaded ──────── */}
+          {fullPopulationData.length > 0 && (step === 'map' || step === 'method') && (
             <div className="space-y-4">
-              {/* Auto Select button */}
-              {selectedIndices.size === 0 && (
-                <div className="bg-white rounded-lg border border-slate-200 p-5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm text-slate-500">
-                      <BarChart3 className="h-5 w-5" />
-                      <span>Configure sampling method on the right, then run selection.</span>
-                    </div>
-                    <button
-                      onClick={runAutoSelect}
-                      disabled={runningSelection}
-                      className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
-                    >
-                      {runningSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
-                      Auto Select
-                    </button>
+              {/* Auto Select bar */}
+              <div className="bg-white rounded-lg border border-slate-200 p-3 flex items-center justify-between">
+                {selectedIndices.size > 0 ? (
+                  <div className="flex items-center gap-2 text-sm text-green-700">
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span><strong>{selectedIndices.size}</strong> items selected</span>
                   </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <BarChart3 className="h-4 w-4" />
+                    <span>{step === 'map' ? 'Complete column mapping above, then run selection.' : 'Configure method on the right, then run.'}</span>
+                  </div>
+                )}
+                <button
+                  onClick={runAutoSelect}
+                  disabled={runningSelection || step === 'map'}
+                  className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 transition-colors"
+                >
+                  {runningSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
+                  {selectedIndices.size > 0 ? 'Re-select' : 'Auto Select'}
+                </button>
+              </div>
+
+              {/* Planning rationale with detail icon */}
+              {planningRationale && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 flex items-center justify-between">
+                  <div>
+                    <strong>Selection rationale:</strong> {planningRationale}
+                    {selectionSeed !== null && <span className="ml-2 text-blue-400">(Seed: {selectionSeed})</span>}
+                  </div>
+                  <button
+                    onClick={() => setShowRationalePopup(true)}
+                    className="ml-3 p-1 text-blue-500 hover:text-blue-700 transition-colors shrink-0"
+                    title="View detailed statistical calculations"
+                  >
+                    <Info className="h-4 w-4" />
+                  </button>
                 </div>
               )}
 
-              {/* Results — selected sample table */}
-              {selectedIndices.size > 0 && (
-                <>
-                  {/* Planning rationale */}
-                  {planningRationale && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">
-                      <strong>Selection rationale:</strong> {planningRationale}
-                      {selectionSeed !== null && <span className="ml-2 text-blue-400">(Seed: {selectionSeed})</span>}
-                    </div>
+              {/* Population data table with selection highlighting */}
+              <div className="bg-white rounded-lg border border-slate-200">
+                <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-700">
+                    Population Data
+                    {selectedIndices.size > 0 && <span className="ml-2 text-green-600 font-normal">({selectedIndices.size} selected)</span>}
+                  </h3>
+                  {selectedIndices.size > 0 && (
+                    <button
+                      onClick={() => {
+                        const headers = uploadedColumns.join(',');
+                        const rows = fullPopulationData
+                          .filter((_, i) => selectedIndices.has(i))
+                          .map(row => uploadedColumns.map(col => `"${String(row[col] || '').replace(/"/g, '""')}"`).join(','));
+                        const csv = [headers, ...rows].join('\n');
+                        const blob = new Blob([csv], { type: 'text/csv' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = `sample_${selectedClient?.clientName || 'export'}.csv`;
+                        a.click(); URL.revokeObjectURL(url);
+                      }}
+                      className="text-xs text-blue-600 hover:text-blue-700"
+                    >
+                      Export Sample CSV
+                    </button>
                   )}
-
-                  {/* Sample table */}
-                  <div className="bg-white rounded-lg border border-slate-200">
-                    <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-slate-700">
-                        Sample Selected — {selectedIndices.size} items
-                      </h3>
-                      <button
-                        onClick={() => {
-                          // Export selected items as CSV
-                          const headers = uploadedColumns.join(',');
-                          const rows = fullPopulationData
-                            .filter((_, i) => selectedIndices.has(i))
-                            .map(row => uploadedColumns.map(col => `"${String(row[col] || '').replace(/"/g, '""')}"`).join(','));
-                          const csv = [headers, ...rows].join('\n');
-                          const blob = new Blob([csv], { type: 'text/csv' });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url; a.download = `sample_${selectedClient?.clientName || 'export'}.csv`;
-                          a.click(); URL.revokeObjectURL(url);
-                        }}
-                        className="text-xs text-blue-600 hover:text-blue-700"
-                      >
-                        Export Sample CSV
-                      </button>
-                    </div>
-                    <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-                      <table className="w-full text-xs">
-                        <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
-                          <tr>
-                            <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-8">#</th>
-                            <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-8">Sel</th>
+                </div>
+                <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-8">#</th>
+                        {selectedIndices.size > 0 && (
+                          <th className="px-2 py-1.5 text-center font-semibold text-slate-600 w-8">Sel</th>
+                        )}
+                        {uploadedColumns.slice(0, 8).map(col => (
+                          <th key={col} className="px-2 py-1.5 text-left font-semibold text-slate-600 truncate max-w-[120px]">{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {fullPopulationData.map((row, i) => {
+                        const isSelected = selectedIndices.has(i);
+                        return (
+                          <tr key={i} className={isSelected ? 'bg-green-50' : ''}>
+                            <td className="px-2 py-1 text-slate-400">{i + 1}</td>
+                            {selectedIndices.size > 0 && (
+                              <td className="px-2 py-1 text-center">
+                                {isSelected && <span className="inline-block w-3.5 h-3.5 rounded-full bg-green-500" />}
+                              </td>
+                            )}
                             {uploadedColumns.slice(0, 8).map(col => (
-                              <th key={col} className="px-2 py-1.5 text-left font-semibold text-slate-600 truncate max-w-[120px]">{col}</th>
+                              <td key={col} className={`px-2 py-1 truncate max-w-[120px] ${isSelected ? 'text-green-800 font-medium' : 'text-slate-500'}`}>
+                                {String(row[col] ?? '')}
+                              </td>
                             ))}
                           </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-50">
-                          {fullPopulationData.map((row, i) => {
-                            const isSelected = selectedIndices.has(i);
-                            return (
-                              <tr key={i} className={isSelected ? 'bg-green-50' : ''}>
-                                <td className="px-2 py-1 text-slate-400">{i + 1}</td>
-                                <td className="px-2 py-1">
-                                  {isSelected && <span className="inline-block w-3.5 h-3.5 rounded-full bg-green-500" />}
-                                </td>
-                                {uploadedColumns.slice(0, 8).map(col => (
-                                  <td key={col} className={`px-2 py-1 truncate max-w-[120px] ${isSelected ? 'text-green-800 font-medium' : 'text-slate-500'}`}>
-                                    {String(row[col] ?? '')}
-                                  </td>
-                                ))}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </>
-              )}
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1477,6 +1494,135 @@ export function SamplingCalculatorClient({
           </div>
         </div>
       </div>
+
+      {/* ─── Rationale Detail Popup ────────────────────────────────────────── */}
+      {showRationalePopup && detailedAuditTrail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <h3 className="text-base font-semibold text-slate-900">Selection Rationale — Detailed Calculations</h3>
+              <button onClick={() => setShowRationalePopup(false)} className="p-1 text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div ref={rationaleRef} className="px-5 py-4 overflow-y-auto flex-1 text-sm space-y-4">
+              {/* Method summary */}
+              <div>
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Sampling Method</h4>
+                <p className="text-slate-700">
+                  {(detailedAuditTrail as Record<string, unknown>).algorithm as string || 'Simple Random Sampling Without Replacement (SRSWOR)'}
+                </p>
+              </div>
+
+              {/* Parameters */}
+              <div>
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Parameters</h4>
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-slate-100">
+                    <tr><td className="py-1 text-slate-500 w-48">Population size (N)</td><td className="py-1 font-medium">{String((detailedAuditTrail as Record<string, unknown>).populationSize ?? '—')}</td></tr>
+                    <tr><td className="py-1 text-slate-500">Sample size (n)</td><td className="py-1 font-medium">{String((detailedAuditTrail as Record<string, unknown>).sampleSize ?? '—')}</td></tr>
+                    <tr><td className="py-1 text-slate-500">Confidence level</td><td className="py-1 font-medium">{((Number((detailedAuditTrail as Record<string, unknown>).confidence) || 0.95) * 100).toFixed(1)}%</td></tr>
+                    <tr><td className="py-1 text-slate-500">Tolerable misstatement (TM)</td><td className="py-1 font-medium">{auditData.functionalCurrency} {String((detailedAuditTrail as Record<string, unknown>).tolerableMisstatement ?? '—')}</td></tr>
+                    <tr><td className="py-1 text-slate-500">Error metric</td><td className="py-1 font-medium">{String((detailedAuditTrail as Record<string, unknown>).errorMetric ?? '—').replace(/_/g, ' ')}</td></tr>
+                    <tr><td className="py-1 text-slate-500">PRNG seed</td><td className="py-1 font-mono">{String((detailedAuditTrail as Record<string, unknown>).seed ?? '—')}</td></tr>
+                    <tr><td className="py-1 text-slate-500">Tool version</td><td className="py-1 font-medium">{String((detailedAuditTrail as Record<string, unknown>).toolVersion ?? '1.0')}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Statistical formulas */}
+              <div>
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Statistical Methodology</h4>
+                <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-700 space-y-2 font-mono">
+                  <p>Finite Population Correction: FPC = √((N − n) / N)</p>
+                  <p>Standard Error: SE = (s / √n) × FPC</p>
+                  <p>Upper Confidence Limit (mean): UCL(μ) = x̄ + t(α, n−1) × SE</p>
+                  <p>Upper Confidence Limit (total): UCL(T) = N × UCL(μ)</p>
+                  <p>Decision: UCL(T) ≤ TM → PASS</p>
+                </div>
+              </div>
+
+              {/* Planning rationale */}
+              <div>
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Sample Size Rationale</h4>
+                <p className="text-slate-700">{planningRationale}</p>
+              </div>
+
+              {/* Population totals */}
+              <div>
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Coverage</h4>
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-slate-100">
+                    <tr><td className="py-1 text-slate-500 w-48">Population total</td><td className="py-1 font-medium">{auditData.functionalCurrency} {populationTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>
+                    <tr><td className="py-1 text-slate-500">Sample total</td><td className="py-1 font-medium">{sampleTotal !== null ? `${auditData.functionalCurrency} ${sampleTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</td></tr>
+                    <tr><td className="py-1 text-slate-500">Value coverage</td><td className="py-1 font-medium">{coverage !== null ? `${coverage.toFixed(2)}%` : '—'}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Audit trail hashes */}
+              <div>
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Audit Trail</h4>
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-slate-100">
+                    <tr><td className="py-1 text-slate-500 w-48">Population hash (SHA-256)</td><td className="py-1 font-mono text-[10px] break-all">{String((detailedAuditTrail as Record<string, unknown>).populationHash ?? '—')}</td></tr>
+                    <tr><td className="py-1 text-slate-500">Timestamp</td><td className="py-1 font-medium">{String((detailedAuditTrail as Record<string, unknown>).timestamp ?? '—')}</td></tr>
+                    <tr><td className="py-1 text-slate-500">Algorithm</td><td className="py-1 font-medium">{String((detailedAuditTrail as Record<string, unknown>).algorithm ?? '—')}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  // Print the rationale
+                  const printWin = window.open('', '_blank');
+                  if (printWin && rationaleRef.current) {
+                    printWin.document.write(`<html><head><title>Sampling Rationale — ${selectedClient?.clientName || ''}</title><style>body{font-family:Arial,sans-serif;font-size:12px;padding:20px;color:#333}h4{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 4px}table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid #eee}.font-mono{font-family:monospace}</style></head><body>`);
+                    printWin.document.write(rationaleRef.current.innerHTML);
+                    printWin.document.write('</body></html>');
+                    printWin.document.close();
+                    printWin.print();
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                <Printer className="h-3.5 w-3.5" /> Print
+              </button>
+              <button
+                onClick={() => {
+                  // Save as JSON
+                  const data = {
+                    ...detailedAuditTrail,
+                    planningRationale,
+                    populationTotal,
+                    sampleTotal,
+                    coverage,
+                    client: selectedClient?.clientName,
+                    period: selectedPeriod ? `${selectedPeriod.startDate} - ${selectedPeriod.endDate}` : '',
+                  };
+                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url; a.download = `sampling_rationale_${selectedClient?.clientName || 'export'}.json`;
+                  a.click(); URL.revokeObjectURL(url);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" /> Save
+              </button>
+              <button
+                onClick={() => setShowRationalePopup(false)}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
