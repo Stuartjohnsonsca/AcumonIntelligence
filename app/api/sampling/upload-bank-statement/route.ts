@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
 import { enqueueBankStatementParse } from '@/lib/azure-queue';
+import { uploadToInbox, CONTAINERS } from '@/lib/azure-blob';
 import { apiAction } from '@/lib/logger';
 import { createHash } from 'crypto';
 
@@ -50,37 +51,12 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const fileHash = createHash('sha256').update(buffer).digest('hex');
 
-    // Upload to Azure Blob — use upload-inbox (guaranteed to exist) with sampling prefix for isolation
-    const containerName = 'upload-inbox';
-    const storagePath = `sampling/${engagement.clientId}/${engagementId}/bank-statements/${fileHash.slice(0, 8)}_${file.name}`;
+    // Upload to Azure Blob via the same proven function used by doc-summary
+    const containerName = CONTAINERS.INBOX;
+    const sanitisedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `sampling/${engagement.clientId}/${engagementId}/${fileHash.slice(0, 8)}_${sanitisedName}`;
 
-    const { BlobServiceClient } = await import('@azure/storage-blob');
-    const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING;
-    if (!connStr) return NextResponse.json({ error: 'Storage not configured' }, { status: 500 });
-
-    // Extract account name for logging
-    const accountMatch = connStr.match(/AccountName=([^;]+)/);
-    const accountName = accountMatch?.[1] || 'unknown';
-    action.info('Using storage account', { accountName, containerName, storagePath });
-
-    const blobService = BlobServiceClient.fromConnectionString(connStr);
-    const container = blobService.getContainerClient(containerName);
-
-    // Ensure container exists — log any errors
-    try {
-      await container.createIfNotExists();
-    } catch (containerErr) {
-      action.warn('createIfNotExists failed, trying upload anyway', {
-        error: containerErr instanceof Error ? containerErr.message : String(containerErr),
-        accountName,
-        containerName,
-      });
-    }
-
-    const blob = container.getBlockBlobClient(storagePath);
-    await blob.uploadData(buffer, {
-      blobHTTPHeaders: { blobContentType: 'application/pdf' },
-    });
+    await uploadToInbox(storagePath, buffer, 'application/pdf');
 
     action.info('File uploaded to blob', { storagePath, fileHash: fileHash.slice(0, 16) });
 
