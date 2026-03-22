@@ -53,6 +53,7 @@ model User {
   samplingEngagements        SamplingEngagement[]
   samplingReviews            SamplingReview[]           @relation("SamplingReviewer")
   samplingEngagementsReview  SamplingEngagement[]       @relation("SamplingEngagementReviewer")
+  evidenceRequestsCreated   AuditEvidenceRequest[]     @relation("EvidenceRequestCreator")
 
   @@map("users")
 }
@@ -118,6 +119,8 @@ model Client {
   docSummaryJobs         DocSummaryJob[]
   periods                ClientPeriod[]
   samplingEngagements    SamplingEngagement[]
+  portalUsers            ClientPortalUser[]
+  evidenceRequests       AuditEvidenceRequest[]
 
   @@map("clients")
 }
@@ -521,6 +524,7 @@ model ClientPeriod {
   client             Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   productAssignments PeriodProductAssignment[]
   samplingEngagements SamplingEngagement[]
+  evidenceRequests    AuditEvidenceRequest[]
 
   @@unique([clientId, startDate])
   @@map("client_periods")
@@ -698,6 +702,7 @@ model SamplingRun {
   judgementChat SamplingJudgementChat[]
   reviews     SamplingReview[]
   artifacts   SamplingExportArtifact[]
+  evidenceRequests AuditEvidenceRequest[]
 
   @@index([engagementId])
   @@index([populationId])
@@ -783,5 +788,103 @@ model SamplingExportArtifact {
 
   @@index([runId])
   @@map("sampling_export_artifacts")
+}
+
+// ─── Client Audit Portal ──────────────────────────────────────────────────────
+
+model ClientPortalUser {
+  id             String    @id @default(uuid())
+  clientId       String    @map("client_id")
+  email          String
+  name           String
+  passwordHash   String    @map("password_hash")
+  isActive       Boolean   @default(true) @map("is_active")
+  lastLoginAt    DateTime? @map("last_login_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  client             Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  twoFactorCodes     ClientPortalTwoFactor[]
+  evidenceUploads    EvidenceUpload[]
+
+  @@unique([clientId, email])
+  @@map("client_portal_users")
+}
+
+model ClientPortalTwoFactor {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  code      String
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user ClientPortalUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("client_portal_two_factor")
+}
+
+// ─── Audit Evidence Requests ──────────────────────────────────────────────────
+
+model AuditEvidenceRequest {
+  id              String   @id @default(uuid())
+  runId           String   @map("run_id")
+  clientId        String   @map("client_id")
+  periodId        String   @map("period_id")
+  createdBy       String   @map("created_by")
+  transactionId   String   @map("transaction_id")
+  description     String   @db.Text
+  amount          Float?
+  date            String?
+  reference       String?
+  contact         String?
+  // Evidence type checkboxes
+  invoiceRequired       Boolean @default(false) @map("invoice_required")
+  paymentRequired       Boolean @default(false) @map("payment_required")
+  supplierConfirmation  Boolean @default(false) @map("supplier_confirmation")
+  debtorConfirmation    Boolean @default(false) @map("debtor_confirmation")
+  contractRequired      Boolean @default(false) @map("contract_required")
+  intercompanyRequired  Boolean @default(false) @map("intercompany_required")
+  directorMatters       Boolean @default(false) @map("director_matters")
+  // Status tracking
+  status          String   @default("pending") // pending | partial | complete | cancelled
+  assignedTo      Json?    @map("assigned_to") // Array of client team member emails
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  run       SamplingRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period    ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  creator   User         @relation("EvidenceRequestCreator", fields: [createdBy], references: [id])
+  uploads   EvidenceUpload[]
+
+  @@index([runId])
+  @@index([clientId, periodId])
+  @@map("audit_evidence_requests")
+}
+
+model EvidenceUpload {
+  id              String   @id @default(uuid())
+  requestId       String   @map("request_id")
+  uploadedBy      String   @map("uploaded_by") // ClientPortalUser ID
+  originalName    String   @map("original_name")
+  storagePath     String   @map("storage_path")
+  containerName   String   @default("audit-evidence") @map("container_name")
+  fileSize        Int?     @map("file_size")
+  mimeType        String?  @map("mime_type")
+  evidenceType    String   @map("evidence_type") // invoice | payment | supplier_confirmation | debtor_confirmation | contract | intercompany | director_matters
+  // Verification
+  aiVerified      Boolean? @map("ai_verified") // null=pending, true=matches, false=mismatch
+  aiVerifyNotes   String?  @map("ai_verify_notes") @db.Text
+  firmAccepted    Boolean? @map("firm_accepted") // null=pending, true=accepted, false=rejected
+  firmReviewedBy  String?  @map("firm_reviewed_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  request         AuditEvidenceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  uploader        ClientPortalUser     @relation(fields: [uploadedBy], references: [id])
+
+  @@index([requestId])
+  @@map("evidence_uploads")
 }
 
