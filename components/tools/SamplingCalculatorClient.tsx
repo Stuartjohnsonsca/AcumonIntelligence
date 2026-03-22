@@ -5,7 +5,9 @@ import {
   Upload, FileSpreadsheet, Loader2, ChevronDown, AlertCircle,
   CheckCircle2, Search, Lock, ArrowLeft, Plus, BarChart3,
   Link2, Grid3X3, MessageSquare, Info, Printer, Download, X,
+  RotateCcw, Clock,
 } from 'lucide-react';
+import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -117,6 +119,8 @@ function defaultTestType(dataType: string): string {
 export function SamplingCalculatorClient({
   userName, assignedClients, firmConfig,
 }: Props) {
+  const { addTask, updateTask } = useBackgroundTasks();
+
   // ─── Step/state management ─────────────────────────────────────────────────
   const [step, setStep] = useState<'client' | 'no-access' | 'configure' | 'upload' | 'map' | 'method'>('client');
 
@@ -180,6 +184,31 @@ export function SamplingCalculatorClient({
   const [compositeThreshold, setCompositeThreshold] = useState(0);
   const [compositeJustification, setCompositeJustification] = useState('');
   const [compositeResidualMethod, setCompositeResidualMethod] = useState('random');
+  const [compositeResidualBasis, setCompositeResidualBasis] = useState('net_signed');
+  const [compositeResidualSystematic, setCompositeResidualSystematic] = useState('single_stage');
+  const [compositeDefResult, setCompositeDefResult] = useState<'defensible' | 'weak' | 'indefensible' | null>(null);
+  const [compositeDefFeedback, setCompositeDefFeedback] = useState('');
+  const [compositeDefAssessing, setCompositeDefAssessing] = useState(false);
+
+  // Judgemental
+  const [judgementalDescription, setJudgementalDescription] = useState('');
+  const [judgementalJustification, setJudgementalJustification] = useState('');
+  const [judgementalDefResult, setJudgementalDefResult] = useState<'defensible' | 'weak' | 'indefensible' | null>(null);
+  const [judgementalDefFeedback, setJudgementalDefFeedback] = useState('');
+  const [judgementalDefAssessing, setJudgementalDefAssessing] = useState(false);
+
+  // Stratification rationale
+  const [stratRationale, setStratRationale] = useState('');
+  const [stratDefResult, setStratDefResult] = useState<'defensible' | 'weak' | 'indefensible' | null>(null);
+  const [stratDefFeedback, setStratDefFeedback] = useState('');
+  const [stratDefAssessing, setStratDefAssessing] = useState(false);
+
+  // Reset confirmation
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // Session history
+  const [engagementHistory, setEngagementHistory] = useState<{ id: string; createdAt: string; auditArea: string | null; status: string; _count: { runs: number } }[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   // ─── Mode B stratification ──────────────────────────────────────────────
   const [allocationRule, setAllocationRule] = useState<'rule_a' | 'rule_b' | 'rule_c'>('rule_a');
@@ -359,6 +388,16 @@ export function SamplingCalculatorClient({
 
       const { populationId } = await uploadRes.json();
 
+      // Show background task dot
+      const taskId = `bank-stmt-${populationId}`;
+      addTask({
+        id: taskId,
+        clientName: selectedClient?.clientName || '',
+        activity: 'Bank Statement Extraction',
+        status: 'running',
+        toolPath: '/tools/sampling',
+      });
+
       // Step 2: Poll for worker completion
       let attempts = 0;
       const maxAttempts = 200; // 5 minutes at 1.5s intervals
@@ -372,10 +411,12 @@ export function SamplingCalculatorClient({
         const status = await statusRes.json();
 
         if (status.status === 'failed') {
+          updateTask(taskId, { status: 'error', error: status.error || 'Parsing failed' });
           throw new Error(status.error || 'Bank statement parsing failed');
         }
 
         if (status.status === 'complete') {
+          updateTask(taskId, { status: 'completed' });
           const { rows, columns, metadata } = status as {
             rows: Record<string, unknown>[];
             columns: string[];
@@ -512,42 +553,74 @@ export function SamplingCalculatorClient({
 
   // ─── Assess fixed sample size justification ────────────────────────────
 
-  async function assessJustification() {
-    if (!fixedJustification.trim() || fixedJustification.length < 20) {
-      setJustificationResult('indefensible');
-      setJustificationFeedback('Justification is too brief. Please provide a detailed explanation referencing audit risk, materiality, or the nature of the population.');
+  // ─── Shared AI defensibility assessment ─────────────────────────────────
+  // Used by fixed sample size, composite threshold, judgemental, and stratification
+
+  async function assessDefensibility(
+    type: 'fixed_size' | 'composite_threshold' | 'judgemental' | 'stratification',
+    justification: string,
+    description?: string,
+    callbacks?: {
+      setResult: (v: 'defensible' | 'weak' | 'indefensible' | null) => void;
+      setFeedback: (v: string) => void;
+      setAssessing: (v: boolean) => void;
+    },
+  ) {
+    const setResult = callbacks?.setResult || setJustificationResult;
+    const setFeedback = callbacks?.setFeedback || setJustificationFeedback;
+    const setAssessing = callbacks?.setAssessing || setJustificationAssessing;
+
+    if (!justification.trim() || justification.length < 10) {
+      setResult('indefensible');
+      setFeedback('Justification is too brief. Please provide a detailed explanation referencing audit risk, materiality, or the nature of the population.');
       return;
     }
-    setJustificationAssessing(true);
-    setJustificationResult(null);
-    setJustificationFeedback('');
+
+    setAssessing(true);
+    setResult(null);
+    setFeedback('');
+
     try {
-      // Client-side heuristic check for obvious red flags
-      const lower = fixedJustification.toLowerCase();
-      const redFlags = ['fewer items', 'most efficient', 'reduced workload', 'less work', 'save time', 'quickest', 'minimum effort'];
-      const hasRedFlag = redFlags.some(flag => lower.includes(flag));
+      const res = await fetch('/api/sampling/assess-justification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type,
+          justification,
+          description,
+          context: {
+            method: samplingMethod,
+            sampleSize: fixedSampleSize,
+            populationSize: populationCount,
+            threshold: compositeThreshold,
+            dataType: auditData.dataType,
+            materiality: auditData.performanceMateriality,
+          },
+        }),
+      });
 
-      if (hasRedFlag) {
-        setJustificationResult('indefensible');
-        setJustificationFeedback('This justification relies on workload minimisation, which is not acceptable to audit regulators. Please revise to reference risk, materiality, or the nature of the population.');
-        setJustificationAssessing(false);
-        return;
+      if (res.ok) {
+        const data = await res.json();
+        const verdict = data.verdict === 'potentially_weak' ? 'weak' : data.verdict;
+        setResult(verdict as 'defensible' | 'weak' | 'indefensible');
+        const parts: string[] = [];
+        if (data.assessment) parts.push(data.assessment);
+        if (data.concerns?.length) parts.push('Concerns: ' + data.concerns.join('; '));
+        if (data.suggestions?.length) parts.push('Suggestions: ' + data.suggestions.join('; '));
+        setFeedback(parts.join('\n'));
+      } else {
+        setResult('weak');
+        setFeedback('Could not complete AI assessment. Please review manually.');
       }
-
-      const hasRiskRef = /risk|material|assert|nature|population|significant|control|substantive/i.test(fixedJustification);
-      if (!hasRiskRef) {
-        setJustificationResult('weak');
-        setJustificationFeedback('This justification does not clearly reference audit risk, materiality, or assertion-level considerations. Consider strengthening your rationale.');
-        setJustificationAssessing(false);
-        return;
-      }
-
-      setJustificationResult('defensible');
-      setJustificationFeedback('Justification appears defensible. It references appropriate audit considerations.');
     } catch {
-      setJustificationFeedback('Could not assess justification. Please review manually.');
+      setResult('weak');
+      setFeedback('Assessment service unavailable. Please review manually.');
     }
-    setJustificationAssessing(false);
+    setAssessing(false);
+  }
+
+  async function assessJustification() {
+    await assessDefensibility('fixed_size', fixedJustification);
   }
 
   // ─── Auto-map columns by name matching ──────────────────────────────────
@@ -927,7 +1000,7 @@ export function SamplingCalculatorClient({
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <div>
+        <div className="flex-1">
           <h1 className="text-xl font-bold text-slate-800">
             Sample Calculator — {selectedClient?.clientName}
           </h1>
@@ -936,7 +1009,41 @@ export function SamplingCalculatorClient({
             {confidenceLevel ? ` | Confidence: ${confidenceLevel}%` : ''}
           </p>
         </div>
+        <button
+          onClick={() => setShowResetConfirm(true)}
+          className="px-3 py-1.5 text-xs text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-slate-700 transition-colors"
+        >
+          Reset
+        </button>
       </div>
+
+      {/* Reset confirmation */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-sm mx-4 p-5">
+            <h3 className="text-base font-semibold text-slate-900 mb-2">Reset All Parameters?</h3>
+            <p className="text-sm text-slate-500 mb-4">This will clear all sampling parameters, audit data, population data, and results. This cannot be undone.</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowResetConfirm(false)} className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-800">Cancel</button>
+              <button onClick={() => {
+                setAuditData({ performanceMateriality: 0, clearlyTrivial: 0, tolerableMisstatement: 0, functionalCurrency: 'GBP', dataType: 'Revenue', testType: 'one_tail' });
+                setSamplingMethod('random'); setStratification('simple'); setRandomBasis('net_signed');
+                setSystematicBasis('single_stage'); setSampleSizeStrategy('calculator'); setFixedSampleSize(25);
+                setInherentRisk('Medium'); setSpecificRisk('Medium');
+                setCompositeThreshold(0); setCompositeJustification(''); setCompositeResidualMethod('random');
+                setJudgementalDescription(''); setJudgementalJustification('');
+                setFixedJustification(''); setStratRationale('');
+                setSelectedIndices(new Set()); setSampleTotal(null); setCoverage(null);
+                setRunId(null); setEngagementId(null);
+                setFullPopulationData([]); setUploadedColumns([]); setUploadedPreview([]);
+                setPopulationCount(0); setPopulationTotal(0);
+                setError(''); setStep('configure');
+                setShowResetConfirm(false);
+              }} className="px-4 py-1.5 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700">Reset</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-center gap-2">
@@ -1631,6 +1738,39 @@ export function SamplingCalculatorClient({
                     ))}
                   </div>
                 )}
+
+                {/* Stratification rationale + defensibility */}
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">
+                    Stratification Rationale <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={stratRationale}
+                    onChange={(e) => { setStratRationale(e.target.value); setStratDefResult(null); }}
+                    rows={3}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    placeholder="Explain why stratification is appropriate for this population, referencing risk characteristics, value distribution, or the nature of the data..."
+                  />
+                  <button
+                    onClick={() => assessDefensibility('stratification', stratRationale, undefined, {
+                      setResult: setStratDefResult, setFeedback: setStratDefFeedback, setAssessing: setStratDefAssessing,
+                    })}
+                    disabled={stratDefAssessing || !stratRationale.trim()}
+                    className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md bg-purple-700 text-white hover:bg-purple-800 disabled:opacity-40 transition-colors"
+                  >
+                    {stratDefAssessing ? <><Loader2 className="h-3 w-3 animate-spin" /> Assessing...</> : <><MessageSquare className="h-3 w-3" /> Assess Defensibility</>}
+                  </button>
+                  {stratDefResult && (
+                    <div className={`mt-2 p-2 rounded-lg text-xs ${
+                      stratDefResult === 'defensible' ? 'bg-green-50 border border-green-200 text-green-700'
+                      : stratDefResult === 'weak' ? 'bg-amber-50 border border-amber-200 text-amber-700'
+                      : 'bg-red-50 border border-red-200 text-red-700'
+                    }`}>
+                      <span className="font-semibold">{stratDefResult === 'defensible' ? 'Defensible' : stratDefResult === 'weak' ? 'Potentially Weak' : 'Indefensible'}</span>
+                      {stratDefFeedback && <p className="mt-0.5 whitespace-pre-line">{stratDefFeedback}</p>}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1700,20 +1840,39 @@ export function SamplingCalculatorClient({
                   <input
                     type="number"
                     value={compositeThreshold || ''}
-                    onChange={(e) => setCompositeThreshold(parseFloat(e.target.value) || 0)}
+                    onChange={(e) => { setCompositeThreshold(parseFloat(e.target.value) || 0); setCompositeDefResult(null); }}
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
                     placeholder="0.00"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Justification</label>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Justification <span className="text-red-500">*</span></label>
                   <textarea
                     value={compositeJustification}
-                    onChange={(e) => setCompositeJustification(e.target.value)}
+                    onChange={(e) => { setCompositeJustification(e.target.value); setCompositeDefResult(null); }}
                     rows={3}
                     className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    placeholder="Explain why this threshold is appropriate..."
+                    placeholder="Explain why this threshold is appropriate, with reference to audit risk, materiality, and the nature of the population..."
                   />
+                  <button
+                    onClick={() => assessDefensibility('composite_threshold', compositeJustification, undefined, {
+                      setResult: setCompositeDefResult, setFeedback: setCompositeDefFeedback, setAssessing: setCompositeDefAssessing,
+                    })}
+                    disabled={compositeDefAssessing || !compositeJustification.trim()}
+                    className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-white hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                  >
+                    {compositeDefAssessing ? <><Loader2 className="h-3 w-3 animate-spin" /> Assessing...</> : <><MessageSquare className="h-3 w-3" /> Assess Defensibility</>}
+                  </button>
+                  {compositeDefResult && (
+                    <div className={`mt-2 p-2 rounded-lg text-xs ${
+                      compositeDefResult === 'defensible' ? 'bg-green-50 border border-green-200 text-green-700'
+                      : compositeDefResult === 'weak' ? 'bg-amber-50 border border-amber-200 text-amber-700'
+                      : 'bg-red-50 border border-red-200 text-red-700'
+                    }`}>
+                      <span className="font-semibold">{compositeDefResult === 'defensible' ? 'Defensible' : compositeDefResult === 'weak' ? 'Potentially Weak' : 'Indefensible'}</span>
+                      {compositeDefFeedback && <p className="mt-0.5 whitespace-pre-line">{compositeDefFeedback}</p>}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Residual Population Method</label>
@@ -1728,12 +1887,82 @@ export function SamplingCalculatorClient({
                     <option value="judgemental">Judgemental</option>
                   </select>
                 </div>
+                {/* Residual method sub-options */}
+                {compositeResidualMethod === 'random' && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">Residual — Random Basis</label>
+                    <div className="space-y-1">
+                      {[{ key: 'net_signed', label: 'Net (signed) misstatement' }, { key: 'overstatement_only', label: 'Overstatement-only' }, { key: 'absolute_error', label: 'Absolute error / gross error' }].map(opt => (
+                        <label key={opt.key} className="flex items-center gap-2 text-xs text-slate-600">
+                          <input type="radio" name="compositeResidualBasis" checked={compositeResidualBasis === opt.key} onChange={() => setCompositeResidualBasis(opt.key)} className="text-blue-600" />
+                          {opt.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {compositeResidualMethod === 'systematic' && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">Residual — Systematic Basis</label>
+                    <div className="space-y-1">
+                      {[{ key: 'single_stage', label: 'Single Stage' }, { key: 'two_stage', label: '2 Stage' }].map(opt => (
+                        <label key={opt.key} className="flex items-center gap-2 text-xs text-slate-600">
+                          <input type="radio" name="compositeResidualSys" checked={compositeResidualSystematic === opt.key} onChange={() => setCompositeResidualSystematic(opt.key)} className="text-blue-600" />
+                          {opt.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
             {samplingMethod === 'judgemental' && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-                Judgemental sampling requires an AI-assisted dialogue to document your rationale. This will open when you click Auto Select.
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">
+                    Selection Criteria <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={judgementalDescription}
+                    onChange={(e) => { setJudgementalDescription(e.target.value); setJudgementalDefResult(null); }}
+                    rows={3}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="Describe what the agent should do to select the sample (e.g. select all invoices above £25k and all year-end transactions)..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">
+                    Justification <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={judgementalJustification}
+                    onChange={(e) => { setJudgementalJustification(e.target.value); setJudgementalDefResult(null); }}
+                    rows={3}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="Justify why this sampling approach is appropriate for the audit objective..."
+                  />
+                  <button
+                    onClick={() => assessDefensibility('judgemental', judgementalJustification, judgementalDescription, {
+                      setResult: setJudgementalDefResult, setFeedback: setJudgementalDefFeedback, setAssessing: setJudgementalDefAssessing,
+                    })}
+                    disabled={judgementalDefAssessing || !judgementalJustification.trim() || !judgementalDescription.trim()}
+                    className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-white hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                  >
+                    {judgementalDefAssessing ? <><Loader2 className="h-3 w-3 animate-spin" /> Assessing...</> : <><MessageSquare className="h-3 w-3" /> Assess Defensibility</>}
+                  </button>
+                  {judgementalDefResult && (
+                    <div className={`mt-2 p-2 rounded-lg text-xs ${
+                      judgementalDefResult === 'defensible' ? 'bg-green-50 border border-green-200 text-green-700'
+                      : judgementalDefResult === 'weak' ? 'bg-amber-50 border border-amber-200 text-amber-700'
+                      : 'bg-red-50 border border-red-200 text-red-700'
+                    }`}>
+                      <span className="font-semibold">{judgementalDefResult === 'defensible' ? 'Defensible' : judgementalDefResult === 'weak' ? 'Potentially Weak' : 'Indefensible'}</span>
+                      {judgementalDefFeedback && <p className="mt-0.5 whitespace-pre-line">{judgementalDefFeedback}</p>}
+                    </div>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-400">Users can also manually select items in the data table.</p>
               </div>
             )}
             </>)}
