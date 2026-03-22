@@ -141,30 +141,47 @@ export async function POST(req: Request) {
 
       action.info('Text extraction complete, splitting into chunks', { totalChars: extractedText.length, chunks: chunks.length });
 
+      // Helper to safely call AI and extract content (handles errors, thinking tags)
+      async function callAI(prompt: string): Promise<string> {
+        try {
+          const result = await client.chat.completions.create({
+            model: 'Qwen/Qwen3.5-397B-A17B',
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 16000,
+            temperature: 0.1,
+          });
+          let content = result.choices?.[0]?.message?.content?.trim() || '';
+          // Strip thinking tags from reasoning models (Qwen3.5 may output <think>...</think>)
+          content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+          return content;
+        } catch (aiErr) {
+          action.warn('AI API call failed', { error: aiErr instanceof Error ? aiErr.message : String(aiErr) });
+          return '';
+        }
+      }
+
+      // Helper to safely parse JSON from AI response
+      function parseAIJson(content: string): Record<string, unknown> | null {
+        if (!content) return null;
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return null;
+        try {
+          return JSON.parse(jsonMatch[0]);
+        } catch {
+          action.warn('Failed to parse AI JSON response', { contentPreview: content.slice(0, 200) });
+          return null;
+        }
+      }
+
       if (chunks.length === 1) {
-        // Single chunk — one call
-        const result = await client.chat.completions.create({
-          model: 'Qwen/Qwen3.5-397B-A17B',
-          messages: [
-            { role: 'user', content: `${EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT ---\n${chunks[0]}` },
-          ],
-          max_tokens: 16000,
-          temperature: 0.1,
-        });
-        responseContent = result.choices?.[0]?.message?.content?.trim() || '';
+        responseContent = await callAI(`${EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT ---\n${chunks[0]}`);
       } else {
         // Multiple chunks — process ALL in parallel for speed
         const chunkPromises = chunks.map((chunk, ci) => {
           const chunkPrompt = ci === 0
             ? `${EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`
             : `Extract ALL transactions from this bank statement text. Return ONLY valid JSON: {"transactions": [...]} with each transaction having date (YYYY-MM-DD), description, reference, debit (number), credit (number), balance (number).\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`;
-
-          return client.chat.completions.create({
-            model: 'Qwen/Qwen3.5-397B-A17B',
-            messages: [{ role: 'user', content: chunkPrompt }],
-            max_tokens: 16000,
-            temperature: 0.1,
-          });
+          return callAI(chunkPrompt);
         });
 
         const results = await Promise.all(chunkPromises);
@@ -173,19 +190,15 @@ export async function POST(req: Request) {
         let metadata: Record<string, unknown> = {};
 
         for (let ci = 0; ci < results.length; ci++) {
-          const content = results[ci].choices?.[0]?.message?.content?.trim() || '';
-          const jsonMatch = content.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[0]);
-              if (ci === 0) {
-                metadata = { ...parsed };
-                delete metadata.transactions;
-              }
-              if (Array.isArray(parsed.transactions)) {
-                allTransactions.push(...parsed.transactions);
-              }
-            } catch { /* skip malformed chunk */ }
+          const parsed = parseAIJson(results[ci]);
+          if (parsed) {
+            if (ci === 0) {
+              metadata = { ...parsed };
+              delete metadata.transactions;
+            }
+            if (Array.isArray(parsed.transactions)) {
+              allTransactions.push(...(parsed.transactions as Record<string, unknown>[]));
+            }
           }
         }
 
@@ -263,13 +276,22 @@ export async function POST(req: Request) {
       }
     }
 
-    // Parse the AI response
-    const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+    // Parse the AI response — strip thinking tags first
+    let cleanResponse = responseContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const jsonMatch = cleanResponse.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return NextResponse.json({ error: 'Could not parse bank statement data' }, { status: 422 });
+      action.warn('No JSON in AI response', { responsePreview: cleanResponse.slice(0, 300) });
+      return NextResponse.json({ error: 'Could not parse bank statement data. The AI did not return valid transaction data.' }, { status: 422 });
     }
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      action.warn('Invalid JSON from AI', { responsePreview: jsonMatch[0].slice(0, 300), error: parseErr instanceof Error ? parseErr.message : String(parseErr) });
+      return NextResponse.json({ error: 'Bank statement data was returned in an invalid format. Please try again.' }, { status: 422 });
+    }
+
     const transactions: Record<string, unknown>[] = Array.isArray(parsed.transactions) ? parsed.transactions : [];
 
     if (transactions.length === 0) {
