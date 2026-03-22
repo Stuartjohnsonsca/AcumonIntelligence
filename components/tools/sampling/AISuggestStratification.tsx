@@ -159,18 +159,28 @@ export default function AISuggestStratification({
 
   return (
     <div className="space-y-2">
-      {/* Suggest button */}
+      {/* D: AI-Proposed Stratification */}
       {!suggestion && (
-        <button
-          onClick={handleSuggest}
-          disabled={disabled || loading || fullPopulationData.length === 0}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-40 transition-colors"
-        >
-          {loading
-            ? <><Loader2 className="h-3 w-3 animate-spin" /> Analysing population...</>
-            : <><Sparkles className="h-3 w-3" /> AI Suggest</>
-          }
-        </button>
+        <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs font-semibold text-purple-800">(D) AI-Proposed Stratification</span>
+              <p className="text-[10px] text-purple-600 mt-0.5">
+                Analyse population to recommend features, allocation rule, and rationale.
+              </p>
+            </div>
+            <button
+              onClick={handleSuggest}
+              disabled={disabled || loading || fullPopulationData.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 transition-colors"
+            >
+              {loading
+                ? <><Loader2 className="h-3 w-3 animate-spin" /> Analysing...</>
+                : <><Sparkles className="h-3 w-3" /> AI Suggest</>
+              }
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Error */}
