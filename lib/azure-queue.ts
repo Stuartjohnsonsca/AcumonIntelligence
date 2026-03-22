@@ -6,6 +6,7 @@ const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING || '';
 export const QUEUES = {
   DOC_SUMMARY_ANALYSIS: 'doc-summary-analysis',
   PDF_GENERATION: 'pdf-generation',
+  BANK_STATEMENT_PARSE: 'bank-statement-parse',
 } as const;
 
 let queueServiceClient: QueueServiceClient | null = null;
@@ -55,7 +56,18 @@ export interface PdfGenerationMessage {
   userId: string;
 }
 
-export type QueueMessage = DocSummaryMessage | PdfGenerationMessage;
+export interface BankStatementParseMessage {
+  type: 'bank-statement-parse';
+  populationId: string;
+  engagementId: string;
+  clientId: string;
+  userId: string;
+  storagePath: string;
+  containerName: string;
+  fileName: string;
+}
+
+export type QueueMessage = DocSummaryMessage | PdfGenerationMessage | BankStatementParseMessage;
 
 // ─── Send ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +78,14 @@ export async function enqueueDocSummaryAnalysis(msg: Omit<DocSummaryMessage, 'ty
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64');
   await client.sendMessage(encoded);
   console.log(`[Queue] Enqueued doc-summary-analysis | jobId=${msg.jobId} fileId=${msg.fileId}`);
+}
+
+export async function enqueueBankStatementParse(msg: Omit<BankStatementParseMessage, 'type'>): Promise<void> {
+  const client = await getQueueClient(QUEUES.BANK_STATEMENT_PARSE);
+  const payload: BankStatementParseMessage = { type: 'bank-statement-parse', ...msg };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64');
+  await client.sendMessage(encoded);
+  console.log(`[Queue] Enqueued bank-statement-parse | populationId=${msg.populationId} file=${msg.fileName}`);
 }
 
 export async function enqueuePdfGeneration(msg: Omit<PdfGenerationMessage, 'type'>): Promise<void> {

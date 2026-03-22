@@ -317,53 +317,69 @@ export function SamplingCalculatorClient({
     setBankStatementMeta(null);
 
     try {
+      // Step 1: Upload to blob + enqueue for async worker processing
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('engagementId', engagementId || '');
 
-      const res = await fetch('/api/sampling/parse-bank-statement', {
+      const uploadRes = await fetch('/api/sampling/upload-bank-statement', {
         method: 'POST',
         body: formData,
       });
 
-      // Handle non-JSON responses (Vercel timeout pages, 502s, etc.)
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await res.text();
-        throw new Error(
-          res.status === 504 ? 'Request timed out — the bank statement may be too large. Try uploading fewer pages or use the Paste Data option.'
-          : res.status >= 500 ? `Server error (${res.status}). Please try again.`
-          : `Unexpected response (${res.status}): ${text.slice(0, 100)}`
-        );
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => ({ error: 'Upload failed' }));
+        throw new Error(err.error || 'Failed to upload bank statement');
       }
 
-      const data = await res.json();
+      const { populationId } = await uploadRes.json();
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to parse bank statement');
+      // Step 2: Poll for worker completion
+      let attempts = 0;
+      const maxAttempts = 120; // 2 minutes at 1s intervals
+      while (attempts < maxAttempts) {
+        await new Promise(r => setTimeout(r, 1500));
+        attempts++;
+
+        const statusRes = await fetch(`/api/sampling/population-status?populationId=${populationId}`);
+        if (!statusRes.ok) continue;
+
+        const status = await statusRes.json();
+
+        if (status.status === 'failed') {
+          throw new Error(status.error || 'Bank statement parsing failed');
+        }
+
+        if (status.status === 'complete') {
+          const { rows, columns, metadata } = status as {
+            rows: Record<string, unknown>[];
+            columns: string[];
+            metadata: Record<string, unknown>;
+          };
+
+          setUploadedColumns(columns);
+          setUploadedPreview(rows.slice(0, 5));
+          setUploadedFileName(file.name);
+          setPopulationCount(rows.length);
+          setFullPopulationData(rows);
+          setBankStatementMeta(metadata);
+
+          // Auto-map bank statement columns
+          setColumnMapping({
+            transactionId: 'Transaction ID',
+            date: 'Date',
+            amount: 'Amount',
+            description: 'Description',
+          });
+
+          setStep('map');
+          setBankStatementParsing(false);
+          return;
+        }
+        // status === 'parsing' — keep polling
       }
 
-      const { rows, columns, metadata } = data as {
-        rows: Record<string, unknown>[];
-        columns: string[];
-        metadata: Record<string, unknown>;
-      };
-
-      setUploadedColumns(columns);
-      setUploadedPreview(rows.slice(0, 5));
-      setUploadedFileName(file.name);
-      setPopulationCount(rows.length);
-      setFullPopulationData(rows);
-      setBankStatementMeta(metadata);
-
-      // Auto-map bank statement columns
-      setColumnMapping({
-        transactionId: 'Transaction ID',
-        date: 'Date',
-        amount: 'Amount',
-        description: 'Description',
-      });
-
-      setStep('map');
+      throw new Error('Bank statement parsing timed out. Please try again.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse bank statement');
     }
