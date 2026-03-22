@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
-  "buildCommand": "next build",
+  "buildCommand": "prisma db push --skip-generate && next build",
   "installCommand": "npm install",
   "outputDirectory": ".next",
   "regions": ["lhr1"],
