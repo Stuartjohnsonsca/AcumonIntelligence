@@ -10,6 +10,7 @@ import {
 import { selectSystematic } from '@/lib/sampling-systematic';
 import { selectMUS } from '@/lib/sampling-mus';
 import { selectComposite } from '@/lib/sampling-composite';
+import { stratifyPopulation, type StratificationFeature } from '@/lib/sampling-stratification';
 
 export const maxDuration = 30;
 
@@ -50,6 +51,11 @@ export async function POST(req: Request) {
     // Composite-specific
     compositeThreshold,
     compositeResidualMethod,
+    // Mode B stratification
+    stratificationFeatures,
+    allocationRule,
+    allocationParams,
+    explainabilityLevel,
   } = body;
 
   if (!engagementId || !populationData || !columnMapping) {
@@ -183,6 +189,46 @@ export async function POST(req: Request) {
         break;
       }
 
+      case 'stratified': {
+        // Mode B — AI Risk Stratification
+        const features: StratificationFeature[] = Array.isArray(stratificationFeatures)
+          ? stratificationFeatures
+          : [{ name: 'Amount', column: columnMapping.amount || 'bookValue', type: 'numeric' as const, weight: 1 }];
+
+        const rule = allocationRule || 'rule_a';
+        const params = allocationParams || {};
+
+        const stratResult = stratifyPopulation({
+          population: populationItems,
+          features,
+          allocationRule: rule,
+          ruleAMediumPct: params.mediumPct || 30,
+          ruleALowPct: params.lowPct || 10,
+          ruleBTotalN: params.totalN || 50,
+          ruleCHighN: params.highN,
+          ruleCMediumN: params.mediumN,
+          ruleCLowN: params.lowN,
+          seed,
+          explainability: explainabilityLevel || 'basic',
+        });
+
+        selectedIndices = stratResult.selectedIndices;
+        selectedItems = stratResult.selectedItems;
+        n = stratResult.sampleSize;
+        algorithmName = stratResult.algorithm;
+
+        const strataSummary = stratResult.strata.map(s => `${s.name}: ${s.itemCount} items (${s.sampleSize} sampled)`).join('; ');
+        planningRationale = `AI Risk Stratification: ${strataSummary}. Features: ${stratResult.featuresUsed.join(', ')}. Allocation: ${rule}.`;
+
+        extraData = {
+          strata: stratResult.strata,
+          featuresUsed: stratResult.featuresUsed,
+          allocationRule: rule,
+          itemProfiles: stratResult.itemProfiles.filter(ip => ip.stratum === 'high').slice(0, 50), // Top 50 high-risk profiles
+        };
+        break;
+      }
+
       case 'random':
       default: {
         // Random SRS
@@ -242,8 +288,8 @@ export async function POST(req: Request) {
       data: {
         engagementId,
         populationId: population.id,
-        mode: 'A',
-        method: method || 'random',
+        mode: selectedMethod === 'stratified' ? 'B' : 'A',
+        method: selectedMethod,
         stratification: stratification || 'simple',
         parameters: {
           errorMetric: metric,

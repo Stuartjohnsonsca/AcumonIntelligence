@@ -181,6 +181,14 @@ export function SamplingCalculatorClient({
   const [compositeJustification, setCompositeJustification] = useState('');
   const [compositeResidualMethod, setCompositeResidualMethod] = useState('random');
 
+  // ─── Mode B stratification ──────────────────────────────────────────────
+  const [allocationRule, setAllocationRule] = useState<'rule_a' | 'rule_b' | 'rule_c'>('rule_a');
+  const [ruleBTotal, setRuleBTotal] = useState(50);
+  const [ruleCHigh, setRuleCHigh] = useState(0);
+  const [ruleCMedium, setRuleCMedium] = useState(10);
+  const [ruleCLow, setRuleCLow] = useState(5);
+  const [stratificationResults, setStratificationResults] = useState<{ strata: { name: string; level: string; itemCount: number; sampleSize: number; totalValue: number; topDrivers: { feature: string; contribution: number }[] }[] } | null>(null);
+
   // ─── Saved column mappings ──────────────────────────────────────────────
   const [savedMappings, setSavedMappings] = useState<Record<string, Partial<ColumnMapping>>>({});
   const [mappingSaved, setMappingSaved] = useState(false);
@@ -639,9 +647,31 @@ export function SamplingCalculatorClient({
             : 20,
           // Method-specific params
           systematicBasis,
-          confidenceFactor: 3.0, // Default moderate; will use firm config in future
+          confidenceFactor: 3.0,
           compositeThreshold,
           compositeResidualMethod,
+          // Mode B params
+          ...(stratification === 'stratified' ? {
+            method: 'stratified',
+            stratificationFeatures: columnMapping.amount
+              ? [
+                  { name: 'Amount', column: columnMapping.amount, type: 'numeric', weight: 1 },
+                  ...(columnMapping.preparer ? [{ name: 'Preparer', column: columnMapping.preparer, type: 'categorical', weight: 0.5 }] : []),
+                  ...(columnMapping.overrideFlag ? [{ name: 'Override', column: columnMapping.overrideFlag, type: 'flag', weight: 1 }] : []),
+                  ...(columnMapping.exceptionFlag ? [{ name: 'Exception', column: columnMapping.exceptionFlag, type: 'flag', weight: 1 }] : []),
+                ]
+              : [],
+            allocationRule,
+            allocationParams: {
+              mediumPct: 30,
+              lowPct: 10,
+              totalN: ruleBTotal,
+              highN: ruleCHigh,
+              mediumN: ruleCMedium,
+              lowN: ruleCLow,
+            },
+            explainabilityLevel: 'detailed',
+          } : {}),
         }),
       });
 
@@ -659,6 +689,9 @@ export function SamplingCalculatorClient({
       setPlanningRationale(result.planningRationale || '');
       setPopulationTotal(result.populationTotal);
       setDetailedAuditTrail(result.auditTrail || null);
+      if (result.auditTrail?.strata) {
+        setStratificationResults({ strata: result.auditTrail.strata });
+      }
 
       // Update the fixed sample size display to match actual
       if (sampleSizeStrategy !== 'fixed') {
@@ -1396,8 +1429,85 @@ export function SamplingCalculatorClient({
               ))}
             </div>
 
-            {/* Method selection */}
-            <div className="space-y-1.5 mb-4">
+            {/* Mode B: Stratification config when Stratified is selected */}
+            {stratification === 'stratified' && (
+              <div className="space-y-3 mb-4">
+                <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs text-purple-700">
+                  <strong>AI Risk Stratification</strong> — Population will be segmented into High/Medium/Low risk strata using outlier detection, clustering, and rule-based scoring.
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Allocation Rule</label>
+                  <div className="space-y-1">
+                    {[
+                      { key: 'rule_a' as const, label: 'Rule A: 100% High, 30% Medium, 10% Low' },
+                      { key: 'rule_b' as const, label: 'Rule B: Fixed total, proportional by risk' },
+                      { key: 'rule_c' as const, label: 'Rule C: Custom per stratum' },
+                    ].map(opt => (
+                      <label key={opt.key} className="flex items-center gap-2 text-xs text-slate-700">
+                        <input type="radio" name="allocationRule" checked={allocationRule === opt.key} onChange={() => setAllocationRule(opt.key)} className="text-purple-600" />
+                        {opt.label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {allocationRule === 'rule_b' && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Total sample size</label>
+                    <input type="number" min={1} value={ruleBTotal} onChange={(e) => setRuleBTotal(parseInt(e.target.value) || 50)} className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500" />
+                  </div>
+                )}
+
+                {allocationRule === 'rule_c' && (
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-medium text-red-600 mb-1">High</label>
+                      <input type="number" min={0} value={ruleCHigh} onChange={(e) => setRuleCHigh(parseInt(e.target.value) || 0)} className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-red-400" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-amber-600 mb-1">Medium</label>
+                      <input type="number" min={0} value={ruleCMedium} onChange={(e) => setRuleCMedium(parseInt(e.target.value) || 0)} className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-green-600 mb-1">Low</label>
+                      <input type="number" min={0} value={ruleCLow} onChange={(e) => setRuleCLow(parseInt(e.target.value) || 0)} className="w-full px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-green-400" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Stratification results */}
+                {stratificationResults && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-semibold text-slate-600">Stratification Results</h4>
+                    {stratificationResults.strata.map(s => (
+                      <div key={s.level} className={`p-2 rounded-lg text-xs ${
+                        s.level === 'high' ? 'bg-red-50 border border-red-200 text-red-700'
+                        : s.level === 'medium' ? 'bg-amber-50 border border-amber-200 text-amber-700'
+                        : 'bg-green-50 border border-green-200 text-green-700'
+                      }`}>
+                        <div className="flex justify-between mb-0.5">
+                          <strong>{s.name}</strong>
+                          <span>{s.sampleSize}/{s.itemCount} sampled</span>
+                        </div>
+                        <div className="text-[10px] opacity-75">
+                          Value: {auditData.functionalCurrency} {s.totalValue.toLocaleString()}
+                        </div>
+                        {s.topDrivers.length > 0 && (
+                          <div className="mt-1 text-[10px] opacity-75">
+                            Top drivers: {s.topDrivers.map(d => d.feature).join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Method selection (Mode A only) */}
+            {stratification === 'simple' && (<>
+              <div className="space-y-1.5 mb-4">
               {SAMPLING_METHODS.map(m => (
                 <button
                   key={m.key}
@@ -1497,9 +1607,11 @@ export function SamplingCalculatorClient({
                 Judgemental sampling requires an AI-assisted dialogue to document your rationale. This will open when you click Auto Select.
               </div>
             )}
+            </>)}
           </div>
 
-          {/* Sample size strategy */}
+          {/* Sample size strategy (Mode A only) */}
+          {stratification === 'simple' && (
           <div className="bg-white rounded-lg border border-slate-200 p-5">
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Sample Size</h3>
 
@@ -1602,6 +1714,7 @@ export function SamplingCalculatorClient({
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 
