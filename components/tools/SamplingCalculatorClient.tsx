@@ -1047,7 +1047,7 @@ export function SamplingCalculatorClient({
                     dataInputMode === 'upload' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
-                  <Upload className="h-3 w-3" /> Upload File
+                  <Upload className="h-3 w-3" /> Upload Spreadsheet
                 </button>
                 <button
                   onClick={() => setDataInputMode('paste')}
