@@ -261,22 +261,36 @@ export default function DistributionAnalysisModal({
     [fullPopulationData, amountColumn],
   );
 
-  // ─── Scatter data (each item as a point) ───────────────────────────────
-  const scatterData = useMemo(() => {
-    const popPoints: { x: number; y: number; isSample: boolean }[] = [];
-    const samplePoints: { x: number; y: number; isSample: boolean }[] = [];
-    // Sort amounts for x-axis ordering (rank-based scatter)
-    const indexed = amounts.map((v, i) => ({ value: v, index: i }));
-    indexed.sort((a, b) => a.value - b.value);
-    indexed.forEach((item, rank) => {
-      const point = { x: rank + 1, y: item.value, isSample: selectedIndices.has(item.index) };
-      if (point.isSample) {
-        samplePoints.push(point);
+  // ─── Scatter data: x=amount, y=jittered row for visibility ─────────────
+  // Points are classified as normal, sample, or anomaly based on distance
+  // from the fitted distribution (beyond 2σ threshold)
+  const scatterAnalysis = useMemo(() => {
+    const mean = amounts.length > 0 ? amounts.reduce((s, v) => s + v, 0) / amounts.length : 0;
+    const sd = calcStdDev(amounts, mean);
+    const threshold = sd > 0 ? 2 : Infinity; // 2σ anomaly threshold
+
+    const normalPoints: { x: number; y: number }[] = [];
+    const samplePoints: { x: number; y: number }[] = [];
+    const anomalyPoints: { x: number; y: number; idx: number }[] = [];
+
+    // Deterministic jitter based on index for y-axis spread
+    amounts.forEach((val, i) => {
+      const zScore = sd > 0 ? Math.abs((val - mean) / sd) : 0;
+      const isAnomaly = zScore > threshold;
+      const isSample = selectedIndices.has(i);
+      // Jitter y: spread points vertically so they don't overlap
+      const jitterY = (i % 20) / 20 + Math.sin(i * 0.7) * 0.3;
+
+      if (isAnomaly) {
+        anomalyPoints.push({ x: val, y: jitterY, idx: i });
+      } else if (isSample) {
+        samplePoints.push({ x: val, y: jitterY });
       } else {
-        popPoints.push(point);
+        normalPoints.push({ x: val, y: jitterY });
       }
     });
-    return { popPoints, samplePoints };
+
+    return { normalPoints, samplePoints, anomalyPoints, anomalyCount: anomalyPoints.length };
   }, [amounts, selectedIndices]);
 
   // ─── Distribution fitting ─────────────────────────────────────────────
@@ -429,79 +443,77 @@ export default function DistributionAnalysisModal({
           {/* ── Distribution Tab ────────────────────────────────────────── */}
           {activeTab === 'histogram' && (
             <div className="space-y-4">
-              {/* Detected distribution badge */}
-              {bestFit && (
-                <div className="flex items-center gap-3 flex-wrap">
+              {/* Detected distribution + anomaly count */}
+              <div className="flex items-center gap-3 flex-wrap">
+                {bestFit && (
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: `${DIST_COLORS[bestFit.type]}15`, color: DIST_COLORS[bestFit.type] }}>
                     Best fit: {bestFit.label}
                     <span className="opacity-60">({(bestFit.goodnessOfFit * 100).toFixed(0)}%)</span>
                   </div>
-                  {distributions.slice(1, 3).map(d => (
-                    <span key={d.type} className="text-[10px] text-slate-400">
-                      {d.label}: {(d.goodnessOfFit * 100).toFixed(0)}%
-                    </span>
-                  ))}
-                  {bestFit.type === 'normal' && <span className="text-[10px] text-slate-400">μ={stats.population.mean.toFixed(1)}, σ={stats.population.stdDev.toFixed(1)}</span>}
-                  {bestFit.type === 'log-normal' && <span className="text-[10px] text-slate-400">μ_ln={bestFit.params.logMean?.toFixed(2)}, σ_ln={bestFit.params.logStdDev?.toFixed(2)}</span>}
-                  {bestFit.type === 'exponential' && <span className="text-[10px] text-slate-400">λ={bestFit.params.rate?.toFixed(4)}</span>}
-                </div>
-              )}
+                )}
+                {scatterAnalysis.anomalyCount > 0 && (
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-600">
+                    {scatterAnalysis.anomalyCount} anomalies detected (&gt;2σ)
+                  </div>
+                )}
+                {distributions.slice(1, 3).map(d => (
+                  <span key={d.type} className="text-[10px] text-slate-400">
+                    {d.label}: {(d.goodnessOfFit * 100).toFixed(0)}%
+                  </span>
+                ))}
+              </div>
 
-              {/* Scatter plot: ranked items with distribution overlay */}
+              {/* Scatter: x=amount, anomalies in red */}
               <div>
                 <p className="text-xs text-slate-500 mb-2">
-                  Each point is a population item sorted by amount{hasSample ? ' (green = sampled)' : ''}.
+                  Each transaction plotted by amount. <span className="text-red-500 font-medium">Red points</span> fall outside the expected distribution (&gt;2σ).
                 </p>
-                <ResponsiveContainer width="100%" height={280}>
-                  <ComposedChart data={scatterData.popPoints.map((p, i) => ({ ...p, idx: i }))}>
+                <ResponsiveContainer width="100%" height={260}>
+                  <ComposedChart margin={{ top: 10, right: 20, bottom: 5, left: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="x" tick={{ fontSize: 9 }} label={{ value: 'Rank', position: 'insideBottom', offset: -3, fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 9 }} label={{ value: `Amount (${currency})`, angle: -90, position: 'insideLeft', fontSize: 10 }} />
-                    <Tooltip formatter={(value) => [fmt(Number(value)), 'Amount']} labelFormatter={(l) => `Rank ${l}`} />
+                    <XAxis type="number" dataKey="x" tick={{ fontSize: 9 }} domain={['auto', 'auto']}
+                      tickFormatter={(v: number) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v.toFixed(0)}
+                      label={{ value: `Amount (${currency})`, position: 'insideBottom', offset: -3, fontSize: 10 }} />
+                    <YAxis type="number" dataKey="y" tick={false} axisLine={false} domain={[-0.5, 1.5]} hide />
+                    <Tooltip formatter={(value) => [fmt(Number(value)), 'Amount']} />
                     <Legend wrapperStyle={{ fontSize: 10 }} />
-                    <Scatter data={scatterData.popPoints} dataKey="y" fill="#94a3b8" name="Population" r={2} />
-                    {hasSample && (
-                      <Scatter data={scatterData.samplePoints} dataKey="y" fill="#22c55e" name="Sample" r={3} />
-                    )}
+                    <Scatter data={scatterAnalysis.normalPoints} dataKey="y" fill="#94a3b8" name="Normal" r={2} opacity={0.5} />
+                    {hasSample && <Scatter data={scatterAnalysis.samplePoints} dataKey="y" fill="#22c55e" name="Sampled" r={3} opacity={0.7} />}
+                    <Scatter data={scatterAnalysis.anomalyPoints} dataKey="y" fill="#ef4444" name="Anomaly (>2σ)" r={4} opacity={0.9} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
 
-              {/* Histogram with distribution curve overlay */}
+              {/* Histogram with fitted distribution curve overlay */}
               <div>
                 <p className="text-xs text-slate-500 mb-2">
-                  Frequency histogram with {bestFit?.label || 'fitted'} distribution overlay.
+                  Frequency histogram with {bestFit?.label || 'fitted'} distribution overlay. Bars outside the curve highlight anomalous concentrations.
                 </p>
-                <ResponsiveContainer width="100%" height={260}>
-                  <ComposedChart data={composedData} barGap={0} barCategoryGap={1}>
+                <ResponsiveContainer width="100%" height={240}>
+                  <ComposedChart data={composedData} barGap={0} barCategoryGap={1} margin={{ bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="label" tick={{ fontSize: 9 }} angle={-45} textAnchor="end" height={50} />
-                    <YAxis tick={{ fontSize: 9 }} />
+                    <XAxis dataKey="label" tick={{ fontSize: 8 }} angle={-45} textAnchor="end" height={50}
+                      tickFormatter={(v: string) => { const n = Number(v); return n >= 1000 ? `${(n/1000).toFixed(0)}k` : v; }} />
+                    <YAxis tick={{ fontSize: 9 }} label={{ value: 'Count', angle: -90, position: 'insideLeft', fontSize: 10 }} />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: 10 }} />
                     <Bar dataKey="population" fill="#cbd5e1" name="Population" radius={[2, 2, 0, 0]} />
                     {hasSample && <Bar dataKey="sample" fill="#86efac" name="Sample" radius={[2, 2, 0, 0]} />}
                     {bestFit && bestFit.curveData.length > 0 && (
-                      <Line
-                        dataKey="fitted"
-                        stroke={DIST_COLORS[bestFit.type]}
-                        strokeWidth={2}
-                        dot={false}
-                        name={`${bestFit.label} fit`}
-                        type="monotone"
-                      />
+                      <Line dataKey="fitted" stroke={DIST_COLORS[bestFit.type]} strokeWidth={2.5} dot={false} name={`${bestFit.label} fit`} type="monotone" />
                     )}
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
 
               {/* Distribution shape stats */}
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-5 gap-2">
                 {[
                   { label: 'Skewness', value: stats.population.skewness.toFixed(3), desc: stats.population.skewness > 0.5 ? 'Right-skewed' : stats.population.skewness < -0.5 ? 'Left-skewed' : 'Symmetric' },
                   { label: 'Kurtosis', value: stats.population.kurtosis.toFixed(3), desc: stats.population.kurtosis > 1 ? 'Heavy-tailed' : stats.population.kurtosis < -1 ? 'Light-tailed' : 'Mesokurtic' },
                   { label: 'Range', value: fmt(stats.population.max - stats.population.min), desc: '' },
-                  { label: 'CV', value: stats.population.mean !== 0 ? `${((stats.population.stdDev / Math.abs(stats.population.mean)) * 100).toFixed(1)}%` : '—', desc: 'Coefficient of variation' },
+                  { label: 'CV', value: stats.population.mean !== 0 ? `${((stats.population.stdDev / Math.abs(stats.population.mean)) * 100).toFixed(1)}%` : '—', desc: 'Coeff. of variation' },
+                  { label: 'Anomalies', value: `${scatterAnalysis.anomalyCount}`, desc: `of ${amounts.length} items` },
                 ].map(s => (
                   <div key={s.label} className="bg-slate-50 rounded-lg p-2">
                     <div className="text-[10px] text-slate-500">{s.label}</div>

@@ -1,6 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
-import { getTransactions, getAccounts, batchFetchHistories, getTaxRates, batchFetchContactGroups } from '@/lib/xero';
+import { getTransactions, getDataByType, getAccounts, batchFetchHistories, getTaxRates, batchFetchContactGroups, type XeroDataType } from '@/lib/xero';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
 
@@ -13,7 +13,7 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json();
-  const { clientId, accountCodes, dateFrom, dateTo, excludeManualJournals } = body;
+  const { clientId, accountCodes, dateFrom, dateTo, excludeManualJournals, dataType } = body;
 
   if (!clientId || !dateFrom || !dateTo) {
     return NextResponse.json({ error: 'clientId, dateFrom, dateTo required' }, { status: 400 });
@@ -44,8 +44,17 @@ export async function POST(req: Request) {
       const codes = accountCodes ? accountCodes.split(',').filter(Boolean) : [];
       const totalSteps = 5;
 
-      await updateProgress({ phase: 'fetching', step: 1, totalSteps, message: 'Fetching transactions from Xero... (1 of 5)' });
-      const transactions = await getTransactions(clientId, codes, dateFrom, dateTo);
+      const xeroDataType: XeroDataType = dataType || 'all_transactions';
+      const dataTypeLabel = {
+        invoices: 'sales invoices', purchase_invoices: 'purchase invoices',
+        bank_transactions: 'bank transactions', manual_journals: 'manual journals',
+        all_transactions: 'transactions',
+      }[xeroDataType] || 'transactions';
+
+      await updateProgress({ phase: 'fetching', step: 1, totalSteps, message: `Fetching ${dataTypeLabel} from Xero... (1 of 5)` });
+      const transactions = xeroDataType === 'all_transactions'
+        ? await getTransactions(clientId, codes, dateFrom, dateTo)
+        : await getDataByType(clientId, xeroDataType, codes, dateFrom, dateTo);
 
       await updateProgress({ phase: 'fetching', step: 2, totalSteps, message: `${transactions.length} transactions fetched. Loading accounts... (2 of 5)`, recordCount: transactions.length });
       const accounts = await getAccounts(clientId);

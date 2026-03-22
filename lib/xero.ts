@@ -647,6 +647,7 @@ async function fetchPaginated(
   url: string,
   clientId: string,
   where: string,
+  responseKey?: string,
 ): Promise<XeroTransaction[]> {
   const results: XeroTransaction[] = [];
   let page = 1;
@@ -670,11 +671,72 @@ async function fetchPaginated(
     if (!res.ok) throw new Error(`Xero API fetch failed (${res.status}) for ${url}`);
     const data = await res.json();
 
-    const items: XeroTransaction[] = data.Invoices ?? data.BankTransactions ?? [];
+    // Use provided key, or auto-detect from known response shapes
+    const items: XeroTransaction[] = responseKey
+      ? (data[responseKey] ?? [])
+      : (data.Invoices ?? data.BankTransactions ?? data.ManualJournals ?? data.PurchaseOrders ?? data.ExpenseClaims ?? []);
     results.push(...items);
 
     if (items.length < 100) break;
     page++;
+  }
+
+  return results;
+}
+
+// ─── Data Type Fetchers ─────────────────────────────────────────────────────
+
+export type XeroDataType = 'invoices' | 'purchase_invoices' | 'bank_transactions' | 'manual_journals' | 'all_transactions';
+
+export async function getDataByType(
+  clientId: string,
+  dataType: XeroDataType,
+  accountCodes: string[],
+  dateFrom: string,
+  dateTo: string,
+): Promise<XeroTransaction[]> {
+  const whereClause = [
+    `Date >= DateTime(${dateFrom.replace(/-/g, ',')})`,
+    `Date <= DateTime(${dateTo.replace(/-/g, ',')})`,
+  ].join(' AND ');
+
+  let results: XeroTransaction[] = [];
+
+  switch (dataType) {
+    case 'invoices': {
+      // Sales invoices only (Type=ACCREC)
+      const salesWhere = `${whereClause} AND Type=="ACCREC"`;
+      results = await fetchPaginated(`${XERO_API_BASE}/Invoices`, clientId, salesWhere, 'Invoices');
+      break;
+    }
+    case 'purchase_invoices': {
+      // Purchase invoices only (Type=ACCPAY)
+      const purchaseWhere = `${whereClause} AND Type=="ACCPAY"`;
+      results = await fetchPaginated(`${XERO_API_BASE}/Invoices`, clientId, purchaseWhere, 'Invoices');
+      break;
+    }
+    case 'bank_transactions': {
+      results = await fetchPaginated(`${XERO_API_BASE}/BankTransactions`, clientId, whereClause, 'BankTransactions');
+      break;
+    }
+    case 'manual_journals': {
+      results = await fetchPaginated(`${XERO_API_BASE}/ManualJournals`, clientId, whereClause, 'ManualJournals');
+      break;
+    }
+    case 'all_transactions':
+    default: {
+      // Original behaviour: invoices + bank transactions
+      results = await getTransactions(clientId, accountCodes, dateFrom, dateTo);
+      return results; // already filtered by account codes
+    }
+  }
+
+  // Filter by account codes if specified
+  if (accountCodes.length > 0) {
+    const codeSet = new Set(accountCodes);
+    results = results.filter(txn =>
+      txn.LineItems?.some((li: { AccountCode: string }) => codeSet.has(li.AccountCode)),
+    );
   }
 
   return results;
