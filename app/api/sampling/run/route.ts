@@ -36,11 +36,10 @@ export async function POST(req: Request) {
     errorMetric,
     sampleSize: fixedSampleSize,
     sampleSizeStrategy,
-    planningMode,
-    planningParams,
     seed: providedSeed,
     confidence,
     tolerableMisstatement,
+    kFactor, // from firm risk matrix, e.g. 20 for 20%
   } = body;
 
   if (!engagementId || !populationData || !columnMapping) {
@@ -88,31 +87,23 @@ export async function POST(req: Request) {
 
     if (sampleSizeStrategy === 'fixed') {
       n = fixedSampleSize || 25;
-    } else if (method === 'random' && planningMode) {
-      // Use planning engine
-      const planResult = planSampleSize({
-        populationItems,
-        confidence: conf,
-        tolerableMisstatement: TM,
-        errorMetric: metric,
-        mode: planningMode,
-        pilotSize: planningParams?.pilotSize,
-        assumedSd: planningParams?.assumedSd,
-        kFactor: planningParams?.kFactor,
-      });
-      n = planResult.recommendedN;
-      planningRationale = planResult.rationale;
+      planningRationale = `Fixed sample size of ${n} (user-specified).`;
     } else {
-      // Default: compute from risk parameters if TM > 0, else use 25
+      // Calculate sample size from population standard deviation × k-factor from risk matrix
       if (TM > 0) {
-        const bookValues = populationItems.map(i => i.bookValue);
-        const bookSd = Math.sqrt(bookValues.reduce((s, v) => s + (v - bookValues.reduce((a, b) => a + b, 0) / bookValues.length) ** 2, 0) / (bookValues.length - 1));
-        const sdEstimate = bookSd * 0.2; // Conservative 20% k-factor
-        n = computeRequiredSampleSize(N, TM, sdEstimate, conf);
-        planningRationale = `Computed from population book value SD (${bookSd.toFixed(2)}) × 20% k-factor. Required n=${n} for TM=${TM} at ${(conf * 100).toFixed(0)}% confidence.`;
+        const planResult = planSampleSize({
+          populationItems,
+          confidence: conf,
+          tolerableMisstatement: TM,
+          errorMetric: metric,
+          mode: 'book_sd_bound',
+          kFactor: kFactor || 20,
+        });
+        n = planResult.recommendedN;
+        planningRationale = planResult.rationale;
       } else {
         n = Math.min(25, N);
-        planningRationale = 'Default sample size (no tolerable misstatement specified).';
+        planningRationale = 'Default sample size of 25 (no tolerable misstatement specified).';
       }
     }
 
@@ -155,8 +146,7 @@ export async function POST(req: Request) {
           tolerableMisstatement: TM,
           sampleSizeStrategy: sampleSizeStrategy || 'calculator',
           fixedSampleSize: sampleSizeStrategy === 'fixed' ? fixedSampleSize : undefined,
-          planningMode: planningMode || null,
-          planningParams: planningParams || null,
+          kFactor: kFactor || 20,
           planningRationale,
         },
         seed,
