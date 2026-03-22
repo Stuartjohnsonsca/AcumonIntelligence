@@ -65,16 +65,55 @@ export async function POST(req: Request) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    // Try text extraction first
+    // Try text extraction — multiple fallback extractors
     let extractedText = '';
+
+    // Attempt 1: unpdf
     try {
       const { extractText } = await import('unpdf');
       const pdfData = new Uint8Array(buffer);
       const result = await extractText(pdfData);
       const pages = Array.isArray(result.text) ? result.text : [String(result.text || '')];
       extractedText = pages.join('\n\n');
-    } catch {
-      // Text extraction failed — will try vision
+      console.log(`[Sampling:ParseBankStatement] unpdf extracted ${extractedText.length} chars`);
+    } catch (e1) {
+      console.log(`[Sampling:ParseBankStatement] unpdf failed: ${e1 instanceof Error ? e1.message : e1}`);
+    }
+
+    // Attempt 2: pdf-lib basic text extraction (if unpdf failed or returned very little)
+    if (extractedText.length < 10) {
+      try {
+        const { PDFDocument } = await import('pdf-lib');
+        const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
+        const pageCount = pdfDoc.getPageCount();
+        console.log(`[Sampling:ParseBankStatement] pdf-lib loaded, ${pageCount} pages. Text extraction via unpdf failed, falling back to vision model.`);
+        // pdf-lib doesn't extract text, but we know the PDF is valid
+        // Set extractedText to empty to trigger vision path
+      } catch (e2) {
+        console.log(`[Sampling:ParseBankStatement] pdf-lib also failed: ${e2 instanceof Error ? e2.message : e2}`);
+      }
+    }
+
+    // Attempt 3: pdfjs-dist as final text fallback
+    if (extractedText.length < 10) {
+      try {
+        const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+        const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+        const pages: string[] = [];
+        for (let i = 1; i <= doc.numPages; i++) {
+          const page = await doc.getPage(i);
+          const content = await page.getTextContent();
+          const pageText = content.items
+            .map((item: unknown) => (item as { str?: string }).str || '')
+            .join(' ');
+          pages.push(pageText);
+        }
+        extractedText = pages.join('\n\n');
+        await doc.destroy();
+        console.log(`[Sampling:ParseBankStatement] pdfjs-dist extracted ${extractedText.length} chars`);
+      } catch (e3) {
+        console.log(`[Sampling:ParseBankStatement] pdfjs-dist failed: ${e3 instanceof Error ? e3.message : e3}`);
+      }
     }
 
     const apiKey = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
@@ -86,14 +125,16 @@ export async function POST(req: Request) {
     let responseContent = '';
 
     // For text-based PDFs, even short text can be valid (bank statements have tabular data)
-    // Lower the threshold significantly — even 10 chars means some text was found
     if (extractedText.length >= 10) {
-      // Text-based extraction — split into chunks if very long
-      const maxChunkSize = 12000;
+      // Text-based extraction — split into chunks for parallel processing
+      // Use 20K chunks to reduce number of API calls (model context supports it)
+      const maxChunkSize = 20000;
       const chunks: string[] = [];
       for (let i = 0; i < extractedText.length; i += maxChunkSize) {
         chunks.push(extractedText.slice(i, i + maxChunkSize));
       }
+
+      console.log(`[Sampling:ParseBankStatement] Extracted ${extractedText.length} chars, split into ${chunks.length} chunks`);
 
       if (chunks.length === 1) {
         // Single chunk — one call
@@ -102,30 +143,32 @@ export async function POST(req: Request) {
           messages: [
             { role: 'user', content: `${EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT ---\n${chunks[0]}` },
           ],
-          max_tokens: 8000,
+          max_tokens: 16000,
           temperature: 0.1,
         });
         responseContent = result.choices?.[0]?.message?.content?.trim() || '';
       } else {
-        // Multiple chunks — extract from each, then merge
+        // Multiple chunks — process ALL in parallel for speed
+        const chunkPromises = chunks.map((chunk, ci) => {
+          const chunkPrompt = ci === 0
+            ? `${EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`
+            : `Extract ALL transactions from this bank statement text. Return ONLY valid JSON: {"transactions": [...]} with each transaction having date (YYYY-MM-DD), description, reference, debit (number), credit (number), balance (number).\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`;
+
+          return client.chat.completions.create({
+            model: 'Qwen/Qwen3-235B-A22B',
+            messages: [{ role: 'user', content: chunkPrompt }],
+            max_tokens: 16000,
+            temperature: 0.1,
+          });
+        });
+
+        const results = await Promise.all(chunkPromises);
+
         const allTransactions: Record<string, unknown>[] = [];
         let metadata: Record<string, unknown> = {};
 
-        for (let ci = 0; ci < chunks.length; ci++) {
-          const chunkPrompt = ci === 0
-            ? `${EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT (page ${ci + 1} of ${chunks.length}) ---\n${chunks[ci]}`
-            : `Continue extracting transactions from this bank statement. Same format as before.\n\n--- BANK STATEMENT TEXT (page ${ci + 1} of ${chunks.length}) ---\n${chunks[ci]}`;
-
-          const result = await client.chat.completions.create({
-            model: 'Qwen/Qwen3-235B-A22B',
-            messages: [
-              { role: 'user', content: chunkPrompt },
-            ],
-            max_tokens: 8000,
-            temperature: 0.1,
-          });
-
-          const content = result.choices?.[0]?.message?.content?.trim() || '';
+        for (let ci = 0; ci < results.length; ci++) {
+          const content = results[ci].choices?.[0]?.message?.content?.trim() || '';
           const jsonMatch = content.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             try {
@@ -141,6 +184,7 @@ export async function POST(req: Request) {
           }
         }
 
+        console.log(`[Sampling:ParseBankStatement] Extracted ${allTransactions.length} transactions from ${chunks.length} parallel chunks`);
         responseContent = JSON.stringify({ ...metadata, transactions: allTransactions });
       }
     } else {
