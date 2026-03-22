@@ -98,6 +98,7 @@ export default function AISuggestStratification({
   const [loading, setLoading] = useState(false);
   const [suggestion, setSuggestion] = useState<AISuggestion | null>(null);
   const [error, setError] = useState('');
+  const [selectedFeatures, setSelectedFeatures] = useState<Set<number>>(new Set());
 
   const handleSuggest = async () => {
     setLoading(true);
@@ -126,6 +127,8 @@ export default function AISuggestStratification({
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setSuggestion(data);
+      // Auto-select all proposed features
+      setSelectedFeatures(new Set(data.features.map((_: unknown, i: number) => i)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to get AI suggestion');
     }
@@ -134,9 +137,23 @@ export default function AISuggestStratification({
 
   const handleApply = () => {
     if (suggestion) {
-      onAccept(suggestion);
+      // Only include user-selected features
+      const filteredSuggestion = {
+        ...suggestion,
+        features: suggestion.features.filter((_, i) => selectedFeatures.has(i)),
+      };
+      if (filteredSuggestion.features.length === 0) return;
+      onAccept(filteredSuggestion);
       setSuggestion(null);
     }
+  };
+
+  const toggleFeature = (idx: number) => {
+    setSelectedFeatures(prev => {
+      const next = new Set(prev);
+      next.has(idx) ? next.delete(idx) : next.add(idx);
+      return next;
+    });
   };
 
   const ruleLabel = (rule: string) => {
@@ -202,15 +219,30 @@ export default function AISuggestStratification({
             </button>
           </div>
 
-          {/* Features */}
+          {/* Stratification Dimensions (selectable) */}
           <div>
-            <div className="text-[10px] font-medium text-purple-600 mb-1">Features</div>
-            <div className="flex flex-wrap gap-1">
+            <div className="text-[10px] font-medium text-purple-600 mb-1.5">
+              Proposed Stratification Dimensions ({selectedFeatures.size}/{suggestion.features.length} selected)
+            </div>
+            <div className="space-y-1">
               {suggestion.features.map((f, i) => (
-                <span key={i} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${typeColor(f.type)}`}>
-                  {f.name}
-                  <span className="opacity-60">({f.weight})</span>
-                </span>
+                <label key={i} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                  selectedFeatures.has(i)
+                    ? 'bg-white border border-purple-300'
+                    : 'bg-purple-25 border border-transparent opacity-50'
+                }`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedFeatures.has(i)}
+                    onChange={() => toggleFeature(i)}
+                    className="rounded border-purple-300 text-purple-600"
+                  />
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${typeColor(f.type)}`}>
+                    {f.type}
+                  </span>
+                  <span className="text-xs text-purple-800 font-medium">{f.name}</span>
+                  <span className="text-[10px] text-purple-400 ml-auto">weight: {f.weight}</span>
+                </label>
               ))}
             </div>
           </div>
@@ -246,9 +278,10 @@ export default function AISuggestStratification({
           <div className="flex gap-2 pt-1">
             <button
               onClick={handleApply}
-              className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md bg-purple-700 text-white hover:bg-purple-800 transition-colors"
+              disabled={selectedFeatures.size === 0}
+              className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md bg-purple-700 text-white hover:bg-purple-800 disabled:opacity-40 transition-colors"
             >
-              <Check className="h-3 w-3" /> Apply
+              <Check className="h-3 w-3" /> Apply {selectedFeatures.size} Dimension{selectedFeatures.size !== 1 ? 's' : ''}
             </button>
             <button
               onClick={() => setSuggestion(null)}

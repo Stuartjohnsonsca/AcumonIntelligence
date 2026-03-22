@@ -403,7 +403,7 @@ export default function DistributionAnalysisModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-4xl mx-4 max-h-[85vh] flex flex-col">
+      <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[90vw] h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <h3 className="text-base font-semibold text-slate-900">Distribution Analysis</h3>
