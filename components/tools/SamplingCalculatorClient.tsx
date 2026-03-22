@@ -325,6 +325,17 @@ export function SamplingCalculatorClient({
         body: formData,
       });
 
+      // Handle non-JSON responses (Vercel timeout pages, 502s, etc.)
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(
+          res.status === 504 ? 'Request timed out — the bank statement may be too large. Try uploading fewer pages or use the Paste Data option.'
+          : res.status >= 500 ? `Server error (${res.status}). Please try again.`
+          : `Unexpected response (${res.status}): ${text.slice(0, 100)}`
+        );
+      }
+
       const data = await res.json();
 
       if (!res.ok) {

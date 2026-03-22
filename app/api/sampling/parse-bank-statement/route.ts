@@ -145,7 +145,7 @@ export async function POST(req: Request) {
       async function callAI(prompt: string): Promise<string> {
         try {
           const result = await client.chat.completions.create({
-            model: 'Qwen/Qwen3.5-397B-A17B',
+            model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
             messages: [{ role: 'user', content: prompt }],
             max_tokens: 16000,
             temperature: 0.1,
