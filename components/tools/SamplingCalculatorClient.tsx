@@ -1436,12 +1436,16 @@ export function SamplingCalculatorClient({
                 ))}
               </div>
 
-              <details className="mb-4">
+              <details className="mb-4" open>
                 <summary className="text-xs font-medium text-slate-500 cursor-pointer hover:text-slate-700">
-                  Optional fields (recommended)
+                  Optional fields ({(() => {
+                    const mapped = new Set(Object.values(columnMapping).filter(Boolean));
+                    return uploadedColumns.filter(c => !mapped.has(c)).length;
+                  })()} unmapped columns)
                 </summary>
                 <div className="grid grid-cols-2 gap-3 mt-2">
-                  {(['preparer', 'timestamp', 'vendorCustomer', 'glCode', 'overrideFlag', 'exceptionFlag'] as const).map(field => (
+                  {/* Standard optional fields */}
+                  {(['preparer', 'timestamp', 'vendorCustomer', 'glCode', 'overrideFlag', 'exceptionFlag', 'sourceSystem'] as const).map(field => (
                     <div key={field}>
                       <label className="block text-xs font-medium text-slate-500 mb-1">
                         {field.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}
@@ -1459,6 +1463,22 @@ export function SamplingCalculatorClient({
                     </div>
                   ))}
                 </div>
+                {/* Show unmapped columns from data as read-only info */}
+                {(() => {
+                  const mapped = new Set(Object.values(columnMapping).filter(Boolean));
+                  const unmapped = uploadedColumns.filter(c => !mapped.has(c));
+                  if (unmapped.length === 0) return null;
+                  return (
+                    <div className="mt-3 p-2 bg-slate-50 rounded-lg">
+                      <p className="text-[10px] text-slate-400 mb-1.5">Unmapped columns (available in population data):</p>
+                      <div className="flex flex-wrap gap-1">
+                        {unmapped.map(col => (
+                          <span key={col} className="px-2 py-0.5 text-[10px] bg-white border border-slate-200 rounded text-slate-600">{col}</span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </details>
 
               {/* Preview */}
@@ -2123,6 +2143,20 @@ export function SamplingCalculatorClient({
             )}
           </div>
           )}
+
+            {/* Apply button */}
+            {step === 'method' && fullPopulationData.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <button
+                  onClick={runAutoSelect}
+                  disabled={runningSelection}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 transition-colors"
+                >
+                  {runningSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  {selectedIndices.size > 0 ? 'Re-apply Sampling' : 'Apply Sampling'}
+                </button>
+              </div>
+            )}
         </div>
       </div>
 
@@ -2457,6 +2491,22 @@ export function SamplingCalculatorClient({
         stratificationResults={stratificationResults}
         itemProfiles={itemProfiles}
         currency={auditData.functionalCurrency}
+        onSelectAnomalies={(anomalyIndices) => {
+          // Merge anomaly selections into the existing selected indices
+          setSelectedIndices(prev => {
+            const merged = new Set(prev);
+            anomalyIndices.forEach(i => merged.add(i));
+            return merged;
+          });
+          // Compute sample total for the merged selection
+          const allSelected = new Set([...selectedIndices, ...anomalyIndices]);
+          const total = [...allSelected].reduce((sum, i) => {
+            const row = fullPopulationData[i];
+            return sum + (parseFloat(String(row?.[columnMapping.amount || ''] || 0)) || 0);
+          }, 0);
+          setSampleTotal(Math.round(total * 100) / 100);
+          setCoverage(populationTotal > 0 ? (total / populationTotal) * 100 : 0);
+        }}
       />
     </div>
   );
