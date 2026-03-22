@@ -4,7 +4,7 @@ import OpenAI from 'openai';
 
 export const maxDuration = 120;
 
-const EXTRACTION_PROMPT = `You are a bank statement data extractor. Extract ALL transactions from this bank statement into structured JSON.
+const EXTRACTION_PROMPT = `You are an expert bank statement data extractor. The text below was extracted from a PDF bank statement. The text may be jumbled because PDF table layouts extract imperfectly — column values may appear out of order or on separate lines. Your job is to intelligently reconstruct the transactions.
 
 For each transaction, extract:
 - date: The transaction date (format: YYYY-MM-DD)
@@ -29,13 +29,17 @@ Return ONLY valid JSON in this exact format:
   ]
 }
 
-IMPORTANT:
+CRITICAL RULES:
 - Extract EVERY transaction, do not skip any
-- Amounts must be numbers, not strings
+- Amounts must be numbers, not strings (no commas in numbers)
 - If a transaction is a payment/debit, put the amount in "debit" and 0 in "credit"
 - If a transaction is a receipt/credit, put the amount in "credit" and 0 in "debit"
 - Dates must be in YYYY-MM-DD format
-- If the year is not shown on each line, infer it from the statement period`;
+- If the year is not shown on each line, infer it from the statement period
+- The text may be garbled from PDF extraction — look for patterns: dates, amounts, descriptions
+- If amounts have commas (e.g. "1,234.56"), convert to plain numbers (1234.56)
+- If you see columns like "Money In" / "Money Out" or "Paid In" / "Paid Out", map these to credit/debit
+- If balance is not shown per-transaction, set it to 0`;
 
 /**
  * POST /api/sampling/parse-bank-statement
@@ -81,7 +85,9 @@ export async function POST(req: Request) {
     const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
     let responseContent = '';
 
-    if (extractedText.length >= 50) {
+    // For text-based PDFs, even short text can be valid (bank statements have tabular data)
+    // Lower the threshold significantly — even 10 chars means some text was found
+    if (extractedText.length >= 10) {
       // Text-based extraction — split into chunks if very long
       const maxChunkSize = 12000;
       const chunks: string[] = [];
@@ -138,48 +144,25 @@ export async function POST(req: Request) {
         responseContent = JSON.stringify({ ...metadata, transactions: allTransactions });
       }
     } else {
-      // Scanned PDF — convert pages to images and use vision model
+      // Scanned/image PDF — split into single-page PDFs, send each as base64 to vision model
       console.log('[Sampling:ParseBankStatement] Text too short, using vision model for OCR');
 
       try {
-        const { execSync } = await import('child_process');
-        const { writeFileSync, readFileSync, mkdirSync, readdirSync, unlinkSync, rmdirSync } = await import('fs');
-        const { join } = await import('path');
-        const os = await import('os');
+        const { PDFDocument } = await import('pdf-lib');
+        const pdfDoc = await PDFDocument.load(buffer);
+        const pageCount = pdfDoc.getPageCount();
+        const maxPages = Math.min(pageCount, 5);
 
-        const tmpDir = join(os.tmpdir(), `bank-stmt-${Date.now()}`);
-        mkdirSync(tmpDir, { recursive: true });
-        const pdfPath = join(tmpDir, 'statement.pdf');
-        writeFileSync(pdfPath, buffer);
-
-        // Convert PDF pages to images using pdftoppm (from poppler)
-        try {
-          execSync(`pdftoppm -jpeg -r 200 "${pdfPath}" "${join(tmpDir, 'page')}"`, { timeout: 30000 });
-        } catch {
-          // pdftoppm may not be available on serverless — fall back to error
-          return NextResponse.json({
-            error: 'This bank statement appears to be scanned. OCR processing is not available on this server. Please use the Paste Data option to enter transactions manually.',
-            scanned: true,
-          }, { status: 422 });
-        }
-
-        // Read generated page images
-        const pageFiles = readdirSync(tmpDir)
-          .filter(f => f.startsWith('page') && f.endsWith('.jpg'))
-          .sort();
-
-        if (pageFiles.length === 0) {
-          return NextResponse.json({ error: 'Could not convert PDF pages to images' }, { status: 422 });
-        }
-
-        // Send each page to vision model (max 5 pages for bank statements)
         const allTransactions: Record<string, unknown>[] = [];
         let metadata: Record<string, unknown> = {};
-        const maxPages = Math.min(pageFiles.length, 5);
 
         for (let pi = 0; pi < maxPages; pi++) {
-          const imgData = readFileSync(join(tmpDir, pageFiles[pi]));
-          const base64 = imgData.toString('base64');
+          // Create a single-page PDF for this page
+          const singlePageDoc = await PDFDocument.create();
+          const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [pi]);
+          singlePageDoc.addPage(copiedPage);
+          const singlePageBytes = await singlePageDoc.save();
+          const base64Pdf = Buffer.from(singlePageBytes).toString('base64');
 
           const visionPrompt = pi === 0
             ? EXTRACTION_PROMPT
@@ -191,7 +174,7 @@ export async function POST(req: Request) {
               role: 'user',
               content: [
                 { type: 'text', text: visionPrompt },
-                { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
+                { type: 'image_url', image_url: { url: `data:application/pdf;base64,${base64Pdf}` } },
               ],
             }],
             max_tokens: 8000,
@@ -210,28 +193,22 @@ export async function POST(req: Request) {
               if (Array.isArray(parsed.transactions)) {
                 allTransactions.push(...parsed.transactions);
               }
-            } catch { /* skip malformed */ }
+            } catch { /* skip malformed chunk */ }
           }
         }
 
-        // Cleanup temp files
-        try {
-          readdirSync(tmpDir).forEach(f => unlinkSync(join(tmpDir, f)));
-          rmdirSync(tmpDir);
-        } catch { /* non-fatal */ }
-
         if (allTransactions.length === 0) {
           return NextResponse.json({
-            error: 'Could not extract transactions from the scanned bank statement. Please try the Paste Data option.',
+            error: 'Could not extract transactions from the bank statement. The PDF may be image-only or encrypted. Please try the Paste Data option.',
             scanned: true,
           }, { status: 422 });
         }
 
         responseContent = JSON.stringify({ ...metadata, transactions: allTransactions });
       } catch (ocrErr) {
-        console.error('[Sampling:ParseBankStatement] OCR error:', ocrErr instanceof Error ? ocrErr.message : ocrErr);
+        console.error('[Sampling:ParseBankStatement] Vision OCR error:', ocrErr instanceof Error ? ocrErr.message : ocrErr);
         return NextResponse.json({
-          error: 'Failed to process scanned bank statement. Please use the Paste Data option to enter transactions manually.',
+          error: 'Failed to process bank statement. Please use the Paste Data option to enter transactions manually.',
           scanned: true,
         }, { status: 422 });
       }
