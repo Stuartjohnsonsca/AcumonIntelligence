@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
+import { apiAction } from '@/lib/logger';
 import OpenAI from 'openai';
 
 export const maxDuration = 120;
@@ -52,12 +53,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
   }
 
+  const action = apiAction(req, session.user as { id: string; firmId?: string }, '/api/sampling/parse-bank-statement', 'sampling');
+
   try {
     const formData = await req.formData();
     const file = formData.get('file') as File;
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
+
+    action.info('Parsing bank statement', { fileName: file.name, fileSize: file.size });
 
     if (!file.name.toLowerCase().endsWith('.pdf')) {
       return NextResponse.json({ error: 'Only PDF files are supported' }, { status: 400 });
@@ -75,9 +80,9 @@ export async function POST(req: Request) {
       const result = await extractText(pdfData);
       const pages = Array.isArray(result.text) ? result.text : [String(result.text || '')];
       extractedText = pages.join('\n\n');
-      console.log(`[Sampling:ParseBankStatement] unpdf extracted ${extractedText.length} chars`);
+      action.info('unpdf extracted text', { chars: extractedText.length });
     } catch (e1) {
-      console.log(`[Sampling:ParseBankStatement] unpdf failed: ${e1 instanceof Error ? e1.message : e1}`);
+      action.warn('unpdf failed', { error: e1 instanceof Error ? e1.message : String(e1) });
     }
 
     // Attempt 2: pdf-lib basic text extraction (if unpdf failed or returned very little)
@@ -86,11 +91,11 @@ export async function POST(req: Request) {
         const { PDFDocument } = await import('pdf-lib');
         const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
         const pageCount = pdfDoc.getPageCount();
-        console.log(`[Sampling:ParseBankStatement] pdf-lib loaded, ${pageCount} pages. Text extraction via unpdf failed, falling back to vision model.`);
+        action.info('pdf-lib loaded, falling back to vision model', { pages: pageCount });
         // pdf-lib doesn't extract text, but we know the PDF is valid
         // Set extractedText to empty to trigger vision path
       } catch (e2) {
-        console.log(`[Sampling:ParseBankStatement] pdf-lib also failed: ${e2 instanceof Error ? e2.message : e2}`);
+        action.warn('pdf-lib failed', { error: e2 instanceof Error ? e2.message : String(e2) });
       }
     }
 
@@ -110,9 +115,9 @@ export async function POST(req: Request) {
         }
         extractedText = pages.join('\n\n');
         await doc.destroy();
-        console.log(`[Sampling:ParseBankStatement] pdfjs-dist extracted ${extractedText.length} chars`);
+        action.info('pdfjs-dist extracted text', { chars: extractedText.length });
       } catch (e3) {
-        console.log(`[Sampling:ParseBankStatement] pdfjs-dist failed: ${e3 instanceof Error ? e3.message : e3}`);
+        action.warn('pdfjs-dist failed', { error: e3 instanceof Error ? e3.message : String(e3) });
       }
     }
 
@@ -134,7 +139,7 @@ export async function POST(req: Request) {
         chunks.push(extractedText.slice(i, i + maxChunkSize));
       }
 
-      console.log(`[Sampling:ParseBankStatement] Extracted ${extractedText.length} chars, split into ${chunks.length} chunks`);
+      action.info('Text extraction complete, splitting into chunks', { totalChars: extractedText.length, chunks: chunks.length });
 
       if (chunks.length === 1) {
         // Single chunk — one call
@@ -184,12 +189,12 @@ export async function POST(req: Request) {
           }
         }
 
-        console.log(`[Sampling:ParseBankStatement] Extracted ${allTransactions.length} transactions from ${chunks.length} parallel chunks`);
+        action.info('Parallel extraction complete', { transactions: allTransactions.length, chunks: chunks.length });
         responseContent = JSON.stringify({ ...metadata, transactions: allTransactions });
       }
     } else {
       // Scanned/image PDF — split into single-page PDFs, send each as base64 to vision model
-      console.log('[Sampling:ParseBankStatement] Text too short, using vision model for OCR');
+      action.info('Text too short for text-mode, using vision model', { textLength: extractedText.length });
 
       try {
         const { PDFDocument } = await import('pdf-lib');
@@ -250,7 +255,7 @@ export async function POST(req: Request) {
 
         responseContent = JSON.stringify({ ...metadata, transactions: allTransactions });
       } catch (ocrErr) {
-        console.error('[Sampling:ParseBankStatement] Vision OCR error:', ocrErr instanceof Error ? ocrErr.message : ocrErr);
+        await action.error(ocrErr, { stage: 'vision_ocr' });
         return NextResponse.json({
           error: 'Failed to process bank statement. Please use the Paste Data option to enter transactions manually.',
           scanned: true,
@@ -288,6 +293,8 @@ export async function POST(req: Request) {
       };
     });
 
+    await action.success('Bank statement parsed', { transactionCount: rows.length, fileName: file.name });
+
     return NextResponse.json({
       rows,
       columns: ['Transaction ID', 'Date', 'Description', 'Reference', 'Debit', 'Credit', 'Amount', 'Balance'],
@@ -304,12 +311,7 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    const stack = error instanceof Error ? error.stack?.split('\n').slice(0, 3).join('\n') : '';
-    console.error('[Sampling:ParseBankStatement] Error:', msg, stack);
-    return NextResponse.json({
-      error: `Failed to parse bank statement: ${msg}`,
-      debug: process.env.NODE_ENV !== 'production' ? stack : undefined,
-    }, { status: 500 });
+    await action.error(error, { stage: 'parse_bank_statement' });
+    return action.errorResponse(error);
   }
 }

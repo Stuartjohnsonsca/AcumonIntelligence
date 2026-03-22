@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
+import { apiAction } from '@/lib/logger';
 import {
   selectSRSWOR, computePopulationHash, buildAuditTrail,
   generateSeed, planSampleSize,
@@ -29,6 +30,8 @@ export async function POST(req: Request) {
   if (!session?.user?.twoFactorVerified) {
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
   }
+
+  const action = apiAction(req, session.user as { id: string; firmId?: string }, '/api/sampling/run', 'sampling');
 
   const body = await req.json();
   const {
@@ -338,6 +341,11 @@ export async function POST(req: Request) {
       data: { status: 'complete' },
     });
 
+    await action.success('Sampling complete', {
+      runId: run.id, method, sampleSize: selectedItems.length,
+      populationSize: N, coverage: Math.round(coverage * 100) / 100,
+    });
+
     return NextResponse.json({
       runId: run.id,
       selectedIndices,
@@ -354,7 +362,7 @@ export async function POST(req: Request) {
       auditTrail,
     });
   } catch (error) {
-    console.error('[Sampling:Run] Error:', error instanceof Error ? error.message : error);
-    return NextResponse.json({ error: 'Sampling failed' }, { status: 500 });
+    await action.error(error, { method: body?.method, engagementId: body?.engagementId });
+    return action.errorResponse(error);
   }
 }
