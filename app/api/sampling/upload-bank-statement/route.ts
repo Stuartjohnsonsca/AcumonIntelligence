@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
-import { enqueueBankStatementParse } from '@/lib/azure-queue';
 import { uploadToInbox, CONTAINERS } from '@/lib/azure-blob';
 import { apiAction } from '@/lib/logger';
 import { createHash } from 'crypto';
@@ -74,16 +73,8 @@ export async function POST(req: Request) {
       },
     });
 
-    // Enqueue for async worker processing
-    await enqueueBankStatementParse({
-      populationId: population.id,
-      engagementId,
-      clientId: engagement.clientId,
-      userId: session.user.id,
-      storagePath,
-      containerName,
-      fileName: file.name,
-    });
+    // Worker polls DB for populations needing parsing (parsedData = null, storagePath set)
+    // No queue needed — avoids Turbopack/Vercel module loading issues with @azure/storage-queue
 
     await action.success('Bank statement queued for parsing', {
       populationId: population.id,

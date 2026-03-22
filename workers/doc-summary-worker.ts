@@ -19,6 +19,7 @@ import {
   type BankStatementParseMessage,
 } from '../lib/azure-queue';
 import { prisma } from '../lib/db';
+import { Prisma } from '@prisma/client';
 import { downloadBlob } from '../lib/azure-blob';
 import {
   analyseDocumentForAudit,
@@ -104,46 +105,45 @@ async function main(): Promise<void> {
       console.error(`[Worker] DocSummary poll error: ${errMsg}`);
     }
 
-    // ─── Bank Statement Parse Queue ──────────────────────────────────────
+    // ─── Bank Statement Parse (DB polling) ─────────────────────────────────
     try {
-      const bsMessages = await receiveMessages<BankStatementParseMessage>(
-        QUEUES.BANK_STATEMENT_PARSE,
-        1,
-        VISIBILITY_TIMEOUT_SECONDS,
-      );
+      // Find populations that need parsing: have a storagePath but no parsedData yet
+      const pending = await prisma.samplingPopulation.findFirst({
+        where: {
+          storagePath: { not: null },
+          parsedData: { equals: Prisma.DbNull },
+          originalFileName: { endsWith: '.pdf' },
+        },
+        include: {
+          engagement: { select: { clientId: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
 
-      for (const received of bsMessages) {
-        const { message, messageId, popReceipt, dequeueCount } = received;
-        console.log(`[Worker:BankStatement] Processing | populationId=${message.populationId} file=${message.fileName} dequeue=${dequeueCount}`);
-
-        if (isDeadLetter(dequeueCount)) {
-          console.error(`[Worker:BankStatement] Dead letter | populationId=${message.populationId}`);
-          await prisma.samplingPopulation.update({
-            where: { id: message.populationId },
-            data: { parsedData: { error: 'Max retries exceeded' } },
-          });
-          await deleteMessage(QUEUES.BANK_STATEMENT_PARSE, messageId, popReceipt);
-          continue;
-        }
+      if (pending && pending.storagePath) {
+        console.log(`[Worker:BankStatement] Found pending | populationId=${pending.id} file=${pending.originalFileName}`);
 
         try {
-          await processBankStatement(message);
-          await deleteMessage(QUEUES.BANK_STATEMENT_PARSE, messageId, popReceipt);
-          console.log(`[Worker:BankStatement] Complete | populationId=${message.populationId}`);
+          await processBankStatement({
+            type: 'bank-statement-parse',
+            populationId: pending.id,
+            engagementId: pending.engagementId,
+            clientId: pending.engagement.clientId,
+            userId: '',
+            storagePath: pending.storagePath,
+            containerName: pending.containerName,
+            fileName: pending.originalFileName || 'statement.pdf',
+          });
+          console.log(`[Worker:BankStatement] Complete | populationId=${pending.id}`);
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          console.error(`[Worker:BankStatement] Failed | populationId=${message.populationId} error=${errMsg}`);
-          // Store error so the polling endpoint can return it
+          console.error(`[Worker:BankStatement] Failed | populationId=${pending.id} error=${errMsg}`);
           await prisma.samplingPopulation.update({
-            where: { id: message.populationId },
+            where: { id: pending.id },
             data: { parsedData: { error: errMsg } },
           }).catch(() => {});
-          // Delete message so it doesn't retry endlessly
-          await deleteMessage(QUEUES.BANK_STATEMENT_PARSE, messageId, popReceipt);
         }
-      }
-
-      if (bsMessages.length === 0) {
+      } else {
         await sleep(POLL_INTERVAL_MS);
       }
     } catch (err) {
