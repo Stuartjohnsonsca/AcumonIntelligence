@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import {
   Upload, FileSpreadsheet, Loader2, ChevronDown, AlertCircle,
   CheckCircle2, Search, Lock, ArrowLeft, Plus, BarChart3,
+  Link2, Grid3X3, MessageSquare,
 } from 'lucide-react';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -157,6 +158,24 @@ export function SamplingCalculatorClient({
   const [inherentRisk, setInherentRisk] = useState<'Low' | 'Medium' | 'High'>('Medium');
   const [specificRisk, setSpecificRisk] = useState<'Low' | 'Medium' | 'High'>('Medium');
 
+  // ─── Data input mode ────────────────────────────────────────────────────
+  const [dataInputMode, setDataInputMode] = useState<'upload' | 'paste' | 'connect'>('upload');
+
+  // ─── Spreadsheet paste ─────────────────────────────────────────────────
+  const [spreadsheetData, setSpreadsheetData] = useState<string[][]>([['', '', '', '', '']]);
+  const spreadsheetRef = useRef<HTMLDivElement>(null);
+
+  // ─── Accounting connection ─────────────────────────────────────────────
+  const [xeroConnected, setXeroConnected] = useState(false);
+  const [xeroOrgName, setXeroOrgName] = useState('');
+  const [checkingConnection, setCheckingConnection] = useState(false);
+
+  // ─── Fixed size justification ──────────────────────────────────────────
+  const [fixedJustification, setFixedJustification] = useState('');
+  const [justificationAssessing, setJustificationAssessing] = useState(false);
+  const [justificationResult, setJustificationResult] = useState<'defensible' | 'weak' | 'indefensible' | null>(null);
+  const [justificationFeedback, setJustificationFeedback] = useState('');
+
   // ─── Composite extras ─────────────────────────────────────────────────────
   const [compositeThreshold, setCompositeThreshold] = useState(0);
   const [compositeJustification, setCompositeJustification] = useState('');
@@ -245,6 +264,141 @@ export function SamplingCalculatorClient({
       setError(err instanceof Error ? err.message : 'Failed to parse file');
     }
     setUploading(false);
+  }
+
+  // ─── Check accounting connection ────────────────────────────────────────
+
+  const checkXeroConnection = useCallback(async (clientId: string) => {
+    setCheckingConnection(true);
+    try {
+      const res = await fetch(`/api/accounting/xero/status?clientId=${clientId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setXeroConnected(!!data.connected);
+        setXeroOrgName(data.orgName || '');
+      }
+    } catch { /* silent */ }
+    setCheckingConnection(false);
+  }, []);
+
+  // ─── Handle spreadsheet paste ──────────────────────────────────────────
+
+  function handleSpreadsheetPaste(e: React.ClipboardEvent) {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    if (!text.trim()) return;
+
+    const rows = text.split('\n').map(row => row.split('\t'));
+    // Ensure at least as many columns as the widest row
+    const maxCols = Math.max(...rows.map(r => r.length), 5);
+    const normalized = rows.map(r => {
+      while (r.length < maxCols) r.push('');
+      return r;
+    });
+
+    setSpreadsheetData(normalized);
+
+    // Auto-detect columns from first row (header)
+    if (normalized.length > 1) {
+      const headers = normalized[0];
+      setUploadedColumns(headers);
+      const dataRows: Record<string, unknown>[] = [];
+      for (let i = 1; i < normalized.length; i++) {
+        const row: Record<string, unknown> = {};
+        headers.forEach((h, j) => { row[h] = normalized[i][j] || ''; });
+        dataRows.push(row);
+      }
+      setUploadedPreview(dataRows.slice(0, 5));
+      setUploadedFileName('Pasted data');
+      setColumnMapping({});
+      setStep('map');
+    }
+  }
+
+  function handleSpreadsheetCellChange(row: number, col: number, value: string) {
+    setSpreadsheetData(prev => {
+      const updated = prev.map(r => [...r]);
+      // Expand rows if needed
+      while (updated.length <= row) updated.push(new Array(updated[0]?.length || 5).fill(''));
+      // Expand cols if needed
+      if (col >= (updated[0]?.length || 0)) {
+        updated.forEach(r => { while (r.length <= col) r.push(''); });
+      }
+      updated[row][col] = value;
+      return updated;
+    });
+  }
+
+  function processSpreadsheetData() {
+    if (spreadsheetData.length < 2) {
+      setError('Please enter at least a header row and one data row');
+      return;
+    }
+    const headers = spreadsheetData[0].map(h => h.trim()).filter(h => h);
+    if (headers.length === 0) {
+      setError('First row must contain column headers');
+      return;
+    }
+    setUploadedColumns(headers);
+    const dataRows: Record<string, unknown>[] = [];
+    for (let i = 1; i < spreadsheetData.length; i++) {
+      const row: Record<string, unknown> = {};
+      let hasData = false;
+      headers.forEach((h, j) => {
+        const v = spreadsheetData[i][j] || '';
+        row[h] = v;
+        if (v.trim()) hasData = true;
+      });
+      if (hasData) dataRows.push(row);
+    }
+    if (dataRows.length === 0) {
+      setError('No data rows found');
+      return;
+    }
+    setUploadedPreview(dataRows.slice(0, 5));
+    setUploadedFileName('Pasted data');
+    setColumnMapping({});
+    setStep('map');
+  }
+
+  // ─── Assess fixed sample size justification ────────────────────────────
+
+  async function assessJustification() {
+    if (!fixedJustification.trim() || fixedJustification.length < 20) {
+      setJustificationResult('indefensible');
+      setJustificationFeedback('Justification is too brief. Please provide a detailed explanation referencing audit risk, materiality, or the nature of the population.');
+      return;
+    }
+    setJustificationAssessing(true);
+    setJustificationResult(null);
+    setJustificationFeedback('');
+    try {
+      // Client-side heuristic check for obvious red flags
+      const lower = fixedJustification.toLowerCase();
+      const redFlags = ['fewer items', 'most efficient', 'reduced workload', 'less work', 'save time', 'quickest', 'minimum effort'];
+      const hasRedFlag = redFlags.some(flag => lower.includes(flag));
+
+      if (hasRedFlag) {
+        setJustificationResult('indefensible');
+        setJustificationFeedback('This justification relies on workload minimisation, which is not acceptable to audit regulators. Please revise to reference risk, materiality, or the nature of the population.');
+        setJustificationAssessing(false);
+        return;
+      }
+
+      const hasRiskRef = /risk|material|assert|nature|population|significant|control|substantive/i.test(fixedJustification);
+      if (!hasRiskRef) {
+        setJustificationResult('weak');
+        setJustificationFeedback('This justification does not clearly reference audit risk, materiality, or assertion-level considerations. Consider strengthening your rationale.');
+        setJustificationAssessing(false);
+        return;
+      }
+
+      setJustificationResult('defensible');
+      setJustificationFeedback('Justification appears defensible. It references appropriate audit considerations.');
+    } catch {
+      setJustificationFeedback('Could not assess justification. Please review manually.');
+    }
+    setJustificationAssessing(false);
   }
 
   // ─── Validate mapping ─────────────────────────────────────────────────────
@@ -531,25 +685,168 @@ export function SamplingCalculatorClient({
             </div>
           </div>
 
-          {/* Upload area */}
+          {/* Population Data — 3 input modes */}
           {(step === 'configure' || step === 'upload') && (
             <div className="bg-white rounded-lg border border-slate-200 p-5">
               <h3 className="text-sm font-semibold text-slate-700 mb-3">Population Data</h3>
-              <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 text-center">
-                <FileSpreadsheet className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-                <p className="text-sm text-slate-600 mb-2">Upload Excel (.xlsx) or CSV file</p>
-                <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 cursor-pointer transition-colors">
-                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  Choose File
-                  <input
-                    type="file"
-                    accept=".xlsx,.csv"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                    disabled={uploading}
-                  />
-                </label>
+
+              {/* Mode tabs */}
+              <div className="flex gap-1 mb-4 bg-slate-100 rounded-lg p-0.5">
+                <button
+                  onClick={() => setDataInputMode('upload')}
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    dataInputMode === 'upload' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <Upload className="h-3 w-3" /> Upload File
+                </button>
+                <button
+                  onClick={() => setDataInputMode('paste')}
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    dataInputMode === 'paste' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <Grid3X3 className="h-3 w-3" /> Paste Data
+                </button>
+                <button
+                  onClick={() => {
+                    setDataInputMode('connect');
+                    if (selectedClient) checkXeroConnection(selectedClient.id);
+                  }}
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    dataInputMode === 'connect' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <Link2 className="h-3 w-3" />
+                  {selectedClient?.software ? `Connect to ${selectedClient.software}` : 'Connect to Accounting System'}
+                </button>
               </div>
+
+              {/* Upload mode */}
+              {dataInputMode === 'upload' && (
+                <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 text-center">
+                  <FileSpreadsheet className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+                  <p className="text-sm text-slate-600 mb-2">Upload Excel (.xlsx) or CSV file</p>
+                  <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 cursor-pointer transition-colors">
+                    {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    Choose File
+                    <input
+                      type="file"
+                      accept=".xlsx,.csv"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      disabled={uploading}
+                    />
+                  </label>
+                </div>
+              )}
+
+              {/* Paste / Spreadsheet mode */}
+              {dataInputMode === 'paste' && (
+                <div>
+                  <p className="text-xs text-slate-400 mb-2">
+                    Paste data from Excel or type directly. First row should be column headers.
+                  </p>
+                  <div
+                    ref={spreadsheetRef}
+                    onPaste={handleSpreadsheetPaste}
+                    className="border border-slate-200 rounded-lg overflow-auto max-h-[400px]"
+                  >
+                    <table className="text-xs w-full border-collapse">
+                      <tbody>
+                        {spreadsheetData.map((row, ri) => (
+                          <tr key={ri} className={ri === 0 ? 'bg-slate-50 font-medium' : ''}>
+                            <td className="w-8 px-1 py-0.5 text-center text-slate-400 border-r border-b border-slate-100 bg-slate-50 text-[10px]">
+                              {ri + 1}
+                            </td>
+                            {row.map((cell, ci) => (
+                              <td key={ci} className="border-r border-b border-slate-100 p-0">
+                                <input
+                                  type="text"
+                                  value={cell}
+                                  onChange={(e) => handleSpreadsheetCellChange(ri, ci, e.target.value)}
+                                  className="w-full px-1.5 py-1 text-xs border-0 focus:outline-none focus:bg-blue-50 min-w-[80px]"
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <button
+                      onClick={() => setSpreadsheetData(prev => [...prev, new Array(prev[0]?.length || 5).fill('')])}
+                      className="text-xs text-blue-600 hover:text-blue-700"
+                    >
+                      + Add Row
+                    </button>
+                    <button
+                      onClick={() => setSpreadsheetData(prev => prev.map(r => [...r, '']))}
+                      className="text-xs text-blue-600 hover:text-blue-700"
+                    >
+                      + Add Column
+                    </button>
+                    <div className="flex-1" />
+                    <button
+                      onClick={processSpreadsheetData}
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                    >
+                      Use This Data
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Connect to accounting system mode */}
+              {dataInputMode === 'connect' && (
+                <div className="text-center py-6">
+                  {checkingConnection ? (
+                    <div className="flex items-center gap-2 text-sm text-slate-500 justify-center">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Checking connection...
+                    </div>
+                  ) : xeroConnected ? (
+                    <div>
+                      <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
+                      <p className="text-sm font-medium text-green-700 mb-1">
+                        Connected to {xeroOrgName || selectedClient?.software || 'Xero'}
+                      </p>
+                      <p className="text-xs text-slate-400 mb-3">
+                        You can fetch population data from the connected accounting system.
+                      </p>
+                      <button
+                        className="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+                        onClick={() => {
+                          // TODO: Phase 4 — fetch data from Xero and populate
+                          alert('Fetch from accounting system will be available in the next update.');
+                        }}
+                      >
+                        Fetch Data
+                      </button>
+                    </div>
+                  ) : (
+                    <div>
+                      <Link2 className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+                      <p className="text-sm text-slate-600 mb-1">
+                        No active connection to {selectedClient?.software || 'an accounting system'} for this client.
+                      </p>
+                      <p className="text-xs text-slate-400 mb-3">
+                        Connect to import population data directly.
+                      </p>
+                      <button
+                        onClick={() => {
+                          if (selectedClient) {
+                            window.open(`/api/accounting/xero/connect?clientId=${selectedClient.id}`, '_blank');
+                          }
+                        }}
+                        className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                      >
+                        Connect to {selectedClient?.software || 'Xero'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -883,15 +1180,55 @@ export function SamplingCalculatorClient({
             </div>
 
             {sampleSizeStrategy === 'fixed' ? (
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Sample Size (n)</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={fixedSampleSize}
-                  onChange={(e) => setFixedSampleSize(parseInt(e.target.value) || 1)}
-                  className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Sample Size (n)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={fixedSampleSize}
+                    onChange={(e) => setFixedSampleSize(parseInt(e.target.value) || 1)}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">
+                    Justification <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={fixedJustification}
+                    onChange={(e) => { setFixedJustification(e.target.value); setJustificationResult(null); }}
+                    rows={3}
+                    className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="Explain why this fixed sample size is appropriate, with reference to audit risk, materiality, and the nature of the population..."
+                  />
+                  <button
+                    onClick={assessJustification}
+                    disabled={justificationAssessing || !fixedJustification.trim()}
+                    className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-white hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                  >
+                    {justificationAssessing ? (
+                      <><Loader2 className="h-3 w-3 animate-spin" /> Assessing...</>
+                    ) : (
+                      <><MessageSquare className="h-3 w-3" /> Assess Defensibility</>
+                    )}
+                  </button>
+                  {justificationResult && (
+                    <div className={`mt-2 p-2 rounded-lg text-xs ${
+                      justificationResult === 'defensible'
+                        ? 'bg-green-50 border border-green-200 text-green-700'
+                        : justificationResult === 'weak'
+                        ? 'bg-amber-50 border border-amber-200 text-amber-700'
+                        : 'bg-red-50 border border-red-200 text-red-700'
+                    }`}>
+                      <span className="font-semibold">
+                        {justificationResult === 'defensible' ? 'Defensible' :
+                         justificationResult === 'weak' ? 'Potentially Weak' : 'Indefensible'}
+                      </span>
+                      {justificationFeedback && <p className="mt-0.5">{justificationFeedback}</p>}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="space-y-3">
