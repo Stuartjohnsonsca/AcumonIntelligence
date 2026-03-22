@@ -41,6 +41,7 @@ interface Props {
     performanceMateriality: number;
     tolerableMisstatement: number;
     dataType: string;
+    confidenceLevel: number;
   };
   onAccept: (suggestion: AISuggestion) => void;
   disabled?: boolean;
@@ -115,6 +116,7 @@ export default function AISuggestStratification({
             dataType: auditData.dataType,
             performanceMateriality: auditData.performanceMateriality,
             tolerableMisstatement: auditData.tolerableMisstatement,
+            confidenceLevel: auditData.confidenceLevel,
           },
         }),
       });

@@ -1813,7 +1813,7 @@ export function SamplingCalculatorClient({
                 <AISuggestStratification
                   columnMapping={columnMapping}
                   fullPopulationData={fullPopulationData}
-                  auditData={{ performanceMateriality: auditData.performanceMateriality, tolerableMisstatement: auditData.tolerableMisstatement, dataType: auditData.dataType }}
+                  auditData={{ performanceMateriality: auditData.performanceMateriality, tolerableMisstatement: auditData.tolerableMisstatement, dataType: auditData.dataType, confidenceLevel: firmConfig?.confidenceLevel ?? 95 }}
                   disabled={fullPopulationData.length === 0}
                   onAccept={(s) => {
                     setAiStratSuggestion(s);
