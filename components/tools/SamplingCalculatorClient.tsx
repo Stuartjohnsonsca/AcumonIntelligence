@@ -1831,6 +1831,31 @@ export function SamplingCalculatorClient({
                 {stratificationResults && (
                   <div className="space-y-2">
                     <h4 className="text-xs font-semibold text-slate-600">Stratification Results</h4>
+
+                    {/* Dimension boxes — one per applied feature */}
+                    {aiStratSuggestion && aiStratSuggestion.features.length > 0 && (
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {aiStratSuggestion.features.map((f, i) => {
+                          const dimColors = [
+                            { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
+                            { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700' },
+                            { bg: 'bg-teal-50', border: 'border-teal-200', text: 'text-teal-700' },
+                            { bg: 'bg-pink-50', border: 'border-pink-200', text: 'text-pink-700' },
+                            { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700' },
+                          ];
+                          const c = dimColors[i % dimColors.length];
+                          return (
+                            <div key={i} className={`p-2 rounded-lg text-xs ${c.bg} border ${c.border} ${c.text}`}>
+                              <div className="font-semibold text-[10px] uppercase tracking-wider opacity-60">{f.type}</div>
+                              <div className="font-medium">{f.name}</div>
+                              <div className="text-[10px] opacity-60">weight: {f.weight}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Risk strata boxes */}
                     {stratificationResults.strata.map(s => (
                       <div key={s.level} className={`p-2 rounded-lg text-xs ${
                         s.level === 'high' ? 'bg-red-50 border border-red-200 text-red-700'

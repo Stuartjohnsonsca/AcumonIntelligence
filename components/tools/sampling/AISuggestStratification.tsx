@@ -181,7 +181,7 @@ export default function AISuggestStratification({
         <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-xs font-semibold text-purple-800">(D) AI-Proposed Stratification</span>
+              <span className="text-xs font-semibold text-purple-800">(E) AI-Proposed Stratification</span>
               <p className="text-[10px] text-purple-600 mt-0.5">
                 Analyse population to recommend features, allocation rule, and rationale.
               </p>
