@@ -531,52 +531,67 @@ async function processBankStatement(msg: BankStatementParseMessage): Promise<voi
     try { fs.readdirSync(tmpDir).forEach(f => fs.unlinkSync(path.join(tmpDir, f))); fs.rmdirSync(tmpDir); } catch { /* */ }
   }
 
-  // If we have text, send to AI for extraction
+  // If we have text, split by page and process each page in parallel
   if (extractedText.length >= 10) {
-    console.log(`[Worker:BankStatement] Sending ${extractedText.length} chars to AI...`);
     const apiKey = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
     if (!apiKey) throw new Error('AI API key not configured');
 
     const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
 
-    // Split into chunks and process in parallel
-    const maxChunkSize = 20000;
-    const chunks: string[] = [];
-    for (let i = 0; i < extractedText.length; i += maxChunkSize) {
-      chunks.push(extractedText.slice(i, i + maxChunkSize));
-    }
-
-    const chunkPromises = chunks.map((chunk, ci) => {
-      const prompt = ci === 0
-        ? `${BANK_EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`
-        : `Extract ALL transactions from this bank statement text. Return ONLY valid JSON: {"transactions": [...]} with each transaction having date, description, reference, debit, credit, balance.\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`;
-
-      return client.chat.completions.create({
-        model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 16000,
-        temperature: 0.1,
-      });
-    });
-
-    const results = await Promise.all(chunkPromises);
-
-    const allTransactions: Record<string, unknown>[] = [];
-    let metadata: Record<string, unknown> = {};
-
-    for (let ci = 0; ci < results.length; ci++) {
-      const content = (results[ci].choices?.[0]?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (ci === 0) { metadata = { ...parsed }; delete metadata.transactions; }
-          if (Array.isArray(parsed.transactions)) allTransactions.push(...(parsed.transactions as Record<string, unknown>[]));
-        } catch { /* skip malformed */ }
+    // Re-extract page by page for parallel processing
+    let pages: string[] = [];
+    try {
+      const { extractText } = await import('unpdf');
+      const result = await extractText(new Uint8Array(buffer));
+      pages = Array.isArray(result.text) ? result.text.filter(p => p.trim().length > 20) : [extractedText];
+    } catch {
+      // Fallback: split into ~3000 char chunks (roughly 1 page)
+      for (let i = 0; i < extractedText.length; i += 3000) {
+        pages.push(extractedText.slice(i, i + 3000));
       }
     }
 
-    console.log(`[Worker:BankStatement] Extracted ${allTransactions.length} transactions from ${chunks.length} chunks`);
+    console.log(`[Worker:BankStatement] Processing ${pages.length} pages in parallel...`);
+
+    // Process all pages in parallel — each page is small (~3K chars, ~20 transactions)
+    const BATCH_SIZE = 4; // Process 4 pages at a time to avoid rate limits
+    const allTransactions: Record<string, unknown>[] = [];
+    let metadata: Record<string, unknown> = {};
+
+    for (let batch = 0; batch < pages.length; batch += BATCH_SIZE) {
+      const batchPages = pages.slice(batch, batch + BATCH_SIZE);
+      const batchPromises = batchPages.map((pageText, idx) => {
+        const pageNum = batch + idx;
+        const prompt = pageNum === 0
+          ? `${BANK_EXTRACTION_PROMPT}\n\n--- PAGE ${pageNum + 1} of ${pages.length} ---\n${pageText}`
+          : `Extract ALL transactions from this bank statement page. Return ONLY valid JSON: {"transactions": [{"date":"YYYY-MM-DD","description":"...","reference":"...","debit":0,"credit":0,"balance":0}]}\n\n--- PAGE ${pageNum + 1} of ${pages.length} ---\n${pageText}`;
+
+        return client.chat.completions.create({
+          model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 4000, // Each page has ~20 transactions max
+          temperature: 0.1,
+        });
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+
+      for (let i = 0; i < batchResults.length; i++) {
+        const content = (batchResults[i].choices?.[0]?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (batch === 0 && i === 0) { metadata = { ...parsed }; delete metadata.transactions; }
+            if (Array.isArray(parsed.transactions)) allTransactions.push(...(parsed.transactions as Record<string, unknown>[]));
+          } catch { /* skip malformed page */ }
+        }
+      }
+
+      console.log(`[Worker:BankStatement] Batch ${Math.floor(batch / BATCH_SIZE) + 1}: ${allTransactions.length} transactions so far`);
+    }
+
+    console.log(`[Worker:BankStatement] Extracted ${allTransactions.length} transactions from ${pages.length} pages`);
 
     if (allTransactions.length === 0) {
       throw new Error('No transactions could be extracted from the bank statement');
