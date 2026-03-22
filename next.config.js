@@ -1,7 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ['pdf-parse', 'unpdf', 'pdfjs-dist', 'xlsx', 'ioredis', 'jstat'],
+  serverExternalPackages: [
+    'pdf-parse', 'unpdf', 'pdfjs-dist', 'xlsx', 'ioredis', 'jstat',
+    '@azure/storage-blob', '@azure/storage-queue', '@azure/communication-email',
+    'pdf-lib', 'openai',
+  ],
   images: {
     dangerouslyAllowSVG: true,
     contentDispositionType: 'attachment',
