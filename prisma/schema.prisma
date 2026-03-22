@@ -658,7 +658,7 @@ model SamplingPopulation {
   fileHash              String?  @map("file_hash") // SHA-256 of uploaded file
   originalFileName      String?  @map("original_file_name")
   storagePath           String?  @map("storage_path")
-  containerName         String   @default("sampling-populations") @map("container_name")
+  containerName         String   @default("upload-inbox") @map("container_name")
   columnMapping         Json?    @map("column_mapping") // {transactionId: "col_A", date: "col_B", amount: "col_C", ...}
   dataQualitySummary    Json?    @map("data_quality_summary") // {missingCounts, duplicates, dateRange, outlierStats}
   parsedData            Json?    @map("parsed_data") // stored population rows for engine use
