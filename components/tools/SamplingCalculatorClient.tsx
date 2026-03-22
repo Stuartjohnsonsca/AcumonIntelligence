@@ -1350,23 +1350,67 @@ export function SamplingCalculatorClient({
                     {selectedIndices.size > 0 && <span className="ml-2 text-green-600 font-normal">({selectedIndices.size} selected)</span>}
                   </h3>
                   {selectedIndices.size > 0 && (
-                    <button
-                      onClick={() => {
-                        const headers = uploadedColumns.join(',');
-                        const rows = fullPopulationData
-                          .filter((_, i) => selectedIndices.has(i))
-                          .map(row => uploadedColumns.map(col => `"${String(row[col] || '').replace(/"/g, '""')}"`).join(','));
-                        const csv = [headers, ...rows].join('\n');
-                        const blob = new Blob([csv], { type: 'text/csv' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url; a.download = `sample_${selectedClient?.clientName || 'export'}.csv`;
-                        a.click(); URL.revokeObjectURL(url);
-                      }}
-                      className="text-xs text-blue-600 hover:text-blue-700"
-                    >
-                      Export Sample CSV
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {runId && (
+                        <>
+                          <button
+                            onClick={async () => {
+                              const res = await fetch('/api/sampling/export', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ runId, format: 'pdf' }),
+                              });
+                              if (res.ok) {
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url; a.download = `Sampling_Plan_${selectedClient?.clientName || 'export'}.pdf`;
+                                a.click(); URL.revokeObjectURL(url);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                          >
+                            <Download className="h-3 w-3" /> PDF Report
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const res = await fetch('/api/sampling/export', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ runId, format: 'excel' }),
+                              });
+                              if (res.ok) {
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url; a.download = `Sample_Schedule_${selectedClient?.clientName || 'export'}.xlsx`;
+                                a.click(); URL.revokeObjectURL(url);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 text-xs text-green-600 hover:text-green-700"
+                          >
+                            <FileSpreadsheet className="h-3 w-3" /> Excel Schedule
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={() => {
+                          const headers = uploadedColumns.join(',');
+                          const rows = fullPopulationData
+                            .filter((_, i) => selectedIndices.has(i))
+                            .map(row => uploadedColumns.map(col => `"${String(row[col] || '').replace(/"/g, '""')}"`).join(','));
+                          const csv = [headers, ...rows].join('\n');
+                          const blob = new Blob([csv], { type: 'text/csv' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url; a.download = `sample_${selectedClient?.clientName || 'export'}.csv`;
+                          a.click(); URL.revokeObjectURL(url);
+                        }}
+                        className="text-xs text-slate-500 hover:text-slate-700"
+                      >
+                        CSV
+                      </button>
+                    </div>
                   )}
                 </div>
                 <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
