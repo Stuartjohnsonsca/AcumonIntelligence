@@ -105,14 +105,18 @@ export async function POST(req: Request) {
         max_tokens: 500,
         temperature: 0.1,
       });
-      const content = result.choices?.[0]?.message?.content?.trim() || '';
+      let content = result.choices?.[0]?.message?.content?.trim() || '';
+      // Strip thinking tags from reasoning models
+      content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
       // Parse JSON from response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        const parties: string[] = Array.isArray(parsed.parties) ? parsed.parties : [];
-        return NextResponse.json({ parties, fileName: file.originalName });
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const parties: string[] = Array.isArray(parsed.parties) ? parsed.parties : [];
+          return NextResponse.json({ parties, fileName: file.originalName });
+        } catch { /* malformed JSON — fall through */ }
       }
     }
 
