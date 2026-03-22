@@ -699,16 +699,15 @@ export function SamplingCalculatorClient({
   function proceedToMethod() {
     if (!validateMapping()) return;
 
-    // Compute population total from the amount column
+    // Compute population total from the amount column using full dataset
     const amountCol = columnMapping.amount!;
-    const rows = uploadedPreview; // In production, use full parsed data
-    const total = rows.reduce((sum, r) => sum + (parseFloat(String(r[amountCol])) || 0), 0);
+    const total = fullPopulationData.reduce((sum, r) => sum + (parseFloat(String(r[amountCol])) || 0), 0);
     setPopulationTotal(Math.round(total * 100) / 100);
-    setPopulationCount(rows.length);
+    setPopulationCount(fullPopulationData.length);
 
     // Save internal data quality for engine use (not shown to user as a step)
     const idCol = columnMapping.transactionId!;
-    const ids = rows.map(r => String(r[idCol]));
+    const ids = fullPopulationData.map(r => String(r[idCol]));
     const uniqueIds = new Set(ids);
     const duplicates = ids.length - uniqueIds.size;
 
@@ -1563,10 +1562,20 @@ export function SamplingCalculatorClient({
               {/* Population data table with selection highlighting */}
               <div className="bg-white rounded-lg border border-slate-200">
                 <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-slate-700">
-                    Population Data
-                    {selectedIndices.size > 0 && <span className="ml-2 text-green-600 font-normal">({selectedIndices.size} selected)</span>}
-                  </h3>
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-sm font-semibold text-slate-700">
+                      Population Data
+                      {selectedIndices.size > 0 && <span className="ml-2 text-green-600 font-normal">({selectedIndices.size} selected)</span>}
+                    </h3>
+                    {step === 'method' && (
+                      <button
+                        onClick={() => setStep('map')}
+                        className="text-[10px] text-blue-600 hover:text-blue-700 underline"
+                      >
+                        Edit Mapping
+                      </button>
+                    )}
+                  </div>
                   {selectedIndices.size > 0 && (
                     <div className="flex items-center gap-2">
                       {runId && (
@@ -1698,23 +1707,6 @@ export function SamplingCalculatorClient({
                   <strong>AI Risk Stratification</strong> — Population will be segmented into High/Medium/Low risk strata using outlier detection, clustering, and rule-based scoring.
                 </div>
 
-                <AISuggestStratification
-                  columnMapping={columnMapping}
-                  fullPopulationData={fullPopulationData}
-                  auditData={{ performanceMateriality: auditData.performanceMateriality, tolerableMisstatement: auditData.tolerableMisstatement, dataType: auditData.dataType }}
-                  disabled={fullPopulationData.length === 0}
-                  onAccept={(s) => {
-                    setAiStratSuggestion(s);
-                    setAllocationRule(s.allocationRule);
-                    if (s.allocationRule === 'rule_b' && s.allocationParams.totalN) setRuleBTotal(s.allocationParams.totalN);
-                    if (s.allocationRule === 'rule_c') {
-                      if (s.allocationParams.highN != null) setRuleCHigh(s.allocationParams.highN);
-                      if (s.allocationParams.mediumN != null) setRuleCMedium(s.allocationParams.mediumN);
-                      if (s.allocationParams.lowN != null) setRuleCLow(s.allocationParams.lowN);
-                    }
-                  }}
-                />
-
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1.5">Allocation Rule</label>
                   <div className="space-y-1">
@@ -1754,6 +1746,23 @@ export function SamplingCalculatorClient({
                     </div>
                   </div>
                 )}
+
+                <AISuggestStratification
+                  columnMapping={columnMapping}
+                  fullPopulationData={fullPopulationData}
+                  auditData={{ performanceMateriality: auditData.performanceMateriality, tolerableMisstatement: auditData.tolerableMisstatement, dataType: auditData.dataType }}
+                  disabled={fullPopulationData.length === 0}
+                  onAccept={(s) => {
+                    setAiStratSuggestion(s);
+                    setAllocationRule(s.allocationRule);
+                    if (s.allocationRule === 'rule_b' && s.allocationParams.totalN) setRuleBTotal(s.allocationParams.totalN);
+                    if (s.allocationRule === 'rule_c') {
+                      if (s.allocationParams.highN != null) setRuleCHigh(s.allocationParams.highN);
+                      if (s.allocationParams.mediumN != null) setRuleCMedium(s.allocationParams.mediumN);
+                      if (s.allocationParams.lowN != null) setRuleCLow(s.allocationParams.lowN);
+                    }
+                  }}
+                />
 
                 {/* Stratification results */}
                 {stratificationResults && (
