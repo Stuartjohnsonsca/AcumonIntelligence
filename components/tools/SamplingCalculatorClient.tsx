@@ -157,7 +157,9 @@ export function SamplingCalculatorClient({
   const [specificRisk, setSpecificRisk] = useState<'Low' | 'Medium' | 'High'>('Medium');
 
   // ─── Data input mode ────────────────────────────────────────────────────
-  const [dataInputMode, setDataInputMode] = useState<'upload' | 'paste' | 'connect'>('upload');
+  const [dataInputMode, setDataInputMode] = useState<'upload' | 'paste' | 'connect' | 'bank'>('upload');
+  const [bankStatementParsing, setBankStatementParsing] = useState(false);
+  const [bankStatementMeta, setBankStatementMeta] = useState<Record<string, unknown> | null>(null);
 
   // ─── Spreadsheet paste ─────────────────────────────────────────────────
   const [spreadsheetData, setSpreadsheetData] = useState<string[][]>([['', '', '', '', '']]);
@@ -285,6 +287,58 @@ export function SamplingCalculatorClient({
       setError(err instanceof Error ? err.message : 'Failed to parse file');
     }
     setUploading(false);
+  }
+
+  // ─── Bank statement PDF upload ──────────────────────────────────────────
+
+  async function handleBankStatementUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBankStatementParsing(true);
+    setError('');
+    setBankStatementMeta(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/sampling/parse-bank-statement', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to parse bank statement');
+      }
+
+      const { rows, columns, metadata } = data as {
+        rows: Record<string, unknown>[];
+        columns: string[];
+        metadata: Record<string, unknown>;
+      };
+
+      setUploadedColumns(columns);
+      setUploadedPreview(rows.slice(0, 5));
+      setUploadedFileName(file.name);
+      setPopulationCount(rows.length);
+      setFullPopulationData(rows);
+      setBankStatementMeta(metadata);
+
+      // Auto-map bank statement columns
+      setColumnMapping({
+        transactionId: 'Transaction ID',
+        date: 'Date',
+        amount: 'Amount',
+        description: 'Description',
+      });
+
+      setStep('map');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to parse bank statement');
+    }
+    setBankStatementParsing(false);
   }
 
   // ─── Check accounting connection ────────────────────────────────────────
@@ -915,7 +969,15 @@ export function SamplingCalculatorClient({
                   }`}
                 >
                   <Link2 className="h-3 w-3" />
-                  {selectedClient?.software ? `Connect to ${selectedClient.software}` : 'Connect to Accounting System'}
+                  {selectedClient?.software ? `Connect to ${selectedClient.software}` : 'Connect'}
+                </button>
+                <button
+                  onClick={() => setDataInputMode('bank')}
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    dataInputMode === 'bank' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <FileSpreadsheet className="h-3 w-3" /> Bank Statement
                 </button>
               </div>
 
@@ -1045,6 +1107,49 @@ export function SamplingCalculatorClient({
                       >
                         Connect to {selectedClient?.software || 'Xero'}
                       </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Bank statement PDF upload */}
+              {dataInputMode === 'bank' && (
+                <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 text-center">
+                  {bankStatementParsing ? (
+                    <div className="space-y-3">
+                      <Loader2 className="h-10 w-10 text-blue-500 mx-auto animate-spin" />
+                      <p className="text-sm text-slate-600 font-medium">Extracting transactions from bank statement...</p>
+                      <p className="text-xs text-slate-400">This may take a minute for multi-page statements</p>
+                    </div>
+                  ) : (
+                    <>
+                      <FileSpreadsheet className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+                      <p className="text-sm text-slate-600 mb-1">Upload a bank statement PDF</p>
+                      <p className="text-xs text-slate-400 mb-3">
+                        Transactions will be extracted automatically using AI and loaded into the data table
+                      </p>
+                      <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 cursor-pointer transition-colors">
+                        <Upload className="h-4 w-4" />
+                        Choose PDF
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          onChange={handleBankStatementUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    </>
+                  )}
+                  {bankStatementMeta && (
+                    <div className="mt-4 text-left bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-700">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <strong>{(bankStatementMeta.transactionCount as number) || 0} transactions extracted</strong>
+                      </div>
+                      {bankStatementMeta.bankName ? <p>Bank: {String(bankStatementMeta.bankName)}</p> : null}
+                      {bankStatementMeta.accountName ? <p>Account: {String(bankStatementMeta.accountName)}</p> : null}
+                      {bankStatementMeta.statementPeriod ? <p>Period: {String(bankStatementMeta.statementPeriod)}</p> : null}
+                      {bankStatementMeta.currency ? <p>Currency: {String(bankStatementMeta.currency)}</p> : null}
                     </div>
                   )}
                 </div>
