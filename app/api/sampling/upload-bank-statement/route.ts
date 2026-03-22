@@ -50,9 +50,9 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const fileHash = createHash('sha256').update(buffer).digest('hex');
 
-    // Upload to Azure Blob — path includes client ID for isolation
-    const containerName = 'sampling-populations';
-    const storagePath = `${engagement.clientId}/${engagementId}/bank-statements/${fileHash.slice(0, 8)}_${file.name}`;
+    // Upload to Azure Blob — use upload-inbox (guaranteed to exist) with sampling prefix for isolation
+    const containerName = 'upload-inbox';
+    const storagePath = `sampling/${engagement.clientId}/${engagementId}/bank-statements/${fileHash.slice(0, 8)}_${file.name}`;
 
     const { BlobServiceClient } = await import('@azure/storage-blob');
     const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING;
