@@ -102,6 +102,7 @@ AUDIT CONTEXT:
 - Data type: ${auditContext.dataType}
 - Performance materiality: ${auditContext.performanceMateriality}
 - Tolerable misstatement: ${auditContext.tolerableMisstatement}
+- Firm confidence level: ${auditContext.confidenceLevel || 95}%
 
 What stratification configuration do you recommend?`;
 
