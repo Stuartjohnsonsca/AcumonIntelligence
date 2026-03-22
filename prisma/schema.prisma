@@ -18,8 +18,9 @@ model Firm {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  users   User[]
-  clients Client[]
+  users          User[]
+  clients        Client[]
+  samplingConfig FirmSamplingConfig?
 
   @@map("firms")
 }
@@ -49,6 +50,9 @@ model User {
   docSummaryJobs             DocSummaryJob[]
   activityLogs               ActivityLog[]
   periodProductAssignments   PeriodProductAssignment[]
+  samplingEngagements        SamplingEngagement[]
+  samplingReviews            SamplingReview[]           @relation("SamplingReviewer")
+  samplingEngagementsReview  SamplingEngagement[]       @relation("SamplingEngagementReviewer")
 
   @@map("users")
 }
@@ -113,6 +117,7 @@ model Client {
   aiUsage                AiUsage[]
   docSummaryJobs         DocSummaryJob[]
   periods                ClientPeriod[]
+  samplingEngagements    SamplingEngagement[]
 
   @@map("clients")
 }
@@ -515,6 +520,7 @@ model ClientPeriod {
 
   client             Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   productAssignments PeriodProductAssignment[]
+  samplingEngagements SamplingEngagement[]
 
   @@unique([clientId, startDate])
   @@map("client_periods")
@@ -577,5 +583,205 @@ model ErrorLog {
   @@index([createdAt])
   @@index([resolved])
   @@map("error_logs")
+}
+
+// ─── Sampling Calculator ─────────────────────────────────────────────────────
+
+model FirmSamplingConfig {
+  id                    String   @id @default(uuid())
+  firmId                String   @unique @map("firm_id")
+  confidenceLevel       Float    @default(95) @map("confidence_level") // e.g. 95 for 95%
+  confidenceFactorTable Json?    @map("confidence_factor_table") // [{inherentRisk, specificRisk, overallRMM, riskOfIncorrectAcceptance, confidenceFactorRange}]
+  riskMatrix            Json?    @map("risk_matrix") // 3x3 grid: k values by inherent risk x specific risk
+  updatedBy             String?  @map("updated_by")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@map("firm_sampling_configs")
+}
+
+model SamplingEngagement {
+  id          String   @id @default(uuid())
+  clientId    String   @map("client_id")
+  periodId    String   @map("period_id")
+  userId      String   @map("user_id")
+  name        String?  // engagement name / code
+  auditArea   String?  @map("audit_area") // e.g. revenue, purchases, payroll
+  testingType String?  @map("testing_type") // "test_of_details" | "test_of_controls"
+  assertions  Json?    // ["Occurrence", "Completeness", "Accuracy", ...]
+  status      String   @default("draft") // draft | configured | running | complete | locked
+  reviewerId  String?  @map("reviewer_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period    ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id])
+  reviewer  User?        @relation("SamplingEngagementReviewer", fields: [reviewerId], references: [id])
+  auditData SamplingAuditData?
+  populations SamplingPopulation[]
+  runs        SamplingRun[]
+
+  @@index([clientId, periodId])
+  @@index([userId])
+  @@map("sampling_engagements")
+}
+
+model SamplingAuditData {
+  id                     String   @id @default(uuid())
+  engagementId           String   @unique @map("engagement_id")
+  performanceMateriality Float    @map("performance_materiality")
+  clearlyTrivial         Float    @map("clearly_trivial")
+  tolerableMisstatement  Float    @map("tolerable_misstatement")
+  functionalCurrency     String   @default("GBP") @map("functional_currency")
+  dataType               String   @map("data_type") // Revenue, Direct Costs, Overheads, etc.
+  testType               String   @map("test_type") // one_tail, two_tail, multi_tail
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  engagement SamplingEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@map("sampling_audit_data")
+}
+
+model SamplingPopulation {
+  id                    String   @id @default(uuid())
+  engagementId          String   @map("engagement_id")
+  description           String?
+  periodStart           DateTime? @map("period_start")
+  periodEnd             DateTime? @map("period_end")
+  completenessStatement String?  @map("completeness_statement") @db.Text
+  recordCount           Int      @default(0) @map("record_count")
+  currency              String   @default("GBP")
+  unitOfSampling        String?  @map("unit_of_sampling") // transaction, line, journal, invoice, payment
+  fileHash              String?  @map("file_hash") // SHA-256 of uploaded file
+  originalFileName      String?  @map("original_file_name")
+  storagePath           String?  @map("storage_path")
+  containerName         String   @default("sampling-populations") @map("container_name")
+  columnMapping         Json?    @map("column_mapping") // {transactionId: "col_A", date: "col_B", amount: "col_C", ...}
+  dataQualitySummary    Json?    @map("data_quality_summary") // {missingCounts, duplicates, dateRange, outlierStats}
+  parsedData            Json?    @map("parsed_data") // stored population rows for engine use
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  engagement SamplingEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  runs       SamplingRun[]
+
+  @@index([engagementId])
+  @@map("sampling_populations")
+}
+
+model SamplingRun {
+  id              String   @id @default(uuid())
+  engagementId    String   @map("engagement_id")
+  populationId    String   @map("population_id")
+  parentRunId     String?  @map("parent_run_id") // for extend/rerun linking
+  mode            String   // "A" | "B"
+  method          String   // random, systematic, mus, judgemental, composite
+  stratification  String   @default("simple") // simple | stratified
+  parameters      Json     // full config snapshot for reproducibility
+  seed            Int?     // PRNG seed
+  toolVersion     String   @default("1.0") @map("tool_version")
+  status          String   @default("pending") // pending | running | complete | failed
+  sampleSize      Int?     @map("sample_size")
+  resultSummary   Json?    @map("result_summary") // {meanError, sdError, fpc, ucl, decision, ...}
+  coverageSummary Json?    @map("coverage_summary") // {byMonth, byValueBand, byPreparer}
+  auditTrailHash  String?  @map("audit_trail_hash")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  engagement  SamplingEngagement  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  population  SamplingPopulation  @relation(fields: [populationId], references: [id], onDelete: Cascade)
+  parentRun   SamplingRun?        @relation("RunExtensions", fields: [parentRunId], references: [id])
+  childRuns   SamplingRun[]       @relation("RunExtensions")
+  items       SamplingItem[]
+  strata      SamplingStratum[]
+  judgementChat SamplingJudgementChat[]
+  reviews     SamplingReview[]
+  artifacts   SamplingExportArtifact[]
+
+  @@index([engagementId])
+  @@index([populationId])
+  @@map("sampling_runs")
+}
+
+model SamplingItem {
+  id              String   @id @default(uuid())
+  runId           String   @map("run_id")
+  transactionId   String   @map("transaction_id")
+  bookValue       Float    @map("book_value")
+  auditedValue    Float?   @map("audited_value")
+  selectedReason  String?  @map("selected_reason")
+  stratumId       String?  @map("stratum_id")
+  testResult      String?  @map("test_result") // no_exception | exception | not_testable
+  wpReference     String?  @map("wp_reference")
+  exceptionAmount Float?   @map("exception_amount")
+  exceptionType   String?  @map("exception_type")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  run     SamplingRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stratum SamplingStratum? @relation(fields: [stratumId], references: [id])
+
+  @@index([runId])
+  @@map("sampling_items")
+}
+
+model SamplingStratum {
+  id           String @id @default(uuid())
+  runId        String @map("run_id")
+  name         String
+  definition   Json?  // {scoreRange, ruleFlags, ...}
+  itemCount    Int    @default(0) @map("item_count")
+  totalValue   Float  @default(0) @map("total_value")
+  summaryStats Json?  @map("summary_stats")
+
+  run   SamplingRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  items SamplingItem[]
+
+  @@index([runId])
+  @@map("sampling_strata")
+}
+
+model SamplingJudgementChat {
+  id        String   @id @default(uuid())
+  runId     String   @map("run_id")
+  role      String   // "user" | "assistant"
+  content   String   @db.Text
+  turnOrder Int      @map("turn_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run SamplingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("sampling_judgement_chat")
+}
+
+model SamplingReview {
+  id         String   @id @default(uuid())
+  runId      String   @map("run_id")
+  reviewerId String   @map("reviewer_id")
+  notes      String?  @db.Text
+  decision   String   // approved | rejected | needs_revision
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  run      SamplingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  reviewer User        @relation("SamplingReviewer", fields: [reviewerId], references: [id])
+
+  @@index([runId])
+  @@map("sampling_reviews")
+}
+
+model SamplingExportArtifact {
+  id           String   @id @default(uuid())
+  runId        String   @map("run_id")
+  artifactType String   @map("artifact_type") // sampling_plan_pdf | sample_schedule_xlsx | coverage_appendix | run_log_json
+  fileHash     String?  @map("file_hash")
+  storagePath  String?  @map("storage_path")
+  containerName String  @default("sampling-artifacts") @map("container_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  run SamplingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("sampling_export_artifacts")
 }
 

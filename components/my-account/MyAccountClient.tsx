@@ -6,6 +6,7 @@ import { UsersTab } from './UsersTab';
 import { ClientsTab } from './ClientsTab';
 import { SubscriptionsTab } from './SubscriptionsTab';
 import { AiUsageTab } from './AiUsageTab';
+import { FirmSettingsTab } from './FirmSettingsTab';
 import { Shield } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -44,6 +45,7 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
           {canManageClients && <TabsTrigger value="clients">Clients</TabsTrigger>}
           <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
           {canManageClients && <TabsTrigger value="ai-usage">AI Usage</TabsTrigger>}
+          {(isSuperAdmin || isFirmAdmin) && <TabsTrigger value="firm-settings">Firm Settings</TabsTrigger>}
         </TabsList>
 
         {canManageUsers && (
@@ -65,6 +67,12 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
         {canManageClients && (
           <TabsContent value="ai-usage">
             <AiUsageTab />
+          </TabsContent>
+        )}
+
+        {(isSuperAdmin || isFirmAdmin) && (
+          <TabsContent value="firm-settings">
+            <FirmSettingsTab firmId={firmId} />
           </TabsContent>
         )}
       </Tabs>
