@@ -750,6 +750,41 @@ export function SamplingCalculatorClient({
             </div>
           </div>
 
+          {/* Population Summary — shown once data is loaded */}
+          {populationCount > 0 && (
+            <div className="bg-white rounded-lg border border-slate-200 p-4">
+              <h3 className="text-sm font-semibold text-slate-700 mb-2">Population Summary</h3>
+              <div className="grid grid-cols-4 gap-3">
+                <div className="p-2.5 bg-slate-50 rounded-lg">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider">Population Size</span>
+                  <p className="text-base font-bold text-slate-800">{populationCount.toLocaleString()}</p>
+                </div>
+                <div className="p-2.5 bg-slate-50 rounded-lg">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider">Population Total</span>
+                  <p className="text-base font-bold text-slate-800">
+                    {populationTotal > 0
+                      ? `${auditData.functionalCurrency} ${populationTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      : '—'}
+                  </p>
+                </div>
+                <div className="p-2.5 bg-blue-50 rounded-lg border border-blue-100">
+                  <span className="text-[10px] text-blue-600 uppercase tracking-wider">Sample Size</span>
+                  <p className="text-base font-bold text-blue-800">
+                    {sampleSizeStrategy === 'fixed' ? fixedSampleSize.toLocaleString() : '—'}
+                  </p>
+                </div>
+                <div className="p-2.5 bg-slate-50 rounded-lg">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider">Coverage %</span>
+                  <p className="text-base font-bold text-slate-800">
+                    {sampleSizeStrategy === 'fixed' && populationCount > 0
+                      ? ((fixedSampleSize / populationCount) * 100).toFixed(2) + '%'
+                      : '—'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Population Data — 3 input modes */}
           {(step === 'configure' || step === 'upload') && (
             <div className="bg-white rounded-lg border border-slate-200 p-5">
