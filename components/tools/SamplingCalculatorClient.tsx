@@ -705,15 +705,13 @@ export function SamplingCalculatorClient({
     setPopulationTotal(Math.round(total * 100) / 100);
     setPopulationCount(fullPopulationData.length);
 
-    // Save internal data quality for engine use (not shown to user as a step)
-    const idCol = columnMapping.transactionId!;
-    const ids = fullPopulationData.map(r => String(r[idCol]));
-    const uniqueIds = new Set(ids);
-    const duplicates = ids.length - uniqueIds.size;
-
-    if (duplicates > 0) {
-      setError(`${duplicates} duplicate Transaction IDs found. Please fix your data before proceeding.`);
-      return;
+    // Assign internal row IDs (the mapped Transaction ID column may have duplicates
+    // e.g. multiple line items per invoice — that's valid source data, not an error)
+    const ROW_ID_KEY = '__rowId';
+    for (let i = 0; i < fullPopulationData.length; i++) {
+      if (!fullPopulationData[i][ROW_ID_KEY]) {
+        fullPopulationData[i][ROW_ID_KEY] = `row_${i + 1}`;
+      }
     }
 
     setError('');
