@@ -11,7 +11,6 @@ const nextConfig = {
     contentDispositionType: 'attachment',
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
   },
-  bundler: 'webpack',
   experimental: {
     serverActions: {
       allowedOrigins: ['localhost:3000', 'www.acumonintelligence.com', '*.acumonintelligence.com'],
