@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ['pdf-parse', 'unpdf', 'pdfjs-dist'],
+  serverExternalPackages: ['pdf-parse', 'unpdf', 'pdfjs-dist', 'xlsx', 'ioredis', 'jstat'],
   images: {
     dangerouslyAllowSVG: true,
     contentDispositionType: 'attachment',
