@@ -577,6 +577,9 @@ export function SamplingCalculatorClient({
           sampleSize: fixedSampleSize,
           confidence: (firmConfig?.confidenceLevel || 95) / 100,
           tolerableMisstatement: auditData.tolerableMisstatement,
+          kFactor: firmConfig?.riskMatrix
+            ? firmConfig.riskMatrix[['Low', 'Medium', 'High'].indexOf(inherentRisk)]?.[['Low', 'Medium', 'High'].indexOf(specificRisk)] || 20
+            : 20,
         }),
       });
 
