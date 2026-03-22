@@ -118,7 +118,7 @@ export function SamplingCalculatorClient({
   assignedClients, firmConfig,
 }: Props) {
   // ─── Step/state management ─────────────────────────────────────────────────
-  const [step, setStep] = useState<'client' | 'no-access' | 'configure' | 'upload' | 'map' | 'quality' | 'method'>('client');
+  const [step, setStep] = useState<'client' | 'no-access' | 'configure' | 'upload' | 'map' | 'method'>('client');
 
   // ─── Client/period selection ───────────────────────────────────────────────
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -145,8 +145,6 @@ export function SamplingCalculatorClient({
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [columnMapping, setColumnMapping] = useState<Partial<ColumnMapping>>({});
   const [mappingErrors, setMappingErrors] = useState<string[]>([]);
-  const [dataQuality, setDataQuality] = useState<DataQuality | null>(null);
-  const [qualityAcknowledged, setQualityAcknowledged] = useState(false);
 
   // ─── Sampling method ──────────────────────────────────────────────────────
   const [stratification, setStratification] = useState<'simple' | 'stratified'>('simple');
@@ -180,6 +178,14 @@ export function SamplingCalculatorClient({
   const [compositeThreshold, setCompositeThreshold] = useState(0);
   const [compositeJustification, setCompositeJustification] = useState('');
   const [compositeResidualMethod, setCompositeResidualMethod] = useState('random');
+
+  // ─── Saved column mappings ──────────────────────────────────────────────
+  const [savedMappings, setSavedMappings] = useState<Record<string, Partial<ColumnMapping>>>({});
+  const [mappingSaved, setMappingSaved] = useState(false);
+
+  // ─── Population totals ─────────────────────────────────────────────────
+  const [populationTotal, setPopulationTotal] = useState(0);
+  const [populationCount, setPopulationCount] = useState(0);
 
   // ─── Engagement ────────────────────────────────────────────────────────────
   const [engagementId, setEngagementId] = useState<string | null>(null);
@@ -258,7 +264,9 @@ export function SamplingCalculatorClient({
       setUploadedColumns(columns);
       setUploadedPreview(rows.slice(0, 5));
       setUploadedFileName(file.name);
-      setColumnMapping({});
+      setPopulationCount(rows.length);
+      // Compute population total if we can guess the amount column
+      applyAutoMapping(columns);
       setStep('map');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse file');
@@ -310,7 +318,8 @@ export function SamplingCalculatorClient({
       }
       setUploadedPreview(dataRows.slice(0, 5));
       setUploadedFileName('Pasted data');
-      setColumnMapping({});
+      setPopulationCount(dataRows.length);
+      applyAutoMapping(headers);
       setStep('map');
     }
   }
@@ -357,7 +366,8 @@ export function SamplingCalculatorClient({
     }
     setUploadedPreview(dataRows.slice(0, 5));
     setUploadedFileName('Pasted data');
-    setColumnMapping({});
+    setPopulationCount(dataRows.length);
+    applyAutoMapping(headers);
     setStep('map');
   }
 
@@ -401,6 +411,77 @@ export function SamplingCalculatorClient({
     setJustificationAssessing(false);
   }
 
+  // ─── Auto-map columns by name matching ──────────────────────────────────
+
+  function autoMapColumns(columns: string[]): Partial<ColumnMapping> {
+    const lower = columns.map(c => c.toLowerCase().trim());
+    const mapping: Partial<ColumnMapping> = {};
+
+    // Try to match each required field
+    const patterns: { field: keyof ColumnMapping; matches: string[] }[] = [
+      { field: 'transactionId', matches: ['transaction id', 'trans id', 'id', 'reference', 'ref', 'invoice', 'invoice no', 'doc no', 'document id', 'entry id', 'txn id'] },
+      { field: 'date', matches: ['date', 'transaction date', 'trans date', 'posting date', 'invoice date', 'entry date', 'doc date'] },
+      { field: 'amount', matches: ['amount', 'value', 'total', 'net', 'gross', 'debit', 'balance', 'sum'] },
+      { field: 'description', matches: ['description', 'desc', 'narrative', 'memo', 'details', 'name', 'particulars', 'text'] },
+      { field: 'preparer', matches: ['preparer', 'user', 'created by', 'entered by', 'posted by', 'processor'] },
+      { field: 'vendorCustomer', matches: ['vendor', 'customer', 'supplier', 'client', 'counterparty', 'debtor', 'creditor', 'contact'] },
+      { field: 'glCode', matches: ['gl code', 'account code', 'account', 'gl', 'nominal', 'nominal code', 'ledger code', 'account number'] },
+      { field: 'overrideFlag', matches: ['override', 'manual override', 'override flag'] },
+      { field: 'exceptionFlag', matches: ['exception', 'error', 'exception flag', 'rework'] },
+    ];
+
+    for (const { field, matches } of patterns) {
+      const idx = lower.findIndex(col => matches.some(m => col === m || col.includes(m)));
+      if (idx >= 0 && !Object.values(mapping).includes(columns[idx])) {
+        mapping[field] = columns[idx];
+      }
+    }
+
+    return mapping;
+  }
+
+  function loadSavedMapping(clientId: string) {
+    const key = `sampling-mapping-${clientId}`;
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Partial<ColumnMapping>;
+        setSavedMappings(prev => ({ ...prev, [clientId]: parsed }));
+        return parsed;
+      }
+    } catch { /* silent */ }
+    return null;
+  }
+
+  function saveMapping(clientId: string, mapping: Partial<ColumnMapping>) {
+    const key = `sampling-mapping-${clientId}`;
+    try {
+      localStorage.setItem(key, JSON.stringify(mapping));
+      setMappingSaved(true);
+      setTimeout(() => setMappingSaved(false), 2000);
+    } catch { /* silent */ }
+  }
+
+  function applyAutoMapping(columns: string[]) {
+    // Try saved mapping first, then auto-detect
+    const saved = selectedClient ? loadSavedMapping(selectedClient.id) : null;
+    if (saved) {
+      // Only apply fields that match current columns
+      const valid: Partial<ColumnMapping> = {};
+      for (const [field, col] of Object.entries(saved)) {
+        if (col && columns.includes(col as string)) {
+          (valid as Record<string, string>)[field] = col as string;
+        }
+      }
+      if (Object.keys(valid).length > 0) {
+        setColumnMapping(valid);
+        return;
+      }
+    }
+    // Fall back to auto-detection
+    setColumnMapping(autoMapColumns(columns));
+  }
+
   // ─── Validate mapping ─────────────────────────────────────────────────────
 
   function validateMapping(): boolean {
@@ -413,45 +494,29 @@ export function SamplingCalculatorClient({
     return errors.length === 0;
   }
 
-  function computeDataQuality() {
+  function proceedToMethod() {
     if (!validateMapping()) return;
 
-    const rows = uploadedPreview; // In production, use full parsed data
+    // Compute population total from the amount column
     const amountCol = columnMapping.amount!;
+    const rows = uploadedPreview; // In production, use full parsed data
+    const total = rows.reduce((sum, r) => sum + (parseFloat(String(r[amountCol])) || 0), 0);
+    setPopulationTotal(Math.round(total * 100) / 100);
+    setPopulationCount(rows.length);
+
+    // Save internal data quality for engine use (not shown to user as a step)
     const idCol = columnMapping.transactionId!;
-    const dateCol = columnMapping.date!;
-
-    // Compute basic stats
-    const amounts = rows.map(r => parseFloat(String(r[amountCol])) || 0);
     const ids = rows.map(r => String(r[idCol]));
-    const dates = rows.map(r => String(r[dateCol])).filter(d => d && d !== '');
+    const uniqueIds = new Set(ids);
+    const duplicates = ids.length - uniqueIds.size;
 
-    const missingCounts: Record<string, number> = {};
-    for (const col of uploadedColumns) {
-      missingCounts[col] = rows.filter(r => !r[col] || String(r[col]).trim() === '').length;
+    if (duplicates > 0) {
+      setError(`${duplicates} duplicate Transaction IDs found. Please fix your data before proceeding.`);
+      return;
     }
 
-    const uniqueIds = new Set(ids);
-
-    const sorted = [...amounts].sort((a, b) => a - b);
-    const mean = amounts.reduce((s, v) => s + v, 0) / (amounts.length || 1);
-    const variance = amounts.reduce((s, v) => s + (v - mean) ** 2, 0) / (amounts.length || 1);
-
-    setDataQuality({
-      recordCount: rows.length,
-      dateRange: dates.length > 0 ? { min: dates[0], max: dates[dates.length - 1] } : null,
-      missingCounts,
-      duplicateIds: ids.length - uniqueIds.size,
-      amountStats: amounts.length > 0 ? {
-        min: sorted[0],
-        max: sorted[sorted.length - 1],
-        mean: Math.round(mean * 100) / 100,
-        median: sorted[Math.floor(sorted.length / 2)],
-        stdDev: Math.round(Math.sqrt(variance) * 100) / 100,
-      } : null,
-    });
-
-    setStep('quality');
+    setError('');
+    setStep('method');
   }
 
   // ─── Render helpers ────────────────────────────────────────────────────────
@@ -750,13 +815,14 @@ export function SamplingCalculatorClient({
                   <div
                     ref={spreadsheetRef}
                     onPaste={handleSpreadsheetPaste}
-                    className="border border-slate-200 rounded-lg overflow-auto max-h-[400px]"
+                    className="border border-slate-200 rounded-lg overflow-x-auto overflow-y-auto max-h-[400px]"
+                    style={{ maxWidth: '100%' }}
                   >
-                    <table className="text-xs w-full border-collapse">
+                    <table className="text-xs border-collapse" style={{ minWidth: `${Math.max(spreadsheetData[0]?.length || 5, 5) * 120 + 40}px` }}>
                       <tbody>
                         {spreadsheetData.map((row, ri) => (
-                          <tr key={ri} className={ri === 0 ? 'bg-slate-50 font-medium' : ''}>
-                            <td className="w-8 px-1 py-0.5 text-center text-slate-400 border-r border-b border-slate-100 bg-slate-50 text-[10px]">
+                          <tr key={ri} className={ri === 0 ? 'bg-slate-50 font-medium sticky top-0 z-10' : ''}>
+                            <td className="w-8 min-w-[32px] px-1 py-0.5 text-center text-slate-400 border-r border-b border-slate-100 bg-slate-50 text-[10px] sticky left-0 z-10">
                               {ri + 1}
                             </td>
                             {row.map((cell, ci) => (
@@ -765,7 +831,7 @@ export function SamplingCalculatorClient({
                                   type="text"
                                   value={cell}
                                   onChange={(e) => handleSpreadsheetCellChange(ri, ci, e.target.value)}
-                                  className="w-full px-1.5 py-1 text-xs border-0 focus:outline-none focus:bg-blue-50 min-w-[80px]"
+                                  className="w-[120px] px-1.5 py-1 text-xs border-0 focus:outline-none focus:bg-blue-50"
                                 />
                               </td>
                             ))}
@@ -774,6 +840,10 @@ export function SamplingCalculatorClient({
                       </tbody>
                     </table>
                   </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    {spreadsheetData.length} rows × {spreadsheetData[0]?.length || 0} columns
+                    {spreadsheetData.length > 1 && ` • ${spreadsheetData.length - 1} data rows`}
+                  </p>
                   <div className="flex items-center gap-2 mt-2">
                     <button
                       onClick={() => setSpreadsheetData(prev => [...prev, new Array(prev[0]?.length || 5).fill('')])}
@@ -935,105 +1005,64 @@ export function SamplingCalculatorClient({
                 </div>
               )}
 
-              <button
-                onClick={computeDataQuality}
-                className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-              >
-                Validate & Continue
-              </button>
-            </div>
-          )}
-
-          {/* Data quality summary */}
-          {step === 'quality' && dataQuality && (
-            <div className="bg-white rounded-lg border border-slate-200 p-5">
-              <h3 className="text-sm font-semibold text-slate-700 mb-3">Data Quality Summary</h3>
-
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="p-3 bg-slate-50 rounded-lg">
-                  <span className="text-xs text-slate-500">Records</span>
-                  <p className="text-lg font-bold text-slate-800">{dataQuality.recordCount.toLocaleString()}</p>
-                </div>
-                {dataQuality.amountStats && (
-                  <>
-                    <div className="p-3 bg-slate-50 rounded-lg">
-                      <span className="text-xs text-slate-500">Amount Range</span>
-                      <p className="text-sm font-semibold text-slate-800">
-                        {auditData.functionalCurrency} {dataQuality.amountStats.min.toLocaleString()} – {dataQuality.amountStats.max.toLocaleString()}
-                      </p>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-lg">
-                      <span className="text-xs text-slate-500">Mean / Std Dev</span>
-                      <p className="text-sm font-semibold text-slate-800">
-                        {dataQuality.amountStats.mean.toLocaleString()} / {dataQuality.amountStats.stdDev.toLocaleString()}
-                      </p>
-                    </div>
-                  </>
-                )}
-                {dataQuality.dateRange && (
-                  <div className="p-3 bg-slate-50 rounded-lg">
-                    <span className="text-xs text-slate-500">Date Range</span>
-                    <p className="text-sm font-semibold text-slate-800">{dataQuality.dateRange.min} – {dataQuality.dateRange.max}</p>
-                  </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={proceedToMethod}
+                  className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  Continue
+                </button>
+                {selectedClient && (
+                  <button
+                    onClick={() => saveMapping(selectedClient.id, columnMapping)}
+                    className="px-3 py-2 text-xs text-slate-600 hover:text-slate-800 border border-slate-200 rounded-lg transition-colors"
+                  >
+                    {mappingSaved ? '✓ Saved' : 'Save Mapping for Client'}
+                  </button>
                 )}
               </div>
-
-              {dataQuality.duplicateIds > 0 && (
-                <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  {dataQuality.duplicateIds} duplicate Transaction IDs found. Please fix before proceeding.
-                </div>
-              )}
-
-              {/* Missing values */}
-              {Object.entries(dataQuality.missingCounts).some(([, v]) => v > 0) && (
-                <div className="mb-4">
-                  <h4 className="text-xs font-medium text-slate-500 mb-1">Missing Values</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(dataQuality.missingCounts)
-                      .filter(([, v]) => v > 0)
-                      .map(([col, count]) => (
-                        <span key={col} className="text-xs px-2 py-0.5 bg-amber-50 text-amber-700 rounded">
-                          {col}: {count}
-                        </span>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              <label className="flex items-center gap-2 mb-3 text-sm">
-                <input
-                  type="checkbox"
-                  checked={qualityAcknowledged}
-                  onChange={(e) => setQualityAcknowledged(e.target.checked)}
-                  className="rounded border-slate-300"
-                />
-                <span className="text-slate-600">I have reviewed the data quality summary and wish to proceed</span>
-              </label>
-
-              <button
-                onClick={() => { if (qualityAcknowledged && dataQuality.duplicateIds === 0) setStep('method'); }}
-                disabled={!qualityAcknowledged || dataQuality.duplicateIds > 0}
-                className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
-              >
-                Proceed to Sampling
-              </button>
             </div>
           )}
 
-          {/* Method step — placeholder for Phase 4 engine */}
+          {/* Method step — population totals + auto select */}
           {step === 'method' && (
-            <div className="bg-white rounded-lg border border-slate-200 p-5">
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <BarChart3 className="h-5 w-5" />
-                <span>Population loaded. Configure sampling method on the right panel, then click <strong>Auto Select</strong> to run.</span>
+            <div className="space-y-4">
+              {/* Population / Sample Totals */}
+              <div className="bg-white rounded-lg border border-slate-200 p-5">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-3 bg-slate-50 rounded-lg">
+                    <span className="text-xs text-slate-500">Population Total</span>
+                    <p className="text-lg font-bold text-slate-800">
+                      {auditData.functionalCurrency} {populationTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-xs text-slate-400">{populationCount.toLocaleString()} items</p>
+                  </div>
+                  <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                    <span className="text-xs text-blue-600">Sample Total</span>
+                    <p className="text-lg font-bold text-blue-800">Unknown</p>
+                    <p className="text-xs text-blue-400">Pending sample selection</p>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-lg">
+                    <span className="text-xs text-slate-500">Coverage %</span>
+                    <p className="text-lg font-bold text-slate-800">—</p>
+                    <p className="text-xs text-slate-400">Sample ÷ Population</p>
+                  </div>
+                </div>
               </div>
-              <button
-                disabled
-                className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white opacity-40 cursor-not-allowed"
-              >
-                Auto Select (Phase 4)
-              </button>
+
+              {/* Auto Select */}
+              <div className="bg-white rounded-lg border border-slate-200 p-5">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <BarChart3 className="h-5 w-5" />
+                  <span>Configure sampling method on the right, then click <strong>Auto Select</strong> to run.</span>
+                </div>
+                <button
+                  disabled
+                  className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white opacity-40 cursor-not-allowed"
+                >
+                  Auto Select (Phase 4)
+                </button>
+              </div>
             </div>
           )}
         </div>
