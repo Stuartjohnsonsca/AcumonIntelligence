@@ -45,6 +45,14 @@ const XERO_CATEGORIES = [
   { value: 'fixed_assets', label: 'All Fixed Asset Purchases (excl. manual journals)' },
 ];
 
+const XERO_DATA_TYPES = [
+  { value: 'all_transactions', label: 'All Transactions (Invoices + Bank)' },
+  { value: 'invoices', label: 'Sales Invoices' },
+  { value: 'purchase_invoices', label: 'Purchase Invoices' },
+  { value: 'bank_transactions', label: 'Bank Transactions' },
+  { value: 'manual_journals', label: 'Manual Journals' },
+];
+
 const STAFF_COST_KEYWORDS = [
   'wage', 'salary', 'salaries', 'payroll', 'paye', 'nic', 'national insurance',
   'pension', 'employment tax', 'employer', 'staff cost', 'staff costs',
@@ -80,6 +88,7 @@ export default function XeroFetchPopulation({
   const [xeroSelectedCodes, setXeroSelectedCodes] = useState<Set<string>>(new Set());
   const [xeroDateFrom, setXeroDateFrom] = useState('');
   const [xeroDateTo, setXeroDateTo] = useState('');
+  const [xeroDataType, setXeroDataType] = useState('all_transactions');
   const [xeroCategory, setXeroCategory] = useState('');
 
   // Fetch state
@@ -358,6 +367,7 @@ export default function XeroFetchPopulation({
           dateFrom: xeroDateFrom,
           dateTo: xeroDateTo,
           excludeManualJournals: !!xeroCategory,
+          dataType: xeroDataType,
         }),
       });
       const startData = await startRes.json();
@@ -626,7 +636,17 @@ export default function XeroFetchPopulation({
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-slate-700 mb-1.5 block">Transaction Category</label>
+                <label className="text-xs font-medium text-slate-700 mb-1.5 block">Data Type</label>
+                <select
+                  value={xeroDataType}
+                  onChange={e => setXeroDataType(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                >
+                  {XERO_DATA_TYPES.map(dt => <option key={dt.value} value={dt.value}>{dt.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700 mb-1.5 block">Account Category (optional filter)</label>
                 <select
                   value={xeroCategory}
                   onChange={e => handleCategoryChange(e.target.value)}
