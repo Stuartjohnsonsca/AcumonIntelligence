@@ -454,7 +454,7 @@ export default function DistributionAnalysisModal({
                   {selectionMode && ' Click points to select for sampling.'}
                 </p>
                 <ResponsiveContainer width="100%" height={260}>
-                  <ComposedChart margin={{ top: 10, right: 20, bottom: 5, left: 10 }}>
+                  <ComposedChart margin={{ top: 10, right: 20, bottom: 5, left: 10 }} data={[]}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis type="number" dataKey="x" tick={{ fontSize: 9 }} domain={['auto', 'auto']}
                       tickFormatter={fmtAxis}
@@ -463,16 +463,18 @@ export default function DistributionAnalysisModal({
                     <Tooltip formatter={(value) => [fmt(Number(value)), 'Amount']} />
                     <Legend wrapperStyle={{ fontSize: 10 }} />
                     <Scatter data={scatterAnalysis.normalPoints} dataKey="y" fill="#94a3b8" name="Normal" r={2} opacity={0.4}
-                      onClick={selectionMode ? ((_: unknown, idx: number) => handleScatterClick(scatterAnalysis.normalPoints[idx])) : undefined} cursor={selectionMode ? 'pointer' : 'default'} />
+                      cursor={selectionMode ? 'pointer' : 'default'}
+                      onClick={selectionMode ? ((point: /* eslint-disable-line @typescript-eslint/no-explicit-any */ any) => handleScatterClick({ idx: point?.idx as number })) : undefined} />
                     {hasSample && <Scatter data={scatterAnalysis.samplePoints} dataKey="y" fill="#22c55e" name="Sampled" r={3} opacity={0.7} />}
                     <Scatter data={scatterAnalysis.anomalyPoints} dataKey="y" fill="#ef4444" name={`Anomaly (>${sigmaThreshold.toFixed(1)}σ)`} r={4} opacity={0.9}
-                      onClick={selectionMode ? ((_: unknown, idx: number) => handleScatterClick(scatterAnalysis.anomalyPoints[idx])) : undefined} cursor={selectionMode ? 'pointer' : 'default'} />
+                      cursor={selectionMode ? 'pointer' : 'default'}
+                      onClick={selectionMode ? ((point: /* eslint-disable-line @typescript-eslint/no-explicit-any */ any) => handleScatterClick({ idx: point?.idx as number })) : undefined} />
                     {/* Show manually selected points as blue overlay */}
                     {manuallySelected.size > 0 && (
-                      <Scatter data={amounts.filter((_, i) => manuallySelected.has(i)).map((val, j) => {
-                        const origIdx = [...manuallySelected][j];
-                        return { x: val, y: (origIdx % 20) / 20 + Math.sin(origIdx * 0.7) * 0.3 };
-                      })} dataKey="y" fill="#3b82f6" name="Selected" r={5} opacity={0.9} shape="diamond" />
+                      <Scatter data={[...manuallySelected].map(origIdx => ({
+                        x: amounts[origIdx] ?? 0,
+                        y: (origIdx % 20) / 20 + Math.sin(origIdx * 0.7) * 0.3,
+                      }))} dataKey="y" fill="#3b82f6" name="Selected" r={5} opacity={0.9} />
                     )}
                   </ComposedChart>
                 </ResponsiveContainer>
