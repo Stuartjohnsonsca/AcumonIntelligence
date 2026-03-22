@@ -8,6 +8,9 @@ import {
   RotateCcw, Clock,
 } from 'lucide-react';
 import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
+import AISuggestStratification, { type AISuggestion } from '@/components/tools/sampling/AISuggestStratification';
+import DistributionAnalysisModal from '@/components/tools/sampling/DistributionAnalysisModal';
+import XeroFetchPopulation from '@/components/tools/sampling/XeroFetchPopulation';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -169,10 +172,7 @@ export function SamplingCalculatorClient({
   const [spreadsheetData, setSpreadsheetData] = useState<string[][]>([['', '', '', '', '']]);
   const spreadsheetRef = useRef<HTMLDivElement>(null);
 
-  // ─── Accounting connection ─────────────────────────────────────────────
-  const [xeroConnected, setXeroConnected] = useState(false);
-  const [xeroOrgName, setXeroOrgName] = useState('');
-  const [checkingConnection, setCheckingConnection] = useState(false);
+  // ─── Accounting connection (managed by XeroFetchPopulation component) ──
 
   // ─── Fixed size justification ──────────────────────────────────────────
   const [fixedJustification, setFixedJustification] = useState('');
@@ -217,6 +217,9 @@ export function SamplingCalculatorClient({
   const [ruleCMedium, setRuleCMedium] = useState(10);
   const [ruleCLow, setRuleCLow] = useState(5);
   const [stratificationResults, setStratificationResults] = useState<{ strata: { name: string; level: string; itemCount: number; sampleSize: number; totalValue: number; topDrivers: { feature: string; contribution: number }[] }[] } | null>(null);
+  const [aiStratSuggestion, setAiStratSuggestion] = useState<AISuggestion | null>(null);
+  const [itemProfiles, setItemProfiles] = useState<{ index: number; riskScore: number; stratum: 'high' | 'medium' | 'low' }[] | null>(null);
+  const [showDistributionModal, setShowDistributionModal] = useState(false);
 
   // ─── Saved column mappings ──────────────────────────────────────────────
   const [savedMappings, setSavedMappings] = useState<Record<string, Partial<ColumnMapping>>>({});
@@ -452,20 +455,7 @@ export function SamplingCalculatorClient({
     setBankStatementParsing(false);
   }
 
-  // ─── Check accounting connection ────────────────────────────────────────
-
-  const checkXeroConnection = useCallback(async (clientId: string) => {
-    setCheckingConnection(true);
-    try {
-      const res = await fetch(`/api/accounting/xero/status?clientId=${clientId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setXeroConnected(!!data.connected);
-        setXeroOrgName(data.orgName || '');
-      }
-    } catch { /* silent */ }
-    setCheckingConnection(false);
-  }, []);
+  // ─── Check accounting connection (handled by XeroFetchPopulation) ───────
 
   // ─── Handle spreadsheet paste ──────────────────────────────────────────
 
@@ -788,14 +778,15 @@ export function SamplingCalculatorClient({
           // Mode B params
           ...(stratification === 'stratified' ? {
             method: 'stratified',
-            stratificationFeatures: columnMapping.amount
-              ? [
-                  { name: 'Amount', column: columnMapping.amount, type: 'numeric', weight: 1 },
-                  ...(columnMapping.preparer ? [{ name: 'Preparer', column: columnMapping.preparer, type: 'categorical', weight: 0.5 }] : []),
-                  ...(columnMapping.overrideFlag ? [{ name: 'Override', column: columnMapping.overrideFlag, type: 'flag', weight: 1 }] : []),
-                  ...(columnMapping.exceptionFlag ? [{ name: 'Exception', column: columnMapping.exceptionFlag, type: 'flag', weight: 1 }] : []),
-                ]
-              : [],
+            stratificationFeatures: aiStratSuggestion?.features
+              ?? (columnMapping.amount
+                ? [
+                    { name: 'Amount', column: columnMapping.amount, type: 'numeric', weight: 1 },
+                    ...(columnMapping.preparer ? [{ name: 'Preparer', column: columnMapping.preparer, type: 'categorical', weight: 0.5 }] : []),
+                    ...(columnMapping.overrideFlag ? [{ name: 'Override', column: columnMapping.overrideFlag, type: 'flag', weight: 1 }] : []),
+                    ...(columnMapping.exceptionFlag ? [{ name: 'Exception', column: columnMapping.exceptionFlag, type: 'flag', weight: 1 }] : []),
+                  ]
+                : []),
             allocationRule,
             allocationParams: {
               mediumPct: 30,
@@ -826,6 +817,9 @@ export function SamplingCalculatorClient({
       setDetailedAuditTrail(result.auditTrail || null);
       if (result.auditTrail?.strata) {
         setStratificationResults({ strata: result.auditTrail.strata });
+      }
+      if (result.auditTrail?.itemProfiles) {
+        setItemProfiles(result.auditTrail.itemProfiles);
       }
 
       // Update the fixed sample size display to match actual
@@ -1035,6 +1029,7 @@ export function SamplingCalculatorClient({
                 setFixedJustification(''); setStratRationale('');
                 setSelectedIndices(new Set()); setSampleTotal(null); setCoverage(null);
                 setRunId(null); setEngagementId(null);
+                setAiStratSuggestion(null); setItemProfiles(null); setStratificationResults(null);
                 setFullPopulationData([]); setUploadedColumns([]); setUploadedPreview([]);
                 setPopulationCount(0); setPopulationTotal(0);
                 setError(''); setStep('configure');
@@ -1243,16 +1238,13 @@ export function SamplingCalculatorClient({
                   <Grid3X3 className="h-3 w-3" /> Paste Data
                 </button>
                 <button
-                  onClick={() => {
-                    setDataInputMode('connect');
-                    if (selectedClient) checkXeroConnection(selectedClient.id);
-                  }}
+                  onClick={() => setDataInputMode('connect')}
                   className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                     dataInputMode === 'connect' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   <Link2 className="h-3 w-3" />
-                  {selectedClient?.software ? `Connect to ${selectedClient.software}` : 'Connect'}
+                  {selectedClient?.software || 'Accounting'}
                 </button>
                 <button
                   onClick={() => setDataInputMode('bank')}
@@ -1346,53 +1338,24 @@ export function SamplingCalculatorClient({
               )}
 
               {/* Connect to accounting system mode */}
-              {dataInputMode === 'connect' && (
-                <div className="text-center py-6">
-                  {checkingConnection ? (
-                    <div className="flex items-center gap-2 text-sm text-slate-500 justify-center">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Checking connection...
-                    </div>
-                  ) : xeroConnected ? (
-                    <div>
-                      <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
-                      <p className="text-sm font-medium text-green-700 mb-1">
-                        Connected to {xeroOrgName || selectedClient?.software || 'Xero'}
-                      </p>
-                      <p className="text-xs text-slate-400 mb-3">
-                        You can fetch population data from the connected accounting system.
-                      </p>
-                      <button
-                        className="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
-                        onClick={() => {
-                          // TODO: Phase 4 — fetch data from Xero and populate
-                          alert('Fetch from accounting system will be available in the next update.');
-                        }}
-                      >
-                        Fetch Data
-                      </button>
-                    </div>
-                  ) : (
-                    <div>
-                      <Link2 className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                      <p className="text-sm text-slate-600 mb-1">
-                        No active connection to {selectedClient?.software || 'an accounting system'} for this client.
-                      </p>
-                      <p className="text-xs text-slate-400 mb-3">
-                        Connect to import population data directly.
-                      </p>
-                      <button
-                        onClick={() => {
-                          if (selectedClient) {
-                            window.open(`/api/accounting/xero/connect?clientId=${selectedClient.id}`, '_blank');
-                          }
-                        }}
-                        className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-                      >
-                        Connect to {selectedClient?.software || 'Xero'}
-                      </button>
-                    </div>
-                  )}
-                </div>
+              {dataInputMode === 'connect' && selectedClient && (
+                <XeroFetchPopulation
+                  clientId={selectedClient.id}
+                  clientName={selectedClient.clientName}
+                  software={selectedClient.software}
+                  contactEmail={selectedClient.contactEmail}
+                  addTask={addTask}
+                  updateTask={updateTask}
+                  onDataLoaded={({ rows, columns, fileName }) => {
+                    setUploadedColumns(columns);
+                    setUploadedPreview(rows.slice(0, 5));
+                    setUploadedFileName(fileName);
+                    setPopulationCount(rows.length);
+                    setFullPopulationData(rows);
+                    applyAutoMapping(columns);
+                    setStep('map');
+                  }}
+                />
               )}
 
               {/* Bank statement PDF upload */}
@@ -1568,6 +1531,16 @@ export function SamplingCalculatorClient({
                   {runningSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
                   {selectedIndices.size > 0 ? 'Re-select' : 'Auto Select'}
                 </button>
+                {fullPopulationData.length > 0 && (
+                  <button
+                    onClick={() => setShowDistributionModal(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                    title="Distribution analysis"
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                    Distribution
+                  </button>
+                )}
               </div>
 
               {/* Planning rationale with detail icon */}
@@ -1724,6 +1697,23 @@ export function SamplingCalculatorClient({
                 <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs text-purple-700">
                   <strong>AI Risk Stratification</strong> — Population will be segmented into High/Medium/Low risk strata using outlier detection, clustering, and rule-based scoring.
                 </div>
+
+                <AISuggestStratification
+                  columnMapping={columnMapping}
+                  fullPopulationData={fullPopulationData}
+                  auditData={{ performanceMateriality: auditData.performanceMateriality, tolerableMisstatement: auditData.tolerableMisstatement, dataType: auditData.dataType }}
+                  disabled={fullPopulationData.length === 0}
+                  onAccept={(s) => {
+                    setAiStratSuggestion(s);
+                    setAllocationRule(s.allocationRule);
+                    if (s.allocationRule === 'rule_b' && s.allocationParams.totalN) setRuleBTotal(s.allocationParams.totalN);
+                    if (s.allocationRule === 'rule_c') {
+                      if (s.allocationParams.highN != null) setRuleCHigh(s.allocationParams.highN);
+                      if (s.allocationParams.mediumN != null) setRuleCMedium(s.allocationParams.mediumN);
+                      if (s.allocationParams.lowN != null) setRuleCLow(s.allocationParams.lowN);
+                    }
+                  }}
+                />
 
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1.5">Allocation Rule</label>
@@ -2449,6 +2439,18 @@ export function SamplingCalculatorClient({
           </div>
         </div>
       )}
+
+      {/* Distribution Analysis Modal (D2) */}
+      <DistributionAnalysisModal
+        open={showDistributionModal}
+        onClose={() => setShowDistributionModal(false)}
+        fullPopulationData={fullPopulationData}
+        selectedIndices={selectedIndices}
+        amountColumn={columnMapping.amount || ''}
+        stratificationResults={stratificationResults}
+        itemProfiles={itemProfiles}
+        currency={auditData.functionalCurrency}
+      />
     </div>
   );
 }

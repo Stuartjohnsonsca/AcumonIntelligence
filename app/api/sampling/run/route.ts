@@ -227,7 +227,10 @@ export async function POST(req: Request) {
           strata: stratResult.strata,
           featuresUsed: stratResult.featuresUsed,
           allocationRule: rule,
-          itemProfiles: stratResult.itemProfiles.filter(ip => ip.stratum === 'high').slice(0, 50), // Top 50 high-risk profiles
+          itemProfiles: stratResult.itemProfiles.map(ip => ({
+            index: ip.index, riskScore: ip.riskScore, stratum: ip.stratum,
+          })),
+          highRiskProfiles: stratResult.itemProfiles.filter(ip => ip.stratum === 'high').slice(0, 50),
         };
         break;
       }
