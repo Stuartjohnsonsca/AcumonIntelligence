@@ -16,6 +16,7 @@ import {
   isDeadLetter,
   QUEUES,
   type DocSummaryMessage,
+  type BankStatementParseMessage,
 } from '../lib/azure-queue';
 import { prisma } from '../lib/db';
 import { downloadBlob } from '../lib/azure-blob';
@@ -25,6 +26,7 @@ import {
   calculateDocSummaryCost,
 } from '../lib/doc-summary-ai';
 import { getKeyForJob, getDocSummaryKeyConfig, type KeyConfig } from '../lib/ai-key-manager';
+import OpenAI from 'openai';
 import { setJobStatus, setFileStatus, setFileProgress, closeRedis } from '../lib/redis';
 
 const POLL_INTERVAL_MS = 2000;
@@ -99,7 +101,54 @@ async function main(): Promise<void> {
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[Worker] Poll error: ${errMsg}`);
+      console.error(`[Worker] DocSummary poll error: ${errMsg}`);
+    }
+
+    // ─── Bank Statement Parse Queue ──────────────────────────────────────
+    try {
+      const bsMessages = await receiveMessages<BankStatementParseMessage>(
+        QUEUES.BANK_STATEMENT_PARSE,
+        1,
+        VISIBILITY_TIMEOUT_SECONDS,
+      );
+
+      for (const received of bsMessages) {
+        const { message, messageId, popReceipt, dequeueCount } = received;
+        console.log(`[Worker:BankStatement] Processing | populationId=${message.populationId} file=${message.fileName} dequeue=${dequeueCount}`);
+
+        if (isDeadLetter(dequeueCount)) {
+          console.error(`[Worker:BankStatement] Dead letter | populationId=${message.populationId}`);
+          await prisma.samplingPopulation.update({
+            where: { id: message.populationId },
+            data: { parsedData: { error: 'Max retries exceeded' } },
+          });
+          await deleteMessage(QUEUES.BANK_STATEMENT_PARSE, messageId, popReceipt);
+          continue;
+        }
+
+        try {
+          await processBankStatement(message);
+          await deleteMessage(QUEUES.BANK_STATEMENT_PARSE, messageId, popReceipt);
+          console.log(`[Worker:BankStatement] Complete | populationId=${message.populationId}`);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.error(`[Worker:BankStatement] Failed | populationId=${message.populationId} error=${errMsg}`);
+          // Store error so the polling endpoint can return it
+          await prisma.samplingPopulation.update({
+            where: { id: message.populationId },
+            data: { parsedData: { error: errMsg } },
+          }).catch(() => {});
+          // Delete message so it doesn't retry endlessly
+          await deleteMessage(QUEUES.BANK_STATEMENT_PARSE, messageId, popReceipt);
+        }
+      }
+
+      if (bsMessages.length === 0) {
+        await sleep(POLL_INTERVAL_MS);
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Worker] BankStatement poll error: ${errMsg}`);
       await sleep(POLL_INTERVAL_MS);
     }
   }
@@ -359,6 +408,236 @@ function sleep(ms: number): Promise<void> {
 }
 
 // ─── Start ──────────────────────────────────────────────────────────────────
+
+// ─── Bank Statement Processing ───────────────────────────────────────────────
+
+const BANK_EXTRACTION_PROMPT = `You are an expert bank statement data extractor. The text below was extracted from a PDF bank statement. The text may be jumbled because PDF table layouts extract imperfectly — column values may appear out of order or on separate lines. Your job is to intelligently reconstruct the transactions.
+
+For each transaction, extract:
+- date: The transaction date (format: YYYY-MM-DD)
+- description: The transaction description/narrative
+- reference: Any reference number (or empty string if none)
+- debit: The debit/payment amount as a number (0 if credit)
+- credit: The credit/receipt amount as a number (0 if debit)
+- balance: The running balance after this transaction (0 if not shown)
+
+Return ONLY valid JSON in this exact format:
+{
+  "bankName": "Name of the bank",
+  "accountName": "Account holder name",
+  "accountNumber": "Account number (last 4 digits or masked)",
+  "statementPeriod": "Start date to end date",
+  "currency": "GBP/USD/EUR etc",
+  "openingBalance": 0,
+  "closingBalance": 0,
+  "transactions": [
+    {"date": "2025-01-15", "description": "Direct Debit - Electric Co", "reference": "DD123", "debit": 150.00, "credit": 0, "balance": 4850.00}
+  ]
+}
+
+CRITICAL RULES:
+- Extract EVERY transaction, do not skip any
+- Amounts must be numbers, not strings (no commas in numbers)
+- If a transaction is a payment/debit, put the amount in "debit" and 0 in "credit"
+- If a transaction is a receipt/credit, put the amount in "credit" and 0 in "debit"
+- Dates must be in YYYY-MM-DD format
+- If the year is not shown on each line, infer it from the statement period
+- The text may be garbled from PDF extraction — look for patterns: dates, amounts, descriptions
+- If amounts have commas (e.g. "1,234.56"), convert to plain numbers (1234.56)
+- If you see columns like "Money In" / "Money Out" or "Paid In" / "Paid Out", map these to credit/debit`;
+
+async function processBankStatement(msg: BankStatementParseMessage): Promise<void> {
+  const { populationId, storagePath, containerName, fileName } = msg;
+
+  console.log(`[Worker:BankStatement] Downloading ${fileName} from blob...`);
+
+  // Download PDF from Azure Blob
+  const buffer = await downloadBlob(containerName, storagePath);
+
+  // Extract text — try multiple methods
+  let extractedText = '';
+
+  // Method 1: unpdf
+  try {
+    const { extractText } = await import('unpdf');
+    const result = await extractText(new Uint8Array(buffer));
+    const pages = Array.isArray(result.text) ? result.text : [String(result.text || '')];
+    extractedText = pages.join('\n\n');
+    console.log(`[Worker:BankStatement] unpdf extracted ${extractedText.length} chars`);
+  } catch (e) {
+    console.log(`[Worker:BankStatement] unpdf failed: ${e instanceof Error ? e.message : e}`);
+  }
+
+  // Method 2: pdftoppm + vision (worker has poppler available in Docker)
+  if (extractedText.length < 10) {
+    console.log(`[Worker:BankStatement] Text too short, trying pdftoppm + vision...`);
+    const tmpDir = path.join(os.tmpdir(), `bank-${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const pdfPath = path.join(tmpDir, 'statement.pdf');
+    fs.writeFileSync(pdfPath, buffer);
+
+    try {
+      execSync(`pdftoppm -jpeg -r 200 "${pdfPath}" "${path.join(tmpDir, 'page')}"`, { timeout: 60000 });
+      const pageFiles = fs.readdirSync(tmpDir).filter(f => f.startsWith('page') && f.endsWith('.jpg')).sort();
+
+      if (pageFiles.length > 0) {
+        const apiKey = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
+        if (apiKey) {
+          const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
+          const allTransactions: Record<string, unknown>[] = [];
+          let metadata: Record<string, unknown> = {};
+
+          for (let pi = 0; pi < pageFiles.length; pi++) {
+            const imgData = fs.readFileSync(path.join(tmpDir, pageFiles[pi]));
+            const base64 = imgData.toString('base64');
+            const prompt = pi === 0 ? BANK_EXTRACTION_PROMPT : 'Continue extracting transactions. Same JSON format.';
+
+            const result = await client.chat.completions.create({
+              model: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+              messages: [{ role: 'user', content: [
+                { type: 'text', text: prompt },
+                { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
+              ] }],
+              max_tokens: 8000,
+              temperature: 0.1,
+            });
+
+            const content = (result.choices?.[0]?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (pi === 0) { metadata = { ...parsed }; delete metadata.transactions; }
+                if (Array.isArray(parsed.transactions)) allTransactions.push(...parsed.transactions);
+              } catch { /* skip */ }
+            }
+          }
+
+          // Store results
+          if (allTransactions.length > 0) {
+            await storeParseResults(populationId, allTransactions, metadata, fileName);
+            // Cleanup
+            fs.readdirSync(tmpDir).forEach(f => fs.unlinkSync(path.join(tmpDir, f)));
+            fs.rmdirSync(tmpDir);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`[Worker:BankStatement] pdftoppm failed: ${e instanceof Error ? e.message : e}`);
+    }
+
+    // Cleanup
+    try { fs.readdirSync(tmpDir).forEach(f => fs.unlinkSync(path.join(tmpDir, f))); fs.rmdirSync(tmpDir); } catch { /* */ }
+  }
+
+  // If we have text, send to AI for extraction
+  if (extractedText.length >= 10) {
+    console.log(`[Worker:BankStatement] Sending ${extractedText.length} chars to AI...`);
+    const apiKey = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
+    if (!apiKey) throw new Error('AI API key not configured');
+
+    const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
+
+    // Split into chunks and process in parallel
+    const maxChunkSize = 20000;
+    const chunks: string[] = [];
+    for (let i = 0; i < extractedText.length; i += maxChunkSize) {
+      chunks.push(extractedText.slice(i, i + maxChunkSize));
+    }
+
+    const chunkPromises = chunks.map((chunk, ci) => {
+      const prompt = ci === 0
+        ? `${BANK_EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`
+        : `Extract ALL transactions from this bank statement text. Return ONLY valid JSON: {"transactions": [...]} with each transaction having date, description, reference, debit, credit, balance.\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`;
+
+      return client.chat.completions.create({
+        model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 16000,
+        temperature: 0.1,
+      });
+    });
+
+    const results = await Promise.all(chunkPromises);
+
+    const allTransactions: Record<string, unknown>[] = [];
+    let metadata: Record<string, unknown> = {};
+
+    for (let ci = 0; ci < results.length; ci++) {
+      const content = (results[ci].choices?.[0]?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (ci === 0) { metadata = { ...parsed }; delete metadata.transactions; }
+          if (Array.isArray(parsed.transactions)) allTransactions.push(...(parsed.transactions as Record<string, unknown>[]));
+        } catch { /* skip malformed */ }
+      }
+    }
+
+    console.log(`[Worker:BankStatement] Extracted ${allTransactions.length} transactions from ${chunks.length} chunks`);
+
+    if (allTransactions.length === 0) {
+      throw new Error('No transactions could be extracted from the bank statement');
+    }
+
+    await storeParseResults(populationId, allTransactions, metadata, fileName);
+  } else {
+    throw new Error('Could not extract any text from the bank statement PDF');
+  }
+}
+
+async function storeParseResults(
+  populationId: string,
+  transactions: Record<string, unknown>[],
+  metadata: Record<string, unknown>,
+  fileName: string,
+): Promise<void> {
+  // Convert to spreadsheet-ready format
+  const rows = transactions.map((t, idx) => {
+    const debit = Number(t.debit) || 0;
+    const credit = Number(t.credit) || 0;
+    const amount = credit > 0 ? credit : -debit;
+    return {
+      'Transaction ID': `BS${String(idx + 1).padStart(4, '0')}`,
+      'Date': String(t.date || ''),
+      'Description': String(t.description || ''),
+      'Reference': String(t.reference || ''),
+      'Debit': debit,
+      'Credit': credit,
+      'Amount': Math.round(amount * 100) / 100,
+      'Balance': Number(t.balance) || 0,
+    };
+  });
+
+  const columns = ['Transaction ID', 'Date', 'Description', 'Reference', 'Debit', 'Credit', 'Amount', 'Balance'];
+
+  await prisma.samplingPopulation.update({
+    where: { id: populationId },
+    data: {
+      recordCount: rows.length,
+      currency: String(metadata.currency || 'GBP'),
+      parsedData: {
+        rows,
+        columns,
+        metadata: {
+          bankName: metadata.bankName || null,
+          accountName: metadata.accountName || null,
+          accountNumber: metadata.accountNumber || null,
+          statementPeriod: metadata.statementPeriod || null,
+          currency: metadata.currency || 'GBP',
+          openingBalance: metadata.openingBalance || null,
+          closingBalance: metadata.closingBalance || null,
+          transactionCount: rows.length,
+          fileName,
+        },
+      },
+    },
+  });
+
+  console.log(`[Worker:BankStatement] Stored ${rows.length} rows for populationId=${populationId}`);
+}
 
 main().catch(err => {
   console.error('[Worker] Fatal error:', err);
