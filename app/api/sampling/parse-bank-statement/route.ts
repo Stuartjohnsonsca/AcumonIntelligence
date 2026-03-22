@@ -144,7 +144,7 @@ export async function POST(req: Request) {
       if (chunks.length === 1) {
         // Single chunk — one call
         const result = await client.chat.completions.create({
-          model: 'Qwen/Qwen3-235B-A22B',
+          model: 'Qwen/Qwen3.5-397B-A17B',
           messages: [
             { role: 'user', content: `${EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT ---\n${chunks[0]}` },
           ],
@@ -160,7 +160,7 @@ export async function POST(req: Request) {
             : `Extract ALL transactions from this bank statement text. Return ONLY valid JSON: {"transactions": [...]} with each transaction having date (YYYY-MM-DD), description, reference, debit (number), credit (number), balance (number).\n\n--- BANK STATEMENT TEXT (part ${ci + 1} of ${chunks.length}) ---\n${chunk}`;
 
           return client.chat.completions.create({
-            model: 'Qwen/Qwen3-235B-A22B',
+            model: 'Qwen/Qwen3.5-397B-A17B',
             messages: [{ role: 'user', content: chunkPrompt }],
             max_tokens: 16000,
             temperature: 0.1,
