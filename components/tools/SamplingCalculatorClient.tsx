@@ -115,7 +115,7 @@ function defaultTestType(dataType: string): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function SamplingCalculatorClient({
-  assignedClients, firmConfig,
+  userName, assignedClients, firmConfig,
 }: Props) {
   // ─── Step/state management ─────────────────────────────────────────────────
   const [step, setStep] = useState<'client' | 'no-access' | 'configure' | 'upload' | 'map' | 'method'>('client');
@@ -213,6 +213,16 @@ export function SamplingCalculatorClient({
   // ─── Engagement ────────────────────────────────────────────────────────────
   const [engagementId, setEngagementId] = useState<string | null>(null);
   const [error, setError] = useState('');
+
+  // Access request state
+  const [accessRequesting, setAccessRequesting] = useState(false);
+  const [accessRequestSent, setAccessRequestSent] = useState<{ notifiedCount: number; notifiedUsers: string[] } | null>(null);
+
+  // Review state
+  const [reviews, setReviews] = useState<{ id: string; decision: string; notes: string | null; createdAt: string; reviewer: { name: string; displayId: string } }[]>([]);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [runLocked, setRunLocked] = useState(false);
 
   // ─── Load periods ──────────────────────────────────────────────────────────
 
@@ -807,23 +817,46 @@ export function SamplingCalculatorClient({
         <p className="text-sm text-slate-500 mb-6">
           You do not have access to the Sample Calculator for {selectedClient?.clientName} in the selected period.
         </p>
-        <div className="flex items-center justify-center gap-3">
-          <button
-            onClick={async () => {
-              // TODO: Send email to portfolio owners requesting access
-              alert('Access request sent to portfolio managers.');
-            }}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-          >
-            Request Access
-          </button>
-          <button
-            onClick={() => { setStep('client'); setSelectedPeriod(null); setHasAccess(null); }}
-            className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 transition-colors"
-          >
-            Return to Home
-          </button>
-        </div>
+        {accessRequestSent ? (
+          <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 mb-4">
+            <CheckCircle2 className="h-4 w-4 inline mr-1" />
+            Access request sent to {accessRequestSent.notifiedCount} portfolio manager{accessRequestSent.notifiedCount !== 1 ? 's' : ''}: {accessRequestSent.notifiedUsers.join(', ')}
+          </div>
+        ) : (
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={async () => {
+                if (!selectedClient || !selectedPeriod) return;
+                setAccessRequesting(true);
+                try {
+                  const res = await fetch('/api/sampling/request-access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ clientId: selectedClient.id, periodId: selectedPeriod.id }),
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    setAccessRequestSent({ notifiedCount: data.notifiedCount, notifiedUsers: data.notifiedUsers });
+                  } else {
+                    const err = await res.json().catch(() => null);
+                    setError(err?.error || 'Failed to send request');
+                  }
+                } catch { setError('Failed to send request'); }
+                setAccessRequesting(false);
+              }}
+              disabled={accessRequesting}
+              className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+            >
+              {accessRequesting ? <><Loader2 className="h-4 w-4 animate-spin inline mr-1" /> Requesting...</> : 'Request Access'}
+            </button>
+            <button
+              onClick={() => { setStep('client'); setSelectedPeriod(null); setHasAccess(null); setAccessRequestSent(null); }}
+              className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800 transition-colors"
+            >
+              Return to Home
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -1761,6 +1794,129 @@ export function SamplingCalculatorClient({
           )}
         </div>
       </div>
+
+      {/* ─── Review & Sign-off Panel ─────────────────────────────────────── */}
+      {runId && selectedIndices.size > 0 && (
+        <div className="mt-6 bg-white rounded-lg border border-slate-200 p-5">
+          <h3 className="text-sm font-semibold text-slate-700 mb-3">Review & Sign-off</h3>
+
+          {/* Prepared by */}
+          <div className="flex items-center gap-4 mb-4 p-3 bg-slate-50 rounded-lg">
+            <div>
+              <span className="text-xs font-medium text-slate-500">Prepared by</span>
+              <p className="text-sm font-medium text-slate-800">{userName}</p>
+            </div>
+            <div>
+              <span className="text-xs font-medium text-slate-500">Date</span>
+              <p className="text-sm text-slate-800">{new Date().toLocaleDateString('en-GB')}</p>
+            </div>
+            {runLocked && (
+              <div className="ml-auto flex items-center gap-1 text-green-600">
+                <Lock className="h-4 w-4" />
+                <span className="text-xs font-medium">Locked</span>
+              </div>
+            )}
+          </div>
+
+          {/* Previous reviews */}
+          {reviews.length > 0 && (
+            <div className="mb-4 space-y-2">
+              <span className="text-xs font-medium text-slate-500">Review History</span>
+              {reviews.map(r => (
+                <div key={r.id} className={`p-3 rounded-lg border text-sm ${
+                  r.decision === 'approved' ? 'bg-green-50 border-green-200' :
+                  r.decision === 'rejected' ? 'bg-red-50 border-red-200' :
+                  'bg-amber-50 border-amber-200'
+                }`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-medium">
+                      {r.reviewer.name} ({r.reviewer.displayId})
+                    </span>
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                      r.decision === 'approved' ? 'bg-green-100 text-green-700' :
+                      r.decision === 'rejected' ? 'bg-red-100 text-red-700' :
+                      'bg-amber-100 text-amber-700'
+                    }`}>
+                      {r.decision === 'needs_revision' ? 'Needs Revision' : r.decision.charAt(0).toUpperCase() + r.decision.slice(1)}
+                    </span>
+                  </div>
+                  {r.notes && <p className="text-slate-600 text-xs mt-1">{r.notes}</p>}
+                  <p className="text-[10px] text-slate-400 mt-1">{new Date(r.createdAt).toLocaleString('en-GB')}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Submit review */}
+          {!runLocked && (
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Review Notes</label>
+              <textarea
+                value={reviewNotes}
+                onChange={(e) => setReviewNotes(e.target.value)}
+                rows={3}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3"
+                placeholder="Add review comments..."
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    if (!runId) return;
+                    setReviewSubmitting(true);
+                    try {
+                      const res = await fetch('/api/sampling/review', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ runId, decision: 'approved', notes: reviewNotes }),
+                      });
+                      if (res.ok) {
+                        const review = await res.json();
+                        setReviews(prev => [review, ...prev]);
+                        setRunLocked(true);
+                        setReviewNotes('');
+                      } else {
+                        const err = await res.json().catch(() => null);
+                        setError(err?.error || 'Review failed');
+                      }
+                    } catch { setError('Review failed'); }
+                    setReviewSubmitting(false);
+                  }}
+                  disabled={reviewSubmitting}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 transition-colors"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Approve & Lock
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!runId) return;
+                    setReviewSubmitting(true);
+                    try {
+                      const res = await fetch('/api/sampling/review', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ runId, decision: 'needs_revision', notes: reviewNotes }),
+                      });
+                      if (res.ok) {
+                        const review = await res.json();
+                        setReviews(prev => [review, ...prev]);
+                        setReviewNotes('');
+                      } else {
+                        const err = await res.json().catch(() => null);
+                        setError(err?.error || 'Review failed');
+                      }
+                    } catch { setError('Review failed'); }
+                    setReviewSubmitting(false);
+                  }}
+                  disabled={reviewSubmitting}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-50 disabled:opacity-40 transition-colors"
+                >
+                  <AlertCircle className="h-3.5 w-3.5" /> Request Revision
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ─── Rationale Detail Popup ────────────────────────────────────────── */}
       {showRationalePopup && detailedAuditTrail && (
