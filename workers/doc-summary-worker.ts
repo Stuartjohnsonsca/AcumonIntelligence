@@ -452,7 +452,7 @@ async function processBankStatement(msg: BankStatementParseMessage): Promise<voi
   console.log(`[Worker:BankStatement] Downloading ${fileName} from blob...`);
 
   // Download PDF from Azure Blob
-  const buffer = await downloadBlob(containerName, storagePath);
+  const buffer = await downloadBlob(storagePath, containerName);
 
   // Extract text — try multiple methods
   let extractedText = '';
