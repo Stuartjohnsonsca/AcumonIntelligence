@@ -50,6 +50,7 @@ interface ColumnMapping {
   vendorCustomer?: string;
   glCode?: string;
   sourceSystem?: string;
+  [key: string]: string | undefined; // Allow dynamic custom fields
 }
 
 interface DataQuality {
@@ -171,6 +172,9 @@ export function SamplingCalculatorClient({
   // ─── Spreadsheet paste ─────────────────────────────────────────────────
   const [spreadsheetData, setSpreadsheetData] = useState<string[][]>([['', '', '', '', '']]);
   const spreadsheetRef = useRef<HTMLDivElement>(null);
+
+  // ─── Custom mapping fields ────────────────────────────────────────────
+  const [customMappingFields, setCustomMappingFields] = useState<string[]>([]);
 
   // ─── Accounting connection (managed by XeroFetchPopulation component) ──
 
@@ -1463,18 +1467,59 @@ export function SamplingCalculatorClient({
                     </div>
                   ))}
                 </div>
-                {/* Show unmapped columns from data as read-only info */}
+                {/* Custom mapping fields added by user */}
+                {customMappingFields.length > 0 && (
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    {customMappingFields.map(field => (
+                      <div key={field}>
+                        <label className="block text-xs font-medium text-blue-600 mb-1 flex items-center gap-1">
+                          {field}
+                          <button onClick={() => {
+                            setCustomMappingFields(prev => prev.filter(f => f !== field));
+                            setColumnMapping(prev => { const next = { ...prev }; delete next[field]; return next; });
+                          }} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
+                        </label>
+                        <select
+                          value={columnMapping[field] || ''}
+                          onChange={(e) => setColumnMapping(prev => ({ ...prev, [field]: e.target.value || undefined }))}
+                          className="w-full px-2 py-1.5 text-sm border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          <option value="">— None —</option>
+                          {uploadedColumns.map(col => (
+                            <option key={col} value={col}>{col}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Unmapped columns — click to add as mapping field */}
                 {(() => {
                   const mapped = new Set(Object.values(columnMapping).filter(Boolean));
                   const unmapped = uploadedColumns.filter(c => !mapped.has(c));
                   if (unmapped.length === 0) return null;
                   return (
-                    <div className="mt-3 p-2 bg-slate-50 rounded-lg">
-                      <p className="text-[10px] text-slate-400 mb-1.5">Unmapped columns (available in population data):</p>
+                    <div className="mt-3 p-2.5 bg-slate-50 rounded-lg">
+                      <p className="text-[10px] text-slate-400 mb-1.5">Click to add as mapping field:</p>
                       <div className="flex flex-wrap gap-1">
-                        {unmapped.map(col => (
-                          <span key={col} className="px-2 py-0.5 text-[10px] bg-white border border-slate-200 rounded text-slate-600">{col}</span>
-                        ))}
+                        {unmapped.map(col => {
+                          // Generate a unique field name from the column name
+                          const baseField = col.replace(/[^a-zA-Z0-9]/g, '_').replace(/^_+|_+$/g, '').replace(/_+/g, '_');
+                          const existingFields = new Set([...Object.keys(columnMapping), ...customMappingFields]);
+                          let fieldName = baseField || 'custom';
+                          let suffix = 1;
+                          while (existingFields.has(fieldName)) { fieldName = `${baseField}_${suffix}`; suffix++; }
+                          return (
+                            <button key={col} onClick={() => {
+                              setCustomMappingFields(prev => [...prev, col]);
+                              setColumnMapping(prev => ({ ...prev, [col]: col }));
+                            }}
+                            className="px-2 py-0.5 text-[10px] bg-white border border-slate-200 rounded text-slate-600 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 cursor-pointer transition-colors">
+                              + {col}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   );
