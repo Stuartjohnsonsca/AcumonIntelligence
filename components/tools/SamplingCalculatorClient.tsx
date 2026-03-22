@@ -1051,6 +1051,59 @@ export function SamplingCalculatorClient({
         </div>
       )}
 
+      {/* Previous Sessions */}
+      {selectedClient && selectedPeriod && (
+        <div className="mb-4">
+          <button
+            onClick={async () => {
+              setShowHistory(!showHistory);
+              if (!showHistory && engagementHistory.length === 0) {
+                try {
+                  const res = await fetch(`/api/sampling/engagement?clientId=${selectedClient.id}&periodId=${selectedPeriod.id}`);
+                  if (res.ok) setEngagementHistory(await res.json());
+                } catch { /* silent */ }
+              }
+            }}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 transition-colors"
+          >
+            <Clock className="h-3.5 w-3.5" />
+            Previous Sessions
+            {engagementHistory.length > 0 && <span className="text-slate-400">({engagementHistory.length})</span>}
+            <ChevronDown className={`h-3 w-3 transition-transform ${showHistory ? 'rotate-180' : ''}`} />
+          </button>
+          {showHistory && engagementHistory.length > 0 && (
+            <div className="mt-2 max-h-32 overflow-y-auto space-y-1 border border-slate-100 rounded-lg p-2">
+              {engagementHistory.map(eng => (
+                <button
+                  key={eng.id}
+                  onClick={() => {
+                    setEngagementId(eng.id);
+                    // TODO: load full engagement data (audit data, population, results)
+                  }}
+                  className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
+                    engagementId === eng.id
+                      ? 'bg-blue-50 border border-blue-200 text-blue-700'
+                      : 'hover:bg-slate-50 text-slate-600'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span>{new Date(eng.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                      eng.status === 'locked' ? 'bg-green-100 text-green-700'
+                      : eng.status === 'complete' ? 'bg-blue-100 text-blue-700'
+                      : 'bg-slate-100 text-slate-500'
+                    }`}>{eng.status}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {eng.auditArea || '—'} | {eng._count.runs} run{eng._count.runs !== 1 ? 's' : ''}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-12 gap-6">
         {/* ─── LEFT: Audit Data + Upload ──────────────────────────────── */}
         <div className="col-span-8 space-y-4">
@@ -2263,6 +2316,75 @@ export function SamplingCalculatorClient({
                   </tbody>
                 </table>
               </div>
+
+              {/* Judgement details (for judgemental, composite, fixed, or stratified methods) */}
+              {(samplingMethod === 'judgemental' || samplingMethod === 'composite' || sampleSizeStrategy === 'fixed' || stratification === 'stratified') && (
+                <div>
+                  <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Professional Judgement</h4>
+                  <div className="bg-slate-50 rounded-lg p-3 text-xs space-y-2">
+                    {samplingMethod === 'judgemental' && (
+                      <>
+                        <div>
+                          <span className="font-semibold text-slate-600">Selection Criteria:</span>
+                          <p className="text-slate-700 mt-0.5">{judgementalDescription || '—'}</p>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-600">Justification:</span>
+                          <p className="text-slate-700 mt-0.5">{judgementalJustification || '—'}</p>
+                        </div>
+                        {judgementalDefResult && (
+                          <div className={`p-2 rounded ${judgementalDefResult === 'defensible' ? 'bg-green-50 text-green-700' : judgementalDefResult === 'weak' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                            <span className="font-semibold">AI Assessment: {judgementalDefResult === 'defensible' ? 'Defensible' : judgementalDefResult === 'weak' ? 'Potentially Weak' : 'Indefensible'}</span>
+                            {judgementalDefFeedback && <p className="mt-0.5 whitespace-pre-line">{judgementalDefFeedback}</p>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {samplingMethod === 'composite' && (
+                      <>
+                        <div>
+                          <span className="font-semibold text-slate-600">Threshold Justification:</span>
+                          <p className="text-slate-700 mt-0.5">{compositeJustification || '—'}</p>
+                        </div>
+                        {compositeDefResult && (
+                          <div className={`p-2 rounded ${compositeDefResult === 'defensible' ? 'bg-green-50 text-green-700' : compositeDefResult === 'weak' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                            <span className="font-semibold">AI Assessment: {compositeDefResult === 'defensible' ? 'Defensible' : compositeDefResult === 'weak' ? 'Potentially Weak' : 'Indefensible'}</span>
+                            {compositeDefFeedback && <p className="mt-0.5 whitespace-pre-line">{compositeDefFeedback}</p>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {sampleSizeStrategy === 'fixed' && (
+                      <>
+                        <div>
+                          <span className="font-semibold text-slate-600">Fixed Size Justification:</span>
+                          <p className="text-slate-700 mt-0.5">{fixedJustification || '—'}</p>
+                        </div>
+                        {justificationResult && (
+                          <div className={`p-2 rounded ${justificationResult === 'defensible' ? 'bg-green-50 text-green-700' : justificationResult === 'weak' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                            <span className="font-semibold">AI Assessment: {justificationResult === 'defensible' ? 'Defensible' : justificationResult === 'weak' ? 'Potentially Weak' : 'Indefensible'}</span>
+                            {justificationFeedback && <p className="mt-0.5 whitespace-pre-line">{justificationFeedback}</p>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {stratification === 'stratified' && (
+                      <>
+                        <div>
+                          <span className="font-semibold text-slate-600">Stratification Rationale:</span>
+                          <p className="text-slate-700 mt-0.5">{stratRationale || '—'}</p>
+                        </div>
+                        {stratDefResult && (
+                          <div className={`p-2 rounded ${stratDefResult === 'defensible' ? 'bg-green-50 text-green-700' : stratDefResult === 'weak' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>
+                            <span className="font-semibold">AI Assessment: {stratDefResult === 'defensible' ? 'Defensible' : stratDefResult === 'weak' ? 'Potentially Weak' : 'Indefensible'}</span>
+                            {stratDefFeedback && <p className="mt-0.5 whitespace-pre-line">{stratDefFeedback}</p>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Audit trail hashes */}
               <div>
