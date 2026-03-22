@@ -98,7 +98,7 @@ export async function POST(req: Request) {
     // If we have enough text, detect parties via AI
     if (sampleText.length >= 20) {
       const result = await client.chat.completions.create({
-        model: 'Qwen/Qwen3-235B-A22B',
+        model: 'Qwen/Qwen3.5-397B-A17B',
         messages: [
           { role: 'user', content: `${PARTY_PROMPT}\n\n--- DOCUMENT TEXT ---\n${sampleText}` },
         ],
