@@ -61,6 +61,7 @@ model User {
   samplingEngagementsReview  SamplingEngagement[]       @relation("SamplingEngagementReviewer")
   evidenceRequestsCreated   AuditEvidenceRequest[]     @relation("EvidenceRequestCreator")
   bankToTBSessions           BankToTBSession[]
+  bankAuditSessions          BankAuditSession[]
   toolSessions               ToolSession[]
 
   @@map("users")
@@ -131,6 +132,8 @@ model Client {
   evidenceRequests       AuditEvidenceRequest[]
   bankToTBSessions       BankToTBSession[]
   chartOfAccounts        ClientChartOfAccount[]
+  bankAuditSessions      BankAuditSession[]
+  fsAssertionMappings    FSAssertionMapping[]
 
   @@map("clients")
 }
@@ -536,6 +539,8 @@ model ClientPeriod {
   samplingEngagements SamplingEngagement[]
   evidenceRequests    AuditEvidenceRequest[]
   bankToTBSessions    BankToTBSession[]
+  bankAuditSessions   BankAuditSession[]
+  fsAssertionMappings FSAssertionMapping[]
 
   @@unique([clientId, startDate])
   @@map("client_periods")
@@ -1133,5 +1138,104 @@ model ToolSession {
 
   @@index([userId])
   @@map("tool_sessions")
+}
+
+// ─── Bank Audit Tool ─────────────────────────────────────────────────────────
+
+model BankAuditSession {
+  id                    String   @id @default(uuid())
+  userId                String   @map("user_id")
+  clientId              String   @map("client_id")
+  periodId              String   @map("period_id")
+  performanceMateriality Float?  @map("performance_materiality")
+  clearlyTrivial        Float?   @map("clearly_trivial")
+  tolerableError        Float?   @map("tolerable_error")
+  functionalCurrency    String   @default("GBP") @map("functional_currency")
+  dataSource            String?  @map("data_source") // upload, extract, import, blank
+  bankData              Json?    @map("bank_data")
+  auditTestResults      Json?    @map("audit_test_results")
+  status                String   @default("draft") // draft, testing, reviewed, approved
+  reviewedBy            String?  @map("reviewed_by")
+  reviewedAt            DateTime? @map("reviewed_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client  Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period  ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  tests   BankAuditTest[]
+  files   BankAuditFile[]
+
+  @@unique([clientId, periodId, userId])
+  @@index([userId])
+  @@index([clientId])
+  @@map("bank_audit_sessions")
+}
+
+model BankAuditTest {
+  id          String   @id @default(uuid())
+  sessionId   String   @map("session_id")
+  testKey     String   @map("test_key") // check_balance_tb, unusual_txn, subsequent_receipts, subsequent_payments, capital_txn, transfers_match, page_continuity, custom
+  testLabel   String   @map("test_label")
+  isChecked   Boolean  @default(false) @map("is_checked")
+  status      String   @default("pending") // pending, running, completed, error
+  progress    Float    @default(0) // 0-100
+  resultData  Json?    @map("result_data")
+  errorMsg    String?  @map("error_msg")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  session BankAuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("bank_audit_tests")
+}
+
+model BankAuditFile {
+  id          String   @id @default(uuid())
+  sessionId   String   @map("session_id")
+  fileName    String   @map("file_name")
+  blobPath    String   @map("blob_path")
+  container   String
+  fileType    String   @map("file_type") // pdf, image, csv, xlsx
+  status      String   @default("uploading") // uploading, extracting, completed, error
+  progress    Float    @default(0) // 0-100
+  extractedData Json?  @map("extracted_data")
+  errorMsg    String?  @map("error_msg")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  session BankAuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("bank_audit_files")
+}
+
+// ─── FS Assertions Mapping ───────────────────────────────────────────────────
+
+model FSAssertionMapping {
+  id           String  @id @default(uuid())
+  clientId     String  @map("client_id")
+  periodId     String  @map("period_id")
+  mappingType  String  @map("mapping_type") // fs_level (Financial Statements) or tb_code (TB Code)
+  rowKey       String  @map("row_key") // FS heading or account code
+  rowLabel     String  @map("row_label") // Display label
+  completeness Boolean @default(false)
+  occurrence   Boolean @default(false) // Occurrence & Accuracy
+  cutOff       Boolean @default(false) @map("cut_off")
+  classification Boolean @default(false)
+  presentation Boolean @default(false)
+  existence    Boolean @default(false)
+  valuation    Boolean @default(false)
+  rights       Boolean @default(false) // Rights and Obligations
+  source       String  @default("manual") // manual, import_py, auto_complete
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  client Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, periodId, mappingType, rowKey])
+  @@index([clientId, periodId])
+  @@map("fs_assertion_mappings")
 }
 
