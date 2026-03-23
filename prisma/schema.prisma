@@ -130,6 +130,7 @@ model Client {
   portalUsers            ClientPortalUser[]
   evidenceRequests       AuditEvidenceRequest[]
   bankToTBSessions       BankToTBSession[]
+  chartOfAccounts        ClientChartOfAccount[]
 
   @@map("clients")
 }
@@ -915,6 +916,25 @@ model FirmChartOfAccount {
   @@unique([firmId, accountCode])
   @@index([firmId])
   @@map("firm_chart_of_accounts")
+}
+
+// ─── Client Chart of Accounts (overrides firm default for a specific client) ─
+
+model ClientChartOfAccount {
+  id           String   @id @default(uuid())
+  clientId     String   @map("client_id")
+  accountCode  String   @map("account_code")
+  accountName  String   @map("account_name")
+  categoryType String   @map("category_type")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, accountCode])
+  @@index([clientId])
+  @@map("client_chart_of_accounts")
 }
 
 // ─── Account Code Mappings (firm-level learned categorisations) ─────────────

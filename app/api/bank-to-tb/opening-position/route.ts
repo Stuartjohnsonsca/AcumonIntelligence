@@ -33,11 +33,18 @@ export async function POST(req: NextRequest) {
   let entries: { accountCode: string; accountName: string; categoryType: string; debit: number; credit: number }[] = [];
 
   if (source === 'firm_standard') {
-    // Load from firm's chart of accounts
-    const accounts = await prisma.firmChartOfAccount.findMany({
-      where: { firmId: user.firmId },
+    // Check for client-specific COA override first, then fall back to firm COA
+    const clientAccounts = await prisma.clientChartOfAccount.findMany({
+      where: { clientId: btbSession.clientId },
       orderBy: { sortOrder: 'asc' },
     });
+
+    const accounts = clientAccounts.length > 0
+      ? clientAccounts
+      : await prisma.firmChartOfAccount.findMany({
+          where: { firmId: user.firmId },
+          orderBy: { sortOrder: 'asc' },
+        });
 
     entries = accounts.map(a => ({
       accountCode: a.accountCode,
