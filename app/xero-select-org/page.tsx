@@ -27,6 +27,7 @@ export default async function XeroSelectOrgPage({
     redirect('/tools/data-extraction?xeroError=pending_auth_expired');
   }
 
+  // Check it's not too old (5 minute window)
   const ageMs = Date.now() - pending.createdAt.getTime();
   if (ageMs > 5 * 60 * 1000) {
     await prisma.pendingXeroAuth.delete({ where: { id: pendingId } });

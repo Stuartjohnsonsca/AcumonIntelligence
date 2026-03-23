@@ -52,3 +52,21 @@ export async function verifyJobAccess(
   const access = await verifyClientAccess(user, job.clientId);
   return { ...access, clientId: job.clientId };
 }
+
+/**
+ * Verifies the user has access to a document summary job via the job's client.
+ */
+export async function verifySummaryJobAccess(
+  user: SessionUser,
+  jobId: string,
+): Promise<{ allowed: boolean; clientId?: string; reason?: string }> {
+  const job = await prisma.docSummaryJob.findUnique({
+    where: { id: jobId },
+    select: { clientId: true },
+  });
+
+  if (!job) return { allowed: false, reason: 'Job not found' };
+
+  const access = await verifyClientAccess(user, job.clientId);
+  return { ...access, clientId: job.clientId };
+}

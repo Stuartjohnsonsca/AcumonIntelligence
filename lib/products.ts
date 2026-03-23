@@ -105,6 +105,25 @@ export const ASSURANCE_PRODUCTS = PRODUCTS.filter(
   (p) => p.category === 'Internal Audit'
 );
 
+export const FINANCIAL_ACCOUNTS_ITEMS = [
+  {
+    name: 'Bank to TB',
+    urlPrefix: 'BankToTB',
+    navLabel: 'Bank to TB',
+  },
+  {
+    name: 'Add JRNLS',
+    urlPrefix: 'AddJrnls',
+    navLabel: 'Add JRNLS',
+  },
+];
+
+export const ALL_PRODUCT_CATEGORIES = [
+  { category: 'Financial Accounts', products: FINANCIAL_ACCOUNTS_ITEMS },
+  { category: 'Statutory Audit', products: STATUTORY_AUDIT_PRODUCTS },
+  { category: 'Internal Audit', products: ASSURANCE_PRODUCTS },
+];
+
 export function getProductUrl(urlPrefix: string): string {
   return `https://${urlPrefix.toLowerCase()}.acumonintelligence.com`;
 }

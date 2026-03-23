@@ -15,11 +15,18 @@ model Firm {
   id         String   @id @default(uuid())
   name       String
   dataRegion String   @default("uk") @map("data_region") // uk | eu | us | ap — determines where data is processed and stored
+  chartOfAccountsBlobPath  String?  @map("chart_of_accounts_blob_path")
+  chartOfAccountsContainer String?  @map("chart_of_accounts_container")
+  chartOfAccountsFileName  String?  @map("chart_of_accounts_file_name")
+  chartOfAccountsUpdatedAt DateTime? @map("chart_of_accounts_updated_at")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  users   User[]
-  clients Client[]
+  users              User[]
+  clients            Client[]
+  samplingConfig     FirmSamplingConfig?
+  chartOfAccounts    FirmChartOfAccount[]
+  accountCodeMappings AccountCodeMapping[]
 
   @@map("firms")
 }
@@ -40,12 +47,21 @@ model User {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  firm                  Firm                   @relation(fields: [firmId], references: [id])
-  twoFactorCodes        TwoFactorCode[]
-  clientAssignments     UserClientAssignment[]
-  purchasedSubscriptions Subscription[]
-  extractionJobs        ExtractionJob[]
-  managedClients        Client[]               @relation("PortfolioManagerClients")
+  firm                       Firm                       @relation(fields: [firmId], references: [id])
+  twoFactorCodes             TwoFactorCode[]
+  clientAssignments          UserClientAssignment[]
+  purchasedSubscriptions     Subscription[]
+  extractionJobs             ExtractionJob[]
+  managedClients             Client[]                   @relation("PortfolioManagerClients")
+  docSummaryJobs             DocSummaryJob[]
+  activityLogs               ActivityLog[]
+  periodProductAssignments   PeriodProductAssignment[]
+  samplingEngagements        SamplingEngagement[]
+  samplingReviews            SamplingReview[]           @relation("SamplingReviewer")
+  samplingEngagementsReview  SamplingEngagement[]       @relation("SamplingEngagementReviewer")
+  evidenceRequestsCreated   AuditEvidenceRequest[]     @relation("EvidenceRequestCreator")
+  bankToTBSessions           BankToTBSession[]
+  toolSessions               ToolSession[]
 
   @@map("users")
 }
@@ -95,6 +111,7 @@ model Client {
   contactEmail        String?  @map("contact_email")
   portfolioManagerId  String?  @map("portfolio_manager_id")
   isActive            Boolean  @default(true) @map("is_active")
+  readOnly            Boolean  @default(false) @map("read_only")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
@@ -107,6 +124,12 @@ model Client {
   accountingConnections  AccountingConnection[]
   xeroAuthRequests       XeroAuthRequest[]
   aiUsage                AiUsage[]
+  docSummaryJobs         DocSummaryJob[]
+  periods                ClientPeriod[]
+  samplingEngagements    SamplingEngagement[]
+  portalUsers            ClientPortalUser[]
+  evidenceRequests       AuditEvidenceRequest[]
+  bankToTBSessions       BankToTBSession[]
 
   @@map("clients")
 }
@@ -249,6 +272,7 @@ model AccountingConnection {
   @@map("accounting_connections")
 }
 
+// Temporary storage for Xero OAuth tokens while user picks an organisation
 model PendingXeroAuth {
   id             String   @id @default(uuid())
   clientId       String   @map("client_id")
@@ -258,7 +282,7 @@ model PendingXeroAuth {
   connectedBy    String   @map("connected_by")
   isDelegated    Boolean  @default(false) @map("is_delegated")
   delegatedToken String?  @map("delegated_token")
-  tenants        Json
+  tenants        Json     // Array of { tenantId, tenantName, createdDateUtc }
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@map("pending_xero_auths")
@@ -401,5 +425,693 @@ model BackgroundTask {
   @@index([userId, status])
   @@index([createdAt])
   @@map("background_tasks")
+}
+
+// ─── Document Summary Tool ──────────────────────────────────────────────────
+
+model DocSummaryJob {
+  id             String    @id @default(uuid())
+  clientId       String    @map("client_id")
+  userId         String    @map("user_id")
+  status         String    @default("pending") // pending | processing | complete | failed
+  totalFiles     Int       @default(0) @map("total_files")
+  processedCount Int       @default(0) @map("processed_count")
+  failedCount    Int       @default(0) @map("failed_count")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  expiresAt      DateTime? @map("expires_at")
+
+  client   Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user     User               @relation(fields: [userId], references: [id])
+  files    DocSummaryFile[]
+  findings DocSummaryFinding[]
+  qaMessages DocSummaryQA[]
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("doc_summary_jobs")
+}
+
+model DocSummaryFile {
+  id            String    @id @default(uuid())
+  jobId         String    @map("job_id")
+  originalName  String    @map("original_name")
+  storagePath   String    @map("storage_path")
+  containerName String    @default("upload-inbox") @map("container_name")
+  fileSize      Int       @map("file_size")
+  mimeType      String    @map("mime_type")
+  status        String    @default("uploaded") // uploaded | processing | analysed | failed
+  errorMessage  String?   @map("error_message")
+  pageCount            Int?      @map("page_count")
+  hidden               Boolean   @default(false)
+  documentDescription  String?   @map("document_description") @db.Text
+  extractedText        String?   @map("extracted_text") @db.Text
+  keyTerms             Json?     @map("key_terms")
+  missingInformation   Json?     @map("missing_information")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  job        DocSummaryJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  findings   DocSummaryFinding[]
+  qaMessages DocSummaryQA[]
+
+  @@index([jobId])
+  @@map("doc_summary_files")
+}
+
+model DocSummaryFinding {
+  id                String   @id @default(uuid())
+  jobId             String   @map("job_id")
+  fileId            String   @map("file_id")
+  area              String   // e.g. "Parties", "Obligations", "Risks", or AI-identified area
+  finding           String   @db.Text
+  clauseReference   String   @map("clause_reference")
+  isSignificantRisk   Boolean  @default(false) @map("is_significant_risk")
+  aiSignificantRisk   Boolean  @default(false) @map("ai_significant_risk")
+  userResponse      String?  @map("user_response") @db.Text
+  accountingImpact  String?  @map("accounting_impact") @db.Text
+  auditImpact       String?  @map("audit_impact") @db.Text
+  addToTesting      Boolean  @default(false) @map("add_to_testing")
+  reviewed          Boolean  @default(false)
+  sortOrder         Int      @default(0) @map("sort_order")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  job  DocSummaryJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  file DocSummaryFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([fileId])
+  @@map("doc_summary_findings")
+}
+
+model DocSummaryQA {
+  id        String   @id @default(uuid())
+  jobId     String   @map("job_id")
+  fileId    String   @map("file_id")
+  role      String   // "user" | "assistant"
+  content   String   @db.Text
+  turnOrder Int      @map("turn_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  job  DocSummaryJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  file DocSummaryFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([fileId])
+  @@index([jobId])
+  @@map("doc_summary_qa")
+}
+
+// ─── Client Periods & Product Assignments ────────────────────────────────
+
+model ClientPeriod {
+  id        String   @id @default(uuid())
+  clientId  String   @map("client_id")
+  startDate DateTime @map("start_date")
+  endDate   DateTime @map("end_date")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  client             Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  productAssignments PeriodProductAssignment[]
+  samplingEngagements SamplingEngagement[]
+  evidenceRequests    AuditEvidenceRequest[]
+  bankToTBSessions    BankToTBSession[]
+
+  @@unique([clientId, startDate])
+  @@map("client_periods")
+}
+
+model PeriodProductAssignment {
+  id         String   @id @default(uuid())
+  periodId   String   @map("period_id")
+  productKey String   @map("product_key")
+  category   String
+  userId     String   @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  period ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([periodId, productKey, userId])
+  @@map("period_product_assignments")
+}
+
+// ─── Activity & Error Logging ───────────────────────────────────────────────
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  firmId    String?  @map("firm_id")
+  clientId  String?  @map("client_id")
+  action    String   // e.g. 'upload', 'analyse', 'export', 'login', 'xero_connect'
+  tool      String?  // e.g. 'doc-summary', 'data-extraction'
+  detail    String?  // JSON string with action-specific details
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([firmId])
+  @@index([clientId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model ErrorLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  route     String?  // e.g. '/api/doc-summary/analyse'
+  tool      String?  // e.g. 'doc-summary', 'data-extraction'
+  message   String
+  stack     String?
+  context   String?  // JSON string with request context
+  severity  String   @default("error") // 'error', 'warning', 'critical'
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([route])
+  @@index([severity])
+  @@index([createdAt])
+  @@index([resolved])
+  @@map("error_logs")
+}
+
+// ─── Sampling Calculator ─────────────────────────────────────────────────────
+
+model FirmSamplingConfig {
+  id                    String   @id @default(uuid())
+  firmId                String   @unique @map("firm_id")
+  confidenceLevel       Float    @default(95) @map("confidence_level") // e.g. 95 for 95%
+  confidenceFactorTable Json?    @map("confidence_factor_table") // [{inherentRisk, specificRisk, overallRMM, riskOfIncorrectAcceptance, confidenceFactorRange}]
+  riskMatrix            Json?    @map("risk_matrix") // 3x3 grid: k values by inherent risk x specific risk
+  updatedBy             String?  @map("updated_by")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@map("firm_sampling_configs")
+}
+
+model SamplingEngagement {
+  id          String   @id @default(uuid())
+  clientId    String   @map("client_id")
+  periodId    String   @map("period_id")
+  userId      String   @map("user_id")
+  name        String?  // engagement name / code
+  auditArea   String?  @map("audit_area") // e.g. revenue, purchases, payroll
+  testingType String?  @map("testing_type") // "test_of_details" | "test_of_controls"
+  assertions  Json?    // ["Occurrence", "Completeness", "Accuracy", ...]
+  status      String   @default("draft") // draft | configured | running | complete | locked
+  reviewerId  String?  @map("reviewer_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period    ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id])
+  reviewer  User?        @relation("SamplingEngagementReviewer", fields: [reviewerId], references: [id])
+  auditData SamplingAuditData?
+  populations SamplingPopulation[]
+  runs        SamplingRun[]
+
+  @@index([clientId, periodId])
+  @@index([userId])
+  @@map("sampling_engagements")
+}
+
+model SamplingAuditData {
+  id                     String   @id @default(uuid())
+  engagementId           String   @unique @map("engagement_id")
+  performanceMateriality Float    @map("performance_materiality")
+  clearlyTrivial         Float    @map("clearly_trivial")
+  tolerableMisstatement  Float    @map("tolerable_misstatement")
+  functionalCurrency     String   @default("GBP") @map("functional_currency")
+  dataType               String   @map("data_type") // Revenue, Direct Costs, Overheads, etc.
+  testType               String   @map("test_type") // one_tail, two_tail, multi_tail
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  engagement SamplingEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@map("sampling_audit_data")
+}
+
+model SamplingPopulation {
+  id                    String   @id @default(uuid())
+  engagementId          String   @map("engagement_id")
+  description           String?
+  periodStart           DateTime? @map("period_start")
+  periodEnd             DateTime? @map("period_end")
+  completenessStatement String?  @map("completeness_statement") @db.Text
+  recordCount           Int      @default(0) @map("record_count")
+  currency              String   @default("GBP")
+  unitOfSampling        String?  @map("unit_of_sampling") // transaction, line, journal, invoice, payment
+  fileHash              String?  @map("file_hash") // SHA-256 of uploaded file
+  originalFileName      String?  @map("original_file_name")
+  storagePath           String?  @map("storage_path")
+  containerName         String   @default("upload-inbox") @map("container_name")
+  columnMapping         Json?    @map("column_mapping") // {transactionId: "col_A", date: "col_B", amount: "col_C", ...}
+  dataQualitySummary    Json?    @map("data_quality_summary") // {missingCounts, duplicates, dateRange, outlierStats}
+  parsedData            Json?    @map("parsed_data") // stored population rows for engine use
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  engagement SamplingEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  runs       SamplingRun[]
+
+  @@index([engagementId])
+  @@map("sampling_populations")
+}
+
+model SamplingRun {
+  id              String   @id @default(uuid())
+  engagementId    String   @map("engagement_id")
+  populationId    String   @map("population_id")
+  parentRunId     String?  @map("parent_run_id") // for extend/rerun linking
+  mode            String   // "A" | "B"
+  method          String   // random, systematic, mus, judgemental, composite
+  stratification  String   @default("simple") // simple | stratified
+  parameters      Json     // full config snapshot for reproducibility
+  seed            Int?     // PRNG seed
+  toolVersion     String   @default("1.0") @map("tool_version")
+  status          String   @default("pending") // pending | running | complete | failed
+  sampleSize      Int?     @map("sample_size")
+  resultSummary   Json?    @map("result_summary") // {meanError, sdError, fpc, ucl, decision, ...}
+  coverageSummary Json?    @map("coverage_summary") // {byMonth, byValueBand, byPreparer}
+  auditTrailHash  String?  @map("audit_trail_hash")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  engagement  SamplingEngagement  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  population  SamplingPopulation  @relation(fields: [populationId], references: [id], onDelete: Cascade)
+  parentRun   SamplingRun?        @relation("RunExtensions", fields: [parentRunId], references: [id])
+  childRuns   SamplingRun[]       @relation("RunExtensions")
+  items       SamplingItem[]
+  strata      SamplingStratum[]
+  judgementChat SamplingJudgementChat[]
+  reviews     SamplingReview[]
+  artifacts   SamplingExportArtifact[]
+  evidenceRequests AuditEvidenceRequest[]
+
+  @@index([engagementId])
+  @@index([populationId])
+  @@map("sampling_runs")
+}
+
+model SamplingItem {
+  id              String   @id @default(uuid())
+  runId           String   @map("run_id")
+  transactionId   String   @map("transaction_id")
+  bookValue       Float    @map("book_value")
+  auditedValue    Float?   @map("audited_value")
+  selectedReason  String?  @map("selected_reason")
+  stratumId       String?  @map("stratum_id")
+  testResult      String?  @map("test_result") // no_exception | exception | not_testable
+  wpReference     String?  @map("wp_reference")
+  exceptionAmount Float?   @map("exception_amount")
+  exceptionType   String?  @map("exception_type")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  run     SamplingRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stratum SamplingStratum? @relation(fields: [stratumId], references: [id])
+
+  @@index([runId])
+  @@map("sampling_items")
+}
+
+model SamplingStratum {
+  id           String @id @default(uuid())
+  runId        String @map("run_id")
+  name         String
+  definition   Json?  // {scoreRange, ruleFlags, ...}
+  itemCount    Int    @default(0) @map("item_count")
+  totalValue   Float  @default(0) @map("total_value")
+  summaryStats Json?  @map("summary_stats")
+
+  run   SamplingRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  items SamplingItem[]
+
+  @@index([runId])
+  @@map("sampling_strata")
+}
+
+model SamplingJudgementChat {
+  id        String   @id @default(uuid())
+  runId     String   @map("run_id")
+  role      String   // "user" | "assistant"
+  content   String   @db.Text
+  turnOrder Int      @map("turn_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run SamplingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("sampling_judgement_chat")
+}
+
+model SamplingReview {
+  id         String   @id @default(uuid())
+  runId      String   @map("run_id")
+  reviewerId String   @map("reviewer_id")
+  notes      String?  @db.Text
+  decision   String   // approved | rejected | needs_revision
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  run      SamplingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  reviewer User        @relation("SamplingReviewer", fields: [reviewerId], references: [id])
+
+  @@index([runId])
+  @@map("sampling_reviews")
+}
+
+model SamplingExportArtifact {
+  id           String   @id @default(uuid())
+  runId        String   @map("run_id")
+  artifactType String   @map("artifact_type") // sampling_plan_pdf | sample_schedule_xlsx | coverage_appendix | run_log_json
+  fileHash     String?  @map("file_hash")
+  storagePath  String?  @map("storage_path")
+  containerName String  @default("sampling-artifacts") @map("container_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  run SamplingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("sampling_export_artifacts")
+}
+
+// ─── Client Audit Portal ──────────────────────────────────────────────────────
+
+model ClientPortalUser {
+  id             String    @id @default(uuid())
+  clientId       String    @map("client_id")
+  email          String
+  name           String
+  passwordHash   String    @map("password_hash")
+  isActive       Boolean   @default(true) @map("is_active")
+  lastLoginAt    DateTime? @map("last_login_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  client             Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  twoFactorCodes     ClientPortalTwoFactor[]
+  evidenceUploads    EvidenceUpload[]
+
+  @@unique([clientId, email])
+  @@map("client_portal_users")
+}
+
+model ClientPortalTwoFactor {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  code      String
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user ClientPortalUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("client_portal_two_factor")
+}
+
+// ─── Audit Evidence Requests ──────────────────────────────────────────────────
+
+model AuditEvidenceRequest {
+  id              String   @id @default(uuid())
+  runId           String   @map("run_id")
+  clientId        String   @map("client_id")
+  periodId        String   @map("period_id")
+  createdBy       String   @map("created_by")
+  transactionId   String   @map("transaction_id")
+  description     String   @db.Text
+  amount          Float?
+  date            String?
+  reference       String?
+  contact         String?
+  // Evidence type checkboxes
+  invoiceRequired       Boolean @default(false) @map("invoice_required")
+  paymentRequired       Boolean @default(false) @map("payment_required")
+  supplierConfirmation  Boolean @default(false) @map("supplier_confirmation")
+  debtorConfirmation    Boolean @default(false) @map("debtor_confirmation")
+  contractRequired      Boolean @default(false) @map("contract_required")
+  intercompanyRequired  Boolean @default(false) @map("intercompany_required")
+  directorMatters       Boolean @default(false) @map("director_matters")
+  // Status tracking
+  status          String   @default("pending") // pending | partial | complete | cancelled
+  assignedTo      Json?    @map("assigned_to") // Array of client team member emails
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  run       SamplingRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period    ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  creator   User         @relation("EvidenceRequestCreator", fields: [createdBy], references: [id])
+  uploads   EvidenceUpload[]
+
+  @@index([runId])
+  @@index([clientId, periodId])
+  @@map("audit_evidence_requests")
+}
+
+model EvidenceUpload {
+  id              String   @id @default(uuid())
+  requestId       String   @map("request_id")
+  uploadedBy      String   @map("uploaded_by") // ClientPortalUser ID
+  originalName    String   @map("original_name")
+  storagePath     String   @map("storage_path")
+  containerName   String   @default("audit-evidence") @map("container_name")
+  fileSize        Int?     @map("file_size")
+  mimeType        String?  @map("mime_type")
+  evidenceType    String   @map("evidence_type") // invoice | payment | supplier_confirmation | debtor_confirmation | contract | intercompany | director_matters
+  // Verification
+  aiVerified      Boolean? @map("ai_verified") // null=pending, true=matches, false=mismatch
+  aiVerifyNotes   String?  @map("ai_verify_notes") @db.Text
+  firmAccepted    Boolean? @map("firm_accepted") // null=pending, true=accepted, false=rejected
+  firmReviewedBy  String?  @map("firm_reviewed_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  request         AuditEvidenceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  uploader        ClientPortalUser     @relation(fields: [uploadedBy], references: [id])
+
+  @@index([requestId])
+  @@map("evidence_uploads")
+}
+
+// ─── Firm Chart of Accounts ─────────────────────────────────────────────────
+
+model FirmChartOfAccount {
+  id           String   @id @default(uuid())
+  firmId       String   @map("firm_id")
+  accountCode  String   @map("account_code")
+  accountName  String   @map("account_name")
+  categoryType String   @map("category_type") // Fixed Asset, Investment, Current Asset, Current Liability, Long-term Liability, Equity, Revenue, Direct Costs, Overheads, Other Income, Tax Charge, Distribution
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, accountCode])
+  @@index([firmId])
+  @@map("firm_chart_of_accounts")
+}
+
+// ─── Account Code Mappings (firm-level learned categorisations) ─────────────
+
+model AccountCodeMapping {
+  id           String   @id @default(uuid())
+  firmId       String   @map("firm_id")
+  description  String
+  accountCode  String   @map("account_code")
+  accountName  String   @map("account_name")
+  categoryType String   @map("category_type")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, description])
+  @@index([firmId])
+  @@map("account_code_mappings")
+}
+
+// ─── Bank to TB Tool ────────────────────────────────────────────────────────
+
+model BankToTBSession {
+  id                    String    @id @default(uuid())
+  clientId              String    @map("client_id")
+  periodId              String    @map("period_id")
+  userId                String    @map("user_id")
+  firmId                String    @map("firm_id")
+  status                String    @default("active") // active | complete | archived
+  openingPositionSource String?   @map("opening_position_source") // firm_standard | upload | paste | prior_period
+  openingPositionData   Json?     @map("opening_position_data")
+  combineMode           String?   @map("combine_mode") // together | separate
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  client       Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period       ClientPeriod        @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  user         User                @relation(fields: [userId], references: [id])
+  files        BankToTBFile[]
+  accounts     BankAccount[]
+  transactions BankTransaction[]
+  trialBalance TrialBalanceEntry[]
+  journals     Journal[]
+
+  @@index([clientId, periodId])
+  @@index([userId])
+  @@map("bank_to_tb_sessions")
+}
+
+model BankToTBFile {
+  id            String   @id @default(uuid())
+  sessionId     String   @map("session_id")
+  originalName  String   @map("original_name")
+  storagePath   String   @map("storage_path")
+  containerName String   @default("upload-inbox") @map("container_name")
+  fileSize      Int      @map("file_size")
+  mimeType      String   @map("mime_type")
+  fileHash      String?  @map("file_hash")
+  status        String   @default("uploaded") // uploaded | processing | extracted | failed
+  errorMessage  String?  @map("error_message")
+  pageCount     Int?     @map("page_count")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  session      BankToTBSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([sessionId])
+  @@map("bank_to_tb_files")
+}
+
+model BankAccount {
+  id             String   @id @default(uuid())
+  sessionId      String   @map("session_id")
+  bankName       String?  @map("bank_name")
+  sortCode       String?  @map("sort_code")
+  accountNumber  String?  @map("account_number")
+  accountName    String?  @map("account_name")
+  currency       String   @default("GBP")
+  openingBalance Float?   @map("opening_balance")
+  closingBalance Float?   @map("closing_balance")
+  tabOrder       Int      @default(0) @map("tab_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  session      BankToTBSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([sessionId])
+  @@map("bank_accounts")
+}
+
+model BankTransaction {
+  id            String   @id @default(uuid())
+  sessionId     String   @map("session_id")
+  fileId        String?  @map("file_id")
+  accountId     String?  @map("account_id")
+  date          DateTime
+  description   String
+  reference     String?
+  debit         Float    @default(0)
+  credit        Float    @default(0)
+  balance       Float?
+  bankName      String?  @map("bank_name")
+  sortCode      String?  @map("sort_code")
+  accountNumber String?  @map("account_number")
+  statementDate String?  @map("statement_date")
+  statementPage Int?     @map("statement_page")
+  accountCode   String?  @map("account_code")
+  accountNameMapped String? @map("account_name_mapped")
+  categoryType  String?  @map("category_type")
+  inPeriod      Boolean  @default(true) @map("in_period")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  session BankToTBSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  file    BankToTBFile?   @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  account BankAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+  @@index([accountId])
+  @@map("bank_transactions")
+}
+
+model TrialBalanceEntry {
+  id                    String   @id @default(uuid())
+  sessionId             String   @map("session_id")
+  accountCode           String   @map("account_code")
+  accountName           String   @map("account_name")
+  categoryType          String   @map("category_type")
+  openingDebit          Float    @default(0) @map("opening_debit")
+  openingCredit         Float    @default(0) @map("opening_credit")
+  combinedDebit         Float    @default(0) @map("combined_debit")
+  combinedCredit        Float    @default(0) @map("combined_credit")
+  columnData            Json?    @map("column_data") // for "Combine as Separate": { accountId: { debit, credit }, ... }
+  journalData           Json?    @map("journal_data") // per journal category: { depreciation: { debit, credit }, ... }
+  isFromOpeningPosition Boolean  @default(false) @map("is_from_opening_position")
+  sortOrder             Int      @default(0) @map("sort_order")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  session BankToTBSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, accountCode])
+  @@index([sessionId])
+  @@map("trial_balance_entries")
+}
+
+model Journal {
+  id          String   @id @default(uuid())
+  sessionId   String   @map("session_id")
+  category    String   // depreciation | prepayments | accruals | distributions | unbundle_fa | general
+  description String?  @db.Text
+  status      String   @default("draft") // draft | approved | posted | unposted
+  journalRef  String?  @map("journal_ref")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  session BankToTBSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  lines   JournalLine[]
+
+  @@index([sessionId])
+  @@index([sessionId, category])
+  @@map("bank_to_tb_journals")
+}
+
+model JournalLine {
+  id          String @id @default(uuid())
+  journalId   String @map("journal_id")
+  accountCode String @map("account_code")
+  accountName String @map("account_name")
+  description String?
+  debit       Float  @default(0)
+  credit      Float  @default(0)
+  sortOrder   Int    @default(0) @map("sort_order")
+
+  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@index([journalId])
+  @@map("bank_to_tb_journal_lines")
+}
+
+// ─── Cross-Tool Session Management ──────────────────────────────────────────
+
+model ToolSession {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  toolKey      String   @map("tool_key") // bank-to-tb, sampling, etc.
+  clientId     String   @map("client_id")
+  periodId     String?  @map("period_id")
+  clientName   String   @map("client_name")
+  periodLabel  String?  @map("period_label")
+  toolPath     String   @map("tool_path")
+  lastAccessed DateTime @default(now()) @map("last_accessed")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("tool_sessions")
 }
 
