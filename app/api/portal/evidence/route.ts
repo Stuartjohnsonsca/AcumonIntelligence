@@ -40,6 +40,13 @@ export async function GET(req: Request) {
           createdAt: true,
         },
       },
+      run: {
+        select: {
+          engagement: {
+            select: { auditArea: true },
+          },
+        },
+      },
     },
     orderBy: { createdAt: 'asc' },
   });
