@@ -106,7 +106,14 @@ export function FileUploadSection({ sessionId }: Props) {
         toolPath: '/tools/bank-to-tb',
       });
 
-      // Start polling
+      // Trigger server-side processing of the uploaded files
+      fetch('/api/bank-to-tb/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      }).catch(err => console.error('Process trigger failed:', err));
+
+      // Start polling for status updates
       if (!pollRef.current) {
         pollRef.current = setInterval(pollStatus, 3000);
       }
