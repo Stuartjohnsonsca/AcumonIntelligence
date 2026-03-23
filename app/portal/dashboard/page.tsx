@@ -61,8 +61,8 @@ function getStatusForColumn(request: EvidenceRequest, key: string): 'blank' | 'r
 
 const DOT_STYLES = {
   blank: '',
-  red: 'bg-red-500 hover:bg-red-600 cursor-pointer ring-2 ring-transparent hover:ring-red-200',
-  orange: 'bg-orange-400 hover:bg-orange-500 cursor-pointer ring-2 ring-transparent hover:ring-orange-200',
+  red: 'bg-red-600 hover:bg-red-700 cursor-pointer ring-2 ring-transparent hover:ring-red-200',
+  orange: 'bg-amber-300 hover:bg-amber-400 cursor-pointer ring-2 ring-transparent hover:ring-amber-200',
   green: 'bg-green-500',
 };
 
@@ -234,9 +234,9 @@ export default function PortalDashboardPage() {
             <button key={type} onClick={() => setActiveTab(type)}
               className={`flex flex-col items-center gap-1 px-4 py-1.5 text-xs font-medium rounded-lg transition-colors ${isActive ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
               <span>{type === 'all' ? 'All' : type}</span>
-              <span className="flex items-center gap-1.5">
-                {counts.red > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-red-500" /><span className={`text-[9px] ${isActive ? 'text-red-200' : 'text-red-500'}`}>{counts.red}</span></span>}
-                {counts.orange > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-orange-400" /><span className={`text-[9px] ${isActive ? 'text-orange-200' : 'text-orange-500'}`}>{counts.orange}</span></span>}
+              <span className="flex flex-col items-center gap-0.5">
+                {counts.red > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-red-600" /><span className={`text-[9px] ${isActive ? 'text-red-200' : 'text-red-600'}`}>{counts.red}</span></span>}
+                {counts.orange > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-amber-300" /><span className={`text-[9px] ${isActive ? 'text-amber-200' : 'text-amber-400'}`}>{counts.orange}</span></span>}
                 {counts.green > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-green-500" /><span className={`text-[9px] ${isActive ? 'text-green-200' : 'text-green-600'}`}>{counts.green}</span></span>}
                 {counts.red === 0 && counts.orange === 0 && counts.green === 0 && <span className="text-[9px] opacity-50">—</span>}
               </span>
@@ -309,8 +309,8 @@ export default function PortalDashboardPage() {
 
       {/* Legend */}
       <div className="flex items-center gap-4 text-[10px] text-slate-500">
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500" />Click to upload</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-orange-400" />Uploaded (pending)</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-600" />Click to upload</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-300" />Uploaded (pending)</span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500" />Verified</span>
       </div>
 
