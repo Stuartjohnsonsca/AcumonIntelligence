@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { BlobServiceClient } from '@azure/storage-blob';
-import { reviewDocumentAgainstToR, generateBoardReport } from '@/lib/assurance-review-ai';
+import { generateBoardReport } from '@/lib/assurance-review-ai';
 import { calculateAssuranceCost, SUB_TOOL_NAMES } from '@/lib/assurance-ai';
+import {
+  processDocument,
+  reviewChunkedDocument,
+  processDocumentsParallel,
+} from '@/lib/assurance-doc-processor';
 
 function getBlobServiceClient(): BlobServiceClient {
   const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
@@ -11,7 +16,7 @@ function getBlobServiceClient(): BlobServiceClient {
   return BlobServiceClient.fromConnectionString(connectionString);
 }
 
-async function downloadBlobAsText(containerName: string, storagePath: string): Promise<string> {
+async function downloadBlobAsBuffer(containerName: string, storagePath: string): Promise<Buffer> {
   const blobServiceClient = getBlobServiceClient();
   const containerClient = blobServiceClient.getContainerClient(containerName);
   const blobClient = containerClient.getBlockBlobClient(storagePath);
@@ -23,7 +28,7 @@ async function downloadBlobAsText(containerName: string, storagePath: string): P
   for await (const chunk of body) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  return Buffer.concat(chunks).toString('utf-8');
+  return Buffer.concat(chunks);
 }
 
 export async function POST(request: NextRequest) {
@@ -63,7 +68,7 @@ export async function POST(request: NextRequest) {
       data: { status: 'review_in_progress' },
     });
 
-    // Review documents in PARALLEL for speed (up to 4 concurrent)
+    // Review documents with smart processing: OCR, chunking, parallel execution
     const reviewResults: Array<{
       category: string;
       score: number;
@@ -97,74 +102,64 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Process pending documents in parallel (batches of 4 to avoid rate limits)
-    const BATCH_SIZE = 4;
-    for (let i = 0; i < pendingDocs.length; i += BATCH_SIZE) {
-      const batch = pendingDocs.slice(i, i + BATCH_SIZE);
+    // Process pending documents with adaptive concurrency (up to 6 concurrent)
+    // Each document: download → extract text (OCR if needed) → chunk → review chunks → merge
+    await processDocumentsParallel(pendingDocs, async (doc) => {
+      try {
+        // 1. Download document from Azure Blob
+        const buffer = await downloadBlobAsBuffer(doc.containerName, doc.storagePath);
 
-      const batchResults = await Promise.allSettled(
-        batch.map(async (doc) => {
-          let documentText: string;
-          try {
-            documentText = await downloadBlobAsText(doc.containerName, doc.storagePath);
-          } catch {
-            documentText = `[Unable to extract text from ${doc.originalName}. File type: ${doc.mimeType}]`;
-          }
+        // 2. Process: extract text (PDF text / OCR / raw) and chunk if large
+        const processed = await processDocument(doc.id, doc.originalName, buffer, doc.mimeType);
 
-          const reviewResult = await reviewDocumentAgainstToR(
-            documentText,
-            doc.originalName,
-            doc.documentCategory,
-            torSummary,
-            subToolName,
-            sector,
-          );
+        console.log(`[Assurance:Review] "${doc.originalName}": ${processed.totalChars} chars, ${processed.chunks.length} chunks, method=${processed.extractionMethod}`);
 
-          // Store review result
-          await prisma.assuranceDocument.update({
-            where: { id: doc.id },
-            data: {
-              aiReviewStatus: 'reviewed',
-              aiReviewResult: JSON.parse(JSON.stringify({
-                satisfiesRequirement: reviewResult.satisfiesRequirement,
-                findings: reviewResult.findings,
-                gaps: reviewResult.gaps,
-                recommendations: reviewResult.recommendations,
-              })),
-              aiScore: reviewResult.score,
-            },
-          });
+        // 3. Review all chunks against ToR (parallel within document if multi-chunk)
+        const reviewResult = await reviewChunkedDocument(
+          processed,
+          doc.documentCategory,
+          torSummary,
+          subToolName,
+          sector,
+        );
 
-          return { doc, reviewResult };
-        }),
-      );
+        // 4. Store review result
+        await prisma.assuranceDocument.update({
+          where: { id: doc.id },
+          data: {
+            aiReviewStatus: 'reviewed',
+            aiReviewResult: JSON.parse(JSON.stringify({
+              satisfiesRequirement: reviewResult.satisfiesRequirement,
+              findings: reviewResult.findings,
+              gaps: reviewResult.gaps,
+              recommendations: reviewResult.recommendations,
+              extractionMethod: processed.extractionMethod,
+              totalChars: processed.totalChars,
+              chunkCount: processed.chunks.length,
+            })),
+            aiScore: reviewResult.score,
+          },
+        });
 
-      // Collect results from this batch
-      for (const result of batchResults) {
-        if (result.status === 'fulfilled') {
-          const { doc, reviewResult } = result.value;
-          totalUsage.promptTokens += reviewResult.usage.promptTokens;
-          totalUsage.completionTokens += reviewResult.usage.completionTokens;
-          totalUsage.totalTokens += reviewResult.usage.totalTokens;
+        totalUsage.promptTokens += reviewResult.usage.promptTokens;
+        totalUsage.completionTokens += reviewResult.usage.completionTokens;
+        totalUsage.totalTokens += reviewResult.usage.totalTokens;
 
-          reviewResults.push({
-            category: doc.documentCategory,
-            score: reviewResult.score,
-            findings: reviewResult.findings,
-            gaps: reviewResult.gaps,
-            recommendations: reviewResult.recommendations,
-          });
-        } else {
-          // Failed document — log and mark as reviewed with score 0
-          const failedDoc = batch[batchResults.indexOf(result)];
-          console.error(`[Assurance:Review] Failed to review ${failedDoc.originalName}:`, result.reason);
-          await prisma.assuranceDocument.update({
-            where: { id: failedDoc.id },
-            data: { aiReviewStatus: 'reviewed', aiScore: 0 },
-          });
-        }
+        reviewResults.push({
+          category: doc.documentCategory,
+          score: reviewResult.score,
+          findings: reviewResult.findings,
+          gaps: reviewResult.gaps,
+          recommendations: reviewResult.recommendations,
+        });
+      } catch (err) {
+        console.error(`[Assurance:Review] Failed to review ${doc.originalName}:`, err);
+        await prisma.assuranceDocument.update({
+          where: { id: doc.id },
+          data: { aiReviewStatus: 'reviewed', aiScore: 0 },
+        });
       }
-    }
+    }, 6); // max 6 concurrent document reviews
 
     // Get benchmark data
     const benchmarkData = await prisma.assuranceScore.aggregate({
