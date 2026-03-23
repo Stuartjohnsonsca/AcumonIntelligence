@@ -261,6 +261,7 @@ export function SamplingCalculatorClient({
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [runLocked, setRunLocked] = useState(false);
+  const [lockedDataType, setLockedDataType] = useState<string | null>(null);
 
   // ─── Load periods ──────────────────────────────────────────────────────────
 
@@ -1150,12 +1151,41 @@ export function SamplingCalculatorClient({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">Type of Data</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1">
+                  Type of Data
+                  {runLocked && lockedDataType && (
+                    <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-green-600">
+                      <Lock className="h-2.5 w-2.5" /> Locked ({lockedDataType})
+                    </span>
+                  )}
+                </label>
                 <select
                   value={auditData.dataType}
                   onChange={(e) => {
                     const dt = e.target.value;
+                    // If data type changes from a locked run, confirm and unlock
+                    if (runLocked && lockedDataType && dt !== lockedDataType) {
+                      if (!confirm(`Changing the data type will unlock the approved sample and clear the population data. Continue?`)) return;
+                    }
                     setAuditData(prev => ({ ...prev, dataType: dt, testType: defaultTestType(dt) }));
+                    if (runLocked && lockedDataType && dt !== lockedDataType) {
+                      setRunLocked(false);
+                      setLockedDataType(null);
+                      setSelectedIndices(new Set());
+                      setSampleTotal(null);
+                      setCoverage(null);
+                      setRunId(null);
+                      setFullPopulationData([]);
+                      setUploadedColumns([]);
+                      setUploadedPreview([]);
+                      setPopulationCount(0);
+                      setPopulationTotal(0);
+                      setStratificationResults(null);
+                      setItemProfiles(null);
+                      setAiStratSuggestion(null);
+                      setReviews([]);
+                      setStep('configure');
+                    }
                   }}
                   className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -2318,6 +2348,7 @@ export function SamplingCalculatorClient({
                         const review = await res.json();
                         setReviews(prev => [review, ...prev]);
                         setRunLocked(true);
+                        setLockedDataType(auditData.dataType);
                         setReviewNotes('');
                       } else {
                         const err = await res.json().catch(() => null);
