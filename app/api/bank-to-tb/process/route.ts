@@ -78,7 +78,13 @@ export async function POST(req: NextRequest) {
 
   const apiKey = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ error: 'AI service not configured' }, { status: 500 });
+    console.error('[BankToTB Process] No TOGETHER_DOC_SUMMARY_KEY or TOGETHER_API_KEY set');
+    // Mark all uploaded files as failed
+    await prisma.bankToTBFile.updateMany({
+      where: { sessionId, status: 'uploaded' },
+      data: { status: 'failed', errorMessage: 'AI extraction service not configured. Contact your administrator.' },
+    });
+    return NextResponse.json({ error: 'AI extraction service not configured. Check TOGETHER_DOC_SUMMARY_KEY or TOGETHER_API_KEY.' }, { status: 500 });
   }
 
   const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
@@ -107,15 +113,20 @@ export async function POST(req: NextRequest) {
       let extractedText = '';
 
       if (file.mimeType === 'application/pdf') {
+        // Try unpdf first (WASM-based)
         try {
+          console.log(`[BankToTB] Trying unpdf for ${file.originalName}`);
           const { extractText } = await import('unpdf');
           const pdfData = new Uint8Array(buffer);
           const result = await extractText(pdfData);
           const pages = Array.isArray(result.text) ? result.text : [String(result.text || '')];
           extractedText = pages.join('\n\n');
-        } catch {
+          console.log(`[BankToTB] unpdf extracted ${extractedText.length} chars from ${file.originalName}`);
+        } catch (unpdfErr) {
+          console.warn(`[BankToTB] unpdf failed for ${file.originalName}:`, unpdfErr instanceof Error ? unpdfErr.message : unpdfErr);
           // Try pdfjs-dist
           try {
+            console.log(`[BankToTB] Trying pdfjs-dist for ${file.originalName}`);
             const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
             const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
             const pages: string[] = [];
@@ -129,10 +140,15 @@ export async function POST(req: NextRequest) {
             }
             extractedText = pages.join('\n\n');
             await doc.destroy();
-          } catch {
-            // Will fall through to vision
+            console.log(`[BankToTB] pdfjs-dist extracted ${extractedText.length} chars from ${file.originalName}`);
+          } catch (pdfjsErr) {
+            console.warn(`[BankToTB] pdfjs-dist failed for ${file.originalName}:`, pdfjsErr instanceof Error ? pdfjsErr.message : pdfjsErr);
+            // Will fall through to vision-based extraction
+            console.log(`[BankToTB] Falling through to vision extraction for ${file.originalName}`);
           }
         }
+      } else {
+        console.log(`[BankToTB] Image file ${file.originalName} — using vision extraction`);
       }
 
       // Update progress: extracting
@@ -142,6 +158,8 @@ export async function POST(req: NextRequest) {
       });
 
       let responseContent = '';
+
+      console.log(`[BankToTB] Text length for ${file.originalName}: ${extractedText.length} chars. Using ${extractedText.length >= 10 ? 'text' : 'vision'} extraction.`);
 
       if (extractedText.length >= 10) {
         // Text-based extraction
