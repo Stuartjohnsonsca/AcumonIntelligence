@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
           orderBy: { sortOrder: 'asc' },
         });
 
-    entries = accounts.map(a => ({
+    entries = accounts.map((a: { accountCode: string; accountName: string; categoryType: string }) => ({
       accountCode: a.accountCode,
       accountName: a.accountName,
       categoryType: a.categoryType,

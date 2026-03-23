@@ -24,7 +24,7 @@ export async function POST(req: Request) {
       if (source === 'import') {
         // Fetch from accounting system (Xero etc.)
         const conn = await prisma.accountingConnection.findFirst({
-          where: { clientId, isActive: true },
+          where: { clientId },
         });
 
         if (!conn) {

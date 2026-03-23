@@ -59,7 +59,7 @@ export async function POST(req: Request) {
     }
 
     // Return PY mappings with import_py source
-    const mappings = pyMappings.map(m => ({
+    const mappings = pyMappings.map((m: { rowKey: string; rowLabel: string; completeness: boolean; occurrence: boolean; cutOff: boolean; classification: boolean; presentation: boolean; existence: boolean; valuation: boolean; rights: boolean }) => ({
       rowKey: m.rowKey,
       rowLabel: m.rowLabel,
       completeness: m.completeness,

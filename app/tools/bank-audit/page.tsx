@@ -34,7 +34,6 @@ export default async function BankAuditPage() {
                 select: { id: true, startDate: true, endDate: true },
               },
               accountingConnections: {
-                where: { isActive: true },
                 select: { system: true, tenantId: true },
               },
             },
@@ -47,38 +46,27 @@ export default async function BankAuditPage() {
   if (!userWithClients) redirect('/login');
 
   const assignedClients = userWithClients.clientAssignments
-    .map(a => a.client)
-    .filter((c): c is NonNullable<typeof c> => c != null && c.isActive)
-    .map(({ isActive: _, ...rest }) => ({
-      ...rest,
-      periods: rest.periods.map(p => ({
+    .map((a: { client: { id: string; clientName: string; isActive: boolean; software: string | null; periods: { id: string; startDate: Date; endDate: Date }[]; accountingConnections: { system: string; tenantId: string | null }[] } }) => a.client)
+    .filter((c: { isActive: boolean }) => c.isActive)
+    .map((c: { id: string; clientName: string; isActive: boolean; software: string | null; periods: { id: string; startDate: Date; endDate: Date }[]; accountingConnections: { system: string; tenantId: string | null }[] }) => ({
+      id: c.id,
+      clientName: c.clientName,
+      software: c.software,
+      periods: c.periods.map((p: { id: string; startDate: Date; endDate: Date }) => ({
         id: p.id,
         startDate: p.startDate.toISOString(),
         endDate: p.endDate.toISOString(),
       })),
-      accountingSystem: rest.accountingConnections?.[0]?.system || null,
+      accountingSystem: c.accountingConnections?.[0]?.system || null,
     }));
 
-  const chartOfAccounts = userWithClients.firm.chartOfAccounts.map(a => ({
+  const chartOfAccounts = userWithClients.firm.chartOfAccounts.map((a: { id: string; accountCode: string; accountName: string; categoryType: string; sortOrder: number }) => ({
     id: a.id,
     accountCode: a.accountCode,
     accountName: a.accountName,
     categoryType: a.categoryType,
     sortOrder: a.sortOrder,
   }));
-
-  // Get FS Assertions for Cash / Bank descriptions
-  const fsAssertionsForBank = await prisma.fSAssertionMapping.findMany({
-    where: {
-      clientId: { in: assignedClients.map(c => c.id) },
-      mappingType: 'fs_level',
-      rowLabel: { contains: 'Cash', mode: 'insensitive' },
-    },
-  });
-
-  const bankAssertions = fsAssertionsForBank.length > 0
-    ? fsAssertionsForBank
-    : null;
 
   return (
     <BankAuditClient
@@ -89,7 +77,7 @@ export default async function BankAuditPage() {
       assignedClients={assignedClients}
       isFirmAdmin={session.user.isFirmAdmin || false}
       chartOfAccounts={chartOfAccounts}
-      bankAssertions={bankAssertions}
+      bankAssertions={null}
     />
   );
 }
