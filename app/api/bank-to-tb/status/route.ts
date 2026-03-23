@@ -41,6 +41,18 @@ export async function GET(req: NextRequest) {
   const failedCount = btbSession.files.filter(f => f.status === 'failed').length;
   const allDone = totalFiles > 0 && extractedCount + failedCount === totalFiles;
 
+  // Get background task progress for detailed stage info
+  const bgTask = await prisma.backgroundTask.findFirst({
+    where: {
+      userId: session.user.id,
+      type: 'bank-to-tb-parse',
+      status: 'running',
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const taskProgress = bgTask?.progress as { stage?: string; currentFile?: string; transactionCount?: number } | null;
+
   return NextResponse.json({
     sessionId,
     files: btbSession.files,
@@ -51,5 +63,10 @@ export async function GET(req: NextRequest) {
       failed: failedCount,
       complete: allDone,
     },
+    progress: taskProgress ? {
+      stage: taskProgress.stage || 'processing',
+      currentFile: taskProgress.currentFile || null,
+      transactionCount: taskProgress.transactionCount || 0,
+    } : null,
   });
 }

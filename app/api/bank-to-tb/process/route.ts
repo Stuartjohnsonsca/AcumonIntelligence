@@ -84,12 +84,20 @@ export async function POST(req: NextRequest) {
   const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
   const results: { fileId: string; status: string; transactionCount: number }[] = [];
 
-  for (const file of btbSession.files) {
+  const totalFiles = btbSession.files.length;
+
+  for (let fi = 0; fi < btbSession.files.length; fi++) {
+    const file = btbSession.files[fi];
     try {
-      // Mark as processing
+      // Mark as processing and update background task progress
       await prisma.bankToTBFile.update({
         where: { id: file.id },
         data: { status: 'processing' },
+      });
+
+      await prisma.backgroundTask.updateMany({
+        where: { userId: session.user.id, type: 'bank-to-tb-parse', status: 'running' },
+        data: { progress: { sessionId, fileCount: totalFiles, processed: fi, currentFile: file.originalName, stage: 'downloading' } },
       });
 
       // Download file from blob
@@ -126,6 +134,12 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+
+      // Update progress: extracting
+      await prisma.backgroundTask.updateMany({
+        where: { userId: session.user.id, type: 'bank-to-tb-parse', status: 'running' },
+        data: { progress: { sessionId, fileCount: totalFiles, processed: fi, currentFile: file.originalName, stage: 'extracting' } },
+      });
 
       let responseContent = '';
 
@@ -211,6 +225,12 @@ export async function POST(req: NextRequest) {
 
       const parsed = JSON.parse(jsonMatch[0]);
       const transactions: Record<string, unknown>[] = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+
+      // Update progress: saving transactions
+      await prisma.backgroundTask.updateMany({
+        where: { userId: session.user.id, type: 'bank-to-tb-parse', status: 'running' },
+        data: { progress: { sessionId, fileCount: totalFiles, processed: fi, currentFile: file.originalName, stage: 'saving', transactionCount: transactions.length } },
+      });
 
       // Create bank transaction records
       for (let i = 0; i < transactions.length; i++) {

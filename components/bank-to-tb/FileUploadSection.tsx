@@ -17,9 +17,17 @@ export function FileUploadSection({ sessionId }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [extractionStage, setExtractionStage] = useState<{ stage: string; currentFile: string | null; transactionCount: number } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
 
   const hasProcessing = state.files.some(f => f.status === 'uploaded' || f.status === 'processing');
+
+  const stageLabels: Record<string, string> = {
+    downloading: 'Downloading file from storage...',
+    extracting: 'Extracting transaction data (AI OCR)...',
+    saving: 'Saving extracted transactions...',
+    processing: 'Processing...',
+  };
 
   const pollStatus = useCallback(async () => {
     try {
@@ -28,7 +36,13 @@ export function FileUploadSection({ sessionId }: Props) {
       const data = await res.json();
       dispatch({ type: 'SET_FILES', payload: data.files });
 
+      // Update extraction stage display
+      if (data.progress) {
+        setExtractionStage(data.progress);
+      }
+
       if (data.summary.complete) {
+        setExtractionStage(null);
         // All files processed - reload session for transactions
         if (pollRef.current) {
           clearInterval(pollRef.current);
@@ -234,6 +248,26 @@ export function FileUploadSection({ sessionId }: Props) {
               )}
             </div>
           ))}
+
+          {/* Extraction stage info */}
+          {extractionStage && hasProcessing && (
+            <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
+              <div className="flex items-center gap-1.5 text-[10px] text-blue-700">
+                <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+                <span className="font-medium">{stageLabels[extractionStage.stage] || extractionStage.stage}</span>
+              </div>
+              {extractionStage.currentFile && (
+                <p className="text-[10px] text-blue-600 mt-0.5 truncate">
+                  File: {extractionStage.currentFile}
+                </p>
+              )}
+              {extractionStage.transactionCount > 0 && (
+                <p className="text-[10px] text-blue-600 mt-0.5">
+                  Found {extractionStage.transactionCount} transactions so far
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
