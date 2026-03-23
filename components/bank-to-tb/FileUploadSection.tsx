@@ -18,9 +18,13 @@ export function FileUploadSection({ sessionId }: Props) {
   const [uploading, setUploading] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [extractionStage, setExtractionStage] = useState<{ stage: string; currentFile: string | null; transactionCount: number } | null>(null);
+  const [processError, setProcessError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
 
   const hasProcessing = state.files.some(f => f.status === 'uploaded' || f.status === 'processing');
+  const hasUploaded = state.files.some(f => f.status === 'uploaded');
+  const hasFailed = state.files.some(f => f.status === 'failed');
 
   const stageLabels: Record<string, string> = {
     downloading: 'Downloading file from storage...',
@@ -78,6 +82,34 @@ export function FileUploadSection({ sessionId }: Props) {
     }
   }, [sessionId, state.clientId, state.periodId, dispatch, updateTask]);
 
+  const triggerProcess = useCallback(async (sid: string) => {
+    setProcessError(null);
+    try {
+      const res = await fetch('/api/bank-to-tb/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: sid }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setProcessError(errData.error || `Extraction failed (${res.status})`);
+        console.error('Process failed:', errData);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setProcessError(`Extraction request failed: ${msg}`);
+      console.error('Process trigger failed:', err);
+    }
+  }, []);
+
+  async function handleRetry() {
+    if (!sessionId) return;
+    setRetrying(true);
+    setProcessError(null);
+    await triggerProcess(sessionId);
+    setRetrying(false);
+  }
+
   useEffect(() => {
     if (hasProcessing && !pollRef.current) {
       pollRef.current = setInterval(pollStatus, 3000);
@@ -121,17 +153,12 @@ export function FileUploadSection({ sessionId }: Props) {
         toolPath: '/tools/bank-to-tb',
       });
 
-      // Trigger server-side processing of the uploaded files
-      fetch('/api/bank-to-tb/process', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId }),
-      }).catch(err => console.error('Process trigger failed:', err));
-
-      // Start polling for status updates
+      // Trigger server-side processing and start polling
       if (!pollRef.current) {
         pollRef.current = setInterval(pollStatus, 3000);
       }
+
+      triggerProcess(sessionId);
     } catch (err) {
       console.error('Upload failed:', err);
     } finally {
@@ -248,6 +275,40 @@ export function FileUploadSection({ sessionId }: Props) {
               )}
             </div>
           ))}
+
+          {/* Process error display */}
+          {processError && (
+            <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-[10px] text-red-700 font-medium">Extraction Error</p>
+              <p className="text-[10px] text-red-600 mt-0.5">{processError}</p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleRetry}
+                disabled={retrying}
+                className="mt-1.5 h-6 text-[10px] border-red-300 text-red-700 hover:bg-red-50"
+              >
+                {retrying ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                Retry Extraction
+              </Button>
+            </div>
+          )}
+
+          {/* Retry button when files stuck in uploaded status */}
+          {hasUploaded && !hasProcessing && !processError && state.files.length > 0 && (
+            <div className="mt-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleRetry}
+                disabled={retrying}
+                className="w-full h-6 text-[10px] border-orange-300 text-orange-700 hover:bg-orange-50"
+              >
+                {retrying ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                Extract Data from Uploaded Files
+              </Button>
+            </div>
+          )}
 
           {/* Extraction stage info */}
           {extractionStage && hasProcessing && (
