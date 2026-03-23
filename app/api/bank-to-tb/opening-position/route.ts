@@ -166,7 +166,13 @@ export async function POST(req: NextRequest) {
   }
 
   if (entries.length === 0) {
-    return NextResponse.json({ error: 'No data found for the selected source' }, { status: 400 });
+    const messages: Record<string, string> = {
+      firm_standard: 'No Chart of Accounts found for your firm. Please ask a Firm Admin to upload one first.',
+      upload: 'No account data could be extracted from the uploaded file. Please check the format includes account names and amounts.',
+      paste: 'No valid rows found in the pasted data. Please check the format.',
+      prior_period: 'No prior period trial balance found. There must be a completed session for the period ending the day before this period starts.',
+    };
+    return NextResponse.json({ error: messages[source] || 'No data found for the selected source' }, { status: 400 });
   }
 
   // Clear existing opening position entries and create new ones
