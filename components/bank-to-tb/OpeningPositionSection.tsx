@@ -21,6 +21,14 @@ export function OpeningPositionSection({ sessionId }: Props) {
   async function handleObtain() {
     if (!source) return;
 
+    if (source === 'blank') {
+      // No opening balances — just switch to trial balance view
+      dispatch({ type: 'SET_TRIAL_BALANCE', payload: [] });
+      dispatch({ type: 'SET_OPENING_SOURCE', payload: 'blank' });
+      dispatch({ type: 'SET_VIEW', payload: 'trial-balance' });
+      return;
+    }
+
     if (source === 'paste') {
       setShowPaste(true);
       return;
@@ -103,6 +111,7 @@ export function OpeningPositionSection({ sessionId }: Props) {
         className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
       >
         <option value="">Select source...</option>
+        <option value="blank">Blank</option>
         <option value="firm_standard">Firm Standard</option>
         <option value="upload">Upload</option>
         <option value="paste">Paste</option>
