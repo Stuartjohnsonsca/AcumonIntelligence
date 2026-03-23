@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { BankToTBProvider, useBankToTB } from '@/components/bank-to-tb/BankToTBContext';
 import { ClientPeriodSelector } from '@/components/bank-to-tb/ClientPeriodSelector';
 import { BalanceBar } from '@/components/bank-to-tb/BalanceBar';
@@ -8,6 +9,9 @@ import { BankTransactionsSheet } from '@/components/bank-to-tb/BankTransactionsS
 import { TrialBalanceSheet } from '@/components/bank-to-tb/TrialBalanceSheet';
 import { AccountTabs } from '@/components/bank-to-tb/AccountTabs';
 import { ControlsPanel } from '@/components/bank-to-tb/ControlsPanel';
+import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
+import { RotateCcw, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface ChartOfAccountItem {
   id: string;
@@ -38,12 +42,63 @@ function BankToTBInner({ assignedClients, chartOfAccounts, userId }: {
   chartOfAccounts: ChartOfAccountItem[];
   userId: string;
 }) {
-  const { state } = useBankToTB();
+  const { state, dispatch } = useBankToTB();
+  const { updateTask } = useBackgroundTasks();
+  const [resetting, setResetting] = useState(false);
+
+  async function handleReset() {
+    if (!state.sessionId) return;
+    if (!confirm('This will clear ALL uploaded files, extracted transactions, trial balance, and journals for this session. Continue?')) return;
+    setResetting(true);
+    try {
+      await fetch('/api/bank-to-tb/reset-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: state.sessionId }),
+      });
+      dispatch({ type: 'SET_FILES', payload: [] });
+      dispatch({ type: 'SET_TRANSACTIONS', payload: [] });
+      dispatch({ type: 'SET_ACCOUNTS', payload: [] });
+      dispatch({ type: 'SET_TRIAL_BALANCE', payload: [] });
+      dispatch({ type: 'SET_MULTI_ACCOUNTS', payload: false });
+      dispatch({ type: 'SET_OUT_OF_PERIOD', payload: false });
+      dispatch({ type: 'SET_OPENING_SOURCE', payload: '' });
+      dispatch({ type: 'SET_VIEW', payload: 'bank-transactions' });
+      updateTask(`btb-${state.sessionId}`, { status: 'completed', completedAt: Date.now() });
+    } catch (err) {
+      console.error('Reset failed:', err);
+    } finally {
+      setResetting(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="sticky top-16 z-40 bg-white border-b shadow-sm">
-        <ClientPeriodSelector clients={assignedClients} />
+        <div className="flex items-center">
+          <div className="flex-1">
+            <ClientPeriodSelector clients={assignedClients} />
+          </div>
+          {/* Always-visible Reset button when session is active */}
+          {state.sessionId && (
+            <div className="pr-4">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleReset}
+                disabled={resetting}
+                className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-400"
+              >
+                {resetting ? (
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-4 w-4 mr-1.5" />
+                )}
+                Reset &amp; Clear All
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       {state.sessionId ? (
