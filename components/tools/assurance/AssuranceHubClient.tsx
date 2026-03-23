@@ -165,38 +165,40 @@ export function AssuranceHubClient({ clientId, clientName, initialChatId }: Assu
           </div>
 
           {/* Sub-tool Buttons - 2 columns */}
-          <div className="lg:col-span-2 space-y-3">
+          <div className="lg:col-span-2 flex flex-col">
             <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">
               Assurance Services
             </h3>
-            {SUB_TOOLS.map((tool) => {
-              const Icon = tool.icon;
-              const isRecommended = recommendedTool === tool.key;
-              return (
-                <button
-                  key={tool.key}
-                  onClick={() => handleSubToolClick(tool.key)}
-                  className={`w-full flex items-start gap-4 p-4 rounded-xl border-2 transition-all text-left ${tool.color} ${
-                    isRecommended ? 'ring-2 ring-blue-500 ring-offset-2 scale-[1.02]' : ''
-                  }`}
-                >
-                  <div className={`flex-shrink-0 p-2 rounded-lg bg-white/80 ${tool.iconColor}`}>
-                    <Icon className="h-6 w-6" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-sm">{tool.label}</p>
-                      {isRecommended && (
-                        <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full uppercase">
-                          Recommended
-                        </span>
-                      )}
+            <div className="grid grid-cols-1 gap-3 auto-rows-fr">
+              {SUB_TOOLS.map((tool) => {
+                const Icon = tool.icon;
+                const isRecommended = recommendedTool === tool.key;
+                return (
+                  <button
+                    key={tool.key}
+                    onClick={() => handleSubToolClick(tool.key)}
+                    className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all text-left ${tool.color} ${
+                      isRecommended ? 'ring-2 ring-blue-500 ring-offset-2 scale-[1.02]' : ''
+                    }`}
+                  >
+                    <div className={`flex-shrink-0 p-2.5 rounded-lg bg-white/80 ${tool.iconColor}`}>
+                      <Icon className="h-6 w-6" />
                     </div>
-                    <p className="text-xs mt-1 opacity-75">{tool.description}</p>
-                  </div>
-                </button>
-              );
-            })}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-sm">{tool.label}</p>
+                        {isRecommended && (
+                          <span className="px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded-full uppercase">
+                            Recommended
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs mt-1 opacity-75 line-clamp-2">{tool.description}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
