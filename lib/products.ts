@@ -90,10 +90,10 @@ export const PRODUCTS = [
     navLabel: 'ESG & Sustainability Reporting',
   },
   {
-    name: 'Diversity Assurance',
+    name: 'Meritocracy & Diversity',
     category: 'Internal Audit',
     urlPrefix: 'Diversity',
-    navLabel: 'Diversity Assurance',
+    navLabel: 'Meritocracy & Diversity',
   },
 ];
 

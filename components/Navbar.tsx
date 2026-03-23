@@ -107,6 +107,12 @@ export function Navbar() {
               {assuranceOpen && (
                 <div className="absolute top-full left-0 pt-1 w-64 z-50">
                   <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                    <button
+                      onClick={() => { setAssuranceOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/assurance'); } else { router.push('/tools/assurance'); } }}
+                      className="w-full text-left px-4 py-2.5 text-sm font-semibold text-blue-600 hover:bg-blue-50 transition-colors border-b border-slate-100"
+                    >
+                      Assurance Hub
+                    </button>
                     {ASSURANCE_PRODUCTS.map((product) => (
                       <button
                         key={product.urlPrefix}
