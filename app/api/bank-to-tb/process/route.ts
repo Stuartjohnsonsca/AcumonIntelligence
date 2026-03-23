@@ -113,38 +113,29 @@ export async function POST(req: NextRequest) {
       let extractedText = '';
 
       if (file.mimeType === 'application/pdf') {
-        // Try unpdf first (WASM-based)
+        // Try pdf-parse first (most reliable on serverless)
         try {
-          console.log(`[BankToTB] Trying unpdf for ${file.originalName}`);
-          const { extractText } = await import('unpdf');
-          const pdfData = new Uint8Array(buffer);
-          const result = await extractText(pdfData);
-          const pages = Array.isArray(result.text) ? result.text : [String(result.text || '')];
-          extractedText = pages.join('\n\n');
-          console.log(`[BankToTB] unpdf extracted ${extractedText.length} chars from ${file.originalName}`);
-        } catch (unpdfErr) {
-          console.warn(`[BankToTB] unpdf failed for ${file.originalName}:`, unpdfErr instanceof Error ? unpdfErr.message : unpdfErr);
-          // Try pdfjs-dist
+          console.log(`[BankToTB] Trying pdf-parse for ${file.originalName}`);
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const pdfParse = require('pdf-parse');
+          const result = await pdfParse(buffer) as { text: string };
+          extractedText = result.text || '';
+          console.log(`[BankToTB] pdf-parse extracted ${extractedText.length} chars from ${file.originalName}`);
+        } catch (pdfParseErr) {
+          console.warn(`[BankToTB] pdf-parse failed for ${file.originalName}:`, pdfParseErr instanceof Error ? pdfParseErr.message : pdfParseErr);
+
+          // Try unpdf as fallback
           try {
-            console.log(`[BankToTB] Trying pdfjs-dist for ${file.originalName}`);
-            const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-            const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
-            const pages: string[] = [];
-            for (let i = 1; i <= doc.numPages; i++) {
-              const page = await doc.getPage(i);
-              const content = await page.getTextContent();
-              const pageText = content.items
-                .map((item: unknown) => (item as { str?: string }).str || '')
-                .join(' ');
-              pages.push(pageText);
-            }
+            console.log(`[BankToTB] Trying unpdf for ${file.originalName}`);
+            const { extractText } = await import('unpdf');
+            const pdfData = new Uint8Array(buffer);
+            const result = await extractText(pdfData);
+            const pages = Array.isArray(result.text) ? result.text : [String(result.text || '')];
             extractedText = pages.join('\n\n');
-            await doc.destroy();
-            console.log(`[BankToTB] pdfjs-dist extracted ${extractedText.length} chars from ${file.originalName}`);
-          } catch (pdfjsErr) {
-            console.warn(`[BankToTB] pdfjs-dist failed for ${file.originalName}:`, pdfjsErr instanceof Error ? pdfjsErr.message : pdfjsErr);
-            // Will fall through to vision-based extraction
-            console.log(`[BankToTB] Falling through to vision extraction for ${file.originalName}`);
+            console.log(`[BankToTB] unpdf extracted ${extractedText.length} chars from ${file.originalName}`);
+          } catch (unpdfErr) {
+            console.warn(`[BankToTB] unpdf failed for ${file.originalName}:`, unpdfErr instanceof Error ? unpdfErr.message : unpdfErr);
+            console.log(`[BankToTB] All PDF text extractors failed — falling through to vision extraction for ${file.originalName}`);
           }
         }
       } else {

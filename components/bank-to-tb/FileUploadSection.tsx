@@ -333,7 +333,25 @@ export function FileUploadSection({ sessionId }: Props) {
           ) : (
             <RotateCcw className="h-4 w-4 mr-2" />
           )}
-          Reset &amp; Clear All
+          Reset &amp; Clear All Data
+        </Button>
+      )}
+
+      {/* Also show reset when session has any data at all */}
+      {state.files.length === 0 && state.transactions.length === 0 && state.trialBalance.length > 0 && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleReset}
+          disabled={resetting}
+          className="w-full mt-3 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-400"
+        >
+          {resetting ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <RotateCcw className="h-4 w-4 mr-2" />
+          )}
+          Reset &amp; Clear All Data
         </Button>
       )}
     </div>
