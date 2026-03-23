@@ -1,18 +1,43 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
-import { ToolLandingPage } from '@/components/tools/ToolLandingPage';
+import { prisma } from '@/lib/db';
+import { AssuranceSubToolPage } from '@/components/tools/assurance/AssuranceSubToolPage';
 
-export default async function CyberResiliencePage() {
+export default async function CyberResiliencePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ clientId?: string; chatId?: string }>;
+}) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
     redirect('/login?callbackUrl=/tools/cyber-resilience');
   }
 
+  const params = await searchParams;
+
+  if (!params.clientId) {
+    const assignment = await prisma.userClientAssignment.findFirst({
+      where: { userId: session.user.id },
+      include: { client: true },
+    });
+    if (assignment?.client) {
+      redirect(`/tools/cyber-resilience?clientId=${assignment.client.id}`);
+    }
+    redirect('/tools/assurance');
+  }
+
+  const client = await prisma.client.findFirst({
+    where: { id: params.clientId, firmId: session.user.firmId },
+  });
+  if (!client) redirect('/tools/assurance');
+
   return (
-    <ToolLandingPage
-      toolName="Cybersecurity Resilience"
-      category="Assurance"
-      description="Cybersecurity posture assessment and resilience testing tools."
+    <AssuranceSubToolPage
+      subToolKey="CyberResiliance"
+      subToolName="Cyber Risk"
+      clientId={client.id}
+      clientName={client.clientName}
+      clientSector={client.sector}
     />
   );
 }

@@ -1,18 +1,43 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
-import { ToolLandingPage } from '@/components/tools/ToolLandingPage';
+import { prisma } from '@/lib/db';
+import { AssuranceSubToolPage } from '@/components/tools/assurance/AssuranceSubToolPage';
 
-export default async function DiversityPage() {
+export default async function DiversityPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ clientId?: string; chatId?: string }>;
+}) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
     redirect('/login?callbackUrl=/tools/diversity');
   }
 
+  const params = await searchParams;
+
+  if (!params.clientId) {
+    const assignment = await prisma.userClientAssignment.findFirst({
+      where: { userId: session.user.id },
+      include: { client: true },
+    });
+    if (assignment?.client) {
+      redirect(`/tools/diversity?clientId=${assignment.client.id}`);
+    }
+    redirect('/tools/assurance');
+  }
+
+  const client = await prisma.client.findFirst({
+    where: { id: params.clientId, firmId: session.user.firmId },
+  });
+  if (!client) redirect('/tools/assurance');
+
   return (
-    <ToolLandingPage
-      toolName="Diversity Assurance"
-      category="Assurance"
-      description="Diversity metrics analysis and assurance reporting for organisations."
+    <AssuranceSubToolPage
+      subToolKey="Diversity"
+      subToolName="Meritocracy & Diversity"
+      clientId={client.id}
+      clientName={client.clientName}
+      clientSector={client.sector}
     />
   );
 }
