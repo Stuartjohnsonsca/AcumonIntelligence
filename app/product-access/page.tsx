@@ -61,6 +61,8 @@ export default async function ProductAccessPage({ searchParams }: Props) {
       CreditorsVerification: '/tools/creditors-verification',
       JournalsTesting: '/tools/journals-testing',
       UnusualBankTxn: '/tools/unusual-bank-txn',
+      BankToTB: '/tools/bank-to-tb',
+      AddJrnls: '/tools/add-jrnls',
       Governance: '/tools/governance',
       CyberResiliance: '/tools/cyber-resilience',
       TalentRisk: '/tools/talent-risk',
