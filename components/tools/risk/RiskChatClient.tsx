@@ -50,7 +50,7 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
   const [messages, setMessages] = useState<RiskChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [planAccepted, setPlanAccepted] = useState(false);
-  const [queuedCount, setQueuedCount] = useState(0);
+  const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
   const messageQueue = useRef<string[]>([]);
   const processingRef = useRef(false);
   const chatIdRef = useRef<string | null>(initialChatId || null);
@@ -83,19 +83,15 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
     processingRef.current = true;
     setIsLoading(true);
 
-    // Merge all queued messages into one combined message
+    // Take all queued messages and decide how to combine
     const queued = [...messageQueue.current];
     messageQueue.current = [];
-    setQueuedCount(0);
-    const combined = queued.length === 1 ? queued[0] : queued.join('\n\n');
+    setQueuedMessages([]);
 
-    // Show as a single user message (or label it as combined)
-    const userMsg: RiskChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: combined,
-    };
-    setMessages(prev => [...prev, userMsg]);
+    // Merge into a single request — number them if multiple so the AI sees each point
+    const combined = queued.length === 1
+      ? queued[0]
+      : queued.map((msg, i) => `[${i + 1}] ${msg}`).join('\n\n');
 
     try {
       const data = await sendToApi(combined);
@@ -132,7 +128,7 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
     if (processingRef.current) {
       // Lyra is thinking — queue the message
       messageQueue.current.push(message);
-      setQueuedCount(messageQueue.current.length);
+      setQueuedMessages([...messageQueue.current]);
 
       // Show queued message in chat immediately so user sees it
       const queuedMsg: RiskChatMessage = {
@@ -216,7 +212,7 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
               onAcceptPlan={handleAcceptPlan}
               onRejectPlan={handleRejectPlan}
               isLoading={isLoading}
-              queuedCount={queuedCount}
+              queuedMessages={queuedMessages}
               className="h-[700px]"
             />
 

@@ -36,7 +36,7 @@ interface RiskChatWindowProps {
   onAcceptPlan?: () => void;
   onRejectPlan?: () => void;
   isLoading: boolean;
-  queuedCount?: number;
+  queuedMessages?: string[];
   className?: string;
 }
 
@@ -55,7 +55,7 @@ export function RiskChatWindow({
   onAcceptPlan,
   onRejectPlan,
   isLoading,
-  queuedCount = 0,
+  queuedMessages = [],
   className,
 }: RiskChatWindowProps) {
   const [input, setInput] = useState('');
@@ -280,9 +280,18 @@ export function RiskChatWindow({
 
       {/* Input — always enabled so users can queue messages while Lyra thinks */}
       <form onSubmit={handleSubmit} className="border-t border-slate-200 p-3">
-        {isLoading && queuedCount > 0 && (
-          <div className="mb-2 px-2 py-1 bg-indigo-50 rounded text-[11px] text-indigo-600">
-            {queuedCount} message{queuedCount > 1 ? 's' : ''} queued — will be sent when Lyra finishes thinking
+        {isLoading && queuedMessages.length > 0 && (
+          <div className="mb-2 px-2 py-1.5 bg-indigo-50 rounded border border-indigo-100">
+            <p className="text-[11px] font-medium text-indigo-700 mb-1">
+              {queuedMessages.length} queued — will be merged and sent when Lyra finishes:
+            </p>
+            <ol className="list-decimal list-inside space-y-0.5">
+              {queuedMessages.map((msg, i) => (
+                <li key={i} className="text-[11px] text-indigo-600 truncate">
+                  {msg.length > 80 ? msg.slice(0, 80) + '...' : msg}
+                </li>
+              ))}
+            </ol>
           </div>
         )}
         <div className="flex gap-2">
