@@ -187,10 +187,16 @@ export async function processAssuranceChat(
   userMessage: string,
   mode: 'triage' | 'drill_down',
   subTool?: string,
+  learnedContext?: string,
 ): Promise<AssuranceChatResponse> {
-  const systemPrompt = mode === 'triage'
+  let systemPrompt = mode === 'triage'
     ? TRIAGE_SYSTEM_PROMPT
     : buildDrillDownSystemPrompt(subTool || 'Internal Audit');
+
+  // Inject learned patterns from past conversations
+  if (learnedContext) {
+    systemPrompt += learnedContext;
+  }
 
   const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
     { role: 'system', content: systemPrompt },

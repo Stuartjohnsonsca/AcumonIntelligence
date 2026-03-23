@@ -1022,3 +1022,22 @@ model AssuranceScore {
   @@map("assurance_scores")
 }
 
+model AssuranceLearning {
+  id          String   @id @default(uuid())
+  firmId      String   @map("firm_id")
+  sector      String?  // sector this learning applies to, null = all sectors
+  subTool     String?  @map("sub_tool") // sub-tool this learning applies to, null = all
+  patternType String   @map("pattern_type") // routing_pattern | common_concern | sector_insight | successful_approach
+  pattern     String   @db.Text // the learned pattern description
+  confidence  Float    @default(0.5) // 0-1, increases with more supporting evidence
+  sourceCount Int      @default(1) @map("source_count") // number of chats that contributed to this pattern
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([firmId])
+  @@index([sector, subTool])
+  @@index([patternType])
+  @@map("assurance_learnings")
+}
+

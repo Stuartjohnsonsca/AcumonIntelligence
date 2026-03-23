@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { processAssuranceChat, calculateAssuranceCost } from '@/lib/assurance-ai';
+import { getRelevantLearnings, processChatFeedback } from '@/lib/assurance-feedback';
 
 // POST: Send message to assurance chat
 export async function POST(request: NextRequest) {
@@ -70,13 +71,21 @@ export async function POST(request: NextRequest) {
       content: m.content,
     }));
 
-    // Process with AI
+    // Fetch learned patterns from past conversations to enhance AI responses
     const chatMode = mode || (chat.subTool ? 'drill_down' : 'triage');
+    const learnedContext = await getRelevantLearnings(
+      session.user.firmId,
+      client.sector,
+      subTool || chat.subTool || undefined,
+    );
+
+    // Process with AI (enriched with past learnings)
     const response = await processAssuranceChat(
       history,
       message,
       chatMode,
       subTool || chat.subTool || undefined,
+      learnedContext || undefined,
     );
 
     // Save assistant message
@@ -94,8 +103,13 @@ export async function POST(request: NextRequest) {
     if (response.metadata.recommendedSubTool) {
       await prisma.assuranceChat.update({
         where: { id: chat.id },
-        data: { subTool: response.metadata.recommendedSubTool },
+        data: { subTool: response.metadata.recommendedSubTool, status: 'resolved' },
       });
+
+      // Trigger feedback extraction in background (non-blocking)
+      processChatFeedback(chat.id, session.user.firmId).catch(err =>
+        console.error('[Assurance:Chat] Background feedback extraction failed:', err),
+      );
     }
 
     // Update chat status if booking requested
@@ -104,6 +118,11 @@ export async function POST(request: NextRequest) {
         where: { id: chat.id },
         data: { status: 'booking_requested' },
       });
+
+      // Also extract learnings from booking-requested chats (useful for understanding gaps)
+      processChatFeedback(chat.id, session.user.firmId).catch(err =>
+        console.error('[Assurance:Chat] Background feedback extraction failed:', err),
+      );
     }
 
     // Track AI usage
