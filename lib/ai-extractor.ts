@@ -490,3 +490,166 @@ export function isSupportedForExtraction(fileName: string): boolean {
   const ext = fileName.toLowerCase().split('.').pop();
   return ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext || '');
 }
+
+// ─── Bank Statement Extraction ──────────────────────────────────────────────
+
+const BANK_STATEMENT_PROMPT = `You are an expert bank statement data extractor. Extract ALL transaction data from this bank statement.
+
+For each transaction, extract:
+- date: The transaction date (format: YYYY-MM-DD)
+- description: The transaction description/narrative
+- reference: Any reference number (or empty string if none)
+- debit: The debit/payment amount as a number (0 if credit)
+- credit: The credit/receipt amount as a number (0 if debit)
+- balance: The running balance after this transaction (0 if not shown)
+
+Also extract these header details:
+- bankName: Name of the bank
+- sortCode: Sort code (e.g. "20-37-83")
+- accountNumber: Full account number
+- statementDate: The date printed on the statement (YYYY-MM-DD)
+- statementPage: Page number if shown
+- openingBalance: Opening balance for this statement page
+- closingBalance: Closing balance for this statement page
+
+Return ONLY valid JSON in this exact format:
+{
+  "bankName": "Bank Name",
+  "sortCode": "12-34-56",
+  "accountNumber": "12345678",
+  "statementDate": "2025-01-31",
+  "statementPage": 1,
+  "openingBalance": 5000.00,
+  "closingBalance": 4500.00,
+  "currency": "GBP",
+  "transactions": [
+    {"date": "2025-01-15", "description": "Direct Debit - Electric Co", "reference": "DD123", "debit": 150.00, "credit": 0, "balance": 4850.00}
+  ]
+}
+
+CRITICAL RULES:
+- Extract EVERY transaction, do not skip any
+- Amounts must be numbers, not strings (no commas in numbers)
+- Dates must be in YYYY-MM-DD format
+- If the year is not shown on each line, infer it from the statement period
+- If amounts have commas, convert to plain numbers
+- If balance is not shown per-transaction, set it to 0
+- Do NOT include "Start Balance" or "Balance carried forward" as transactions`;
+
+export interface BankStatementResult {
+  bankName: string | null;
+  sortCode: string | null;
+  accountNumber: string | null;
+  statementDate: string | null;
+  statementPage: number | null;
+  openingBalance: number | null;
+  closingBalance: number | null;
+  currency: string | null;
+  transactions: {
+    date: string;
+    description: string;
+    reference: string;
+    debit: number;
+    credit: number;
+    balance: number;
+  }[];
+  usage: AiTokenUsage;
+}
+
+export async function extractBankStatementFromBase64(
+  base64Data: string,
+  mimeType: string,
+  fileName: string,
+): Promise<BankStatementResult> {
+  type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
+  let contentParts: ContentPart[];
+  let requireVision = true;
+
+  if (isPdf(mimeType)) {
+    const pdfBuffer = Buffer.from(base64Data, 'base64');
+    const pdfContent = await processPdf(pdfBuffer, 20);
+    console.log(`[BankToTB:AI] PDF mode=${pdfContent.mode} pages=${pdfContent.pageCount} textLen=${pdfContent.text?.length ?? 0} file=${fileName}`);
+
+    if (pdfContent.mode === 'text' && pdfContent.text) {
+      requireVision = false;
+      contentParts = [
+        { type: 'text', text: `${BANK_STATEMENT_PROMPT}\n\n--- BANK STATEMENT TEXT (${pdfContent.pageCount} pages) ---\n${pdfContent.text}` },
+      ];
+    } else {
+      contentParts = [
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+        { type: 'text', text: BANK_STATEMENT_PROMPT },
+      ];
+    }
+  } else {
+    contentParts = [
+      { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+      { type: 'text', text: BANK_STATEMENT_PROMPT },
+    ];
+  }
+
+  const models = selectModels(EXTRACTION_PRIORITIES, requireVision);
+  let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+  let usedModel = models[0];
+  const errors: string[] = [];
+
+  for (const modelId of models) {
+    usedModel = modelId;
+    try {
+      result = await retryWithBackoff(
+        () => client.chat.completions.create({
+          model: modelId,
+          messages: [{ role: 'user', content: contentParts }],
+          max_tokens: 16000,
+        }),
+        `bank-stmt:${fileName}`,
+      );
+      console.log(`[BankToTB:AI] Success | file=${fileName} | model=${modelId}`);
+      break;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      errors.push(`${modelId}: ${errMsg}`);
+      console.warn(`[BankToTB:AI] Model ${modelId} failed for ${fileName}: ${errMsg}`);
+      if (isModelUnavailableError(err)) { markModelUnavailable(modelId); continue; }
+      if (err instanceof Error && err.message.includes('400')) { continue; }
+      throw err;
+    }
+  }
+
+  if (!result) {
+    throw new Error(`[bank-stmt:${fileName}] All models failed. ${errors.join(' | ')}`);
+  }
+
+  const usage = extractUsageMetadata(result);
+  usage.model = usedModel;
+  const text = result.choices[0]?.message?.content || '';
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+  const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/) || cleaned.match(/(\{[\s\S]*\})/);
+  if (!jsonMatch) {
+    throw new Error(`[bank-stmt:${fileName}] No JSON in AI response`);
+  }
+
+  const parsed = JSON.parse(jsonMatch[1].trim());
+  const txns = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+
+  return {
+    bankName: parsed.bankName || null,
+    sortCode: parsed.sortCode || null,
+    accountNumber: parsed.accountNumber || null,
+    statementDate: parsed.statementDate || null,
+    statementPage: parsed.statementPage ? Number(parsed.statementPage) : null,
+    openingBalance: parsed.openingBalance != null ? Number(parsed.openingBalance) : null,
+    closingBalance: parsed.closingBalance != null ? Number(parsed.closingBalance) : null,
+    currency: parsed.currency || null,
+    transactions: txns.map((t: Record<string, unknown>) => ({
+      date: String(t.date || ''),
+      description: String(t.description || ''),
+      reference: String(t.reference || ''),
+      debit: Number(t.debit) || 0,
+      credit: Number(t.credit) || 0,
+      balance: Number(t.balance) || 0,
+    })),
+    usage,
+  };
+}
