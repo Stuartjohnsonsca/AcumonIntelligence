@@ -169,8 +169,8 @@ export default function PortalDashboardPage() {
 
       {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
 
-      {/* Data type tabs with status dot summaries */}
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* Data type tabs with status dot summaries underneath */}
+      <div className="flex items-end gap-3 flex-wrap">
         {[...dataTypes.entries()].map(([type, reqs]) => {
           const counts = getTabCounts(reqs);
           const isActive = activeTab === type;
@@ -178,15 +178,16 @@ export default function PortalDashboardPage() {
             <button
               key={type}
               onClick={() => setActiveTab(type)}
-              className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+              className={`flex flex-col items-center gap-1 px-4 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                 isActive ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
               <span>{type === 'all' ? 'All' : type}</span>
-              <span className="inline-flex items-center gap-1">
-                {counts.red > 0 && <span className="inline-flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-red-500" /><span className={isActive ? 'text-red-200' : 'text-red-500'}>{counts.red}</span></span>}
-                {counts.orange > 0 && <span className="inline-flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-orange-400" /><span className={isActive ? 'text-orange-200' : 'text-orange-500'}>{counts.orange}</span></span>}
-                {counts.green > 0 && <span className="inline-flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-green-500" /><span className={isActive ? 'text-green-200' : 'text-green-600'}>{counts.green}</span></span>}
+              <span className="flex items-center gap-1.5">
+                {counts.red > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-red-500" /><span className={`text-[9px] ${isActive ? 'text-red-200' : 'text-red-500'}`}>{counts.red}</span></span>}
+                {counts.orange > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-orange-400" /><span className={`text-[9px] ${isActive ? 'text-orange-200' : 'text-orange-500'}`}>{counts.orange}</span></span>}
+                {counts.green > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-green-500" /><span className={`text-[9px] ${isActive ? 'text-green-200' : 'text-green-600'}`}>{counts.green}</span></span>}
+                {counts.red === 0 && counts.orange === 0 && counts.green === 0 && <span className="text-[9px] opacity-50">—</span>}
               </span>
             </button>
           );
