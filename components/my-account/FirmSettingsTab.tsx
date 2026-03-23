@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Save, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Loader2, Save, AlertTriangle, Upload, Download, Trash2, FileSpreadsheet } from 'lucide-react';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -46,11 +46,20 @@ const NORMAL_RANGES = {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-interface Props {
-  firmId: string;
+interface COAAccount {
+  id: string;
+  accountCode: string;
+  accountName: string;
+  categoryType: string;
+  sortOrder: number;
 }
 
-export function FirmSettingsTab({ firmId }: Props) {
+interface Props {
+  firmId: string;
+  isFirmAdmin?: boolean;
+}
+
+export function FirmSettingsTab({ firmId, isFirmAdmin = true }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -62,15 +71,35 @@ export function FirmSettingsTab({ firmId }: Props) {
   const [cfTable, setCfTable] = useState<ConfidenceFactorRow[]>(DEFAULT_CONFIDENCE_TABLE);
   const [riskMatrix, setRiskMatrix] = useState<number[][]>(DEFAULT_RISK_MATRIX);
 
+  // Chart of Accounts state
+  const [coaAccounts, setCoaAccounts] = useState<COAAccount[]>([]);
+  const [coaFileName, setCoaFileName] = useState<string | null>(null);
+  const [coaDownloadUrl, setCoaDownloadUrl] = useState<string | null>(null);
+  const [coaUpdatedAt, setCoaUpdatedAt] = useState<string | null>(null);
+  const [coaUploading, setCoaUploading] = useState(false);
+  const [coaDeleting, setCoaDeleting] = useState(false);
+  const [coaError, setCoaError] = useState('');
+  const coaFileRef = useRef<HTMLInputElement>(null);
+
   const loadConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/firm/sampling-config?firmId=${firmId}`);
-      if (res.ok) {
-        const data = await res.json();
+      const [configRes, coaRes] = await Promise.all([
+        fetch(`/api/firm/sampling-config?firmId=${firmId}`),
+        fetch('/api/firm/chart-of-accounts'),
+      ]);
+      if (configRes.ok) {
+        const data = await configRes.json();
         if (data.confidenceLevel) setConfidenceLevel(data.confidenceLevel);
         if (data.confidenceFactorTable?.length) setCfTable(data.confidenceFactorTable);
         if (data.riskMatrix?.length) setRiskMatrix(data.riskMatrix);
+      }
+      if (coaRes.ok) {
+        const coaData = await coaRes.json();
+        setCoaAccounts(coaData.accounts || []);
+        setCoaFileName(coaData.fileName || null);
+        setCoaDownloadUrl(coaData.downloadUrl || null);
+        setCoaUpdatedAt(coaData.updatedAt || null);
       }
     } catch { /* use defaults */ }
     setLoading(false);
@@ -140,6 +169,49 @@ export function FirmSettingsTab({ firmId }: Props) {
     setRiskMatrix(prev => prev.map((r, i) => i === row ? r.map((c, j) => j === col ? value : c) : r));
   }
 
+  async function handleCoaUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCoaUploading(true);
+    setCoaError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/firm/chart-of-accounts', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        setCoaError(data.error || 'Upload failed');
+      } else {
+        setCoaAccounts(data.accounts || []);
+        setCoaFileName(file.name);
+        setCoaUpdatedAt(new Date().toISOString());
+        setCoaDownloadUrl(null); // Will be populated on next load
+      }
+    } catch {
+      setCoaError('Upload failed');
+    }
+    setCoaUploading(false);
+    if (coaFileRef.current) coaFileRef.current.value = '';
+  }
+
+  async function handleCoaDelete() {
+    if (!confirm('Are you sure you want to delete the Chart of Accounts? This cannot be undone.')) return;
+    setCoaDeleting(true);
+    setCoaError('');
+    try {
+      const res = await fetch('/api/firm/chart-of-accounts', { method: 'DELETE' });
+      if (res.ok) {
+        setCoaAccounts([]);
+        setCoaFileName(null);
+        setCoaDownloadUrl(null);
+        setCoaUpdatedAt(null);
+      }
+    } catch {
+      setCoaError('Delete failed');
+    }
+    setCoaDeleting(false);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-12 justify-center text-slate-500">
@@ -150,6 +222,110 @@ export function FirmSettingsTab({ firmId }: Props) {
 
   return (
     <div className="space-y-8">
+      {/* ─── Chart of Accounts ──────────────────────────────────────────── */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-800 mb-1">Chart of Accounts</h2>
+        <p className="text-sm text-slate-500">
+          The default Chart of Accounts used for Financial Statements across the firm.
+          {!isFirmAdmin && ' Only Firm Admins can upload or modify.'}
+        </p>
+      </div>
+
+      <div className="bg-white rounded-lg border border-slate-200 p-5">
+        {/* Upload info and controls */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <FileSpreadsheet className="h-5 w-5 text-slate-400" />
+            {coaFileName ? (
+              <div>
+                <span className="text-sm font-medium text-slate-700">{coaFileName}</span>
+                <span className="text-xs text-slate-400 ml-2">
+                  ({coaAccounts.length} accounts)
+                  {coaUpdatedAt && ` — Updated ${new Date(coaUpdatedAt).toLocaleDateString('en-GB')}`}
+                </span>
+              </div>
+            ) : (
+              <span className="text-sm text-slate-400">No Chart of Accounts uploaded</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {coaDownloadUrl && (
+              <a
+                href={coaDownloadUrl}
+                download={coaFileName || 'chart-of-accounts.xlsx'}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </a>
+            )}
+            {isFirmAdmin && (
+              <>
+                <input
+                  ref={coaFileRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleCoaUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => coaFileRef.current?.click()}
+                  disabled={coaUploading}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+                >
+                  {coaUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  {coaFileName ? 'Replace' : 'Upload'}
+                </button>
+                {coaFileName && (
+                  <button
+                    onClick={handleCoaDelete}
+                    disabled={coaDeleting}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 transition-colors"
+                  >
+                    {coaDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    Delete
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {coaError && (
+          <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">{coaError}</div>
+        )}
+
+        <p className="text-xs text-slate-400 mb-3">
+          Upload a spreadsheet with columns: Account Code, Account Name, Category. Supported categories: Fixed Asset, Investment, Current Asset, Current Liability, Long-term Liability, Equity, Revenue, Direct Costs, Overheads, Other Income, Tax Charge, Distribution.
+        </p>
+
+        {/* Account list */}
+        {coaAccounts.length > 0 && (
+          <div className="max-h-64 overflow-y-auto border border-slate-100 rounded-md">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold text-slate-600">Code</th>
+                  <th className="px-3 py-2 text-left font-semibold text-slate-600">Account Name</th>
+                  <th className="px-3 py-2 text-left font-semibold text-slate-600">Category</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {coaAccounts.map(a => (
+                  <tr key={a.id}>
+                    <td className="px-3 py-1.5 font-mono text-slate-700">{a.accountCode}</td>
+                    <td className="px-3 py-1.5 text-slate-700">{a.accountName}</td>
+                    <td className="px-3 py-1.5 text-slate-500">{a.categoryType}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ─── Sampling Settings ──────────────────────────────────────────── */}
       <div>
         <h2 className="text-lg font-semibold text-slate-800 mb-1">Firm Sampling Settings</h2>
         <p className="text-sm text-slate-500">
