@@ -184,12 +184,17 @@ export function FileUploadSection({ sessionId }: Props) {
         body: JSON.stringify({ sessionId }),
       });
 
-      // Clear local state
+      // Clear all local state
       dispatch({ type: 'SET_FILES', payload: [] });
       dispatch({ type: 'SET_TRANSACTIONS', payload: [] });
       dispatch({ type: 'SET_ACCOUNTS', payload: [] });
+      dispatch({ type: 'SET_TRIAL_BALANCE', payload: [] });
       dispatch({ type: 'SET_MULTI_ACCOUNTS', payload: false });
       dispatch({ type: 'SET_OUT_OF_PERIOD', payload: false });
+      dispatch({ type: 'SET_OPENING_SOURCE', payload: '' });
+      dispatch({ type: 'SET_VIEW', payload: 'bank-transactions' });
+      setProcessError(null);
+      setExtractionStage(null);
 
       updateTask(`btb-${sessionId}`, {
         status: 'completed',
@@ -212,37 +217,19 @@ export function FileUploadSection({ sessionId }: Props) {
         onChange={handleUpload}
         className="hidden"
       />
-      <div className="flex gap-1.5">
-        <Button
-          size="sm"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading || resetting}
-          className="flex-1 bg-blue-600 hover:bg-blue-700"
-        >
-          {uploading ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Upload className="h-4 w-4 mr-2" />
-          )}
-          Upload Bank Statements
-        </Button>
-        {state.files.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleReset}
-            disabled={resetting}
-            className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
-            title="Reset - cancel processing and clear files"
-          >
-            {resetting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RotateCcw className="h-4 w-4" />
-            )}
-          </Button>
+      <Button
+        size="sm"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={uploading || resetting}
+        className="w-full bg-blue-600 hover:bg-blue-700"
+      >
+        {uploading ? (
+          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+        ) : (
+          <Upload className="h-4 w-4 mr-2" />
         )}
-      </div>
+        Upload Bank Statements
+      </Button>
 
       {/* File list */}
       {state.files.length > 0 && (
@@ -330,6 +317,24 @@ export function FileUploadSection({ sessionId }: Props) {
             </div>
           )}
         </div>
+      )}
+
+      {/* Reset button — always visible when there are files or transactions */}
+      {(state.files.length > 0 || state.transactions.length > 0) && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleReset}
+          disabled={resetting}
+          className="w-full mt-3 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-400"
+        >
+          {resetting ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <RotateCcw className="h-4 w-4 mr-2" />
+          )}
+          Reset &amp; Clear All
+        </Button>
       )}
     </div>
   );
