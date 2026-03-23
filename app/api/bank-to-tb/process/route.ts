@@ -116,9 +116,9 @@ export async function POST(req: NextRequest) {
         // Try pdf-parse first (most reliable on serverless)
         try {
           console.log(`[BankToTB] Trying pdf-parse for ${file.originalName}`);
-          const pdfParseModule = await import('pdf-parse');
-          const pdfParse = pdfParseModule.default || pdfParseModule;
-          const result = await (pdfParse as (buf: Buffer) => Promise<{ text: string }>)(buffer);
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const pdfParse = require('pdf-parse');
+          const result = await pdfParse(buffer) as { text: string };
           extractedText = result.text || '';
           console.log(`[BankToTB] pdf-parse extracted ${extractedText.length} chars from ${file.originalName}`);
         } catch (pdfParseErr) {
