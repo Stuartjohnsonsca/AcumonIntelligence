@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { useState } from 'react';
-import { Menu, X, ChevronDown, LogIn, LogOut, User } from 'lucide-react';
+import { Menu, X, ChevronDown, LogIn, LogOut, User, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { STATUTORY_AUDIT_PRODUCTS, ASSURANCE_PRODUCTS, FINANCIAL_ACCOUNTS_ITEMS } from '@/lib/products';
 import { cn } from '@/lib/utils';
@@ -19,6 +19,8 @@ export function Navbar() {
   const [assuranceOpen, setAssuranceOpen] = useState(false);
   const [financialOpen, setFinancialOpen] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [toolSessions, setToolSessions] = useState<{toolKey: string; toolLabel: string; clients: {clientId: string; clientName: string; periods: {id: string; periodLabel: string; toolPath: string}[]}[]}[]>([]);
 
   const isAuthenticated = session?.user && session.user.twoFactorVerified;
 
@@ -195,6 +197,58 @@ export function Navbar() {
                       >
                         Create New Period
                       </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sessions Dropdown */}
+            {isAuthenticated && (
+              <div
+                className="relative"
+                onMouseEnter={() => {
+                  setSessionsOpen(true);
+                  fetch('/api/sessions').then(r => r.json()).then(d => setToolSessions(d.sessions || [])).catch(() => {});
+                }}
+                onMouseLeave={() => setSessionsOpen(false)}
+              >
+                <button
+                  onClick={() => setSessionsOpen(!sessionsOpen)}
+                  className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                >
+                  <Layers className="h-4 w-4" />
+                  <span>Sessions</span>
+                  <ChevronDown className={cn('h-4 w-4 transition-transform', sessionsOpen && 'rotate-180')} />
+                </button>
+                {sessionsOpen && (
+                  <div className="absolute top-full left-0 pt-1 w-72 z-50">
+                    <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1 max-h-80 overflow-y-auto">
+                      {toolSessions.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-slate-400">No active sessions</div>
+                      ) : (
+                        toolSessions.map(tool => (
+                          <div key={tool.toolKey}>
+                            <div className="px-4 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide bg-slate-50">
+                              {tool.toolLabel}
+                            </div>
+                            {tool.clients.map(client => (
+                              <div key={client.clientId}>
+                                <div className="px-6 py-1 text-xs font-medium text-slate-500">{client.clientName}</div>
+                                {client.periods.map(period => (
+                                  <button
+                                    key={period.id}
+                                    onClick={() => { setSessionsOpen(false); router.push(period.toolPath); }}
+                                    className="w-full text-left px-8 py-1.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                                  >
+                                    {period.periodLabel}
+                                  </button>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 )}

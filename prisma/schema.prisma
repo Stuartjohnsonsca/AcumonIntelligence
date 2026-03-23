@@ -15,12 +15,18 @@ model Firm {
   id         String   @id @default(uuid())
   name       String
   dataRegion String   @default("uk") @map("data_region") // uk | eu | us | ap — determines where data is processed and stored
+  chartOfAccountsBlobPath  String?  @map("chart_of_accounts_blob_path")
+  chartOfAccountsContainer String?  @map("chart_of_accounts_container")
+  chartOfAccountsFileName  String?  @map("chart_of_accounts_file_name")
+  chartOfAccountsUpdatedAt DateTime? @map("chart_of_accounts_updated_at")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  users          User[]
-  clients        Client[]
-  samplingConfig FirmSamplingConfig?
+  users               User[]
+  clients             Client[]
+  samplingConfig      FirmSamplingConfig?
+  chartOfAccounts     FirmChartOfAccount[]
+  accountCodeMappings AccountCodeMapping[]
   assuranceChats       AssuranceChat[]
   assuranceEngagements AssuranceEngagement[]
 
@@ -56,6 +62,8 @@ model User {
   samplingReviews            SamplingReview[]           @relation("SamplingReviewer")
   samplingEngagementsReview  SamplingEngagement[]       @relation("SamplingEngagementReviewer")
   evidenceRequestsCreated   AuditEvidenceRequest[]     @relation("EvidenceRequestCreator")
+  bankToTBSessions           BankToTBSession[]
+  toolSessions               ToolSession[]
   assuranceChats             AssuranceChat[]
   assuranceEngagements       AssuranceEngagement[]
 
@@ -126,6 +134,7 @@ model Client {
   samplingEngagements    SamplingEngagement[]
   portalUsers            ClientPortalUser[]
   evidenceRequests       AuditEvidenceRequest[]
+  bankToTBSessions       BankToTBSession[]
   assuranceChats         AssuranceChat[]
   assuranceEngagements   AssuranceEngagement[]
   assuranceScores        AssuranceScore[]
@@ -533,6 +542,7 @@ model ClientPeriod {
   productAssignments PeriodProductAssignment[]
   samplingEngagements SamplingEngagement[]
   evidenceRequests    AuditEvidenceRequest[]
+  bankToTBSessions    BankToTBSession[]
 
   @@unique([clientId, startDate])
   @@map("client_periods")
@@ -1039,5 +1049,222 @@ model AssuranceLearning {
   @@index([sector, subTool])
   @@index([patternType])
   @@map("assurance_learnings")
+}
+
+// ─── Firm Chart of Accounts ─────────────────────────────────────────────────
+
+model FirmChartOfAccount {
+  id           String   @id @default(uuid())
+  firmId       String   @map("firm_id")
+  accountCode  String   @map("account_code")
+  accountName  String   @map("account_name")
+  categoryType String   @map("category_type") // Fixed Asset, Investment, Current Asset, Current Liability, Long-term Liability, Equity, Revenue, Direct Costs, Overheads, Other Income, Tax Charge, Distribution
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, accountCode])
+  @@index([firmId])
+  @@map("firm_chart_of_accounts")
+}
+
+// ─── Account Code Mappings (firm-level learned categorisations) ─────────────
+
+model AccountCodeMapping {
+  id           String   @id @default(uuid())
+  firmId       String   @map("firm_id")
+  description  String
+  accountCode  String   @map("account_code")
+  accountName  String   @map("account_name")
+  categoryType String   @map("category_type")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, description])
+  @@index([firmId])
+  @@map("account_code_mappings")
+}
+
+// ─── Bank to TB Tool ────────────────────────────────────────────────────────
+
+model BankToTBSession {
+  id                    String    @id @default(uuid())
+  clientId              String    @map("client_id")
+  periodId              String    @map("period_id")
+  userId                String    @map("user_id")
+  firmId                String    @map("firm_id")
+  status                String    @default("active") // active | complete | archived
+  openingPositionSource String?   @map("opening_position_source") // firm_standard | upload | paste | prior_period
+  openingPositionData   Json?     @map("opening_position_data")
+  combineMode           String?   @map("combine_mode") // together | separate
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  client       Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period       ClientPeriod        @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  user         User                @relation(fields: [userId], references: [id])
+  files        BankToTBFile[]
+  accounts     BankAccount[]
+  transactions BankTransaction[]
+  trialBalance TrialBalanceEntry[]
+  journals     Journal[]
+
+  @@index([clientId, periodId])
+  @@index([userId])
+  @@map("bank_to_tb_sessions")
+}
+
+model BankToTBFile {
+  id            String   @id @default(uuid())
+  sessionId     String   @map("session_id")
+  originalName  String   @map("original_name")
+  storagePath   String   @map("storage_path")
+  containerName String   @default("upload-inbox") @map("container_name")
+  fileSize      Int      @map("file_size")
+  mimeType      String   @map("mime_type")
+  fileHash      String?  @map("file_hash")
+  status        String   @default("uploaded") // uploaded | processing | extracted | failed
+  errorMessage  String?  @map("error_message")
+  pageCount     Int?     @map("page_count")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  session      BankToTBSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([sessionId])
+  @@map("bank_to_tb_files")
+}
+
+model BankAccount {
+  id             String   @id @default(uuid())
+  sessionId      String   @map("session_id")
+  bankName       String?  @map("bank_name")
+  sortCode       String?  @map("sort_code")
+  accountNumber  String?  @map("account_number")
+  accountName    String?  @map("account_name")
+  currency       String   @default("GBP")
+  openingBalance Float?   @map("opening_balance")
+  closingBalance Float?   @map("closing_balance")
+  tabOrder       Int      @default(0) @map("tab_order")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  session      BankToTBSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([sessionId])
+  @@map("bank_accounts")
+}
+
+model BankTransaction {
+  id            String   @id @default(uuid())
+  sessionId     String   @map("session_id")
+  fileId        String?  @map("file_id")
+  accountId     String?  @map("account_id")
+  date          DateTime
+  description   String
+  reference     String?
+  debit         Float    @default(0)
+  credit        Float    @default(0)
+  balance       Float?
+  bankName      String?  @map("bank_name")
+  sortCode      String?  @map("sort_code")
+  accountNumber String?  @map("account_number")
+  statementDate String?  @map("statement_date")
+  statementPage Int?     @map("statement_page")
+  accountCode   String?  @map("account_code")
+  accountNameMapped String? @map("account_name_mapped")
+  categoryType  String?  @map("category_type")
+  inPeriod      Boolean  @default(true) @map("in_period")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  session BankToTBSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  file    BankToTBFile?   @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  account BankAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+  @@index([accountId])
+  @@map("bank_transactions")
+}
+
+model TrialBalanceEntry {
+  id                    String   @id @default(uuid())
+  sessionId             String   @map("session_id")
+  accountCode           String   @map("account_code")
+  accountName           String   @map("account_name")
+  categoryType          String   @map("category_type")
+  openingDebit          Float    @default(0) @map("opening_debit")
+  openingCredit         Float    @default(0) @map("opening_credit")
+  combinedDebit         Float    @default(0) @map("combined_debit")
+  combinedCredit        Float    @default(0) @map("combined_credit")
+  columnData            Json?    @map("column_data") // for "Combine as Separate": { accountId: { debit, credit }, ... }
+  journalData           Json?    @map("journal_data") // per journal category: { depreciation: { debit, credit }, ... }
+  isFromOpeningPosition Boolean  @default(false) @map("is_from_opening_position")
+  sortOrder             Int      @default(0) @map("sort_order")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  session BankToTBSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, accountCode])
+  @@index([sessionId])
+  @@map("trial_balance_entries")
+}
+
+model Journal {
+  id          String   @id @default(uuid())
+  sessionId   String   @map("session_id")
+  category    String   // depreciation | prepayments | accruals | distributions | unbundle_fa | general
+  description String?  @db.Text
+  status      String   @default("draft") // draft | approved | posted | unposted
+  journalRef  String?  @map("journal_ref")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  session BankToTBSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  lines   JournalLine[]
+
+  @@index([sessionId])
+  @@index([sessionId, category])
+  @@map("bank_to_tb_journals")
+}
+
+model JournalLine {
+  id          String @id @default(uuid())
+  journalId   String @map("journal_id")
+  accountCode String @map("account_code")
+  accountName String @map("account_name")
+  description String?
+  debit       Float  @default(0)
+  credit      Float  @default(0)
+  sortOrder   Int    @default(0) @map("sort_order")
+
+  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@index([journalId])
+  @@map("bank_to_tb_journal_lines")
+}
+
+// ─── Cross-Tool Session Management ──────────────────────────────────────────
+
+model ToolSession {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  toolKey      String   @map("tool_key") // bank-to-tb, sampling, etc.
+  clientId     String   @map("client_id")
+  periodId     String?  @map("period_id")
+  clientName   String   @map("client_name")
+  periodLabel  String?  @map("period_label")
+  toolPath     String   @map("tool_path")
+  lastAccessed DateTime @default(now()) @map("last_accessed")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("tool_sessions")
 }
 

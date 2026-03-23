@@ -30,6 +30,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
     }
 
+    // Check if 2FA is disabled (for testing)
+    if (process.env.DISABLE_2FA === 'true') {
+      await prisma.clientPortalUser.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      });
+      const token = crypto.randomBytes(48).toString('hex');
+      return NextResponse.json({
+        skipVerify: true,
+        token,
+        userId: user.id,
+        user: { id: user.id, email: user.email, name: user.name, clientId: user.clientId },
+        message: '2FA disabled — logged in directly',
+      });
+    }
+
     // Generate 6-digit code
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const sessionToken = crypto.randomBytes(32).toString('hex');
@@ -48,7 +64,6 @@ export async function POST(req: Request) {
       await sendPortalVerificationCode(user.email, user.name, code);
     } catch (emailErr) {
       console.error('Failed to send portal 2FA email:', emailErr);
-      // Don't block login if email fails in dev
     }
 
     return NextResponse.json({
