@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react';
 import { useBankToTB } from './BankToTBContext';
 import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RotateCcw } from 'lucide-react';
+import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
 
 function formatGBP(amount: number): string {
   if (!amount) return '';
@@ -17,8 +18,36 @@ function formatDate(dateStr: string): string {
 
 export function BankTransactionsSheet() {
   const { state, dispatch } = useBankToTB();
+  const { updateTask } = useBackgroundTasks();
   const [organising, setOrganising] = useState(false);
   const [restricting, setRestricting] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  async function handleReset() {
+    if (!state.sessionId) return;
+    if (!confirm('This will clear all uploaded files, transactions, trial balance, and journals for this session. Continue?')) return;
+    setResetting(true);
+    try {
+      await fetch('/api/bank-to-tb/reset-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: state.sessionId }),
+      });
+      dispatch({ type: 'SET_FILES', payload: [] });
+      dispatch({ type: 'SET_TRANSACTIONS', payload: [] });
+      dispatch({ type: 'SET_ACCOUNTS', payload: [] });
+      dispatch({ type: 'SET_TRIAL_BALANCE', payload: [] });
+      dispatch({ type: 'SET_MULTI_ACCOUNTS', payload: false });
+      dispatch({ type: 'SET_OUT_OF_PERIOD', payload: false });
+      dispatch({ type: 'SET_OPENING_SOURCE', payload: '' });
+      dispatch({ type: 'SET_VIEW', payload: 'bank-transactions' });
+      updateTask(`btb-${state.sessionId}`, { status: 'completed', completedAt: Date.now() });
+    } catch (err) {
+      console.error('Reset failed:', err);
+    } finally {
+      setResetting(false);
+    }
+  }
 
   const filteredTxns = useMemo(() => {
     let txns = state.transactions.filter(t => t.inPeriod);
@@ -109,6 +138,20 @@ export function BankTransactionsSheet() {
         <span className="text-xs text-slate-500 self-center ml-auto">
           {filteredTxns.length} transaction{filteredTxns.length !== 1 ? 's' : ''}
         </span>
+
+        {/* Reset button — prominent in the spreadsheet toolbar */}
+        {(state.files.length > 0 || state.transactions.length > 0) && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleReset}
+            disabled={resetting}
+            className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+          >
+            {resetting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RotateCcw className="h-3 w-3 mr-1" />}
+            Reset &amp; Clear All
+          </Button>
+        )}
       </div>
 
       {/* Table */}

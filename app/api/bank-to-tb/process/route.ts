@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { downloadBlob } from '@/lib/azure-blob';
+import { processPdf, isPdf } from '@/lib/pdf-to-images';
+import { selectModels, EXTRACTION_PRIORITIES, markModelUnavailable } from '@/lib/ai-extractor';
 import OpenAI from 'openai';
 
 export const maxDuration = 300;
 
-const EXTRACTION_PROMPT = `You are an expert bank statement data extractor. The text below was extracted from a PDF bank statement. The text may be jumbled because PDF table layouts extract imperfectly — column values may appear out of order or on separate lines. Your job is to intelligently reconstruct the transactions.
+const BANK_EXTRACTION_PROMPT = `You are an expert bank statement data extractor. Extract ALL transaction data from this bank statement.
 
 For each transaction, extract:
 - date: The transaction date (format: YYYY-MM-DD)
@@ -18,9 +20,9 @@ For each transaction, extract:
 
 Also extract these header details:
 - bankName: Name of the bank
-- sortCode: Sort code (e.g. "12-34-56")
+- sortCode: Sort code (e.g. "20-37-83")
 - accountNumber: Full account number
-- statementDate: The date printed on the statement
+- statementDate: The date printed on the statement (YYYY-MM-DD)
 - statementPage: Page number if shown
 - openingBalance: Opening balance for this statement page
 - closingBalance: Closing balance for this statement page
@@ -46,9 +48,60 @@ CRITICAL RULES:
 - Dates must be in YYYY-MM-DD format
 - If the year is not shown on each line, infer it from the statement period
 - If amounts have commas, convert to plain numbers
-- If balance is not shown per-transaction, set it to 0`;
+- If balance is not shown per-transaction, set it to 0
+- Do NOT include "Start Balance" or "Balance carried forward" as transactions — only real payment/receipt transactions`;
 
-// POST - process uploaded bank statement files for a session
+// ─── AI call with model fallback (same pattern as ai-extractor.ts) ───────────
+
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 2000;
+
+async function callAIWithFallback(
+  apiKey: string,
+  messages: OpenAI.ChatCompletionMessageParam[],
+  context: string,
+): Promise<string> {
+  const togetherClient = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
+  const models = selectModels(EXTRACTION_PRIORITIES, messages.some(
+    m => Array.isArray(m.content) && m.content.some(c => typeof c === 'object' && 'type' in c && c.type === 'image_url')
+  ));
+
+  for (const model of models) {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        console.log(`[BankToTB] Calling ${model} (attempt ${attempt + 1}) for ${context}`);
+        const result = await togetherClient.chat.completions.create({
+          model,
+          messages,
+          max_tokens: 16000,
+          temperature: 0.1,
+        });
+        let content = result.choices?.[0]?.message?.content?.trim() || '';
+        content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        if (content.length > 10) {
+          console.log(`[BankToTB] ${model} returned ${content.length} chars for ${context}`);
+          return content;
+        }
+        console.warn(`[BankToTB] ${model} returned empty/short response for ${context}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[BankToTB] ${model} attempt ${attempt + 1} failed: ${msg}`);
+        if (msg.includes('404') || msg.includes('model not found') || msg.includes('does not exist')) {
+          markModelUnavailable(model);
+          break; // Skip to next model
+        }
+        if (attempt < MAX_RETRIES - 1) {
+          const delay = BASE_BACKOFF_MS * Math.pow(2, attempt);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+  }
+  throw new Error('All AI models failed for bank statement extraction');
+}
+
+// ─── POST handler ────────────────────────────────────────────────────────────
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
@@ -79,23 +132,20 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
   if (!apiKey) {
     console.error('[BankToTB Process] No TOGETHER_DOC_SUMMARY_KEY or TOGETHER_API_KEY set');
-    // Mark all uploaded files as failed
     await prisma.bankToTBFile.updateMany({
       where: { sessionId, status: 'uploaded' },
       data: { status: 'failed', errorMessage: 'AI extraction service not configured. Contact your administrator.' },
     });
-    return NextResponse.json({ error: 'AI extraction service not configured. Check TOGETHER_DOC_SUMMARY_KEY or TOGETHER_API_KEY.' }, { status: 500 });
+    return NextResponse.json({ error: 'AI extraction service not configured.' }, { status: 500 });
   }
 
-  const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
-  const results: { fileId: string; status: string; transactionCount: number }[] = [];
-
+  const results: { fileId: string; status: string; transactionCount: number; error?: string }[] = [];
   const totalFiles = btbSession.files.length;
 
   for (let fi = 0; fi < btbSession.files.length; fi++) {
     const file = btbSession.files[fi];
     try {
-      // Mark as processing and update background task progress
+      // Mark as processing
       await prisma.bankToTBFile.update({
         where: { id: file.id },
         data: { status: 'processing' },
@@ -106,142 +156,95 @@ export async function POST(req: NextRequest) {
         data: { progress: { sessionId, fileCount: totalFiles, processed: fi, currentFile: file.originalName, stage: 'downloading' } },
       });
 
-      // Download file from blob
+      // Download from Azure Blob
+      console.log(`[BankToTB] Downloading ${file.originalName} from ${file.storagePath}`);
       const buffer = await downloadBlob(file.storagePath, file.containerName);
+      console.log(`[BankToTB] Downloaded ${buffer.length} bytes for ${file.originalName}`);
 
-      // Extract text from PDF
-      let extractedText = '';
-
-      if (file.mimeType === 'application/pdf') {
-        // Try pdf-parse first (most reliable on serverless)
-        try {
-          console.log(`[BankToTB] Trying pdf-parse for ${file.originalName}`);
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const pdfParse = require('pdf-parse');
-          const result = await pdfParse(buffer) as { text: string };
-          extractedText = result.text || '';
-          console.log(`[BankToTB] pdf-parse extracted ${extractedText.length} chars from ${file.originalName}`);
-        } catch (pdfParseErr) {
-          console.warn(`[BankToTB] pdf-parse failed for ${file.originalName}:`, pdfParseErr instanceof Error ? pdfParseErr.message : pdfParseErr);
-
-          // Try unpdf as fallback
-          try {
-            console.log(`[BankToTB] Trying unpdf for ${file.originalName}`);
-            const { extractText } = await import('unpdf');
-            const pdfData = new Uint8Array(buffer);
-            const result = await extractText(pdfData);
-            const pages = Array.isArray(result.text) ? result.text : [String(result.text || '')];
-            extractedText = pages.join('\n\n');
-            console.log(`[BankToTB] unpdf extracted ${extractedText.length} chars from ${file.originalName}`);
-          } catch (unpdfErr) {
-            console.warn(`[BankToTB] unpdf failed for ${file.originalName}:`, unpdfErr instanceof Error ? unpdfErr.message : unpdfErr);
-            console.log(`[BankToTB] All PDF text extractors failed — falling through to vision extraction for ${file.originalName}`);
-          }
-        }
-      } else {
-        console.log(`[BankToTB] Image file ${file.originalName} — using vision extraction`);
-      }
-
-      // Update progress: extracting
+      // Update progress
       await prisma.backgroundTask.updateMany({
         where: { userId: session.user.id, type: 'bank-to-tb-parse', status: 'running' },
         data: { progress: { sessionId, fileCount: totalFiles, processed: fi, currentFile: file.originalName, stage: 'extracting' } },
       });
 
-      let responseContent = '';
+      // ── Build AI messages using same approach as Financial Data Extraction ──
+      let messages: OpenAI.ChatCompletionMessageParam[];
 
-      console.log(`[BankToTB] Text length for ${file.originalName}: ${extractedText.length} chars. Using ${extractedText.length >= 10 ? 'text' : 'vision'} extraction.`);
+      if (isPdf(file.mimeType || '')) {
+        // Use processPdf from lib/pdf-to-images.ts (same as Financial Data Extraction)
+        const pdfContent = await processPdf(buffer, 20);
+        console.log(`[BankToTB] PDF mode: ${pdfContent.mode}, pages: ${pdfContent.pageCount}, text: ${pdfContent.text?.length ?? 0} chars`);
 
-      if (extractedText.length >= 10) {
-        // Text-based extraction
-        const maxChunkSize = 20000;
-        const chunks: string[] = [];
-        for (let i = 0; i < extractedText.length; i += maxChunkSize) {
-          chunks.push(extractedText.slice(i, i + maxChunkSize));
-        }
-
-        const chunkPromises = chunks.map((chunk, ci) => {
-          const prompt = ci === 0
-            ? `${EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT ---\n${chunk}`
-            : `Continue extracting ALL transactions from this bank statement. Return ONLY {"transactions": [...], "statementPage": N}.\n\n--- TEXT ---\n${chunk}`;
-
-          return client.chat.completions.create({
-            model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-            messages: [{ role: 'user', content: prompt }],
-            max_tokens: 16000,
-            temperature: 0.1,
-          }).then(r => {
-            let c = r.choices?.[0]?.message?.content?.trim() || '';
-            c = c.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-            return c;
-          }).catch(() => '');
-        });
-
-        const chunkResults = await Promise.all(chunkPromises);
-
-        const allTransactions: Record<string, unknown>[] = [];
-        let metadata: Record<string, unknown> = {};
-
-        for (let ci = 0; ci < chunkResults.length; ci++) {
-          const jsonMatch = chunkResults[ci].match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[0]);
-              if (ci === 0) {
-                metadata = { ...parsed };
-                delete metadata.transactions;
-              }
-              if (Array.isArray(parsed.transactions)) {
-                allTransactions.push(...parsed.transactions);
-              }
-            } catch { /* skip */ }
-          }
-        }
-
-        responseContent = JSON.stringify({ ...metadata, transactions: allTransactions });
-      } else {
-        // Vision-based for images or scanned PDFs
-        const base64Data = buffer.toString('base64');
-        const mimeType = file.mimeType || 'application/pdf';
-
-        const result = await client.chat.completions.create({
-          model: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-          messages: [{
-            role: 'user',
+        if (pdfContent.mode === 'text' && pdfContent.text) {
+          // Text-based extraction — send extracted text to AI
+          messages = [{
+            role: 'user' as const,
+            content: `${BANK_EXTRACTION_PROMPT}\n\n--- BANK STATEMENT TEXT ---\n${pdfContent.text.slice(0, 40000)}`,
+          }];
+        } else {
+          // Scanned PDF — send as image to vision model
+          console.log(`[BankToTB] Scanned/image PDF — using vision extraction for ${file.originalName}`);
+          const base64Data = buffer.toString('base64');
+          messages = [{
+            role: 'user' as const,
             content: [
-              { type: 'text', text: EXTRACTION_PROMPT },
-              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+              { type: 'text' as const, text: BANK_EXTRACTION_PROMPT },
+              { type: 'image_url' as const, image_url: { url: `data:application/pdf;base64,${base64Data}` } },
             ],
-          }],
-          max_tokens: 8000,
-          temperature: 0.1,
-        });
-
-        responseContent = result.choices?.[0]?.message?.content?.trim() || '';
-        responseContent = responseContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+          }];
+        }
+      } else {
+        // Image file — send directly as image to vision model
+        console.log(`[BankToTB] Image file — using vision extraction for ${file.originalName}`);
+        const base64Data = buffer.toString('base64');
+        const mimeType = file.mimeType || 'image/png';
+        messages = [{
+          role: 'user' as const,
+          content: [
+            { type: 'text' as const, text: BANK_EXTRACTION_PROMPT },
+            { type: 'image_url' as const, image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+          ],
+        }];
       }
 
-      // Parse response
+      // ── Call AI with model fallback and retry ──
+      const responseContent = await callAIWithFallback(apiKey, messages, file.originalName);
+
+      // Parse JSON response
       const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
+        console.error(`[BankToTB] No JSON in AI response for ${file.originalName}. Response: ${responseContent.slice(0, 200)}`);
         await prisma.bankToTBFile.update({
           where: { id: file.id },
-          data: { status: 'failed', errorMessage: 'No valid JSON returned from AI extraction' },
+          data: { status: 'failed', errorMessage: 'AI did not return valid JSON. The bank statement format may not be supported.' },
         });
-        results.push({ fileId: file.id, status: 'failed', transactionCount: 0 });
+        results.push({ fileId: file.id, status: 'failed', transactionCount: 0, error: 'No JSON in response' });
         continue;
       }
 
-      const parsed = JSON.parse(jsonMatch[0]);
-      const transactions: Record<string, unknown>[] = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch (parseErr) {
+        console.error(`[BankToTB] JSON parse error for ${file.originalName}:`, parseErr);
+        await prisma.bankToTBFile.update({
+          where: { id: file.id },
+          data: { status: 'failed', errorMessage: 'AI returned malformed JSON.' },
+        });
+        results.push({ fileId: file.id, status: 'failed', transactionCount: 0, error: 'JSON parse error' });
+        continue;
+      }
 
-      // Update progress: saving transactions
+      const transactions: Record<string, unknown>[] = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+      console.log(`[BankToTB] Extracted ${transactions.length} transactions from ${file.originalName}`);
+
+      // Update progress: saving
       await prisma.backgroundTask.updateMany({
         where: { userId: session.user.id, type: 'bank-to-tb-parse', status: 'running' },
         data: { progress: { sessionId, fileCount: totalFiles, processed: fi, currentFile: file.originalName, stage: 'saving', transactionCount: transactions.length } },
       });
 
-      // Create bank transaction records
+      // Save transactions to database
       for (let i = 0; i < transactions.length; i++) {
         const t = transactions[i];
         await prisma.bankTransaction.create({
@@ -264,7 +267,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Update file status
+      // Mark file as extracted
       await prisma.bankToTBFile.update({
         where: { id: file.id },
         data: {
@@ -274,31 +277,23 @@ export async function POST(req: NextRequest) {
       });
 
       results.push({ fileId: file.id, status: 'extracted', transactionCount: transactions.length });
+      console.log(`[BankToTB] Successfully processed ${file.originalName}: ${transactions.length} transactions`);
 
     } catch (err) {
-      console.error(`Failed to process file ${file.id}:`, err);
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
+      console.error(`[BankToTB] Failed to process ${file.originalName}:`, errMsg);
       await prisma.bankToTBFile.update({
         where: { id: file.id },
-        data: {
-          status: 'failed',
-          errorMessage: err instanceof Error ? err.message : 'Unknown error',
-        },
+        data: { status: 'failed', errorMessage: errMsg },
       });
-      results.push({ fileId: file.id, status: 'failed', transactionCount: 0 });
+      results.push({ fileId: file.id, status: 'failed', transactionCount: 0, error: errMsg });
     }
   }
 
-  // Update background task
+  // Update background task to completed
   await prisma.backgroundTask.updateMany({
-    where: {
-      userId: session.user.id,
-      type: 'bank-to-tb-parse',
-      status: 'running',
-    },
-    data: {
-      status: 'completed',
-      result: { results },
-    },
+    where: { userId: session.user.id, type: 'bank-to-tb-parse', status: 'running' },
+    data: { status: 'completed', result: { results } },
   });
 
   return NextResponse.json({ success: true, results });
