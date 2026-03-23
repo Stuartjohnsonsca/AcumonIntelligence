@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Shield, Bot, UserCheck, Code } from 'lucide-react';
 import { RiskChatWindow, type RiskChatMessage } from './RiskChatWindow';
 
@@ -50,31 +50,57 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
   const [messages, setMessages] = useState<RiskChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [planAccepted, setPlanAccepted] = useState(false);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const messageQueue = useRef<string[]>([]);
+  const processingRef = useRef(false);
+  const chatIdRef = useRef<string | null>(initialChatId || null);
 
-  const handleSendMessage = useCallback(async (message: string) => {
+  // Keep chatIdRef in sync
+  chatIdRef.current = chatId;
+
+  const sendToApi = useCallback(async (message: string) => {
+    const res = await fetch('/api/risk/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, chatId: chatIdRef.current, message }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Failed to send message');
+    }
+
+    return res.json();
+  }, [clientId]);
+
+  const processQueue = useCallback(async () => {
+    if (processingRef.current) return;
+    if (messageQueue.current.length === 0) {
+      setIsLoading(false);
+      return;
+    }
+
+    processingRef.current = true;
     setIsLoading(true);
 
+    // Merge all queued messages into one combined message
+    const queued = [...messageQueue.current];
+    messageQueue.current = [];
+    setQueuedCount(0);
+    const combined = queued.length === 1 ? queued[0] : queued.join('\n\n');
+
+    // Show as a single user message (or label it as combined)
     const userMsg: RiskChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: message,
+      content: combined,
     };
     setMessages(prev => [...prev, userMsg]);
 
     try {
-      const res = await fetch('/api/risk/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, chatId, message }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to send message');
-      }
-
-      const data = await res.json();
+      const data = await sendToApi(combined);
       setChatId(data.chatId);
+      chatIdRef.current = data.chatId;
 
       const assistantMsg: RiskChatMessage = {
         id: `assistant-${Date.now()}`,
@@ -92,9 +118,36 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
       };
       setMessages(prev => [...prev, errorMsg]);
     } finally {
-      setIsLoading(false);
+      processingRef.current = false;
+      // Check if more messages arrived while we were processing
+      if (messageQueue.current.length > 0) {
+        processQueue();
+      } else {
+        setIsLoading(false);
+      }
     }
-  }, [clientId, chatId]);
+  }, [sendToApi]);
+
+  const handleSendMessage = useCallback(async (message: string) => {
+    if (processingRef.current) {
+      // Lyra is thinking — queue the message
+      messageQueue.current.push(message);
+      setQueuedCount(messageQueue.current.length);
+
+      // Show queued message in chat immediately so user sees it
+      const queuedMsg: RiskChatMessage = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: message,
+      };
+      setMessages(prev => [...prev, queuedMsg]);
+      return;
+    }
+
+    // Not processing — send immediately
+    messageQueue.current.push(message);
+    processQueue();
+  }, [processQueue]);
 
   async function handleAcceptPlan() {
     if (!chatId) return;
@@ -163,6 +216,7 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
               onAcceptPlan={handleAcceptPlan}
               onRejectPlan={handleRejectPlan}
               isLoading={isLoading}
+              queuedCount={queuedCount}
               className="h-[700px]"
             />
 

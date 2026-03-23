@@ -36,6 +36,7 @@ interface RiskChatWindowProps {
   onAcceptPlan?: () => void;
   onRejectPlan?: () => void;
   isLoading: boolean;
+  queuedCount?: number;
   className?: string;
 }
 
@@ -54,6 +55,7 @@ export function RiskChatWindow({
   onAcceptPlan,
   onRejectPlan,
   isLoading,
+  queuedCount = 0,
   className,
 }: RiskChatWindowProps) {
   const [input, setInput] = useState('');
@@ -276,26 +278,32 @@ export function RiskChatWindow({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="border-t border-slate-200 p-3 flex gap-2">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Describe your risk concern..."
-          rows={1}
-          className="flex-1 resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-          disabled={isLoading}
-        />
-        <Button
-          type="submit"
-          size="sm"
-          disabled={!input.trim() || isLoading}
-          className="self-end bg-indigo-600 hover:bg-indigo-700"
-        >
-          <Send className="h-4 w-4" />
-        </Button>
+      {/* Input — always enabled so users can queue messages while Lyra thinks */}
+      <form onSubmit={handleSubmit} className="border-t border-slate-200 p-3">
+        {isLoading && queuedCount > 0 && (
+          <div className="mb-2 px-2 py-1 bg-indigo-50 rounded text-[11px] text-indigo-600">
+            {queuedCount} message{queuedCount > 1 ? 's' : ''} queued — will be sent when Lyra finishes thinking
+          </div>
+        )}
+        <div className="flex gap-2">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={isLoading ? "Add more context while Lyra thinks..." : "Describe your risk concern..."}
+            rows={1}
+            className="flex-1 resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            disabled={!input.trim()}
+            className="self-end bg-indigo-600 hover:bg-indigo-700"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
       </form>
     </div>
   );
