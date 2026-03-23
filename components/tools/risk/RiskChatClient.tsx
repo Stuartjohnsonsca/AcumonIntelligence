@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Shield, Bot, UserCheck, Code } from 'lucide-react';
 import { RiskChatWindow, type RiskChatMessage } from './RiskChatWindow';
+import { RiskFeedbackPanel } from './RiskFeedbackPanel';
 
 interface RiskChatClientProps {
   clientId: string;
@@ -51,9 +52,24 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
   const [isLoading, setIsLoading] = useState(false);
   const [planAccepted, setPlanAccepted] = useState(false);
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
+  const [isFeedbackUser, setIsFeedbackUser] = useState(false);
   const messageQueue = useRef<string[]>([]);
   const processingRef = useRef(false);
   const chatIdRef = useRef<string | null>(initialChatId || null);
+
+  // Check if current user is an authorised feedback tester
+  useEffect(() => {
+    async function checkFeedbackAccess() {
+      try {
+        const res = await fetch('/api/risk/feedback');
+        if (res.ok) {
+          const data = await res.json();
+          setIsFeedbackUser(data.isFeedbackUser === true);
+        }
+      } catch { /* ignore */ }
+    }
+    checkFeedbackAccess();
+  }, []);
 
   // Keep chatIdRef in sync
   chatIdRef.current = chatId;
@@ -257,6 +273,16 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
                 tasks, responsibilities, and deadlines.
               </p>
             </div>
+
+            {/* Detailed feedback panel — only visible to authorised testers */}
+            {isFeedbackUser && (
+              <div className="mt-4">
+                <RiskFeedbackPanel
+                  chatId={chatId}
+                  messages={messages}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
