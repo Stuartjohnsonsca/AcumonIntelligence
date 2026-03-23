@@ -23,6 +23,11 @@ export default function PortalLoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
+      if (data.skipVerify) {
+        // 2FA disabled — go directly to dashboard
+        window.location.href = `/portal/dashboard?token=${data.token}`;
+        return;
+      }
       setSessionToken(data.sessionToken);
       setStep('verify');
     } catch (err) {
