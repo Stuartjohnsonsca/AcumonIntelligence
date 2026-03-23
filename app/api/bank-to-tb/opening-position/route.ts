@@ -33,13 +33,20 @@ export async function POST(req: NextRequest) {
   let entries: { accountCode: string; accountName: string; categoryType: string; debit: number; credit: number }[] = [];
 
   if (source === 'firm_standard') {
-    // Load from firm's chart of accounts
-    const accounts = await prisma.firmChartOfAccount.findMany({
-      where: { firmId: user.firmId },
+    // Check for client-specific COA override first, then fall back to firm COA
+    const clientAccounts = await prisma.clientChartOfAccount.findMany({
+      where: { clientId: btbSession.clientId },
       orderBy: { sortOrder: 'asc' },
     });
 
-    entries = accounts.map(a => ({
+    const accounts = clientAccounts.length > 0
+      ? clientAccounts
+      : await prisma.firmChartOfAccount.findMany({
+          where: { firmId: user.firmId },
+          orderBy: { sortOrder: 'asc' },
+        });
+
+    entries = accounts.map((a: { accountCode: string; accountName: string; categoryType: string }) => ({
       accountCode: a.accountCode,
       accountName: a.accountName,
       categoryType: a.categoryType,
@@ -166,13 +173,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (entries.length === 0) {
-    const messages: Record<string, string> = {
-      firm_standard: 'No Chart of Accounts found for your firm. Please ask a Firm Admin to upload one first.',
-      upload: 'No account data could be extracted from the uploaded file. Please check the format includes account names and amounts.',
-      paste: 'No valid rows found in the pasted data. Please check the format.',
-      prior_period: 'No prior period trial balance found. There must be a completed session for the period ending the day before this period starts.',
-    };
-    return NextResponse.json({ error: messages[source] || 'No data found for the selected source' }, { status: 400 });
+    return NextResponse.json({ error: 'No data found for the selected source' }, { status: 400 });
   }
 
   // Clear existing opening position entries and create new ones

@@ -17,7 +17,8 @@
       "Bash(ls \"C:/Users/stuart/OneDrive - Johnsons Financial Management/AI Toolkit - Documents/Tools/Website/acumon-website/\".env*)",
       "Bash(node -e \"console.log\\(require\\(''next/package.json''\\).version\\)\")",
       "Bash(gh pr:*)",
-      "Bash(grep -n \"=======$\\\\|>>>>>>>\" prisma/schema.prisma)"
+      "Bash(grep -n \"=======$\\\\|>>>>>>>\" prisma/schema.prisma)",
+      "Bash(npx vercel:*)"
     ]
   }
 }

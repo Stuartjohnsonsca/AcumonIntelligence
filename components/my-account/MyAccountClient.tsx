@@ -72,7 +72,7 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
 
         {(isSuperAdmin || isFirmAdmin) && (
           <TabsContent value="firm-settings">
-            <FirmSettingsTab firmId={firmId} />
+            <FirmSettingsTab firmId={firmId} isFirmAdmin={isSuperAdmin || isFirmAdmin} />
           </TabsContent>
         )}
       </Tabs>

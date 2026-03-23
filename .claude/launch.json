@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["next", "dev"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["../../../node_modules/next/dist/bin/next", "dev", "--webpack"],
       "port": 3000,
       "autoPort": true
     }

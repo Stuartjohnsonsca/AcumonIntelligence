@@ -9,12 +9,12 @@ function TaskDot({ task }: { task: BackgroundTask }) {
   const router = useRouter();
 
   const dotColor = task.status === 'running'
-    ? 'bg-red-500'
+    ? 'bg-orange-500'
     : task.status === 'completed'
       ? 'bg-green-500'
       : 'bg-red-600';
 
-  const animate = task.status === 'running' ? 'animate-pulse' : '';
+  const animate = task.status === 'running' ? 'animate-flash' : '';
 
   const tooltipText = task.status === 'error'
     ? `${task.clientName}: ${task.activity} — Error: ${task.error}`

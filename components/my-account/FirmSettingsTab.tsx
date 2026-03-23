@@ -64,6 +64,7 @@ interface TaxonomyConfig {
 
 interface Props {
   firmId: string;
+  isFirmAdmin?: boolean;
 }
 
 export function FirmSettingsTab({ firmId }: Props) {
