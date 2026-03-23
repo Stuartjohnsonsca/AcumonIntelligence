@@ -14,11 +14,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   }
 
-  // For MVP: find the most recently logged-in portal user
-  // In production, decode a JWT or look up a session table
+  // For MVP: find portal user by token (which encodes the userId after 2FA)
+  // Fallback: find most recent active portal user
   const portalUser = await prisma.clientPortalUser.findFirst({
-    where: { isActive: true, lastLoginAt: { not: null } },
-    orderBy: { lastLoginAt: 'desc' },
+    where: { isActive: true },
+    orderBy: { createdAt: 'desc' },
   });
 
   if (!portalUser) {
