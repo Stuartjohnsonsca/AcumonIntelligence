@@ -14,19 +14,21 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   }
 
-  // For MVP: find portal user by token (which encodes the userId after 2FA)
-  // Fallback: find most recent active portal user
-  const portalUser = await prisma.clientPortalUser.findFirst({
+  // For MVP: find all portal users for this email, then query all their clients
+  // In production, use proper JWT/session with specific user ID
+  const portalUsers = await prisma.clientPortalUser.findMany({
     where: { isActive: true },
-    orderBy: { createdAt: 'desc' },
+    select: { clientId: true },
   });
 
-  if (!portalUser) {
-    return NextResponse.json({ error: 'No authenticated portal user found' }, { status: 401 });
+  if (portalUsers.length === 0) {
+    return NextResponse.json({ error: 'No portal users found' }, { status: 401 });
   }
 
+  const clientIds = [...new Set(portalUsers.map(u => u.clientId))];
+
   const requests = await prisma.auditEvidenceRequest.findMany({
-    where: { clientId: portalUser.clientId },
+    where: { clientId: { in: clientIds } },
     include: {
       uploads: {
         select: {
