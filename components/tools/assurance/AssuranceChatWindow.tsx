@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Calendar } from 'lucide-react';
+import { Send, Loader2, Calendar, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -24,6 +24,7 @@ interface AssuranceChatWindowProps {
   onSubToolRecommended?: (subTool: string) => void;
   onBookingRequested?: () => void;
   isLoading: boolean;
+  queuedMessages?: string[];
   welcomeMessage?: string;
   className?: string;
 }
@@ -37,17 +38,37 @@ const SUB_TOOL_DISPLAY: Record<string, string> = {
 };
 
 export function AssuranceChatWindow({
+  chatId,
   messages,
   onSendMessage,
   onSubToolRecommended,
   onBookingRequested,
   isLoading,
+  queuedMessages = [],
   welcomeMessage = 'How can we help you today? What are your concerns? I can help produce terms of reference for any particular area.',
   className,
 }: AssuranceChatWindowProps) {
   const [input, setInput] = useState('');
+  const [feedback, setFeedback] = useState<Record<string, 'positive' | 'negative'>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  async function handleFeedback(messageId: string, rating: 'positive' | 'negative') {
+    if (feedback[messageId] === rating) {
+      setFeedback(prev => { const next = { ...prev }; delete next[messageId]; return next; });
+      return;
+    }
+    setFeedback(prev => ({ ...prev, [messageId]: rating }));
+    try {
+      await fetch('/api/assurance/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId, messageId, rating }),
+      });
+    } catch (err) {
+      console.error('Failed to submit feedback:', err);
+    }
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -112,6 +133,41 @@ export function AssuranceChatWindow({
                 ))}
               </div>
 
+              {/* Feedback buttons for assistant messages */}
+              {msg.role === 'assistant' && (
+                <div className="flex items-center gap-1 mt-1.5">
+                  <button
+                    onClick={() => handleFeedback(msg.id, 'positive')}
+                    className={cn(
+                      'p-1 rounded transition-colors',
+                      feedback[msg.id] === 'positive'
+                        ? 'text-emerald-600 bg-emerald-50'
+                        : 'text-slate-300 hover:text-emerald-500 hover:bg-emerald-50',
+                    )}
+                    title="Helpful response"
+                  >
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleFeedback(msg.id, 'negative')}
+                    className={cn(
+                      'p-1 rounded transition-colors',
+                      feedback[msg.id] === 'negative'
+                        ? 'text-red-600 bg-red-50'
+                        : 'text-slate-300 hover:text-red-500 hover:bg-red-50',
+                    )}
+                    title="Not helpful"
+                  >
+                    <ThumbsDown className="h-3.5 w-3.5" />
+                  </button>
+                  {feedback[msg.id] && (
+                    <span className="text-[10px] text-slate-400 ml-1">
+                      {feedback[msg.id] === 'positive' ? 'Thanks for the feedback!' : 'We\'ll improve — thanks!'}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Sub-tool recommendation badge */}
               {msg.metadata?.recommendedSubTool && (
                 <div className="mt-2">
@@ -158,26 +214,41 @@ export function AssuranceChatWindow({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="border-t border-slate-200 p-3 flex gap-2">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Type your message..."
-          rows={1}
-          className="flex-1 resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          disabled={isLoading}
-        />
-        <Button
-          type="submit"
-          size="sm"
-          disabled={!input.trim() || isLoading}
-          className="self-end"
-        >
-          <Send className="h-4 w-4" />
-        </Button>
+      {/* Input — always enabled so users can queue messages while AI thinks */}
+      <form onSubmit={handleSubmit} className="border-t border-slate-200 p-3">
+        {isLoading && queuedMessages.length > 0 && (
+          <div className="mb-2 px-2 py-1.5 bg-blue-50 rounded border border-blue-100">
+            <p className="text-[11px] font-medium text-blue-700 mb-1">
+              {queuedMessages.length} queued — will be merged and sent when AI finishes:
+            </p>
+            <ol className="list-decimal list-inside space-y-0.5">
+              {queuedMessages.map((msg, i) => (
+                <li key={i} className="text-[11px] text-blue-600 truncate">
+                  {msg.length > 80 ? msg.slice(0, 80) + '...' : msg}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={isLoading ? "Add more context while AI thinks..." : "Type your message..."}
+            rows={1}
+            className="flex-1 resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            disabled={!input.trim()}
+            className="self-end"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
       </form>
     </div>
   );

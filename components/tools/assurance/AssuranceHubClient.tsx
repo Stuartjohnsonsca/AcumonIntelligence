@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Shield, Cpu, Users, Leaf, Scale } from 'lucide-react';
 import { AssuranceChatWindow, type ChatMessage } from './AssuranceChatWindow';
@@ -65,34 +65,49 @@ export function AssuranceHubClient({ clientId, clientName, initialChatId }: Assu
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [recommendedTool, setRecommendedTool] = useState<string | null>(null);
+  const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
+  const messageQueue = useRef<string[]>([]);
+  const processingRef = useRef(false);
+  const chatIdRef = useRef<string | null>(initialChatId || null);
 
-  const handleSendMessage = useCallback(async (message: string) => {
+  chatIdRef.current = chatId;
+
+  const sendToApi = useCallback(async (message: string) => {
+    const res = await fetch('/api/assurance/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, chatId: chatIdRef.current, message, mode: 'triage' }),
+    });
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Failed to send message');
+    }
+    return res.json();
+  }, [clientId]);
+
+  const processQueue = useCallback(async () => {
+    if (processingRef.current) return;
+    if (messageQueue.current.length === 0) {
+      setIsLoading(false);
+      return;
+    }
+
+    processingRef.current = true;
     setIsLoading(true);
 
-    // Add user message optimistically
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: message,
-    };
-    setMessages(prev => [...prev, userMsg]);
+    const queued = [...messageQueue.current];
+    messageQueue.current = [];
+    setQueuedMessages([]);
+
+    const combined = queued.length === 1
+      ? queued[0]
+      : queued.map((msg, i) => `[${i + 1}] ${msg}`).join('\n\n');
 
     try {
-      const res = await fetch('/api/assurance/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, chatId, message, mode: 'triage' }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to send message');
-      }
-
-      const data = await res.json();
+      const data = await sendToApi(combined);
       setChatId(data.chatId);
+      chatIdRef.current = data.chatId;
 
-      // Add assistant response
       const assistantMsg: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -113,9 +128,33 @@ export function AssuranceHubClient({ clientId, clientName, initialChatId }: Assu
       };
       setMessages(prev => [...prev, errorMsg]);
     } finally {
-      setIsLoading(false);
+      processingRef.current = false;
+      if (messageQueue.current.length > 0) {
+        processQueue();
+      } else {
+        setIsLoading(false);
+      }
     }
-  }, [clientId, chatId]);
+  }, [sendToApi]);
+
+  const handleSendMessage = useCallback(async (message: string) => {
+    // Show user message in chat immediately
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: message,
+    };
+    setMessages(prev => [...prev, userMsg]);
+
+    if (processingRef.current) {
+      messageQueue.current.push(message);
+      setQueuedMessages([...messageQueue.current]);
+      return;
+    }
+
+    messageQueue.current.push(message);
+    processQueue();
+  }, [processQueue]);
 
   function handleSubToolClick(subToolKey: string) {
     const tool = SUB_TOOLS.find(t => t.key === subToolKey);
@@ -160,6 +199,7 @@ export function AssuranceHubClient({ clientId, clientName, initialChatId }: Assu
               onSubToolRecommended={handleSubToolClick}
               onBookingRequested={handleBooking}
               isLoading={isLoading}
+              queuedMessages={queuedMessages}
               className="h-[600px]"
             />
           </div>
