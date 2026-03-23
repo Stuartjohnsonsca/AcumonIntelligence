@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Upload, CheckCircle2, AlertCircle, Loader2, X, FileText,
+  Upload, CheckCircle2, AlertCircle, Loader2, X, FileText, Mail, MapPin,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -23,7 +23,6 @@ interface EvidenceRequest {
   intercompanyRequired: boolean;
   directorMatters: boolean;
   status: string;
-  // Data source info from sampling
   run?: { engagement?: { auditArea?: string } };
   uploads: {
     id: string;
@@ -45,7 +44,7 @@ const EVIDENCE_COLUMNS = [
   { key: 'directorMatters', label: 'Director Matters' },
 ] as const;
 
-type EvidenceKey = (typeof EVIDENCE_COLUMNS)[number]['key'];
+const CONFIRMATION_TYPES = new Set(['supplierConfirmation', 'debtorConfirmation']);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -53,17 +52,17 @@ function getStatusForColumn(request: EvidenceRequest, key: string): 'blank' | 'r
   const required = (request as unknown as Record<string, unknown>)[key];
   if (!required) return 'blank';
   const uploads = request.uploads.filter(u => u.evidenceType === key);
-  if (uploads.length === 0) return 'red'; // Required, not uploaded
+  if (uploads.length === 0) return 'red';
   const latest = uploads[uploads.length - 1];
-  if (latest.firmAccepted === false) return 'red'; // Rejected
-  if (latest.aiVerified === true || latest.firmAccepted === true) return 'green'; // Verified
-  return 'orange'; // Uploaded, pending verification
+  if (latest.firmAccepted === false) return 'red';
+  if (latest.aiVerified === true || latest.firmAccepted === true) return 'green';
+  return 'orange';
 }
 
-const DOT_COLORS = {
+const DOT_STYLES = {
   blank: '',
-  red: 'bg-red-500',
-  orange: 'bg-orange-400',
+  red: 'bg-red-500 hover:bg-red-600 cursor-pointer ring-2 ring-transparent hover:ring-red-200',
+  orange: 'bg-orange-400 hover:bg-orange-500 cursor-pointer ring-2 ring-transparent hover:ring-orange-200',
   green: 'bg-green-500',
 };
 
@@ -73,10 +72,21 @@ export default function PortalDashboardPage() {
   const [requests, setRequests] = useState<EvidenceRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [uploadingKey, setUploadingKey] = useState<string | null>(null); // "reqId:colKey"
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [bulkFiles, setBulkFiles] = useState<{ file: File; mappedRequestId: string }[]>([]);
   const [activeTab, setActiveTab] = useState('all');
+
+  // Confirmation popup state (for supplier/debtor)
+  const [confirmPopup, setConfirmPopup] = useState<{ requestId: string; evidenceType: string; label: string } | null>(null);
+  const [confirmMode, setConfirmMode] = useState<'email' | 'postal'>('email');
+  const [confirmContact, setConfirmContact] = useState('');
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [confirmAddress, setConfirmAddress] = useState({ line1: '', line2: '', city: '', postcode: '', country: '' });
+  const [confirmSending, setConfirmSending] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingUpload, setPendingUpload] = useState<{ requestId: string; evidenceType: string } | null>(null);
 
   const token = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('token') || ''
@@ -86,8 +96,7 @@ export default function PortalDashboardPage() {
     try {
       const res = await fetch(`/api/portal/evidence?token=${token}`);
       if (!res.ok) throw new Error('Failed to load requests');
-      const data = await res.json();
-      setRequests(data);
+      setRequests(await res.json());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load');
     }
@@ -113,7 +122,6 @@ export default function PortalDashboardPage() {
 
   const filteredRequests = dataTypes.get(activeTab) || requests;
 
-  // ─── Summary counts per tab ───────────────────────────────────────────
   function getTabCounts(reqs: EvidenceRequest[]) {
     let red = 0, orange = 0, green = 0;
     for (const req of reqs) {
@@ -127,16 +135,16 @@ export default function PortalDashboardPage() {
     return { red, orange, green };
   }
 
-  // ─── Upload handler ───────────────────────────────────────────────────
+  // ─── File upload handler ──────────────────────────────────────────────
   const handleUpload = async (requestId: string, evidenceType: string, file: File) => {
-    setUploadingId(requestId);
+    const key = `${requestId}:${evidenceType}`;
+    setUploadingKey(key);
     try {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('requestId', requestId);
       formData.append('evidenceType', evidenceType);
       formData.append('token', token);
-
       const res = await fetch('/api/portal/evidence/upload', { method: 'POST', body: formData });
       if (!res.ok) {
         const err = await res.json().catch(() => null);
@@ -146,42 +154,85 @@ export default function PortalDashboardPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     }
-    setUploadingId(null);
+    setUploadingKey(null);
   };
 
-  if (loading) {
-    return <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 text-blue-500 animate-spin" /></div>;
-  }
+  // ─── Dot click handler ────────────────────────────────────────────────
+  const handleDotClick = (req: EvidenceRequest, colKey: string, colLabel: string) => {
+    const status = getStatusForColumn(req, colKey);
+    if (status === 'green') return; // Already verified, no action
 
-  if (error && requests.length === 0) {
-    return <div className="text-center py-20"><AlertCircle className="h-10 w-10 text-red-400 mx-auto mb-3" /><p className="text-sm text-red-600">{error}</p></div>;
-  }
+    // Supplier/Debtor confirmation opens contact popup
+    if (CONFIRMATION_TYPES.has(colKey)) {
+      setConfirmPopup({ requestId: req.id, evidenceType: colKey, label: colLabel });
+      setConfirmMode('email');
+      setConfirmContact(req.contact || '');
+      setConfirmEmail('');
+      setConfirmAddress({ line1: '', line2: '', city: '', postcode: '', country: '' });
+      return;
+    }
+
+    // All other types open file picker
+    setPendingUpload({ requestId: req.id, evidenceType: colKey });
+    setTimeout(() => fileInputRef.current?.click(), 50);
+  };
+
+  // ─── Submit confirmation request ──────────────────────────────────────
+  const handleSubmitConfirmation = async () => {
+    if (!confirmPopup) return;
+    setConfirmSending(true);
+    try {
+      const formData = new FormData();
+      const details = confirmMode === 'email'
+        ? `Contact: ${confirmContact}\nEmail: ${confirmEmail}`
+        : `Contact: ${confirmContact}\nAddress: ${confirmAddress.line1}, ${confirmAddress.line2}, ${confirmAddress.city}, ${confirmAddress.postcode}, ${confirmAddress.country}`;
+      const blob = new Blob([details], { type: 'text/plain' });
+      formData.append('file', blob, `${confirmPopup.evidenceType}_request.txt`);
+      formData.append('requestId', confirmPopup.requestId);
+      formData.append('evidenceType', confirmPopup.evidenceType);
+      formData.append('token', token);
+      const res = await fetch('/api/portal/evidence/upload', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error('Failed to submit confirmation request');
+      await loadRequests();
+      setConfirmPopup(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Submission failed');
+    }
+    setConfirmSending(false);
+  };
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-8 w-8 text-blue-500 animate-spin" /></div>;
+  if (error && requests.length === 0) return <div className="text-center py-20"><AlertCircle className="h-10 w-10 text-red-400 mx-auto mb-3" /><p className="text-sm text-red-600">{error}</p></div>;
 
   return (
     <div className="space-y-6">
+      {/* Hidden file input for dot-click uploads */}
+      <input ref={fileInputRef} type="file" className="hidden" onChange={e => {
+        const file = e.target.files?.[0];
+        if (file && pendingUpload) {
+          handleUpload(pendingUpload.requestId, pendingUpload.evidenceType, file);
+          setPendingUpload(null);
+        }
+        e.target.value = '';
+      }} />
+
       <div>
         <h1 className="text-xl font-bold text-slate-900">Audit Team Requests</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Below are the audit evidence items requested by your audit team. Please upload the relevant
-          documents for each item. Once uploaded, the system will verify the document matches the request.
+          Below are the audit evidence items requested by your audit team. Click a <span className="text-red-500 font-medium">red dot</span> to upload evidence for that category.
         </p>
       </div>
 
       {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
 
-      {/* Data type tabs with status dot summaries underneath */}
+      {/* Tabs with dots underneath */}
       <div className="flex items-end gap-3 flex-wrap">
         {[...dataTypes.entries()].map(([type, reqs]) => {
           const counts = getTabCounts(reqs);
           const isActive = activeTab === type;
           return (
-            <button
-              key={type}
-              onClick={() => setActiveTab(type)}
-              className={`flex flex-col items-center gap-1 px-4 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                isActive ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
+            <button key={type} onClick={() => setActiveTab(type)}
+              className={`flex flex-col items-center gap-1 px-4 py-1.5 text-xs font-medium rounded-lg transition-colors ${isActive ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
               <span>{type === 'all' ? 'All' : type}</span>
               <span className="flex items-center gap-1.5">
                 {counts.red > 0 && <span className="flex items-center gap-0.5"><span className="w-2 h-2 rounded-full bg-red-500" /><span className={`text-[9px] ${isActive ? 'text-red-200' : 'text-red-500'}`}>{counts.red}</span></span>}
@@ -193,10 +244,7 @@ export default function PortalDashboardPage() {
           );
         })}
         <div className="ml-auto">
-          <button
-            onClick={() => setShowBulkUpload(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
+          <button onClick={() => setShowBulkUpload(true)} className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
             <Upload className="h-3.5 w-3.5" /> Bulk Upload
           </button>
         </div>
@@ -214,12 +262,11 @@ export default function PortalDashboardPage() {
                 <th className="px-3 py-2.5 text-left font-semibold text-slate-600">Date</th>
                 {EVIDENCE_COLUMNS.map(col => (
                   <th key={col.key} className="px-1 py-2.5 text-center w-8">
-                    <div className="writing-mode-vertical text-[9px] font-semibold text-slate-500" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', whiteSpace: 'nowrap', height: '70px', display: 'flex', alignItems: 'center' }}>
+                    <div className="text-[9px] font-semibold text-slate-500" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', whiteSpace: 'nowrap', height: '70px', display: 'flex', alignItems: 'center' }}>
                       {col.label}
                     </div>
                   </th>
                 ))}
-                <th className="px-2 py-2.5 text-center font-semibold text-slate-600 w-20">Upload</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -227,11 +274,6 @@ export default function PortalDashboardPage() {
                 const allDone = EVIDENCE_COLUMNS.every(col => {
                   if (!(req as unknown as Record<string, unknown>)[col.key]) return true;
                   return req.uploads.some(u => u.evidenceType === col.key && (u.aiVerified || u.firmAccepted));
-                });
-                // Find the first evidence type that still needs uploading
-                const neededType = EVIDENCE_COLUMNS.find(col => {
-                  const s = getStatusForColumn(req, col.key);
-                  return s === 'red';
                 });
                 return (
                   <tr key={req.id} className={allDone ? 'bg-green-50/30' : ''}>
@@ -241,41 +283,22 @@ export default function PortalDashboardPage() {
                     <td className="px-3 py-2 text-slate-500">{req.date || '—'}</td>
                     {EVIDENCE_COLUMNS.map(col => {
                       const status = getStatusForColumn(req, col.key);
+                      const isUploading = uploadingKey === `${req.id}:${col.key}`;
                       return (
                         <td key={col.key} className="px-1 py-2 text-center">
-                          {status !== 'blank' && (
-                            <div className={`w-3 h-3 rounded-full mx-auto ${DOT_COLORS[status]}`} />
+                          {status === 'blank' ? null : isUploading ? (
+                            <Loader2 className="h-3 w-3 text-blue-500 animate-spin mx-auto" />
+                          ) : (
+                            <button
+                              onClick={() => handleDotClick(req, col.key, col.label)}
+                              disabled={status === 'green'}
+                              title={status === 'red' ? `Click to upload ${col.label}` : status === 'orange' ? `${col.label} uploaded, pending verification` : `${col.label} verified`}
+                              className={`w-3.5 h-3.5 rounded-full mx-auto block transition-all ${DOT_STYLES[status]}`}
+                            />
                           )}
                         </td>
                       );
                     })}
-                    <td className="px-2 py-2 text-center">
-                      {allDone ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-600 mx-auto" />
-                      ) : neededType ? (
-                        <label className={`inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded cursor-pointer transition-colors ${
-                          uploadingId === req.id
-                            ? 'bg-slate-100 text-slate-400'
-                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
-                        }`}>
-                          {uploadingId === req.id
-                            ? <Loader2 className="h-3 w-3 animate-spin" />
-                            : <Upload className="h-3 w-3" />}
-                          Upload
-                          <input
-                            type="file"
-                            className="hidden"
-                            disabled={uploadingId === req.id}
-                            onChange={e => {
-                              const file = e.target.files?.[0];
-                              if (file && neededType) handleUpload(req.id, neededType.key, file);
-                            }}
-                          />
-                        </label>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
-                    </td>
                   </tr>
                 );
               })}
@@ -286,12 +309,99 @@ export default function PortalDashboardPage() {
 
       {/* Legend */}
       <div className="flex items-center gap-4 text-[10px] text-slate-500">
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500" />Awaiting upload</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-orange-400" />Uploaded (pending verification)</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500" />Click to upload</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-orange-400" />Uploaded (pending)</span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500" />Verified</span>
       </div>
 
-      {/* Bulk Upload Modal */}
+      {/* ─── Supplier/Debtor Confirmation Popup ─────────────────────────── */}
+      {confirmPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 flex flex-col">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-900">{confirmPopup.label} Request</h3>
+              <button onClick={() => setConfirmPopup(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <p className="text-xs text-slate-500">
+                Enter the contact details for the {confirmPopup.label.toLowerCase()} request.
+              </p>
+
+              {/* Contact name */}
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Contact Name</label>
+                <input type="text" value={confirmContact} onChange={e => setConfirmContact(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Contact name" />
+              </div>
+
+              {/* Email / Postal toggle */}
+              <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+                <button onClick={() => setConfirmMode('email')}
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    confirmMode === 'email' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                  <Mail className="h-3 w-3" /> Email
+                </button>
+                <button onClick={() => setConfirmMode('postal')}
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    confirmMode === 'postal' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                  <MapPin className="h-3 w-3" /> Postal
+                </button>
+              </div>
+
+              {confirmMode === 'email' ? (
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Email Address</label>
+                  <input type="email" value={confirmEmail} onChange={e => setConfirmEmail(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="email@example.com" />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Address Line 1</label>
+                    <input type="text" value={confirmAddress.line1} onChange={e => setConfirmAddress(prev => ({ ...prev, line1: e.target.value }))}
+                      className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Address Line 2</label>
+                    <input type="text" value={confirmAddress.line2} onChange={e => setConfirmAddress(prev => ({ ...prev, line2: e.target.value }))}
+                      className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">City</label>
+                      <input type="text" value={confirmAddress.city} onChange={e => setConfirmAddress(prev => ({ ...prev, city: e.target.value }))}
+                        className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Postcode</label>
+                      <input type="text" value={confirmAddress.postcode} onChange={e => setConfirmAddress(prev => ({ ...prev, postcode: e.target.value }))}
+                        className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Country</label>
+                    <input type="text" value={confirmAddress.country} onChange={e => setConfirmAddress(prev => ({ ...prev, country: e.target.value }))}
+                      className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      placeholder="United Kingdom" />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={() => setConfirmPopup(null)} className="px-4 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 rounded-md hover:bg-slate-200">Cancel</button>
+              <button onClick={handleSubmitConfirmation} disabled={confirmSending || !confirmContact || (confirmMode === 'email' ? !confirmEmail : !confirmAddress.line1)}
+                className="px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-40">
+                {confirmSending ? <Loader2 className="h-3 w-3 animate-spin inline mr-1" /> : null}
+                Submit Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Bulk Upload Modal ──────────────────────────────────────────── */}
       {showBulkUpload && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
@@ -324,9 +434,7 @@ export default function PortalDashboardPage() {
                     </div>
                   ))}
                   {bulkFiles.some(f => !f.mappedRequestId) && (
-                    <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-                      All files must be mapped to a request before uploading.
-                    </div>
+                    <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">All files must be mapped to a request before uploading.</div>
                   )}
                 </div>
               )}
