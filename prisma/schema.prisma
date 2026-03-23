@@ -15,6 +15,8 @@ model Firm {
   id         String   @id @default(uuid())
   name       String
   dataRegion String   @default("uk") @map("data_region") // uk | eu | us | ap — determines where data is processed and stored
+  taxonomySourceType       String?  @map("taxonomy_source_type") // "url" | "file" — once set, locked for the firm
+  taxonomyEndpointUrl      String?  @map("taxonomy_endpoint_url") // URL/API endpoint when sourceType = "url"
   chartOfAccountsBlobPath  String?  @map("chart_of_accounts_blob_path")
   chartOfAccountsContainer String?  @map("chart_of_accounts_container")
   chartOfAccountsFileName  String?  @map("chart_of_accounts_file_name")
@@ -22,11 +24,15 @@ model Firm {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  users              User[]
-  clients            Client[]
-  samplingConfig     FirmSamplingConfig?
-  chartOfAccounts    FirmChartOfAccount[]
+  users               User[]
+  clients             Client[]
+  samplingConfig      FirmSamplingConfig?
+  chartOfAccounts     FirmChartOfAccount[]
   accountCodeMappings AccountCodeMapping[]
+  assuranceChats       AssuranceChat[]
+  assuranceEngagements AssuranceEngagement[]
+  riskChats            RiskChat[]
+  iaFeedbackUsers      IAFeedbackUser[]
 
   @@map("firms")
 }
@@ -63,6 +69,11 @@ model User {
   bankToTBSessions           BankToTBSession[]
   bankAuditSessions          BankAuditSession[]
   toolSessions               ToolSession[]
+  assuranceChats             AssuranceChat[]
+  assuranceEngagements       AssuranceEngagement[]
+  riskChats                  RiskChat[]
+  iaFeedbackRoles            IAFeedbackUser[]
+  assuranceFeedback          AssuranceFeedback[]
 
   @@map("users")
 }
@@ -110,6 +121,7 @@ model Client {
   software            String?
   contactName         String?  @map("contact_name")
   contactEmail        String?  @map("contact_email")
+  sector              String?  // Financial Services, Healthcare, Manufacturing, Technology, Public Sector, Retail, Energy, Education, Construction, Legal, Charities & Non-Profit
   portfolioManagerId  String?  @map("portfolio_manager_id")
   isActive            Boolean  @default(true) @map("is_active")
   readOnly            Boolean  @default(false) @map("read_only")
@@ -134,6 +146,10 @@ model Client {
   chartOfAccounts        ClientChartOfAccount[]
   bankAuditSessions      BankAuditSession[]
   fsAssertionMappings    FSAssertionMapping[]
+  assuranceChats         AssuranceChat[]
+  assuranceEngagements   AssuranceEngagement[]
+  assuranceScores        AssuranceScore[]
+  riskChats              RiskChat[]
 
   @@map("clients")
 }
@@ -904,6 +920,189 @@ model EvidenceUpload {
   @@map("evidence_uploads")
 }
 
+// ─── Assurance Hub ──────────────────────────────────────────────────────────
+
+model AssuranceChat {
+  id        String   @id @default(uuid())
+  clientId  String   @map("client_id")
+  userId    String   @map("user_id")
+  firmId    String   @map("firm_id")
+  subTool   String?  @map("sub_tool") // null during triage, set when resolved: Governance | CyberResiliance | TalentRisk | ESGSustainability | Diversity
+  status    String   @default("active") // active | resolved | booking_requested
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  client     Client                 @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user       User                   @relation(fields: [userId], references: [id])
+  firm       Firm                   @relation(fields: [firmId], references: [id])
+  messages   AssuranceChatMessage[]
+  engagement AssuranceEngagement?
+
+  @@index([clientId, userId])
+  @@index([firmId])
+  @@map("assurance_chats")
+}
+
+model AssuranceChatMessage {
+  id        String   @id @default(uuid())
+  chatId    String   @map("chat_id")
+  role      String   // "user" | "assistant" | "system"
+  content   String   @db.Text
+  metadata  Json?    // structured data: recommendedSubTool, shouldBook, etc.
+  turnOrder Int      @map("turn_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  chat AssuranceChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
+  @@map("assurance_chat_messages")
+}
+
+model AssuranceEngagement {
+  id              String    @id @default(uuid())
+  chatId          String    @unique @map("chat_id")
+  clientId        String    @map("client_id")
+  firmId          String    @map("firm_id")
+  userId          String    @map("user_id")
+  subTool         String    @map("sub_tool") // Governance | CyberResiliance | TalentRisk | ESGSustainability | Diversity
+  engagementType  String    @map("engagement_type") // terms_of_reference | sample_testing | duplicate_transactions
+  sector          String?
+  projectDetails  Json?     @map("project_details") // captured from chat drill-down
+  termsOfReference String?  @map("terms_of_reference") @db.Text // generated ToR content (JSON)
+  torGeneratedAt  DateTime? @map("tor_generated_at")
+  reportContent   String?   @map("report_content") @db.Text // final board report content
+  reportGeneratedAt DateTime? @map("report_generated_at")
+  score           Int?      // 0-100 overall score
+  status          String    @default("draft") // draft | tor_generated | evidence_collection | review_in_progress | complete
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  chat      AssuranceChat       @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  client    Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  firm      Firm                @relation(fields: [firmId], references: [id])
+  user      User                @relation(fields: [userId], references: [id])
+  documents AssuranceDocument[]
+  reports   AssuranceReport[]
+  scores    AssuranceScore[]
+
+  @@index([clientId, firmId])
+  @@index([userId])
+  @@map("assurance_engagements")
+}
+
+model AssuranceDocument {
+  id               String   @id @default(uuid())
+  engagementId     String   @map("engagement_id")
+  uploadedById     String   @map("uploaded_by_id")
+  originalName     String   @map("original_name")
+  storagePath      String   @map("storage_path")
+  containerName    String   @default("assurance-evidence") @map("container_name")
+  fileSize         Int      @map("file_size")
+  mimeType         String   @map("mime_type")
+  documentCategory String   @map("document_category") // maps to ToR evidence checklist category
+  aiReviewStatus   String   @default("pending") @map("ai_review_status") // pending | reviewing | reviewed
+  aiReviewResult   Json?    @map("ai_review_result") // { satisfiesRequirement, findings, gaps, recommendations }
+  aiScore          Int?     @map("ai_score") // 0-100 individual document score
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  engagement AssuranceEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@map("assurance_documents")
+}
+
+model AssuranceReport {
+  id            String   @id @default(uuid())
+  engagementId  String   @map("engagement_id")
+  reportType    String   @map("report_type") // terms_of_reference | board_report
+  storagePath   String   @map("storage_path")
+  containerName String   @default("assurance-reports") @map("container_name")
+  fileHash      String?  @map("file_hash")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  engagement AssuranceEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@map("assurance_reports")
+}
+
+model AssuranceScore {
+  id           String   @id @default(uuid())
+  engagementId String   @map("engagement_id")
+  clientId     String   @map("client_id")
+  firmId       String   @map("firm_id")
+  subTool      String   @map("sub_tool")
+  sector       String?
+  score        Int      // 0-100
+  scoredAt     DateTime @default(now()) @map("scored_at")
+  metadata     Json?    // breakdown by section
+
+  engagement AssuranceEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  client     Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([firmId, subTool])
+  @@index([sector, subTool])
+  @@index([clientId])
+  @@map("assurance_scores")
+}
+
+model AssuranceLearning {
+  id          String   @id @default(uuid())
+  firmId      String   @map("firm_id")
+  sector      String?  // sector this learning applies to, null = all sectors
+  subTool     String?  @map("sub_tool") // sub-tool this learning applies to, null = all
+  patternType String   @map("pattern_type") // routing_pattern | common_concern | sector_insight | successful_approach
+  pattern     String   @db.Text // the learned pattern description
+  confidence  Float    @default(0.5) // 0-1, increases with more supporting evidence
+  sourceCount Int      @default(1) @map("source_count") // number of chats that contributed to this pattern
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([firmId])
+  @@index([sector, subTool])
+  @@index([patternType])
+  @@map("assurance_learnings")
+}
+
+// ─── Risk Chat (Lyra) ──────────────────────────────────────────────────
+
+model RiskChat {
+  id             String   @id @default(uuid())
+  clientId       String   @map("client_id")
+  userId         String   @map("user_id")
+  firmId         String   @map("firm_id")
+  status         String   @default("active") // active | action_plan_generated | accepted | booking_requested
+  commitmentType String?  @map("commitment_type") // user_activity | system_work | auditor_work | software_dev
+  actionPlan     Json?    @map("action_plan")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  client   Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id])
+  firm     Firm             @relation(fields: [firmId], references: [id])
+  messages RiskChatMessage[]
+
+  @@index([clientId, userId])
+  @@index([firmId])
+  @@map("risk_chats")
+}
+
+model RiskChatMessage {
+  id        String   @id @default(uuid())
+  chatId    String   @map("chat_id")
+  role      String   // "user" | "assistant" | "system"
+  content   String   @db.Text
+  metadata  Json?
+  turnOrder Int      @map("turn_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  chat RiskChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
+  @@map("risk_chat_messages")
+}
+
 // ─── Firm Chart of Accounts ─────────────────────────────────────────────────
 
 model FirmChartOfAccount {
@@ -921,25 +1120,6 @@ model FirmChartOfAccount {
   @@unique([firmId, accountCode])
   @@index([firmId])
   @@map("firm_chart_of_accounts")
-}
-
-// ─── Client Chart of Accounts (overrides firm default for a specific client) ─
-
-model ClientChartOfAccount {
-  id           String   @id @default(uuid())
-  clientId     String   @map("client_id")
-  accountCode  String   @map("account_code")
-  accountName  String   @map("account_name")
-  categoryType String   @map("category_type")
-  sortOrder    Int      @default(0) @map("sort_order")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
-
-  @@unique([clientId, accountCode])
-  @@index([clientId])
-  @@map("client_chart_of_accounts")
 }
 
 // ─── Account Code Mappings (firm-level learned categorisations) ─────────────
@@ -1140,6 +1320,61 @@ model ToolSession {
   @@map("tool_sessions")
 }
 
+// ─── IA Feedback Users ─────────────────────────────────────────────────────
+
+model IAFeedbackUser {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  firmId    String   @map("firm_id")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, firmId])
+  @@index([firmId])
+  @@map("ia_feedback_users")
+}
+
+model AssuranceFeedback {
+  id         String   @id @default(uuid())
+  targetType String   @map("target_type") // "chat_message" | "report_section" | "recommendation"
+  targetId   String   @map("target_id") // messageId or report section identifier
+  chatId     String?  @map("chat_id")
+  userId     String   @map("user_id")
+  firmId     String   @map("firm_id")
+  rating     String   // "helpful" | "unhelpful" | "needs_improvement"
+  comment    String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([targetType, targetId])
+  @@index([chatId])
+  @@index([firmId])
+  @@map("assurance_feedback")
+}
+
+// ─── Client Chart of Accounts (overrides firm default for a specific client) ─
+
+model ClientChartOfAccount {
+  id           String   @id @default(uuid())
+  clientId     String   @map("client_id")
+  accountCode  String   @map("account_code")
+  accountName  String   @map("account_name")
+  categoryType String   @map("category_type")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, accountCode])
+  @@index([clientId])
+  @@map("client_chart_of_accounts")
+}
+
 // ─── Bank Audit Tool ─────────────────────────────────────────────────────────
 
 model BankAuditSession {
@@ -1151,10 +1386,10 @@ model BankAuditSession {
   clearlyTrivial        Float?   @map("clearly_trivial")
   tolerableError        Float?   @map("tolerable_error")
   functionalCurrency    String   @default("GBP") @map("functional_currency")
-  dataSource            String?  @map("data_source") // upload, extract, import, blank
+  dataSource            String?  @map("data_source")
   bankData              Json?    @map("bank_data")
   auditTestResults      Json?    @map("audit_test_results")
-  status                String   @default("draft") // draft, testing, reviewed, approved
+  status                String   @default("draft")
   reviewedBy            String?  @map("reviewed_by")
   reviewedAt            DateTime? @map("reviewed_at")
   createdAt             DateTime @default(now()) @map("created_at")
@@ -1175,11 +1410,11 @@ model BankAuditSession {
 model BankAuditTest {
   id          String   @id @default(uuid())
   sessionId   String   @map("session_id")
-  testKey     String   @map("test_key") // check_balance_tb, unusual_txn, subsequent_receipts, subsequent_payments, capital_txn, transfers_match, page_continuity, custom
+  testKey     String   @map("test_key")
   testLabel   String   @map("test_label")
   isChecked   Boolean  @default(false) @map("is_checked")
-  status      String   @default("pending") // pending, running, completed, error
-  progress    Float    @default(0) // 0-100
+  status      String   @default("pending")
+  progress    Float    @default(0)
   resultData  Json?    @map("result_data")
   errorMsg    String?  @map("error_msg")
   createdAt   DateTime @default(now()) @map("created_at")
@@ -1197,9 +1432,9 @@ model BankAuditFile {
   fileName    String   @map("file_name")
   blobPath    String   @map("blob_path")
   container   String
-  fileType    String   @map("file_type") // pdf, image, csv, xlsx
-  status      String   @default("uploading") // uploading, extracting, completed, error
-  progress    Float    @default(0) // 0-100
+  fileType    String   @map("file_type")
+  status      String   @default("uploading")
+  progress    Float    @default(0)
   extractedData Json?  @map("extracted_data")
   errorMsg    String?  @map("error_msg")
   createdAt   DateTime @default(now()) @map("created_at")
@@ -1216,18 +1451,18 @@ model FSAssertionMapping {
   id           String  @id @default(uuid())
   clientId     String  @map("client_id")
   periodId     String  @map("period_id")
-  mappingType  String  @map("mapping_type") // fs_level (Financial Statements) or tb_code (TB Code)
-  rowKey       String  @map("row_key") // FS heading or account code
-  rowLabel     String  @map("row_label") // Display label
+  mappingType  String  @map("mapping_type")
+  rowKey       String  @map("row_key")
+  rowLabel     String  @map("row_label")
   completeness Boolean @default(false)
-  occurrence   Boolean @default(false) // Occurrence & Accuracy
+  occurrence   Boolean @default(false)
   cutOff       Boolean @default(false) @map("cut_off")
   classification Boolean @default(false)
   presentation Boolean @default(false)
   existence    Boolean @default(false)
   valuation    Boolean @default(false)
-  rights       Boolean @default(false) // Rights and Obligations
-  source       String  @default("manual") // manual, import_py, auto_complete
+  rights       Boolean @default(false)
+  source       String  @default("manual")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
