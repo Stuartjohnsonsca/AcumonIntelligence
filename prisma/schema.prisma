@@ -31,6 +31,7 @@ model Firm {
   accountCodeMappings AccountCodeMapping[]
   assuranceChats       AssuranceChat[]
   assuranceEngagements AssuranceEngagement[]
+  riskChats            RiskChat[]
   iaFeedbackUsers      IAFeedbackUser[]
 
   @@map("firms")
@@ -69,6 +70,7 @@ model User {
   toolSessions               ToolSession[]
   assuranceChats             AssuranceChat[]
   assuranceEngagements       AssuranceEngagement[]
+  riskChats                  RiskChat[]
   iaFeedbackRoles            IAFeedbackUser[]
   assuranceFeedback          AssuranceFeedback[]
 
@@ -143,6 +145,7 @@ model Client {
   assuranceChats         AssuranceChat[]
   assuranceEngagements   AssuranceEngagement[]
   assuranceScores        AssuranceScore[]
+  riskChats              RiskChat[]
 
   @@map("clients")
 }
@@ -1054,6 +1057,44 @@ model AssuranceLearning {
   @@index([sector, subTool])
   @@index([patternType])
   @@map("assurance_learnings")
+}
+
+// ─── Risk Chat (Lyra) ──────────────────────────────────────────────────
+
+model RiskChat {
+  id             String   @id @default(uuid())
+  clientId       String   @map("client_id")
+  userId         String   @map("user_id")
+  firmId         String   @map("firm_id")
+  status         String   @default("active") // active | action_plan_generated | accepted | booking_requested
+  commitmentType String?  @map("commitment_type") // user_activity | system_work | auditor_work | software_dev
+  actionPlan     Json?    @map("action_plan")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  client   Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id])
+  firm     Firm             @relation(fields: [firmId], references: [id])
+  messages RiskChatMessage[]
+
+  @@index([clientId, userId])
+  @@index([firmId])
+  @@map("risk_chats")
+}
+
+model RiskChatMessage {
+  id        String   @id @default(uuid())
+  chatId    String   @map("chat_id")
+  role      String   // "user" | "assistant" | "system"
+  content   String   @db.Text
+  metadata  Json?
+  turnOrder Int      @map("turn_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  chat RiskChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
+  @@map("risk_chat_messages")
 }
 
 // ─── Firm Chart of Accounts ─────────────────────────────────────────────────
