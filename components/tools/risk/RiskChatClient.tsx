@@ -156,6 +156,7 @@ export function RiskChatClient({ clientId, clientName, initialChatId }: RiskChat
           {/* Chat Window - 3 columns */}
           <div className="lg:col-span-3">
             <RiskChatWindow
+              chatId={chatId}
               messages={messages}
               onSendMessage={handleSendMessage}
               onBookingRequested={handleBooking}

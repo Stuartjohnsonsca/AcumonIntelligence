@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Calendar, CheckCircle, XCircle } from 'lucide-react';
+import { Send, Loader2, Calendar, CheckCircle, XCircle, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -29,6 +29,7 @@ export interface RiskChatMessage {
 }
 
 interface RiskChatWindowProps {
+  chatId: string | null;
   messages: RiskChatMessage[];
   onSendMessage: (message: string) => Promise<void>;
   onBookingRequested?: () => void;
@@ -46,6 +47,7 @@ const COMMITMENT_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 export function RiskChatWindow({
+  chatId,
   messages,
   onSendMessage,
   onBookingRequested,
@@ -55,8 +57,27 @@ export function RiskChatWindow({
   className,
 }: RiskChatWindowProps) {
   const [input, setInput] = useState('');
+  const [feedback, setFeedback] = useState<Record<string, 'positive' | 'negative'>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  async function handleFeedback(messageId: string, rating: 'positive' | 'negative') {
+    // If already rated the same way, un-rate
+    if (feedback[messageId] === rating) {
+      setFeedback(prev => { const next = { ...prev }; delete next[messageId]; return next; });
+      return;
+    }
+    setFeedback(prev => ({ ...prev, [messageId]: rating }));
+    try {
+      await fetch('/api/risk/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId, messageId, rating }),
+      });
+    } catch (err) {
+      console.error('Failed to submit feedback:', err);
+    }
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -123,6 +144,41 @@ export function RiskChatWindow({
                   </p>
                 ))}
               </div>
+
+              {/* Feedback buttons for assistant messages */}
+              {msg.role === 'assistant' && (
+                <div className="flex items-center gap-1 mt-1.5">
+                  <button
+                    onClick={() => handleFeedback(msg.id, 'positive')}
+                    className={cn(
+                      'p-1 rounded transition-colors',
+                      feedback[msg.id] === 'positive'
+                        ? 'text-emerald-600 bg-emerald-50'
+                        : 'text-slate-300 hover:text-emerald-500 hover:bg-emerald-50',
+                    )}
+                    title="Helpful response"
+                  >
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleFeedback(msg.id, 'negative')}
+                    className={cn(
+                      'p-1 rounded transition-colors',
+                      feedback[msg.id] === 'negative'
+                        ? 'text-red-600 bg-red-50'
+                        : 'text-slate-300 hover:text-red-500 hover:bg-red-50',
+                    )}
+                    title="Not helpful"
+                  >
+                    <ThumbsDown className="h-3.5 w-3.5" />
+                  </button>
+                  {feedback[msg.id] && (
+                    <span className="text-[10px] text-slate-400 ml-1">
+                      {feedback[msg.id] === 'positive' ? 'Thanks for the feedback!' : 'We\'ll improve — thanks!'}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Action Plan Display */}
               {msg.metadata?.actionPlan && (
