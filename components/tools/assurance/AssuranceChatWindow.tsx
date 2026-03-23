@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, Calendar, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { AssuranceFeedbackPanel } from './AssuranceFeedbackPanel';
 
 export interface ChatMessage {
   id: string;
@@ -52,6 +53,15 @@ export function AssuranceChatWindow({
   const [feedback, setFeedback] = useState<Record<string, 'positive' | 'negative'>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [isFeedbackUser, setIsFeedbackUser] = useState(false);
+
+  // Check if current user is a feedback user
+  useEffect(() => {
+    fetch('/api/assurance/feedback')
+      .then(res => res.json())
+      .then(data => setIsFeedbackUser(data.isFeedbackUser === true))
+      .catch(() => {});
+  }, []);
 
   async function handleFeedback(messageId: string, rating: 'positive' | 'negative') {
     if (feedback[messageId] === rating) {
@@ -90,7 +100,14 @@ export function AssuranceChatWindow({
   }
 
   return (
-    <div className={cn('flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm', className)}>
+    <div className={cn('flex gap-3', className)}>
+      {/* Feedback Panel — left side, only for IA Feedback Users */}
+      {isFeedbackUser && chatId && (
+        <AssuranceFeedbackPanel chatId={chatId} messages={messages} />
+      )}
+
+      {/* Chat Window */}
+      <div className="flex-1 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm min-h-0">
       {/* Chat Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[300px] max-h-[500px]">
         {/* Welcome message */}
@@ -250,6 +267,7 @@ export function AssuranceChatWindow({
           </Button>
         </div>
       </form>
+      </div>
     </div>
   );
 }

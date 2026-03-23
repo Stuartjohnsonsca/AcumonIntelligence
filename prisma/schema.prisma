@@ -15,6 +15,8 @@ model Firm {
   id         String   @id @default(uuid())
   name       String
   dataRegion String   @default("uk") @map("data_region") // uk | eu | us | ap — determines where data is processed and stored
+  taxonomySourceType       String?  @map("taxonomy_source_type") // "url" | "file" — once set, locked for the firm
+  taxonomyEndpointUrl      String?  @map("taxonomy_endpoint_url") // URL/API endpoint when sourceType = "url"
   chartOfAccountsBlobPath  String?  @map("chart_of_accounts_blob_path")
   chartOfAccountsContainer String?  @map("chart_of_accounts_container")
   chartOfAccountsFileName  String?  @map("chart_of_accounts_file_name")
@@ -30,6 +32,7 @@ model Firm {
   assuranceChats       AssuranceChat[]
   assuranceEngagements AssuranceEngagement[]
   riskChats            RiskChat[]
+  iaFeedbackUsers      IAFeedbackUser[]
 
   @@map("firms")
 }
@@ -68,6 +71,8 @@ model User {
   assuranceChats             AssuranceChat[]
   assuranceEngagements       AssuranceEngagement[]
   riskChats                  RiskChat[]
+  iaFeedbackRoles            IAFeedbackUser[]
+  assuranceFeedback          AssuranceFeedback[]
 
   @@map("users")
 }
@@ -1307,5 +1312,41 @@ model ToolSession {
 
   @@index([userId])
   @@map("tool_sessions")
+}
+
+// ─── IA Feedback Users ─────────────────────────────────────────────────────
+
+model IAFeedbackUser {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  firmId    String   @map("firm_id")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, firmId])
+  @@index([firmId])
+  @@map("ia_feedback_users")
+}
+
+model AssuranceFeedback {
+  id         String   @id @default(uuid())
+  targetType String   @map("target_type") // "chat_message" | "report_section" | "recommendation"
+  targetId   String   @map("target_id") // messageId or report section identifier
+  chatId     String?  @map("chat_id")
+  userId     String   @map("user_id")
+  firmId     String   @map("firm_id")
+  rating     String   // "helpful" | "unhelpful" | "needs_improvement"
+  comment    String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([targetType, targetId])
+  @@index([chatId])
+  @@index([firmId])
+  @@map("assurance_feedback")
 }
 

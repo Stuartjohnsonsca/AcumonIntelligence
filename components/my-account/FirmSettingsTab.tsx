@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Save, AlertTriangle } from 'lucide-react';
+import { Loader2, Save, AlertTriangle, Upload, Link2, Check, X, UserPlus, Trash2 } from 'lucide-react';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -46,6 +46,22 @@ const NORMAL_RANGES = {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
+interface FeedbackUser {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  isActive: boolean;
+}
+
+interface TaxonomyConfig {
+  taxonomySourceType: string | null;
+  taxonomyEndpointUrl: string | null;
+  chartOfAccountsFileName: string | null;
+  chartOfAccountsUpdatedAt: string | null;
+  accountCount: number;
+}
+
 interface Props {
   firmId: string;
 }
@@ -62,6 +78,23 @@ export function FirmSettingsTab({ firmId }: Props) {
   const [cfTable, setCfTable] = useState<ConfidenceFactorRow[]>(DEFAULT_CONFIDENCE_TABLE);
   const [riskMatrix, setRiskMatrix] = useState<number[][]>(DEFAULT_RISK_MATRIX);
 
+  // Taxonomy state
+  const [taxonomyConfig, setTaxonomyConfig] = useState<TaxonomyConfig | null>(null);
+  const [taxonomySourceType, setTaxonomySourceType] = useState<string>('');
+  const [taxonomyUrl, setTaxonomyUrl] = useState('');
+  const [taxonomyLocked, setTaxonomyLocked] = useState(false);
+  const [taxonomySaving, setTaxonomySaving] = useState(false);
+  const [taxonomySaved, setTaxonomySaved] = useState(false);
+  const [taxonomyTesting, setTaxonomyTesting] = useState(false);
+  const [taxonomyTestResult, setTaxonomyTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [taxonomyUploading, setTaxonomyUploading] = useState(false);
+
+  // Feedback Users state
+  const [feedbackUsers, setFeedbackUsers] = useState<FeedbackUser[]>([]);
+  const [feedbackUsersLoading, setFeedbackUsersLoading] = useState(false);
+  const [newFeedbackEmail, setNewFeedbackEmail] = useState('');
+  const [feedbackAddError, setFeedbackAddError] = useState('');
+
   const loadConfig = useCallback(async () => {
     setLoading(true);
     try {
@@ -76,7 +109,34 @@ export function FirmSettingsTab({ firmId }: Props) {
     setLoading(false);
   }, [firmId]);
 
-  useEffect(() => { loadConfig(); }, [loadConfig]);
+  const loadTaxonomy = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/firm/taxonomy?firmId=${firmId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setTaxonomyConfig(data);
+        if (data.taxonomySourceType) {
+          setTaxonomySourceType(data.taxonomySourceType);
+          setTaxonomyLocked(true);
+        }
+        if (data.taxonomyEndpointUrl) setTaxonomyUrl(data.taxonomyEndpointUrl);
+      }
+    } catch { /* ignore */ }
+  }, [firmId]);
+
+  const loadFeedbackUsers = useCallback(async () => {
+    setFeedbackUsersLoading(true);
+    try {
+      const res = await fetch(`/api/firm/feedback-users?firmId=${firmId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setFeedbackUsers(data.users || []);
+      }
+    } catch { /* ignore */ }
+    setFeedbackUsersLoading(false);
+  }, [firmId]);
+
+  useEffect(() => { loadConfig(); loadTaxonomy(); loadFeedbackUsers(); }, [loadConfig, loadTaxonomy, loadFeedbackUsers]);
 
   function validateAndSave() {
     const warnings: string[] = [];
@@ -138,6 +198,109 @@ export function FirmSettingsTab({ firmId }: Props) {
 
   function updateRiskMatrix(row: number, col: number, value: number) {
     setRiskMatrix(prev => prev.map((r, i) => i === row ? r.map((c, j) => j === col ? value : c) : r));
+  }
+
+  // ─── Taxonomy handlers ──────────────────────────────────────────────────
+
+  async function saveTaxonomyConfig() {
+    setTaxonomySaving(true);
+    try {
+      const res = await fetch('/api/firm/taxonomy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firmId, sourceType: taxonomySourceType, endpointUrl: taxonomyUrl }),
+      });
+      if (res.ok) {
+        setTaxonomyLocked(true);
+        setTaxonomySaved(true);
+        setTimeout(() => setTaxonomySaved(false), 2000);
+        loadTaxonomy();
+      }
+    } catch { /* silent */ }
+    setTaxonomySaving(false);
+  }
+
+  async function testTaxonomyUrl() {
+    setTaxonomyTesting(true);
+    setTaxonomyTestResult(null);
+    try {
+      const res = await fetch('/api/firm/taxonomy/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: taxonomyUrl }),
+      });
+      const data = await res.json();
+      setTaxonomyTestResult({
+        success: data.success,
+        message: data.success ? `Connected — ${data.accountCount} accounts found` : (data.error || 'Connection failed'),
+      });
+    } catch {
+      setTaxonomyTestResult({ success: false, message: 'Network error' });
+    }
+    setTaxonomyTesting(false);
+  }
+
+  async function handleTaxonomyFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setTaxonomyUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('firmId', firmId);
+      const res = await fetch('/api/firm/taxonomy/upload', { method: 'POST', body: formData });
+      if (res.ok) {
+        const data = await res.json();
+        setTaxonomyLocked(true);
+        setTaxonomySaved(true);
+        setTimeout(() => setTaxonomySaved(false), 2000);
+        loadTaxonomy();
+        alert(`Taxonomy uploaded: ${data.created} created, ${data.updated} updated`);
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Upload failed');
+      }
+    } catch { alert('Upload error'); }
+    setTaxonomyUploading(false);
+    e.target.value = '';
+  }
+
+  function unlockTaxonomy() {
+    setTaxonomyLocked(false);
+  }
+
+  // ─── Feedback user handlers ────────────────────────────────────────────────
+
+  async function addFeedbackUser() {
+    if (!newFeedbackEmail.trim()) return;
+    setFeedbackAddError('');
+    try {
+      const res = await fetch('/api/firm/feedback-users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firmId, email: newFeedbackEmail.trim() }),
+      });
+      if (res.ok) {
+        setNewFeedbackEmail('');
+        loadFeedbackUsers();
+      } else {
+        const data = await res.json();
+        setFeedbackAddError(data.error || 'Failed to add user');
+      }
+    } catch {
+      setFeedbackAddError('Network error');
+    }
+  }
+
+  async function removeFeedbackUser(userId: string) {
+    try {
+      await fetch('/api/firm/feedback-users', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firmId, userId }),
+      });
+      loadFeedbackUsers();
+    } catch { /* silent */ }
   }
 
   if (loading) {
@@ -273,6 +436,169 @@ export function FirmSettingsTab({ firmId }: Props) {
           Save Settings
         </button>
         {saved && <span className="text-sm text-green-600 font-medium">Saved</span>}
+      </div>
+
+      {/* ─── Taxonomy / Chart of Accounts ───────────────────────────────────── */}
+      <div className="bg-white rounded-lg border border-slate-200 p-5">
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">Taxonomy / Chart of Accounts</h3>
+        <p className="text-xs text-slate-400 mb-4">
+          Configure where the firm&apos;s chart of accounts (taxonomy) is sourced from. This is used by the Bank to TB tool for transaction categorisation.
+        </p>
+
+        {/* Source type selector */}
+        <div className="flex items-center gap-3 mb-4">
+          <label className="text-sm text-slate-600 font-medium">Source:</label>
+          <select
+            value={taxonomySourceType}
+            onChange={(e) => setTaxonomySourceType(e.target.value)}
+            disabled={taxonomyLocked}
+            className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+          >
+            <option value="">Select source type...</option>
+            <option value="url">URL / API Endpoint</option>
+            <option value="file">File Upload</option>
+          </select>
+          {taxonomyLocked && (
+            <button
+              onClick={unlockTaxonomy}
+              className="text-xs text-blue-600 hover:text-blue-800 underline"
+            >
+              Change
+            </button>
+          )}
+        </div>
+
+        {/* URL input */}
+        {taxonomySourceType === 'url' && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Link2 className="h-4 w-4 text-slate-400 flex-shrink-0" />
+              <input
+                type="url"
+                value={taxonomyUrl}
+                onChange={(e) => setTaxonomyUrl(e.target.value)}
+                placeholder="https://api.example.com/chart-of-accounts"
+                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={testTaxonomyUrl}
+                disabled={!taxonomyUrl || taxonomyTesting}
+                className="px-3 py-2 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-40 transition-colors"
+              >
+                {taxonomyTesting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Test'}
+              </button>
+            </div>
+            {taxonomyTestResult && (
+              <div className={`flex items-center gap-2 text-xs ${taxonomyTestResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                {taxonomyTestResult.success ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                {taxonomyTestResult.message}
+              </div>
+            )}
+            <button
+              onClick={saveTaxonomyConfig}
+              disabled={!taxonomyUrl || taxonomySaving}
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+            >
+              {taxonomySaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              Save & Fetch Taxonomy
+            </button>
+          </div>
+        )}
+
+        {/* File upload */}
+        {taxonomySourceType === 'file' && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 cursor-pointer transition-colors">
+                <Upload className="h-4 w-4" />
+                {taxonomyUploading ? 'Uploading...' : 'Upload File'}
+                <input
+                  type="file"
+                  accept=".csv,.json,.xlsx"
+                  onChange={handleTaxonomyFileUpload}
+                  className="hidden"
+                  disabled={taxonomyUploading}
+                />
+              </label>
+              <span className="text-xs text-slate-400">Accepts CSV, JSON, or XLSX</span>
+            </div>
+          </div>
+        )}
+
+        {/* Current status */}
+        {taxonomyConfig && (taxonomyConfig.chartOfAccountsFileName || taxonomyConfig.accountCount > 0) && (
+          <div className="mt-4 p-3 bg-slate-50 rounded-lg text-xs text-slate-600 space-y-1">
+            {taxonomyConfig.chartOfAccountsFileName && (
+              <p>File: <span className="font-medium">{taxonomyConfig.chartOfAccountsFileName}</span></p>
+            )}
+            {taxonomyConfig.taxonomyEndpointUrl && (
+              <p>Endpoint: <span className="font-medium">{taxonomyConfig.taxonomyEndpointUrl}</span></p>
+            )}
+            <p>Accounts loaded: <span className="font-medium">{taxonomyConfig.accountCount}</span></p>
+            {taxonomyConfig.chartOfAccountsUpdatedAt && (
+              <p>Last updated: <span className="font-medium">{new Date(taxonomyConfig.chartOfAccountsUpdatedAt).toLocaleString()}</span></p>
+            )}
+          </div>
+        )}
+        {taxonomySaved && <span className="text-sm text-green-600 font-medium mt-2 block">Saved</span>}
+      </div>
+
+      {/* ─── IA Feedback Users ───────────────────────────────────────────────── */}
+      <div className="bg-white rounded-lg border border-slate-200 p-5">
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">IA Feedback Users</h3>
+        <p className="text-xs text-slate-400 mb-4">
+          Designated users who can provide feedback on AI responses in the Assurance tools. Their feedback helps improve the AI over time.
+        </p>
+
+        {/* Add user */}
+        <div className="flex items-center gap-2 mb-4">
+          <input
+            type="email"
+            value={newFeedbackEmail}
+            onChange={(e) => { setNewFeedbackEmail(e.target.value); setFeedbackAddError(''); }}
+            placeholder="Enter user email to add..."
+            className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onKeyDown={(e) => e.key === 'Enter' && addFeedbackUser()}
+          />
+          <button
+            onClick={addFeedbackUser}
+            disabled={!newFeedbackEmail.trim()}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add
+          </button>
+        </div>
+        {feedbackAddError && (
+          <p className="text-xs text-red-600 mb-3">{feedbackAddError}</p>
+        )}
+
+        {/* User list */}
+        {feedbackUsersLoading ? (
+          <div className="flex items-center gap-2 py-4 text-slate-400 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+          </div>
+        ) : feedbackUsers.length === 0 ? (
+          <p className="text-xs text-slate-400 py-2">No feedback users configured yet.</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {feedbackUsers.map((user) => (
+              <div key={user.id} className="flex items-center justify-between py-2">
+                <div>
+                  <p className="text-sm font-medium text-slate-700">{user.userName}</p>
+                  <p className="text-xs text-slate-400">{user.userEmail}</p>
+                </div>
+                <button
+                  onClick={() => removeFeedbackUser(user.userId)}
+                  className="p-1.5 text-slate-400 hover:text-red-600 rounded transition-colors"
+                  title="Remove feedback user"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ─── Warning modal ─────────────────────────────────────────────────── */}

@@ -305,3 +305,85 @@ export async function decayOldPatterns(firmId: string, daysThreshold: number = 9
 
   return decayed;
 }
+
+// ─── Integrate human feedback into learning loop ────────────────────────────
+
+export async function applyHumanFeedback(firmId: string, chatId: string): Promise<void> {
+  // Get all human feedback for this chat
+  const feedback = await prisma.assuranceFeedback.findMany({
+    where: { chatId, firmId },
+  });
+
+  if (feedback.length === 0) return;
+
+  // Get the chat's resolved sub-tool and sector
+  const chat = await prisma.assuranceChat.findUnique({
+    where: { id: chatId },
+    include: { client: { select: { sector: true } } },
+  });
+  if (!chat) return;
+
+  // Count feedback sentiment
+  const helpful = feedback.filter(f => f.rating === 'helpful').length;
+  const unhelpful = feedback.filter(f => f.rating === 'unhelpful').length;
+  const needsImprovement = feedback.filter(f => f.rating === 'needs_improvement').length;
+
+  // Calculate net sentiment: positive boosts, negative reduces
+  const netSentiment = (helpful * 0.1) - (unhelpful * 0.15) - (needsImprovement * 0.05);
+
+  // Apply to learnings derived from this chat's context
+  const learnings = await prisma.assuranceLearning.findMany({
+    where: {
+      firmId,
+      OR: [
+        { subTool: chat.subTool || undefined },
+        { sector: chat.client?.sector || undefined },
+      ],
+    },
+  });
+
+  for (const learning of learnings) {
+    const newConfidence = Math.max(0.05, Math.min(1.0, learning.confidence + netSentiment));
+    await prisma.assuranceLearning.update({
+      where: { id: learning.id },
+      data: { confidence: newConfidence },
+    });
+  }
+
+  // If there are written feedback comments, extract additional patterns
+  const comments = feedback
+    .filter(f => f.comment && f.comment.trim().length > 10)
+    .map(f => `[${f.rating}]: ${f.comment}`);
+
+  if (comments.length > 0) {
+    const commentContext = comments.join('\n');
+    // Include human feedback in the next pattern extraction
+    console.log(`[Assurance:Feedback] Applied human feedback from ${feedback.length} entries for chat ${chatId}. Net sentiment: ${netSentiment.toFixed(2)}`);
+
+    // Store direct human insights as high-confidence patterns
+    for (const fb of feedback.filter(f => f.comment && f.comment.trim().length > 20)) {
+      const patternType = fb.rating === 'unhelpful' ? 'common_concern' : 'successful_approach';
+      await prisma.assuranceLearning.create({
+        data: {
+          firmId,
+          sector: chat.client?.sector || null,
+          subTool: chat.subTool || null,
+          patternType,
+          pattern: `[Human feedback] ${fb.comment}`,
+          confidence: 0.7, // Human feedback starts with higher confidence
+          sourceCount: 1,
+        },
+      });
+    }
+  }
+}
+
+// ─── Enhanced processChatFeedback that includes human feedback ───────────────
+
+export async function processChatFeedbackWithHumanInput(chatId: string, firmId: string): Promise<{ patternsStored: number }> {
+  // First, apply any human feedback to existing patterns
+  await applyHumanFeedback(firmId, chatId);
+
+  // Then run the normal pattern extraction
+  return processChatFeedback(chatId, firmId);
+}
