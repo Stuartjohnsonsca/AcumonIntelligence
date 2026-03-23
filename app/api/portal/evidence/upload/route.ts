@@ -19,17 +19,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'file, requestId, evidenceType, and token are required' }, { status: 400 });
     }
 
-    // Find portal user (MVP: most recently logged in)
-    const portalUser = await prisma.clientPortalUser.findFirst({
-      where: { isActive: true, lastLoginAt: { not: null } },
-      orderBy: { lastLoginAt: 'desc' },
+    // Find all portal users to get accessible client IDs
+    const portalUsers = await prisma.clientPortalUser.findMany({
+      where: { isActive: true },
+      select: { id: true, clientId: true },
     });
 
-    if (!portalUser) {
+    if (portalUsers.length === 0) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    // Verify the request belongs to this client
+    const accessibleClientIds = new Set(portalUsers.map(u => u.clientId));
+    const uploaderId = portalUsers[0].id;
+
+    // Verify the request belongs to an accessible client
     const request = await prisma.auditEvidenceRequest.findUnique({
       where: { id: requestId },
       include: {
@@ -45,7 +48,7 @@ export async function POST(req: Request) {
       },
     });
 
-    if (!request || request.clientId !== portalUser.clientId) {
+    if (!request || !accessibleClientIds.has(request.clientId)) {
       return NextResponse.json({ error: 'Request not found' }, { status: 404 });
     }
 
@@ -59,7 +62,7 @@ export async function POST(req: Request) {
     const upload = await prisma.evidenceUpload.create({
       data: {
         requestId,
-        uploadedBy: portalUser.id,
+        uploadedBy: uploaderId,
         originalName: file.name,
         storagePath: blobName,
         containerName: 'upload-inbox',
@@ -83,7 +86,7 @@ export async function POST(req: Request) {
       const firmUserEmail = request.run.engagement.user.email;
       if (firmUserEmail) {
         const client = await prisma.client.findUnique({
-          where: { id: portalUser.clientId },
+          where: { id: request.clientId },
           select: { clientName: true },
         });
         await sendEvidenceUploadNotification(

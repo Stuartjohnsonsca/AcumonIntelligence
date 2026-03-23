@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { Upload, FileText, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { Upload, FileText, Check, AlertCircle, Loader2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBankToTB } from './BankToTBContext';
 import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
@@ -16,6 +16,7 @@ export function FileUploadSection({ sessionId }: Props) {
   const { addTask, updateTask } = useBackgroundTasks();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
 
   const hasProcessing = state.files.some(f => f.status === 'uploaded' || f.status === 'processing');
@@ -106,7 +107,14 @@ export function FileUploadSection({ sessionId }: Props) {
         toolPath: '/tools/bank-to-tb',
       });
 
-      // Start polling
+      // Trigger server-side processing of the uploaded files
+      fetch('/api/bank-to-tb/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      }).catch(err => console.error('Process trigger failed:', err));
+
+      // Start polling for status updates
       if (!pollRef.current) {
         pollRef.current = setInterval(pollStatus, 3000);
       }
@@ -115,6 +123,41 @@ export function FileUploadSection({ sessionId }: Props) {
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  async function handleReset() {
+    if (!confirm('This will cancel any processing and clear all uploaded files for this session. Continue?')) return;
+    setResetting(true);
+    try {
+      // Stop polling
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = undefined;
+      }
+
+      // Call server to reset files and transactions
+      await fetch('/api/bank-to-tb/reset-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+
+      // Clear local state
+      dispatch({ type: 'SET_FILES', payload: [] });
+      dispatch({ type: 'SET_TRANSACTIONS', payload: [] });
+      dispatch({ type: 'SET_ACCOUNTS', payload: [] });
+      dispatch({ type: 'SET_MULTI_ACCOUNTS', payload: false });
+      dispatch({ type: 'SET_OUT_OF_PERIOD', payload: false });
+
+      updateTask(`btb-${sessionId}`, {
+        status: 'completed',
+        completedAt: Date.now(),
+      });
+    } catch (err) {
+      console.error('Reset failed:', err);
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -128,19 +171,37 @@ export function FileUploadSection({ sessionId }: Props) {
         onChange={handleUpload}
         className="hidden"
       />
-      <Button
-        size="sm"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={uploading}
-        className="w-full bg-blue-600 hover:bg-blue-700"
-      >
-        {uploading ? (
-          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-        ) : (
-          <Upload className="h-4 w-4 mr-2" />
+      <div className="flex gap-1.5">
+        <Button
+          size="sm"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading || resetting}
+          className="flex-1 bg-blue-600 hover:bg-blue-700"
+        >
+          {uploading ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <Upload className="h-4 w-4 mr-2" />
+          )}
+          Upload Bank Statements
+        </Button>
+        {state.files.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleReset}
+            disabled={resetting}
+            className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+            title="Reset - cancel processing and clear files"
+          >
+            {resetting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RotateCcw className="h-4 w-4" />
+            )}
+          </Button>
         )}
-        Upload Bank Statements
-      </Button>
+      </div>
 
       {/* File list */}
       {state.files.length > 0 && (

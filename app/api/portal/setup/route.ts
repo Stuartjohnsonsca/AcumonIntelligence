@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
     // Find the client by name
     const client = await prisma.client.findFirst({
-      where: { clientName: { contains: clientName, mode: 'insensitive' } },
+      where: { clientName: { equals: clientName, mode: 'insensitive' } },
       select: { id: true, clientName: true },
     });
 

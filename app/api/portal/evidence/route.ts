@@ -14,19 +14,21 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   }
 
-  // For MVP: find the most recently logged-in portal user
-  // In production, decode a JWT or look up a session table
-  const portalUser = await prisma.clientPortalUser.findFirst({
-    where: { isActive: true, lastLoginAt: { not: null } },
-    orderBy: { lastLoginAt: 'desc' },
+  // For MVP: find all portal users for this email, then query all their clients
+  // In production, use proper JWT/session with specific user ID
+  const portalUsers = await prisma.clientPortalUser.findMany({
+    where: { isActive: true },
+    select: { clientId: true },
   });
 
-  if (!portalUser) {
-    return NextResponse.json({ error: 'No authenticated portal user found' }, { status: 401 });
+  if (portalUsers.length === 0) {
+    return NextResponse.json({ error: 'No portal users found' }, { status: 401 });
   }
 
+  const clientIds = [...new Set(portalUsers.map(u => u.clientId))];
+
   const requests = await prisma.auditEvidenceRequest.findMany({
-    where: { clientId: portalUser.clientId },
+    where: { clientId: { in: clientIds } },
     include: {
       uploads: {
         select: {
@@ -36,6 +38,13 @@ export async function GET(req: Request) {
           firmAccepted: true,
           originalName: true,
           createdAt: true,
+        },
+      },
+      run: {
+        select: {
+          engagement: {
+            select: { auditArea: true },
+          },
         },
       },
     },

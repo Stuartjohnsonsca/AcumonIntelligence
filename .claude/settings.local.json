@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npm --version)",
+      "Bash(cygpath -w \"C:/Users/stuart/OneDrive - Johnsons Financial Management/AI Toolkit - Documents/Tools/Website/acumon-website/node_modules/next/dist/bin/next\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/)",
+      "Bash(npx tsc:*)",
+      "Bash(rm -rf /c/tmp/acumon)",
+      "Bash(cmd //c \"mklink /J C:\\\\tmp\\\\acumon \"\"C:\\\\Users\\\\stuart\\\\OneDrive - Johnsons Financial Management\\\\AI Toolkit - Documents\\\\Tools\\\\Website\\\\acumon-website\\\\.claude\\\\worktrees\\\\quizzical-sammet\"\"\")",
+      "Bash(cmd //c 'dir C:\\\\tmp\\\\acumon')",
+      "Bash(findstr :3001)",
+      "Bash(npx prisma:*)",
+      "Bash(cp \"../../.env.local\" .env.local)",
+      "Bash(ls .env*)",
+      "Bash(ls \"C:/Users/stuart/OneDrive - Johnsons Financial Management/AI Toolkit - Documents/Tools/Website/acumon-website/\"*.env*)",
+      "Bash(ls \"C:/Users/stuart/OneDrive - Johnsons Financial Management/AI Toolkit - Documents/Tools/Website/acumon-website/\".env*)",
+      "Bash(node -e \"console.log\\(require\\(''next/package.json''\\).version\\)\")",
+      "Bash(gh pr:*)",
+      "Bash(grep -n \"=======$\\\\|>>>>>>>\" prisma/schema.prisma)"
+    ]
+  }
+}

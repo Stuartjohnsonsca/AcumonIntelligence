@@ -109,6 +109,18 @@ export function Navbar() {
               {assuranceOpen && (
                 <div className="absolute top-full left-0 pt-1 w-64 z-50">
                   <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                    <button
+                      onClick={() => { setAssuranceOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/assurance'); } else { router.push('/tools/assurance'); } }}
+                      className="w-full text-left px-4 py-2.5 text-sm font-semibold text-blue-600 hover:bg-blue-50 transition-colors border-b border-slate-100"
+                    >
+                      Assurance Hub
+                    </button>
+                    <button
+                      onClick={() => { setAssuranceOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/risk'); } else { router.push('/tools/risk'); } }}
+                      className="w-full text-left px-4 py-2.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 transition-colors border-b border-slate-100"
+                    >
+                      Risk
+                    </button>
                     {ASSURANCE_PRODUCTS.map((product) => (
                       <button
                         key={product.urlPrefix}
@@ -313,6 +325,9 @@ export function Navbar() {
 
           <div>
             <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Assurance</p>
+            <button onClick={() => { setMobileOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/risk'); } else { router.push('/tools/risk'); } }} className="w-full text-left px-3 py-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 rounded-md">
+              Risk
+            </button>
             {ASSURANCE_PRODUCTS.map((product) => (
               <button key={product.urlPrefix} onClick={() => { setMobileOpen(false); handleProductClick(product.urlPrefix); }} className="w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md">
                 {product.navLabel}
