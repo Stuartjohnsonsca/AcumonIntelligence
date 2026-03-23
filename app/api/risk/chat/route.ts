@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { processRiskChat, calculateRiskCost } from '@/lib/risk-ai';
@@ -211,7 +211,7 @@ export async function PATCH(request: NextRequest) {
     if (action === 'reject') {
       await prisma.riskChat.update({
         where: { id: chatId },
-        data: { status: 'active', actionPlan: null, commitmentType: null },
+        data: { status: 'active', actionPlan: Prisma.DbNull, commitmentType: null },
       });
       return NextResponse.json({ status: 'active' });
     }
