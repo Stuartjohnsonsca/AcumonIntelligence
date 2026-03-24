@@ -83,6 +83,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   const { action, role } = body as { action: string; role: string };
 
   if (action === 'signoff' && ['operator', 'reviewer', 'partner'].includes(role)) {
+    // Server-side enforcement: verify user holds the matching team role
+    const roleMap: Record<string, string> = { operator: 'Junior', reviewer: 'Manager', partner: 'RI' };
+    const requiredTeamRole = roleMap[role];
+    const teamMember = await prisma.auditTeamMember.findFirst({
+      where: { engagementId, userId: session.user.id, role: requiredTeamRole },
+    });
+    if (!teamMember) {
+      return NextResponse.json({ error: `You must be assigned as ${role} to sign off` }, { status: 403 });
+    }
+
     // Load existing sign-offs
     const existing = await prisma.auditPermanentFile.findUnique({
       where: { engagementId_sectionKey: { engagementId, sectionKey: SIGNOFF_KEY } },
