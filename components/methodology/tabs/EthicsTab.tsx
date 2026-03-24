@@ -49,10 +49,14 @@ const ETHICS_SECTIONS = [
   },
 ] as const;
 
-const FEE_ROWS = [
+const FEE_INPUT_ROWS = [
   'Audit Fee', 'Non-Audit Fee', 'Total Fees',
-  '% of Non-Audit Fee to Audit Fee', '% of Total Fees to Firm Fees',
   'Overdue Fees from client',
+] as const;
+
+const FEE_COMPUTED_ROWS = [
+  { label: '% of Non-Audit Fee to Audit Fee', numerator: 'Non-Audit Fee', denominator: 'Audit Fee' },
+  { label: '% of Total Fees to Firm Fees', numerator: 'Total Fees', denominator: '__firm_fees' },
 ] as const;
 
 const ORITP_SECTIONS = [
@@ -231,20 +235,58 @@ export function EthicsTab({ engagementId }: Props) {
           <h3 className="text-sm font-semibold text-slate-700">Fee Assessment</h3>
         </div>
         <div className="divide-y divide-slate-100">
-          {FEE_ROWS.map(row => {
+          {/* Input rows */}
+          {FEE_INPUT_ROWS.map(row => {
             const valKey = `fee__${row.replace(/\s+/g, '_')}__value`;
             const issueKey = `fee__${row.replace(/\s+/g, '_')}__issue`;
-            const isPercentage = row.startsWith('%');
             return (
               <div key={row} className="px-4 py-2 flex items-center gap-4 hover:bg-slate-50/30">
                 <span className="text-xs text-slate-700 flex-1">{row}</span>
                 <input
-                  type={isPercentage ? 'text' : 'number'}
+                  type="number"
                   value={(values[valKey] as string) || ''}
                   onChange={e => setValue(valKey, e.target.value)}
                   className="w-32 border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
-                  placeholder={isPercentage ? '%' : '£'}
+                  placeholder="£"
                 />
+                <select
+                  value={(values[issueKey] as string) || ''}
+                  onChange={e => setValue(issueKey, e.target.value)}
+                  className="border border-slate-200 rounded px-1 py-0.5 text-xs bg-white w-12"
+                >
+                  <option value="">-</option>
+                  <option value="Y">Y</option>
+                  <option value="N">N</option>
+                </select>
+              </div>
+            );
+          })}
+          {/* Firm Fees input (set by Methodology Admin, editable here for now) */}
+          <div className="px-4 py-2 flex items-center gap-4 hover:bg-slate-50/30 bg-blue-50/30">
+            <span className="text-xs text-slate-700 flex-1">Firm Fees <span className="text-[10px] text-slate-400">(set by Methodology Admin)</span></span>
+            <input
+              type="number"
+              value={(values['fee__firm_fees__value'] as string) || ''}
+              onChange={e => setValue('fee__firm_fees__value', e.target.value)}
+              className="w-32 border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
+              placeholder="£"
+            />
+            <div className="w-12" />
+          </div>
+          {/* Computed percentage rows */}
+          {FEE_COMPUTED_ROWS.map(row => {
+            const numKey = `fee__${row.numerator.replace(/\s+/g, '_')}__value`;
+            const denKey = row.denominator === '__firm_fees' ? 'fee__firm_fees__value' : `fee__${row.denominator.replace(/\s+/g, '_')}__value`;
+            const issueKey = `fee__${row.label.replace(/\s+/g, '_')}__issue`;
+            const num = parseFloat((values[numKey] as string) || '0') || 0;
+            const den = parseFloat((values[denKey] as string) || '0') || 0;
+            const pct = den > 0 ? ((num / den) * 100).toFixed(1) : '—';
+            return (
+              <div key={row.label} className="px-4 py-2 flex items-center gap-4 hover:bg-slate-50/30 bg-yellow-50/30">
+                <span className="text-xs text-slate-700 flex-1">{row.label}</span>
+                <span className="w-32 text-xs font-medium text-slate-800 text-right px-2 py-1">
+                  {pct === '—' ? '—' : `${pct}%`}
+                </span>
                 <select
                   value={(values[issueKey] as string) || ''}
                   onChange={e => setValue(issueKey, e.target.value)}

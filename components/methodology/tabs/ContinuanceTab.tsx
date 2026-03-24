@@ -18,7 +18,7 @@ const FEE_COMMENT_TYPES = ['Agreed fixed fee', 'Agreed time & materials', 'PY + 
 const FEE_REASONABLE_OPTIONS = ['Fee is considered reasonable', 'Fee is not reasonable'] as const;
 
 const SERVICE_ROWS = [
-  'Audit', 'Corporation Tax', 'Advisory / Valuation Services', 'Internal Audit',
+  'Audit', 'Accounts Preparation', 'Corporation Tax', 'Advisory / Valuation Services', 'Internal Audit',
   'Other Assurance', 'Payroll', 'VAT / Bookkeeping', 'Recruitment, Legal & Litigation and IT Services',
 ] as const;
 
@@ -242,7 +242,7 @@ export function ContinuanceTab({ engagementId }: Props) {
                   <td className="px-3 py-1 text-slate-700">{row}</td>
                   <td className="px-3 py-1"><input type="number" value={fee || ''} onChange={e => set(`py_fee_${row}`, Number(e.target.value) || null)} className={numCls} min={0} /></td>
                   <td className="px-3 py-1"><input type="number" value={hours || ''} onChange={e => set(`py_hours_${row}`, Number(e.target.value) || null)} className={numCls} min={0} step="0.5" /></td>
-                  <td className="px-3 py-1 text-right text-slate-500">{fph !== null ? fph.toFixed(2) : ''}</td>
+                  <td className="px-3 py-1 text-right text-slate-500">{fph !== null ? fph.toLocaleString() : ''}</td>
                   <td className="px-3 py-1"><input type="text" value={(v(`py_detail_${row}`) as string) || ''} onChange={e => set(`py_detail_${row}`, e.target.value)} className="w-full border border-slate-200 rounded px-1 py-0.5 text-xs" /></td>
                 </tr>
               );
@@ -251,7 +251,7 @@ export function ContinuanceTab({ engagementId }: Props) {
               <td className="px-3 py-1">Total</td>
               <td className="px-3 py-1 text-right">{pyFeeTotal > 0 ? pyFeeTotal.toLocaleString() : ''}</td>
               <td className="px-3 py-1 text-right">{pyHoursTotal > 0 ? pyHoursTotal.toFixed(1) : ''}</td>
-              <td className="px-3 py-1 text-right text-slate-500">{calculateFeePerHour(pyFeeTotal, pyHoursTotal)?.toFixed(2) || ''}</td>
+              <td className="px-3 py-1 text-right text-slate-500">{calculateFeePerHour(pyFeeTotal, pyHoursTotal)?.toLocaleString() || ''}</td>
               <td></td>
             </tr>
           </tbody>
@@ -278,7 +278,7 @@ export function ContinuanceTab({ engagementId }: Props) {
                   <td className="px-3 py-1 text-slate-700">{row}</td>
                   <td className="px-3 py-1"><input type="number" value={fee || ''} onChange={e => set(`cy_fee_${row}`, Number(e.target.value) || null)} className={numCls} min={0} /></td>
                   <td className="px-3 py-1"><input type="number" value={hours || ''} onChange={e => set(`cy_hours_${row}`, Number(e.target.value) || null)} className={numCls} min={0} step="0.5" /></td>
-                  <td className="px-3 py-1 text-right text-slate-500">{fph !== null ? fph.toFixed(2) : ''}</td>
+                  <td className="px-3 py-1 text-right text-slate-500">{fph !== null ? fph.toLocaleString() : ''}</td>
                   <td className="px-3 py-1">
                     <select value={(v(`cy_comment_type_${row}`) as string) || ''} onChange={e => set(`cy_comment_type_${row}`, e.target.value)} className="border border-slate-200 rounded px-1 py-0.5 text-xs bg-white w-full">
                       <option value="">-</option>
@@ -298,7 +298,7 @@ export function ContinuanceTab({ engagementId }: Props) {
               <td className="px-3 py-1">Total</td>
               <td className="px-3 py-1 text-right">{cyFeeTotal > 0 ? cyFeeTotal.toLocaleString() : ''}</td>
               <td className="px-3 py-1 text-right">{cyHoursTotal > 0 ? cyHoursTotal.toFixed(1) : ''}</td>
-              <td className="px-3 py-1 text-right text-slate-500">{calculateFeePerHour(cyFeeTotal, cyHoursTotal)?.toFixed(2) || ''}</td>
+              <td className="px-3 py-1 text-right text-slate-500">{calculateFeePerHour(cyFeeTotal, cyHoursTotal)?.toLocaleString() || ''}</td>
               <td colSpan={2}></td>
             </tr>
           </tbody>

@@ -274,5 +274,5 @@ export function calculateMateriality(
  */
 export function calculateFeePerHour(fee: number | null, hours: number | null): number | null {
   if (!fee || !hours || hours === 0) return null;
-  return Math.round((fee / hours) * 100) / 100;
+  return Math.ceil(fee / hours); // =ROUNDUP(Fee/Hours, 0)
 }
