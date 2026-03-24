@@ -3,6 +3,90 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
+/**
+ * Clear sign-offs for a given role across ALL engagement data.
+ * When Partner changes → clear 'partner' sign-offs everywhere.
+ * When Reviewer changes → clear 'reviewer' sign-offs everywhere.
+ */
+async function clearRoleSignOffs(engagementId: string, role: 'partner' | 'reviewer') {
+  // 1. AuditPermanentFile — uses sectionKey '__signoffs'
+  const pfSignOffs = await prisma.auditPermanentFile.findMany({
+    where: { engagementId, sectionKey: '__signoffs' },
+  });
+  for (const section of pfSignOffs) {
+    const data = (section.data || {}) as Record<string, unknown>;
+    delete data[role];
+    await prisma.auditPermanentFile.update({
+      where: { id: section.id },
+      data: { data: data as object },
+    });
+  }
+
+  // 2. Single-record JSON tables (Ethics, Continuance, NewClientTakeOn, Materiality)
+  // Sign-offs may be stored inside the JSON data field as data.__signoffs
+  const jsonTables = [
+    { model: 'auditEthics', unique: true },
+    { model: 'auditContinuance', unique: true },
+    { model: 'auditNewClientTakeOn', unique: true },
+    { model: 'auditMateriality', unique: true },
+  ];
+
+  for (const { model } of jsonTables) {
+    try {
+      const record = await (prisma as any)[model].findUnique({
+        where: { engagementId },
+      });
+      if (record?.data) {
+        const data = record.data as Record<string, unknown>;
+        // Sign-offs stored at data.__signoffs
+        if (data.__signoffs && typeof data.__signoffs === 'object') {
+          delete (data.__signoffs as Record<string, unknown>)[role];
+          await (prisma as any)[model].update({
+            where: { id: record.id },
+            data: { data: data as object },
+          });
+        }
+      }
+    } catch {
+      // Table record may not exist yet, skip
+    }
+  }
+
+  // 3. Row-based tables (PAR, RMM, TB) — sign-offs may be in row-level JSON
+  // These use per-row data, but sign-offs are typically at the tab level
+  // stored in a special row or in the engagement metadata
+  const rowTables = ['auditPARRow', 'auditRMMRow', 'auditTBRow'];
+  for (const model of rowTables) {
+    try {
+      const rows = await (prisma as any)[model].findMany({
+        where: { engagementId },
+      });
+      for (const row of rows) {
+        if (row.data && typeof row.data === 'object') {
+          const data = row.data as Record<string, unknown>;
+          if (data.__signoffs && typeof data.__signoffs === 'object') {
+            delete (data.__signoffs as Record<string, unknown>)[role];
+            await (prisma as any)[model].update({
+              where: { id: row.id },
+              data: { data: data as object },
+            });
+          }
+        }
+      }
+    } catch {
+      // Skip if table doesn't exist or has different structure
+    }
+  }
+
+  // 4. Documents table sign-offs
+  try {
+    const docs = await prisma.auditDocument.findMany({ where: { engagementId } });
+    for (const doc of docs) {
+      // Documents don't typically have sign-offs, but future-proof
+    }
+  } catch { /* skip */ }
+}
+
 async function verifyEngagementAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const engagement = await prisma.auditEngagement.findUnique({
     where: { id: engagementId },
@@ -101,38 +185,23 @@ export async function PUT(
       [...newRIIds].some(id => !currentRIIds.has(id));
 
     if (partnerChanged) {
-      // Clear partner sign-offs from all appendix tabs
-      // Sign-offs are stored in auditPermanentFile with sectionKey '__signoffs'
-      const signOffSections = await prisma.auditPermanentFile.findMany({
-        where: { engagementId, sectionKey: '__signoffs' },
-      });
-      for (const section of signOffSections) {
-        const signOffs = (section.data || {}) as Record<string, unknown>;
-        delete signOffs.partner;
-        await prisma.auditPermanentFile.update({
-          where: { id: section.id },
-          data: { data: signOffs as object },
-        });
-      }
+      await clearRoleSignOffs(engagementId, 'partner');
+    }
 
-      // Also clear from ethics, continuance, materiality sign-offs (same pattern)
-      for (const table of ['auditEthics', 'auditContinuance', 'auditMateriality'] as const) {
-        try {
-          const records = await (prisma as any)[table].findMany({
-            where: { engagementId, sectionKey: '__signoffs' },
-          });
-          for (const rec of records) {
-            const so = (rec.data || {}) as Record<string, unknown>;
-            delete so.partner;
-            await (prisma as any)[table].update({
-              where: { id: rec.id },
-              data: { data: so as object },
-            });
-          }
-        } catch {
-          // Table may not have sectionKey-based sign-offs yet, skip
-        }
-      }
+    // Also check if Manager (Reviewer) membership changed
+    const currentManagers = await prisma.auditTeamMember.findMany({
+      where: { engagementId, role: 'Manager' },
+      select: { userId: true },
+    });
+    // Compare with what was submitted (after update)
+    const newManagerIds = new Set(teamMembers.filter(m => m.role === 'Manager').map(m => m.userId));
+    const oldManagerIds = new Set(currentManagers.map(m => m.userId));
+    const reviewerChanged = oldManagerIds.size !== newManagerIds.size ||
+      [...oldManagerIds].some(id => !newManagerIds.has(id)) ||
+      [...newManagerIds].some(id => !oldManagerIds.has(id));
+
+    if (reviewerChanged) {
+      await clearRoleSignOffs(engagementId, 'reviewer');
     }
   }
 
