@@ -24,3 +24,7 @@ export function canManageSubscriptions(user: Pick<User, 'isSuperAdmin' | 'isFirm
 export function isSuperAdmin(user: Pick<User, 'isSuperAdmin'>): boolean {
   return user.isSuperAdmin;
 }
+
+export function canManageMethodology(user: Pick<User, 'isSuperAdmin' | 'isMethodologyAdmin'>): boolean {
+  return user.isSuperAdmin || user.isMethodologyAdmin;
+}
