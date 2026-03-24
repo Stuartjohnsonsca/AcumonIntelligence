@@ -1762,21 +1762,28 @@ model AuditRMMRow {
 }
 
 model AuditDocument {
-  id            String    @id @default(uuid())
-  engagementId  String    @map("engagement_id")
-  documentName  String    @map("document_name")
-  requestedFrom String?   @map("requested_from")
-  requestedDate DateTime? @map("requested_date")
-  requestedById String?   @map("requested_by_id")
-  uploadedDate  DateTime? @map("uploaded_date")
-  uploadedById  String?   @map("uploaded_by_id")
-  storagePath   String?   @map("storage_path")
-  containerName String    @default("audit-documents") @map("container_name")
-  fileSize      Int?      @map("file_size")
-  mimeType      String?   @map("mime_type")
-  verifiedOn    DateTime? @map("verified_on")
-  utilisedOn    DateTime? @map("utilised_on")
-  createdAt     DateTime  @default(now()) @map("created_at")
+  id              String    @id @default(uuid())
+  engagementId    String    @map("engagement_id")
+  documentName    String    @map("document_name")
+  requestedFrom   String?   @map("requested_from")
+  requestedDate   DateTime? @map("requested_date")
+  requestedById   String?   @map("requested_by_id")
+  uploadedDate    DateTime? @map("uploaded_date")
+  uploadedById    String?   @map("uploaded_by_id")
+  storagePath     String?   @map("storage_path")
+  containerName   String    @default("audit-documents") @map("container_name")
+  fileSize        Int?      @map("file_size")
+  mimeType        String?   @map("mime_type")
+  visibleToClient Boolean   @default(false) @map("visible_to_client")
+  receivedByName  String?   @map("received_by_name")
+  receivedAt      DateTime? @map("received_at")
+  verifiedOn      DateTime? @map("verified_on")
+  verifiedByName  String?   @map("verified_by_name") // "AI" for auto-verification
+  utilisedOn      DateTime? @map("utilised_on")
+  utilisedByName  String?   @map("utilised_by_name")
+  utilisedTab     String?   @map("utilised_tab") // which tab the document is used in
+  mappedItems     Json?     @map("mapped_items") // JSON array of item keys this doc maps to
+  createdAt       DateTime  @default(now()) @map("created_at")
 
   engagement  AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   requestedBy User?           @relation("DocumentRequester", fields: [requestedById], references: [id])
