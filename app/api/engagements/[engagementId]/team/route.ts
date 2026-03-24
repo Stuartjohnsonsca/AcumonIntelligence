@@ -58,6 +58,13 @@ export async function PUT(
 
   // Update team members if provided
   if (teamMembers) {
+    // Detect RI (Partner) changes — get current RIs before update
+    const currentRIs = await prisma.auditTeamMember.findMany({
+      where: { engagementId, role: 'RI' },
+      select: { userId: true },
+    });
+    const currentRIIds = new Set(currentRIs.map(r => r.userId));
+
     const memberIds = teamMembers.filter(m => m.id).map(m => m.id!);
     await prisma.auditTeamMember.deleteMany({
       where: { engagementId, id: { notIn: memberIds } },
@@ -83,6 +90,47 @@ export async function PUT(
           await prisma.auditTeamMember.create({
             data: { engagementId, userId: member.userId, role: member.role },
           });
+        }
+      }
+    }
+
+    // Check if RI (Partner) membership changed
+    const newRIIds = new Set(teamMembers.filter(m => m.role === 'RI').map(m => m.userId));
+    const partnerChanged = currentRIIds.size !== newRIIds.size ||
+      [...currentRIIds].some(id => !newRIIds.has(id)) ||
+      [...newRIIds].some(id => !currentRIIds.has(id));
+
+    if (partnerChanged) {
+      // Clear partner sign-offs from all appendix tabs
+      // Sign-offs are stored in auditPermanentFile with sectionKey '__signoffs'
+      const signOffSections = await prisma.auditPermanentFile.findMany({
+        where: { engagementId, sectionKey: '__signoffs' },
+      });
+      for (const section of signOffSections) {
+        const signOffs = (section.data || {}) as Record<string, unknown>;
+        delete signOffs.partner;
+        await prisma.auditPermanentFile.update({
+          where: { id: section.id },
+          data: { data: signOffs as object },
+        });
+      }
+
+      // Also clear from ethics, continuance, materiality sign-offs (same pattern)
+      for (const table of ['auditEthics', 'auditContinuance', 'auditMateriality'] as const) {
+        try {
+          const records = await (prisma as any)[table].findMany({
+            where: { engagementId, sectionKey: '__signoffs' },
+          });
+          for (const rec of records) {
+            const so = (rec.data || {}) as Record<string, unknown>;
+            delete so.partner;
+            await (prisma as any)[table].update({
+              where: { id: rec.id },
+              data: { data: so as object },
+            });
+          }
+        } catch {
+          // Table may not have sectionKey-based sign-offs yet, skip
         }
       }
     }
