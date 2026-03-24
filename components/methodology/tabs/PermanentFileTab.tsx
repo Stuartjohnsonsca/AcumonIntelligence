@@ -5,15 +5,8 @@ import { DynamicAppendixForm } from '../DynamicAppendixForm';
 import { PERMANENT_FILE_SECTIONS } from '@/types/methodology';
 import type { TemplateQuestion } from '@/types/methodology';
 
-interface TeamMember {
-  userId: string;
-  userName?: string;
-  role: string;
-}
-
 interface Props {
   engagementId: string;
-  teamMembers?: TeamMember[];
 }
 
 /**
@@ -77,7 +70,7 @@ function getDefaultQuestions(): TemplateQuestion[] {
     // Fraud Risk Analysis
     q('Fraud Risk Analysis', 'Conclusion on the fraud risk assessment'),
     q('Fraud Risk Analysis', 'Confirm that fraud triangle covering incentive/pressures, opportunities and attitudes/rationalisation is considered as part of fraud risk assessment?'),
-    // Auditor\'s Expert
+    // Auditor's Expert
     q("Auditor's Expert", 'Did the audit team identify the need to involve audit experts / specialists in addressing the significant risk?'),
     q("Auditor's Expert", 'Explain in detail how audit team has assessed the competence and capabilities of Auditor Expert involved in the engagement'),
     q("Auditor's Expert", 'Has the audit team issued instructions to expert/specialist setting the scope of work?'),
@@ -94,7 +87,7 @@ function getDefaultQuestions(): TemplateQuestion[] {
   ];
 }
 
-export function PermanentFileTab({ engagementId, teamMembers = [] }: Props) {
+export function PermanentFileTab({ engagementId }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
 
@@ -103,7 +96,6 @@ export function PermanentFileTab({ engagementId, teamMembers = [] }: Props) {
       const res = await fetch(`/api/engagements/${engagementId}/permanent-file`);
       if (res.ok) {
         const json = await res.json();
-        // Flatten section data into single values object
         const flat: Record<string, unknown> = {};
         for (const [, sectionData] of Object.entries(json.data || {})) {
           if (typeof sectionData === 'object' && sectionData) {
@@ -122,7 +114,7 @@ export function PermanentFileTab({ engagementId, teamMembers = [] }: Props) {
   useEffect(() => { loadData(); }, [loadData]);
 
   if (loading) {
-    return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading Client Permanent File...</div>;
+    return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading...</div>;
   }
 
   const questions = getDefaultQuestions();
@@ -133,8 +125,6 @@ export function PermanentFileTab({ engagementId, teamMembers = [] }: Props) {
       endpoint="permanent-file"
       questions={questions}
       initialData={data as Record<string, string | number | boolean | null>}
-      title="Client Permanent File"
-      teamMembers={teamMembers}
     />
   );
 }

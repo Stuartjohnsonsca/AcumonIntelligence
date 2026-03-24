@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
+import { SignOffHeader } from './SignOffHeader';
 import { PermanentFileTab } from './tabs/PermanentFileTab';
 import { EthicsTab } from './tabs/EthicsTab';
 import { ContinuanceTab } from './tabs/ContinuanceTab';
@@ -25,16 +26,40 @@ interface Props {
 
 const TABS = [
   { key: 'opening', label: 'Opening' },
-  { key: 'permanent-file', label: 'Client Permanent File' },
+  { key: 'permanent-file', label: 'Permanent' },
   { key: 'ethics', label: 'Ethics' },
   { key: 'continuance', label: 'Continuance' },
   { key: 'tb', label: 'TBCYvPY' },
   { key: 'materiality', label: 'Materiality' },
   { key: 'par', label: 'PAR' },
   { key: 'rmm', label: 'Identifying & Assessing RMM' },
-  { key: 'documents', label: 'Document Repository' },
-  { key: 'portal', label: 'Client Portal' },
+  { key: 'documents', label: 'Documents' },
+  { key: 'portal', label: 'Portal' },
 ] as const;
+
+// Tabs that get sign-off dots — everything except Documents and Portal
+const SIGNOFF_TABS: Record<string, string> = {
+  'opening': 'Opening',
+  'permanent-file': 'Client Permanent File',
+  'ethics': 'Ethics',
+  'continuance': 'Continuance',
+  'tb': 'Trial Balance CY v PY',
+  'materiality': 'Materiality',
+  'par': 'Preliminary Analytical Review',
+  'rmm': 'Identifying & Assessing RMM',
+};
+
+// Map tab key to API endpoint for sign-offs
+const TAB_ENDPOINTS: Record<string, string> = {
+  'opening': 'permanent-file', // shares with permanent-file for now
+  'permanent-file': 'permanent-file',
+  'ethics': 'ethics',
+  'continuance': 'continuance',
+  'tb': 'trial-balance',
+  'materiality': 'materiality',
+  'par': 'par',
+  'rmm': 'rmm',
+};
 
 type TabKey = typeof TABS[number]['key'];
 
@@ -46,21 +71,26 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
   function switchTab(key: TabKey) {
     setActiveTab(key);
-    // Update URL without full navigation
     const url = new URL(window.location.href);
     url.searchParams.set('tab', key);
     router.replace(url.pathname + url.search, { scroll: false });
   }
 
-  // Determine the continuance/new client tab label
-  const continuanceLabel = 'Continuance'; // TODO: Check if new client based on prior auditor
+  const continuanceLabel = 'Continuance';
+
+  // Normalised team members for sign-off
+  const teamMembers = engagement.teamMembers.map(m => ({
+    userId: m.userId,
+    userName: m.userName || (m as any).user?.name,
+    role: m.role,
+  }));
 
   function renderTabContent() {
     switch (activeTab) {
       case 'opening':
         return <OpeningTab engagement={engagement} auditType={auditType} clientName={clientName} periodEndDate={periodEndDate} />;
       case 'permanent-file':
-        return <PermanentFileTab engagementId={engagement.id} teamMembers={engagement.teamMembers.map(m => ({ userId: m.userId, userName: m.userName || (m as any).user?.name, role: m.role }))} />;
+        return <PermanentFileTab engagementId={engagement.id} teamMembers={teamMembers} />;
       case 'ethics':
         return <EthicsTab engagementId={engagement.id} />;
       case 'continuance':
@@ -81,6 +111,11 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         return null;
     }
   }
+
+  // Wrap content with SignOffHeader for applicable tabs
+  const hasSignOff = activeTab in SIGNOFF_TABS;
+  const signOffTitle = SIGNOFF_TABS[activeTab] || '';
+  const signOffEndpoint = TAB_ENDPOINTS[activeTab] || '';
 
   return (
     <div>
@@ -110,7 +145,18 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       {/* Tab Content */}
       <div className="bg-white rounded-b-lg border border-t-0 border-slate-200 min-h-[500px]">
         <div className="p-4">
-          {renderTabContent()}
+          {hasSignOff ? (
+            <SignOffHeader
+              engagementId={engagement.id}
+              endpoint={signOffEndpoint}
+              title={signOffTitle}
+              teamMembers={teamMembers}
+            >
+              {renderTabContent()}
+            </SignOffHeader>
+          ) : (
+            renderTabContent()
+          )}
         </div>
       </div>
     </div>
