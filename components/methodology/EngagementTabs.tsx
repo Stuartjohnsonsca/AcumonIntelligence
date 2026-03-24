@@ -11,6 +11,8 @@ import { MaterialityTab } from './tabs/MaterialityTab';
 import { TrialBalanceTab } from './tabs/TrialBalanceTab';
 import { PARTab } from './tabs/PARTab';
 import { RMMTab } from './tabs/RMMTab';
+import { DocumentRepositoryTab } from './tabs/DocumentRepositoryTab';
+import { ClientPortalTab } from './tabs/ClientPortalTab';
 
 // Tab placeholder for tabs not yet built
 function TabPlaceholder({ name }: { name: string }) {
@@ -82,9 +84,9 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'rmm':
         return <RMMTab engagementId={engagement.id} auditType={auditType} />;
       case 'documents':
-        return <TabPlaceholder name="Document Repository" />;
+        return <DocumentRepositoryTab engagementId={engagement.id} />;
       case 'portal':
-        return <TabPlaceholder name="Client Portal (Read Only)" />;
+        return <ClientPortalTab engagementId={engagement.id} clientName={clientName} />;
       default:
         return null;
     }
