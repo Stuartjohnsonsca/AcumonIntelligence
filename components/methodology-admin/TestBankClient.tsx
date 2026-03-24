@@ -23,7 +23,7 @@ interface TestBankEntry {
   firmId: string;
   industryId: string;
   fsLine: string;
-  tests: { description: string; testTypeCode: string; significantRisk?: boolean; assertion?: string }[];
+  tests: { description: string; testTypeCode: string; significantRisk?: boolean; assertion?: string; framework?: string }[];
   assertions: string[] | null;
 }
 
@@ -32,6 +32,7 @@ interface Props {
   initialIndustries: Industry[];
   initialTestTypes: TestType[];
   initialTestBanks: TestBankEntry[];
+  initialFrameworkOptions?: string[];
 }
 
 const DEFAULT_FS_LINES = [
@@ -51,7 +52,10 @@ const DEFAULT_FS_LINES = [
   'Reserves',
 ];
 
-export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks }: Props) {
+const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
+
+export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions }: Props) {
+  const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
   const [industries] = useState(initialIndustries);
   const [testTypes] = useState(initialTestTypes);
   const [testBanks, setTestBanks] = useState(initialTestBanks);
@@ -85,7 +89,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   const openPopup = (fsLine: string) => {
     const entry = testBanks.find((tb) => tb.industryId === selectedIndustry && tb.fsLine === fsLine);
     setPopupFsLine(fsLine);
-    setPopupTests(entry?.tests as any[] || [{ description: '', testTypeCode: '', assertion: '', significantRisk: false }]);
+    setPopupTests(entry?.tests as any[] || [{ description: '', testTypeCode: '', assertion: '', framework: '', significantRisk: false }]);
     setPopupOpen(true);
   };
 
@@ -203,7 +207,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       const grouped: Record<string, { description: string; testTypeCode: string; assertion: string; significantRisk: boolean }[]> = {};
 
       for (const parts of dataRows) {
-        const [fsLine, description, typeName, assertion, sigRisk] = parts.map(p => (p || '').toString().trim());
+        const [fsLine, description, typeName, assertion, framework, sigRisk] = parts.map(p => (p || '').toString().trim());
         if (!fsLine || !description) continue;
 
         const matchedType = testTypes.find(t =>
@@ -211,12 +215,14 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         );
         const typeCode = matchedType?.code || testTypes[0]?.code || '';
         const matchedAssertion = ASSERTION_TYPES.find(a => a.toLowerCase() === (assertion || '').toLowerCase()) || '';
+        const matchedFramework = frameworkOptions.find(f => f.toLowerCase() === (framework || '').toLowerCase()) || '';
 
         if (!grouped[fsLine]) grouped[fsLine] = [];
         grouped[fsLine].push({
           description,
           testTypeCode: typeCode,
           assertion: matchedAssertion,
+          framework: matchedFramework,
           significantRisk: (sigRisk || '').toUpperCase() === 'Y',
         });
       }
@@ -373,7 +379,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       {/* Popup for editing tests */}
       {popupOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-lg shadow-xl w-[900px] max-h-[80vh] overflow-y-auto p-6">
+          <div className="bg-white rounded-lg shadow-xl w-[1050px] max-h-[80vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-slate-900">
                 Tests: {popupFsLine}
@@ -387,8 +393,9 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
               <thead>
                 <tr>
                   <th className="text-left text-sm font-medium text-slate-600 p-2 border-b">Test Description</th>
-                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-40">Type</th>
-                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-48">Assertion</th>
+                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-36">Type</th>
+                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-44">Assertion</th>
+                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-28">Framework</th>
                   <th className="text-center text-sm font-medium text-slate-600 p-2 border-b w-16" title="Significant Risk">Sig. Risk</th>
                   <th className="w-8"></th>
                 </tr>
@@ -440,6 +447,22 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                         ))}
                       </select>
                     </td>
+                    <td className="p-2 border-b">
+                      <select
+                        value={test.framework || ''}
+                        onChange={(e) => {
+                          const updated = [...popupTests];
+                          updated[i] = { ...updated[i], framework: e.target.value };
+                          setPopupTests(updated);
+                        }}
+                        className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"
+                      >
+                        <option value="">All</option>
+                        {frameworkOptions.map(fw => (
+                          <option key={fw} value={fw}>{fw}</option>
+                        ))}
+                      </select>
+                    </td>
                     <td className="p-2 border-b text-center">
                       <input
                         type="checkbox"
@@ -468,7 +491,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
 
             <div className="flex items-center justify-between">
               <Button
-                onClick={() => setPopupTests((prev) => [...prev, { description: '', testTypeCode: '', assertion: '', significantRisk: false }])}
+                onClick={() => setPopupTests((prev) => [...prev, { description: '', testTypeCode: '', assertion: '', framework: '', significantRisk: false }])}
                 size="sm"
                 variant="outline"
               >

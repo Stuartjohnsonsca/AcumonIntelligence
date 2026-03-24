@@ -40,6 +40,12 @@ export async function GET(req: Request) {
   ];
   const allFsLines = [...new Set([...defaultFsLines, ...existingFsLines])];
 
+  // Get framework options
+  const fwTemplate = await prisma.methodologyTemplate.findFirst({
+    where: { firmId: session.user.firmId, templateType: 'audit_type_schedules', auditType: '__framework_options' },
+  });
+  const frameworkNames = (fwTemplate?.items as string[]) || ['IFRS', 'FRS102'];
+
   // Build dropdown lists
   const typeNames = testTypes.map(t => t.name);
   const assertionNames = [...ASSERTION_TYPES] as string[];
@@ -53,7 +59,7 @@ export async function GET(req: Request) {
   const ws = wb.addWorksheet('Test Bank');
 
   // Headers
-  const headerRow = ws.addRow(['FS Line Item', 'Test Description', 'Type', 'Assertion', 'Significant Risk']);
+  const headerRow = ws.addRow(['FS Line Item', 'Test Description', 'Type', 'Assertion', 'Framework', 'Significant Risk']);
   headerRow.eachCell(cell => {
     cell.font = { bold: true, size: 11 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
@@ -69,13 +75,14 @@ export async function GET(req: Request) {
   ws.getColumn(2).width = 50;
   ws.getColumn(3).width = 20;
   ws.getColumn(4).width = 25;
-  ws.getColumn(5).width = 18;
+  ws.getColumn(5).width = 16;
+  ws.getColumn(6).width = 18;
 
   // Add pre-populated rows with FS lines (100 rows for data entry)
   const dataRowCount = Math.max(allFsLines.length * 3, 50); // At least 3 rows per FS line
   for (let i = 0; i < dataRowCount; i++) {
     const fsLine = i < allFsLines.length ? allFsLines[i] : '';
-    const row = ws.addRow([fsLine, '', '', '', '']);
+    const row = ws.addRow([fsLine, '', '', '', '', '']);
     // Light alternating row colours
     if (i % 2 === 0) {
       row.eachCell(cell => {
@@ -111,9 +118,21 @@ export async function GET(req: Request) {
     };
   }
 
-  // Significant Risk dropdown (column E)
+  // Framework dropdown (column E)
   for (let r = 2; r <= lastDataRow; r++) {
     ws.getCell(`E${r}`).dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [`"${frameworkNames.join(',')}"`],
+      showErrorMessage: true,
+      errorTitle: 'Invalid Framework',
+      error: `Please select: ${frameworkNames.join(', ')}`,
+    };
+  }
+
+  // Significant Risk dropdown (column F)
+  for (let r = 2; r <= lastDataRow; r++) {
+    ws.getCell(`F${r}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: [`"${sigRiskOptions.join(',')}"`],
@@ -127,7 +146,7 @@ export async function GET(req: Request) {
   ws.views = [{ state: 'frozen', ySplit: 1 }];
 
   // Auto-filter
-  ws.autoFilter = { from: 'A1', to: `E${lastDataRow}` };
+  ws.autoFilter = { from: 'A1', to: `F${lastDataRow}` };
 
   // Generate buffer
   const buffer = await wb.xlsx.writeBuffer();
