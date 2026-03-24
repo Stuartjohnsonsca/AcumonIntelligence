@@ -660,10 +660,15 @@ async function extractFromScannedPdf(pdfBuffer: Buffer, fileName: string): Promi
       { type: 'text', text: visionPrompt },
     ];
 
-    const models = selectModels(EXTRACTION_PRIORITIES, true);
+    // Llama-4-Maverick is the only Together AI model proven to handle PDF input
+    // Put it first, then fall back to other vision models
+    const PDF_VISION_MODELS = [
+      'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+      ...selectModels(EXTRACTION_PRIORITIES, true).filter(m => m !== 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8'),
+    ];
     let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
 
-    for (const modelId of models) {
+    for (const modelId of PDF_VISION_MODELS) {
       try {
         result = await retryWithBackoff(
           () => client.chat.completions.create({
