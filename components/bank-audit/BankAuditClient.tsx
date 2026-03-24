@@ -257,6 +257,25 @@ export function BankAuditClient({
     setBankData([]);
   };
 
+  const handleReset = async () => {
+    if (!sessionId) return;
+    if (!window.confirm('This will clear all uploaded files and extracted bank data. Are you sure?')) return;
+    try {
+      await fetch('/api/bank-audit/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+    } catch { /* ignore */ }
+    setBankData([]);
+    setUploadedFiles([]);
+    setDataSource('none');
+    setTestsCompleted(false);
+    setTestsRunning(false);
+    setBankDataCollapsed(false);
+    setAuditTests(prev => prev.map(t => ({ ...t, isChecked: false, status: 'pending' as const, progress: 0, resultData: null, errorMsg: null })));
+  };
+
   const toggleAuditTest = (key: string) => {
     setAuditTests(prev => prev.map(t => t.key === key ? { ...t, isChecked: !t.isChecked } : t));
   };
@@ -473,7 +492,16 @@ export function BankAuditClient({
 
           {/* Data Ingestion Options */}
           <div className="bg-white rounded-lg border shadow-sm p-5">
-            <h3 className="text-sm font-semibold text-slate-700 mb-3">Bank Data</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-slate-700">Bank Data</h3>
+              <button
+                onClick={handleReset}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 hover:text-red-700 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Reset All Data
+              </button>
+            </div>
             <div className="grid grid-cols-4 gap-3">
               <button
                 onClick={handleUploadSpreadsheet}
@@ -573,17 +601,33 @@ export function BankAuditClient({
                       <table className="w-full text-xs">
                         <thead className="bg-slate-50 sticky top-0">
                           <tr>
-                            {bankData[0] && Object.keys(bankData[0]).map(key => (
-                              <th key={key} className="px-3 py-2 text-left font-medium text-slate-600 border-b">{key}</th>
-                            ))}
+                            <th className="px-2 py-2 text-left font-medium text-blue-700 border-b bg-blue-50">Bank</th>
+                            <th className="px-2 py-2 text-left font-medium text-blue-700 border-b bg-blue-50">Sort Code</th>
+                            <th className="px-2 py-2 text-left font-medium text-blue-700 border-b bg-blue-50">Acc No.</th>
+                            <th className="px-2 py-2 text-left font-medium text-blue-700 border-b bg-blue-50">Stmt Date</th>
+                            <th className="px-2 py-2 text-left font-medium text-blue-700 border-b bg-blue-50">Page</th>
+                            <th className="px-2 py-2 text-left font-medium text-slate-600 border-b">Date</th>
+                            <th className="px-2 py-2 text-left font-medium text-slate-600 border-b">Description</th>
+                            <th className="px-2 py-2 text-left font-medium text-slate-600 border-b">Reference</th>
+                            <th className="px-2 py-2 text-right font-medium text-slate-600 border-b">Debit</th>
+                            <th className="px-2 py-2 text-right font-medium text-slate-600 border-b">Credit</th>
+                            <th className="px-2 py-2 text-right font-medium text-slate-600 border-b">Balance</th>
                           </tr>
                         </thead>
                         <tbody>
                           {bankData.map((row, i) => (
                             <tr key={i} className="border-b hover:bg-slate-50">
-                              {Object.values(row).map((val, j) => (
-                                <td key={j} className="px-3 py-1.5 text-slate-700">{String(val ?? '')}</td>
-                              ))}
+                              <td className="px-2 py-1.5 text-blue-800 bg-blue-50/30">{String(row.bankName ?? '')}</td>
+                              <td className="px-2 py-1.5 text-blue-800 bg-blue-50/30">{String(row.sortCode ?? '')}</td>
+                              <td className="px-2 py-1.5 text-blue-800 bg-blue-50/30">{String(row.accountNumber ?? '')}</td>
+                              <td className="px-2 py-1.5 text-blue-800 bg-blue-50/30">{String(row.statementDate ?? '')}</td>
+                              <td className="px-2 py-1.5 text-blue-800 bg-blue-50/30">{String(row.statementPage ?? '')}</td>
+                              <td className="px-2 py-1.5 text-slate-700">{String(row.date ?? '')}</td>
+                              <td className="px-2 py-1.5 text-slate-700 max-w-xs truncate">{String(row.description ?? '')}</td>
+                              <td className="px-2 py-1.5 text-slate-500">{String(row.reference ?? '')}</td>
+                              <td className="px-2 py-1.5 text-right text-red-600 font-mono">{Number(row.debit) ? Number(row.debit).toFixed(2) : ''}</td>
+                              <td className="px-2 py-1.5 text-right text-green-600 font-mono">{Number(row.credit) ? Number(row.credit).toFixed(2) : ''}</td>
+                              <td className="px-2 py-1.5 text-right font-mono text-slate-700">{Number(row.balance) ? Number(row.balance).toFixed(2) : ''}</td>
                             </tr>
                           ))}
                         </tbody>
