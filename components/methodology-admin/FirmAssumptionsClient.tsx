@@ -177,13 +177,13 @@ export function FirmAssumptionsClient({
         </Button>
       </div>
 
-      {/* Inherent Risk Table (Appendix F) */}
+      {/* Inherent Risk Table */}
       <div className="border rounded-lg">
         <button
           onClick={() => toggleSection('inherent')}
           className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
         >
-          <h2 className="text-lg font-semibold text-slate-900">Appendix F: Methodology Inherent Risk Table</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Methodology Inherent Risk Table</h2>
           {expandedSections.inherent ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
         </button>
         {expandedSections.inherent && (
@@ -234,13 +234,13 @@ export function FirmAssumptionsClient({
         )}
       </div>
 
-      {/* Control Risk Table (Appendix G) */}
+      {/* Control Risk Table */}
       <div className="border rounded-lg">
         <button
           onClick={() => toggleSection('control')}
           className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
         >
-          <h2 className="text-lg font-semibold text-slate-900">Appendix G: Methodology Control Risk Table</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Methodology Control Risk Table</h2>
           {expandedSections.control ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
         </button>
         {expandedSections.control && (
@@ -291,13 +291,13 @@ export function FirmAssumptionsClient({
         )}
       </div>
 
-      {/* Assertions to FS Statements (Appendix H) */}
+      {/* Assertions to FS Statements */}
       <div className="border rounded-lg">
         <button
           onClick={() => toggleSection('assertions')}
           className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
         >
-          <h2 className="text-lg font-semibold text-slate-900">Appendix H: Assertions to FS Statements</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Assertions to FS Statements</h2>
           {expandedSections.assertions ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
         </button>
         {expandedSections.assertions && (
