@@ -184,3 +184,35 @@ export const MATERIALITY_BENCHMARKS = [
   'Total Equity or Net Assets',
   'Total Assets',
 ] as const;
+
+// ─── Template Question Types (for dynamic form rendering) ──────────────────
+
+export type QuestionInputType = 'text' | 'textarea' | 'yesno' | 'dropdown' | 'number' | 'date' | 'formula' | 'checkbox' | 'yna';
+
+export interface TemplateQuestion {
+  id: string;
+  sectionKey: string;
+  questionText: string;
+  inputType: QuestionInputType;
+  dropdownOptions?: string[];
+  formulaExpression?: string;
+  crossRef?: string;
+  isRequired?: boolean;
+  sortOrder: number;
+  validationMin?: number;
+  validationMax?: number;
+  validationDecimals?: number;
+  conditionalOn?: { questionId: string; value: string };
+  mergedWith?: string;
+}
+
+// ─── Materiality Benchmark Ranges (from Appendix E) ────────────────────────
+
+export const MATERIALITY_RANGES: Record<string, { low: number; high: number }> = {
+  'Profit before Tax': { low: 0.05, high: 0.10 },
+  'Gross Profit': { low: 0.01, high: 0.04 },
+  'Total Revenue': { low: 0.005, high: 0.02 },
+  'Total Expenses': { low: 0.005, high: 0.02 },
+  'Total Equity or Net Assets': { low: 0.01, high: 0.05 },
+  'Total Assets': { low: 0.005, high: 0.02 },
+};

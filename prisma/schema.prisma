@@ -1513,6 +1513,7 @@ model AuditEngagement {
   infoRequestType       String    @default("standard") @map("info_request_type") // preliminary | standard
   hardCloseDate         DateTime? @map("hard_close_date")
   isGroupAudit          Boolean   @default(false) @map("is_group_audit")
+  tbViewMode            String    @default("fs_line") @map("tb_view_mode") // fs_line | tb_account
   createdById           String    @map("created_by_id")
   startedAt             DateTime? @map("started_at")
   completedAt           DateTime? @map("completed_at")
@@ -1537,6 +1538,7 @@ model AuditEngagement {
   parRows             AuditPARRow[]
   rmmRows             AuditRMMRow[]
   documents           AuditDocument[]
+  tbRows              AuditTBRow[]
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
@@ -1782,6 +1784,26 @@ model AuditDocument {
 
   @@index([engagementId])
   @@map("audit_documents")
+}
+
+model AuditTBRow {
+  id             String  @id @default(uuid())
+  engagementId   String  @map("engagement_id")
+  accountCode    String  @map("account_code")
+  description    String
+  category       String? // User-defined classification, toggleable
+  currentYear    Float?  @map("current_year")
+  priorYear      Float?  @map("prior_year")
+  fsNoteLevel    String? @map("fs_note_level")
+  fsLevel        String? @map("fs_level")
+  fsStatement    String? @map("fs_statement")
+  groupName      String? @map("group_name") // Only display for GROUP audit type
+  sortOrder      Int     @default(0) @map("sort_order")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@map("audit_tb_rows")
 }
 
 // ─── Methodology Configuration (firm-scoped, versioned) ─────────────────────
