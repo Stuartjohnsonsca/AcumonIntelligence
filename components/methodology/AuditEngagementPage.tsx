@@ -143,13 +143,13 @@ export function AuditEngagementPage({ auditType }: Props) {
                 {clientName} · {periodLabel}
                 {engagement && (
                   <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                    engagement.status === 'pre_start' ? 'bg-yellow-100 text-yellow-700' :
+                    engagement.status === 'pre_start' ? 'bg-yellow-100 text-yellow-700' : // displays as SET UP
                     engagement.status === 'active' ? 'bg-green-100 text-green-700' :
                     engagement.status === 'review' ? 'bg-blue-100 text-blue-700' :
                     engagement.status === 'complete' ? 'bg-slate-100 text-slate-700' :
                     'bg-gray-100 text-gray-500'
                   }`}>
-                    {engagement.status.replace('_', ' ').toUpperCase()}
+                    {engagement.status === 'pre_start' ? 'SET UP' : engagement.status.replace('_', ' ').toUpperCase()}
                   </span>
                 )}
               </p>

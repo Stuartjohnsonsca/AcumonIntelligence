@@ -82,7 +82,7 @@ export async function PUT(
           method: 'POST',
           headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: process.env.AI_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',
+            model: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
             messages: [
               { role: 'system', content: 'You are an audit research assistant. Provide concise, factual business intelligence for audit planning. Keep responses to 2-3 paragraphs. If you cannot find specific information, say so briefly.' },
               { role: 'user', content: cat.prompt },
