@@ -209,30 +209,28 @@ export function DynamicAppendixForm({
               const isStale = (key === 'reviewer' || key === 'partner') && isSignOffStale(key);
               const hasSigned = !!so?.timestamp;
               const showGreen = hasSigned && !isStale;
-              // Check if current user can sign off for this role
+              // Only the user assigned to this role can sign off — no superadmin override
               const currentUserId = session?.user?.id;
               const canSign = currentUserId && teamMembers.some(m => ROLE_MAP[m.role] === key && m.userId === currentUserId);
-              // Also allow superadmin
-              const isSuperAdmin = session?.user?.isSuperAdmin;
 
               return (
                 <div key={key} className="flex flex-col items-center gap-1">
                   <span className="text-[10px] text-slate-500 font-medium">{label}</span>
                   <button
-                    onClick={() => (canSign || isSuperAdmin) && handleSignOff(key)}
-                    disabled={!canSign && !isSuperAdmin}
+                    onClick={() => canSign && handleSignOff(key)}
+                    disabled={!canSign}
                     className={`w-5 h-5 rounded-full border-2 transition-all ${
                       showGreen
                         ? 'bg-green-500 border-green-500'
                         : isStale
                           ? 'bg-white border-green-500'
-                          : canSign || isSuperAdmin
+                          : canSign
                             ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
                             : 'bg-white border-slate-200 cursor-not-allowed opacity-50'
                     }`}
                     title={
                       hasSigned ? `${so.userName} — ${new Date(so.timestamp).toLocaleString()}` :
-                      canSign || isSuperAdmin ? `Click to sign off as ${label}` :
+                      canSign ? `Click to sign off as ${label}` :
                       `Only ${label}s can sign off here`
                     }
                   />
