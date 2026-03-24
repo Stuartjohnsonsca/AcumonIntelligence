@@ -127,7 +127,7 @@ export function PARTab({ engagementId }: Props) {
         </div>
       </div>
 
-      <div className="border border-slate-200 rounded-lg overflow-auto max-h-[600px]">
+      <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 280px)' }}>
         <table className="w-full text-xs">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
