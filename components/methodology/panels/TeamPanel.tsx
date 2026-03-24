@@ -17,7 +17,11 @@ interface Props {
   ethicsPartnerName?: string;
 }
 
-const TEAM_ROLES = ['Junior', 'Manager', 'RI'] as const;
+const TEAM_ROLES = [
+  { value: 'Junior', label: 'Operator' },
+  { value: 'Manager', label: 'Reviewer' },
+  { value: 'RI', label: 'Partner' },
+] as const;
 const SPECIALIST_TYPES = [
   { type: 'Specialist', label: 'Specialist' },
   { type: 'Expert', label: 'Expert' },
@@ -59,7 +63,7 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
     setTeamMembers(prev => [...prev, {
       id: '',
       userId,
-      role: 'Junior',
+      role: 'Junior', // stored as Junior internally, displayed as Operator
       userName: user.name,
       userEmail: user.email,
     }]);
@@ -148,7 +152,7 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
               className="border border-slate-200 rounded px-1 py-0.5 text-xs bg-white"
             >
               {TEAM_ROLES.map(role => (
-                <option key={role} value={role}>{role}</option>
+                <option key={role.value} value={role.value}>{role.label}</option>
               ))}
             </select>
             <button onClick={() => removeMember(i)} className="text-red-400 hover:text-red-600 text-xs">×</button>
