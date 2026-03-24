@@ -337,8 +337,9 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Final Risk</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-24">Control Risk</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Overall</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-44">
-                <div className="flex gap-6 justify-center">
+              <th className="text-center px-1 py-2 text-slate-500 font-medium w-14" title="Significant Risk">Sig.Risk <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span></th>
+              <th className="text-center px-1 py-2 text-slate-500 font-medium w-28">
+                <div className="flex gap-2 justify-center">
                   <span className="text-[7px]">Reviewer</span>
                   <span className="text-[7px]">Partner</span>
                 </div>
@@ -444,11 +445,17 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                         {row.overallRisk || '—'}
                       </span>
                     </td>
+                    {/* Significant Risk */}
+                    <td className="px-1 py-1 text-center align-top">
+                      {(row.overallRisk === 'High' || row.overallRisk === 'Very High') && (
+                        <span className="text-red-500 text-sm" title="Significant Risk">✓</span>
+                      )}
+                    </td>
                     {/* Row-level sign-off dots */}
-                    <td className="px-2 py-1 align-top">
-                      <div className="flex gap-6 justify-center items-start">
+                    <td className="px-1 py-1 align-top">
+                      <div className="flex gap-2 justify-center items-start">
                         {/* Reviewer */}
-                        <div className="flex flex-col items-center min-w-[60px]">
+                        <div className="flex flex-col items-center min-w-[45px]">
                           <button onClick={() => userIsReviewer && signOffRow(i, 'reviewer')} disabled={!userIsReviewer}
                             className={`w-4 h-4 rounded-full border-2 transition-all ${
                               reviewerSO && !reviewerStale ? 'bg-green-500 border-green-500'
@@ -465,7 +472,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                           )}
                         </div>
                         {/* Partner */}
-                        <div className="flex flex-col items-center min-w-[60px]">
+                        <div className="flex flex-col items-center min-w-[45px]">
                           <button onClick={() => userIsPartner && signOffRow(i, 'partner')} disabled={!userIsPartner}
                             className={`w-4 h-4 rounded-full border-2 transition-all ${
                               partnerSO && !partnerStale ? 'bg-green-500 border-green-500'
@@ -491,7 +498,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                   </tr>
                   {isExpanded && (
                     <tr className="bg-blue-50/30 border-b border-slate-200">
-                      <td colSpan={16} className="px-4 py-3">
+                      <td colSpan={17} className="px-4 py-3">
                         <div className="grid grid-cols-5 gap-3">
                           {INHERENT_RISK_COMPONENTS.map(comp => {
                             const textKey = `${comp.key}Text` as keyof RMMRow;
