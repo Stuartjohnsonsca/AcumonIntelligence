@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Copy, Loader2, Save } from 'lucide-react';
+import { Plus, X, Copy, Loader2, Save, Download, Upload } from 'lucide-react';
 import { MANDATORY_FS_LINES } from '@/types/methodology';
 
 interface Industry {
@@ -69,6 +69,9 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   const [saving, setSaving] = useState(false);
   const [copySourceIndustry, setCopySourceIndustry] = useState('');
   const [copyTargetIndustry, setCopyTargetIndustry] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasTests = useCallback(
     (industryId: string, fsLine: string) => {
@@ -159,6 +162,114 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     }
   };
 
+  function downloadTemplate() {
+    const selectedInd = industries.find(i => i.id === selectedIndustry);
+    const indName = selectedInd?.name || 'Industry';
+    const typeOptions = testTypes.map(t => t.name).join(' | ');
+
+    // CSV header
+    const header = 'FS Line Item,Test Description,Type (' + typeOptions + '),Significant Risk (Y/N)';
+    const exampleRows = [
+      'Revenue,Agree revenue to underlying sales records and contracts,Test of Details,N',
+      'Revenue,Compare revenue trends to prior year and budget,Analytical Review,N',
+      'Going Concern,Review cash flow forecasts and underlying assumptions,Judgement,Y',
+    ];
+
+    // Include existing FS lines as empty rows for convenience
+    const fsRows = fsLines.map(line => `${line},,,`);
+
+    const csv = [header, '', '// Example rows (delete these):', ...exampleRows, '', '// FS Lines for ' + indName + ':', ...fsRows].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `test-bank-template-${indName.replace(/\s+/g, '-').toLowerCase()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadResult(null);
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const text = ev.target?.result as string;
+        const lines = text.split('\n').filter(l => l.trim() && !l.trim().startsWith('//'));
+
+        // Skip header row
+        const dataLines = lines.slice(1);
+        let imported = 0;
+        let errors = 0;
+
+        // Group by FS Line
+        const grouped: Record<string, { description: string; testTypeCode: string; significantRisk: boolean }[]> = {};
+
+        for (const line of dataLines) {
+          // Parse CSV (handle quoted fields)
+          const parts = line.match(/(".*?"|[^,]*),?/g)?.map(s => s.replace(/,$/, '').replace(/^"|"$/g, '').trim()) || [];
+          const [fsLine, description, typeName, sigRisk] = parts;
+
+          if (!fsLine || !description) continue;
+
+          // Match type name to code
+          const matchedType = testTypes.find(t =>
+            t.name.toLowerCase() === (typeName || '').toLowerCase() ||
+            t.code.toLowerCase() === (typeName || '').toLowerCase()
+          );
+          const typeCode = matchedType?.code || testTypes[0]?.code || '';
+
+          if (!grouped[fsLine]) grouped[fsLine] = [];
+          grouped[fsLine].push({
+            description,
+            testTypeCode: typeCode,
+            significantRisk: (sigRisk || '').toUpperCase() === 'Y',
+          });
+        }
+
+        // Save each FS line group
+        for (const [fsLine, tests] of Object.entries(grouped)) {
+          // Add FS line if not exists
+          if (!fsLines.includes(fsLine)) {
+            setFsLines(prev => [...prev, fsLine]);
+          }
+
+          try {
+            const res = await fetch('/api/methodology-admin/test-bank', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ firmId, industryId: selectedIndustry, fsLine, tests }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              setTestBanks(prev => {
+                const filtered = prev.filter(tb => !(tb.industryId === selectedIndustry && tb.fsLine === fsLine));
+                return [...filtered, data.entry];
+              });
+              imported += tests.length;
+            } else {
+              errors++;
+            }
+          } catch {
+            errors++;
+          }
+        }
+
+        setUploadResult(`Imported ${imported} tests across ${Object.keys(grouped).length} FS lines${errors > 0 ? ` (${errors} errors)` : ''}`);
+      } catch (err) {
+        setUploadResult('Upload failed: invalid file format');
+      } finally {
+        setUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsText(file);
+  }
+
   return (
     <div className="space-y-6">
       {/* Industry selector and Copy */}
@@ -197,20 +308,38 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         </div>
       </div>
 
-      {/* Add FS Line */}
-      <div className="flex items-center space-x-2">
-        <input
-          type="text"
-          value={newFsLine}
-          onChange={(e) => setNewFsLine(e.target.value)}
-          placeholder="Add FS Statement Line..."
-          className="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
-          onKeyDown={(e) => e.key === 'Enter' && handleAddFsLine()}
-        />
-        <Button onClick={handleAddFsLine} size="sm" variant="outline">
-          <Plus className="h-4 w-4 mr-1" /> Add Column
-        </Button>
+      {/* Upload / Download + Add FS Line */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center space-x-2">
+          <input
+            type="text"
+            value={newFsLine}
+            onChange={(e) => setNewFsLine(e.target.value)}
+            placeholder="Add FS Statement Line..."
+            className="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
+            onKeyDown={(e) => e.key === 'Enter' && handleAddFsLine()}
+          />
+          <Button onClick={handleAddFsLine} size="sm" variant="outline">
+            <Plus className="h-4 w-4 mr-1" /> Add Column
+          </Button>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <Button onClick={downloadTemplate} size="sm" variant="outline">
+            <Download className="h-4 w-4 mr-1" /> Download Template
+          </Button>
+          <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" disabled={uploading}>
+            <Upload className="h-4 w-4 mr-1" /> {uploading ? 'Uploading...' : 'Upload CSV'}
+          </Button>
+          <input ref={fileInputRef} type="file" accept=".csv,.txt" onChange={handleUpload} className="hidden" />
+        </div>
       </div>
+
+      {uploadResult && (
+        <div className={`text-sm px-4 py-2 rounded-lg ${uploadResult.includes('failed') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+          {uploadResult}
+        </div>
+      )}
 
       {/* Grid */}
       <div className="border rounded-lg overflow-x-auto">
