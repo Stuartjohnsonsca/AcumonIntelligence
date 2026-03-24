@@ -9,13 +9,15 @@ import {
   DEFAULT_INFO_REQUEST_PRELIMINARY,
   PERMANENT_FILE_SECTIONS,
 } from '@/types/methodology';
+import type { TemplateQuestion } from '@/types/methodology';
+import { AppendixTemplateEditor } from './AppendixTemplateEditor';
 
 interface Template {
   id: string;
   firmId: string;
   templateType: string;
   auditType: string;
-  items: any;
+  items: unknown;
 }
 
 interface Props {
@@ -23,24 +25,49 @@ interface Props {
   initialTemplates: Template[];
 }
 
-const TEMPLATE_TYPES = [
+// Simple list templates (string arrays)
+const LIST_TEMPLATE_TYPES = [
   { key: 'agreed_dates', label: 'Agreed Dates', defaults: DEFAULT_AGREED_DATES },
-  { key: 'information_request_standard', label: 'Information Request (Standard)', defaults: DEFAULT_INFO_REQUEST_STANDARD },
-  { key: 'information_request_preliminary', label: 'Information Request (Preliminary)', defaults: DEFAULT_INFO_REQUEST_PRELIMINARY },
+  { key: 'information_request_standard', label: 'Info Request (Standard)', defaults: DEFAULT_INFO_REQUEST_STANDARD },
+  { key: 'information_request_preliminary', label: 'Info Request (Preliminary)', defaults: DEFAULT_INFO_REQUEST_PRELIMINARY },
   { key: 'permanent_file', label: 'Permanent File Sections', defaults: PERMANENT_FILE_SECTIONS.map((s) => s.label) },
 ];
 
+// Structured appendix templates (TemplateQuestion arrays)
+const APPENDIX_TEMPLATE_TYPES = [
+  { key: 'permanent_file_questions', label: 'Appendix A: Questions', sectionDefaults: PERMANENT_FILE_SECTIONS.map(s => s.label) },
+  { key: 'ethics_questions', label: 'Appendix B: Questions', sectionDefaults: ['Non Audit Services', 'Threats', 'Relationships', 'Other Considerations', 'Fee Assessment', 'ORITP'] },
+  { key: 'continuance_questions', label: 'Appendix C: Questions', sectionDefaults: ['Entity Details', 'Ownership', 'Continuity', 'Management Info', 'Nature of Business', 'Fee Considerations', 'Resourcing', 'EQR', 'AML', 'MLRO', 'Final Conclusion'] },
+  { key: 'materiality_questions', label: 'Appendix E: Questions', sectionDefaults: ['Benchmark', 'Justification', 'Overall Materiality Assessment', 'Performance Materiality'] },
+];
+
+const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;
 const AUDIT_TYPES = ['ALL', 'SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS'];
+
+type ViewMode = 'lists' | 'appendix';
 
 export function SchedulesClient({ firmId, initialTemplates }: Props) {
   const [templates, setTemplates] = useState<Record<string, string[]>>(() => {
     const map: Record<string, string[]> = {};
     for (const t of initialTemplates) {
-      map[`${t.templateType}|${t.auditType}`] = t.items as string[];
+      if (!t.templateType.endsWith('_questions')) {
+        map[`${t.templateType}|${t.auditType}`] = t.items as string[];
+      }
     }
     return map;
   });
+  const [appendixTemplates, setAppendixTemplates] = useState<Record<string, TemplateQuestion[]>>(() => {
+    const map: Record<string, TemplateQuestion[]> = {};
+    for (const t of initialTemplates) {
+      if (t.templateType.endsWith('_questions')) {
+        map[`${t.templateType}|${t.auditType}`] = t.items as TemplateQuestion[];
+      }
+    }
+    return map;
+  });
+  const [viewMode, setViewMode] = useState<ViewMode>('lists');
   const [activeTemplateType, setActiveTemplateType] = useState(TEMPLATE_TYPES[0].key);
+  const [activeAppendixType, setActiveAppendixType] = useState(APPENDIX_TEMPLATE_TYPES[0].key);
   const [activeAuditType, setActiveAuditType] = useState('ALL');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -93,8 +120,72 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
     }
   };
 
+  async function handleAppendixSave(questions: TemplateQuestion[]) {
+    const appendixKey = `${activeAppendixType}|${activeAuditType}`;
+    setAppendixTemplates(prev => ({ ...prev, [appendixKey]: questions }));
+    await fetch('/api/methodology-admin/templates', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ templateType: activeAppendixType, auditType: activeAuditType, items: questions }),
+    });
+  }
+
+  const currentAppendixKey = `${activeAppendixType}|${activeAuditType}`;
+  const currentAppendixQuestions = appendixTemplates[currentAppendixKey] || [];
+  const currentAppendixType = APPENDIX_TEMPLATE_TYPES.find(t => t.key === activeAppendixType);
+
   return (
     <div className="space-y-6">
+      {/* View Mode Toggle */}
+      <div className="flex items-center gap-2 bg-slate-100 rounded-lg p-1 w-fit">
+        <button
+          onClick={() => setViewMode('lists')}
+          className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'lists' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+        >
+          List Templates
+        </button>
+        <button
+          onClick={() => setViewMode('appendix')}
+          className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'appendix' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+        >
+          Appendix Questions
+        </button>
+      </div>
+
+      {viewMode === 'appendix' ? (
+        <>
+          {/* Appendix Type Tabs */}
+          <div className="flex flex-wrap gap-2 border-b pb-2">
+            {APPENDIX_TEMPLATE_TYPES.map(tt => (
+              <button key={tt.key} onClick={() => setActiveAppendixType(tt.key)}
+                className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${activeAppendixType === tt.key ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                {tt.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Audit Type Filter */}
+          <div className="flex space-x-2">
+            {AUDIT_TYPES.map(at => (
+              <button key={at} onClick={() => setActiveAuditType(at)}
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${activeAuditType === at ? 'bg-slate-700 text-white' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'}`}>
+                {at === 'ALL' ? 'All Types' : at.replace('_', ' ')}
+              </button>
+            ))}
+          </div>
+
+          {/* Appendix Template Editor */}
+          <AppendixTemplateEditor
+            firmId={firmId}
+            templateType={activeAppendixType}
+            auditType={activeAuditType}
+            initialQuestions={currentAppendixQuestions}
+            sectionOptions={currentAppendixType?.sectionDefaults || []}
+            onSave={handleAppendixSave}
+          />
+        </>
+      ) : (
+        <>
       {/* Template Type Tabs */}
       <div className="flex flex-wrap gap-2 border-b pb-2">
         {TEMPLATE_TYPES.map((tt) => (
@@ -177,6 +268,8 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

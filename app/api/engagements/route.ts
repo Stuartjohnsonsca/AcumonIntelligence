@@ -79,11 +79,36 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Engagement already exists for this client/period/type' }, { status: 409 });
     }
 
-    // Get the latest active methodology config for this audit type
-    const methodologyConfig = await prisma.methodologyConfig.findFirst({
+    // Snapshot current methodology: get latest config or create one
+    let methodologyConfig = await prisma.methodologyConfig.findFirst({
       where: { firmId, auditType, isActive: true },
       orderBy: { version: 'desc' },
     });
+
+    // If no config exists, create a snapshot of current templates
+    if (!methodologyConfig) {
+      const allTemplates = await prisma.methodologyTemplate.findMany({
+        where: { firmId, auditType: { in: [auditType, 'ALL'] } },
+      });
+      const riskTables = await prisma.methodologyRiskTable.findMany({ where: { firmId } });
+      const toolSettings = await prisma.methodologyToolSetting.findMany({ where: { firmId } });
+
+      methodologyConfig = await prisma.methodologyConfig.create({
+        data: {
+          firmId,
+          auditType,
+          version: 1,
+          isActive: true,
+          createdById: session.user.id,
+          config: {
+            templates: allTemplates.map(t => ({ type: t.templateType, auditType: t.auditType, items: t.items })),
+            riskTables: riskTables.map(r => ({ type: r.tableType, data: r.data })),
+            toolSettings: toolSettings.map(s => ({ tool: s.toolName, method: s.methodName, availability: s.availability, auditType: s.auditType })),
+            snapshotDate: new Date().toISOString(),
+          },
+        },
+      });
+    }
 
     // Load default agreed dates from methodology templates or use defaults
     const agreedDatesTemplate = await prisma.methodologyTemplate.findUnique({
