@@ -163,39 +163,8 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   };
 
   function downloadTemplate() {
-    const selectedInd = industries.find(i => i.id === selectedIndustry);
-    const indName = selectedInd?.name || 'Industry';
-
-    // Build XLSX-compatible CSV with data validation hints in header
-    const header = 'FS Line Item,Test Description,Type,Assertion,Significant Risk';
-
-    // Pre-populate rows with FS lines
-    const rows = fsLines.map(line => `"${line}",,,,`);
-
-    // Add a hidden validation sheet as comments won't work in CSV
-    // Instead, create a second "Lookups" section that tools can reference
-    const typeList = testTypes.map(t => t.name);
-    const assertionList = [...ASSERTION_TYPES];
-    const sigRiskList = ['Y', 'N'];
-
-    // Lookups block (separate sheet-like section)
-    const lookups = [
-      '',
-      'LOOKUPS (for reference - use these values in the columns above)',
-      'Type Options:,' + typeList.join(','),
-      'Assertion Options:,' + assertionList.join(','),
-      'Significant Risk Options:,' + sigRiskList.join(','),
-    ];
-
-    const csv = [header, ...rows, ...lookups].join('\n');
-
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }); // BOM for Excel
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `test-bank-template-${indName.replace(/\s+/g, '-').toLowerCase()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Download XLSX with dropdown data validation from API
+    window.open(`/api/methodology-admin/test-bank/template?industryId=${selectedIndustry}`, '_blank');
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -204,84 +173,80 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     setUploading(true);
     setUploadResult(null);
 
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        const text = ev.target?.result as string;
-        // Filter out empty lines and the LOOKUPS reference section
-        const lines = text.split('\n').filter(l => l.trim() && !l.trim().startsWith('LOOKUPS') && !l.trim().startsWith('Type Options') && !l.trim().startsWith('Assertion Options') && !l.trim().startsWith('Significant Risk Options'));
+    try {
+      // Read as ArrayBuffer for XLSX, or text for CSV
+      const isXlsx = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
 
-        // Skip header row
-        const dataLines = lines.slice(1);
-        let imported = 0;
-        let errors = 0;
+      let rows: string[][] = [];
 
-        // Group by FS Line
-        const grouped: Record<string, { description: string; testTypeCode: string; assertion: string; significantRisk: boolean }[]> = {};
-
-        for (const line of dataLines) {
-          const parts = line.match(/(".*?"|[^,]*),?/g)?.map(s => s.replace(/,$/, '').replace(/^"|"$/g, '').trim()) || [];
-          const [fsLine, description, typeName, assertion, sigRisk] = parts;
-
-          if (!fsLine || !description) continue;
-
-          const matchedType = testTypes.find(t =>
-            t.name.toLowerCase() === (typeName || '').toLowerCase() ||
-            t.code.toLowerCase() === (typeName || '').toLowerCase()
-          );
-          const typeCode = matchedType?.code || testTypes[0]?.code || '';
-
-          // Match assertion
-          const matchedAssertion = ASSERTION_TYPES.find(a =>
-            a.toLowerCase() === (assertion || '').toLowerCase()
-          ) || '';
-
-          if (!grouped[fsLine]) grouped[fsLine] = [];
-          grouped[fsLine].push({
-            description,
-            testTypeCode: typeCode,
-            assertion: matchedAssertion,
-            significantRisk: (sigRisk || '').toUpperCase() === 'Y',
-          });
-        }
-
-        // Save each FS line group
-        for (const [fsLine, tests] of Object.entries(grouped)) {
-          // Add FS line if not exists
-          if (!fsLines.includes(fsLine)) {
-            setFsLines(prev => [...prev, fsLine]);
-          }
-
-          try {
-            const res = await fetch('/api/methodology-admin/test-bank', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ firmId, industryId: selectedIndustry, fsLine, tests }),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              setTestBanks(prev => {
-                const filtered = prev.filter(tb => !(tb.industryId === selectedIndustry && tb.fsLine === fsLine));
-                return [...filtered, data.entry];
-              });
-              imported += tests.length;
-            } else {
-              errors++;
-            }
-          } catch {
-            errors++;
-          }
-        }
-
-        setUploadResult(`Imported ${imported} tests across ${Object.keys(grouped).length} FS lines${errors > 0 ? ` (${errors} errors)` : ''}`);
-      } catch (err) {
-        setUploadResult('Upload failed: invalid file format');
-      } finally {
-        setUploading(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
+      if (isXlsx) {
+        // Use the XLSX library to parse
+        const XLSX = (await import('xlsx')).default;
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '' });
+        rows = jsonData as string[][];
+      } else {
+        // CSV parsing
+        const text = await file.text();
+        rows = text.split('\n')
+          .filter(l => l.trim() && !l.startsWith('LOOKUPS') && !l.startsWith('Type Options') && !l.startsWith('Assertion Options') && !l.startsWith('Significant Risk'))
+          .map(line => (line.match(/(".*?"|[^,]*),?/g) || []).map(s => s.replace(/,$/, '').replace(/^"|"$/g, '').trim()));
       }
-    };
-    reader.readAsText(file);
+
+      // Skip header row
+      const dataRows = rows.slice(1);
+      let imported = 0;
+      let errors = 0;
+
+      const grouped: Record<string, { description: string; testTypeCode: string; assertion: string; significantRisk: boolean }[]> = {};
+
+      for (const parts of dataRows) {
+        const [fsLine, description, typeName, assertion, sigRisk] = parts.map(p => (p || '').toString().trim());
+        if (!fsLine || !description) continue;
+
+        const matchedType = testTypes.find(t =>
+          t.name.toLowerCase() === typeName.toLowerCase() || t.code.toLowerCase() === typeName.toLowerCase()
+        );
+        const typeCode = matchedType?.code || testTypes[0]?.code || '';
+        const matchedAssertion = ASSERTION_TYPES.find(a => a.toLowerCase() === (assertion || '').toLowerCase()) || '';
+
+        if (!grouped[fsLine]) grouped[fsLine] = [];
+        grouped[fsLine].push({
+          description,
+          testTypeCode: typeCode,
+          assertion: matchedAssertion,
+          significantRisk: (sigRisk || '').toUpperCase() === 'Y',
+        });
+      }
+
+      for (const [fsLine, tests] of Object.entries(grouped)) {
+        if (!fsLines.includes(fsLine)) setFsLines(prev => [...prev, fsLine]);
+        try {
+          const res = await fetch('/api/methodology-admin/test-bank', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ firmId, industryId: selectedIndustry, fsLine, tests }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setTestBanks(prev => {
+              const filtered = prev.filter(tb => !(tb.industryId === selectedIndustry && tb.fsLine === fsLine));
+              return [...filtered, data.entry];
+            });
+            imported += tests.length;
+          } else { errors++; }
+        } catch { errors++; }
+      }
+
+      setUploadResult(`Imported ${imported} tests across ${Object.keys(grouped).length} FS lines${errors > 0 ? ` (${errors} errors)` : ''}`);
+    } catch (err) {
+      setUploadResult('Upload failed: invalid file format');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   }
 
   return (
@@ -343,9 +308,9 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
             <Download className="h-4 w-4 mr-1" /> Download Template
           </Button>
           <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" disabled={uploading}>
-            <Upload className="h-4 w-4 mr-1" /> {uploading ? 'Uploading...' : 'Upload CSV'}
+            <Upload className="h-4 w-4 mr-1" /> {uploading ? 'Uploading...' : 'Upload Spreadsheet'}
           </Button>
-          <input ref={fileInputRef} type="file" accept=".csv,.txt" onChange={handleUpload} className="hidden" />
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} className="hidden" />
         </div>
       </div>
 
