@@ -69,6 +69,295 @@ export interface BankAuditClientProps {
   bankAssertions: unknown;
 }
 
+// ── Status Dot ──────────────────────────────────────────────────────────────
+
+function Dot({ colour }: { colour: string }) {
+  const cls = colour === 'green' ? 'bg-green-500' : colour === 'red' ? 'bg-red-500' : colour === 'orange' ? 'bg-orange-400' : 'bg-slate-300';
+  return <span className={`inline-block w-3 h-3 rounded-full ${cls}`} />;
+}
+
+// ── Test Result Renderer ────────────────────────────────────────────────────
+
+function TestResultRenderer({ data }: { data: Record<string, unknown> }) {
+  const type = data.type as string;
+  const summary = data.summary as string | undefined;
+  const note = data.note as string | undefined;
+
+  // ── Balance Check ──
+  if (type === 'balance_check') {
+    const accounts = (data.accounts || []) as { account: string; bankName: string; sortCode: string; accountNumber: string; closingBalance: number; tbBalance: number | null; difference: number; dotColour: string }[];
+    const curr = (data.currency as string) || '£';
+    return (
+      <div className="space-y-3">
+        {note && <p className="text-xs text-amber-600 bg-amber-50 rounded px-3 py-2">{note}</p>}
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="border-b bg-slate-50">
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Bank Account</th>
+              <th className="text-right px-3 py-2 font-medium text-slate-600">Statement Balance</th>
+              <th className="text-right px-3 py-2 font-medium text-slate-600">TB Balance</th>
+              <th className="text-right px-3 py-2 font-medium text-slate-600">Difference</th>
+              <th className="text-center px-3 py-2 font-medium text-slate-600">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((a, i) => (
+              <tr key={i} className="border-b">
+                <td className="px-3 py-2 text-slate-700">{a.bankName} {a.sortCode} {a.accountNumber}</td>
+                <td className="px-3 py-2 text-right font-mono">{curr}{a.closingBalance.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+                <td className="px-3 py-2 text-right font-mono">{a.tbBalance !== null ? `${curr}${a.tbBalance.toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : '—'}</td>
+                <td className="px-3 py-2 text-right font-mono">{a.tbBalance !== null ? `${curr}${a.difference.toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : '—'}</td>
+                <td className="px-3 py-2 text-center"><Dot colour={a.dotColour} /></td>
+              </tr>
+            ))}
+            {accounts.length > 1 && (
+              <tr className="border-t-2 font-semibold">
+                <td className="px-3 py-2 text-slate-700">Total</td>
+                <td className="px-3 py-2 text-right font-mono">{curr}{(data.totalClosingBalance as number || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+                <td className="px-3 py-2 text-right">—</td>
+                <td className="px-3 py-2 text-right">—</td>
+                <td className="px-3 py-2" />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // ── Unusual Transactions ──
+  if (type === 'unusual_transactions') {
+    const flagged = (data.flagged || []) as { date: string; description: string; amount: string; type: string; reason: string }[];
+    const stats = data.statistics as { avgPayment: string; avgReceipt: string; totalPayments: number; totalReceipts: number } | undefined;
+    const aiInsights = data.aiInsights as string | null;
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-4 gap-3 text-xs">
+          <div className="bg-slate-50 rounded px-3 py-2"><span className="text-slate-500">Transactions reviewed:</span> <strong>{data.reviewedCount as number}</strong></div>
+          <div className="bg-slate-50 rounded px-3 py-2"><span className="text-slate-500">Flagged:</span> <strong className="text-red-600">{data.flaggedCount as number}</strong></div>
+          {stats && <div className="bg-slate-50 rounded px-3 py-2"><span className="text-slate-500">Avg payment:</span> <strong>{stats.avgPayment}</strong></div>}
+          {stats && <div className="bg-slate-50 rounded px-3 py-2"><span className="text-slate-500">Avg receipt:</span> <strong>{stats.avgReceipt}</strong></div>}
+        </div>
+        {flagged.length > 0 && (
+          <table className="w-full text-xs border-collapse">
+            <thead><tr className="border-b bg-slate-50">
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
+              <th className="text-right px-3 py-2 font-medium text-slate-600">Amount</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Type</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Reason</th>
+            </tr></thead>
+            <tbody>
+              {flagged.map((f, i) => (
+                <tr key={i} className="border-b bg-red-50/30">
+                  <td className="px-3 py-1.5">{f.date}</td>
+                  <td className="px-3 py-1.5 max-w-xs truncate">{f.description}</td>
+                  <td className="px-3 py-1.5 text-right font-mono">{f.amount}</td>
+                  <td className="px-3 py-1.5">{f.type}</td>
+                  <td className="px-3 py-1.5 text-amber-700">{f.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {flagged.length === 0 && <p className="text-xs text-green-700 bg-green-50 rounded px-3 py-2">No unusual transactions identified.</p>}
+        {aiInsights && (
+          <div className="bg-blue-50 rounded px-3 py-2 text-xs text-blue-800">
+            <p className="font-medium mb-1">AI Analysis:</p>
+            <p className="whitespace-pre-wrap">{aiInsights}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Subsequent Receipts / Payments ──
+  if (type === 'subsequent_receipts' || type === 'subsequent_payments') {
+    const isReceipts = type === 'subsequent_receipts';
+    const items = (isReceipts ? data.receipts : data.payments) as { date: string; description: string; amount: string; bankAccount: string; flag: string }[] || [];
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-slate-600">{summary}</p>
+        {(data.totalAmount as string) && <p className="text-xs"><span className="text-slate-500">Total amount:</span> <strong>{data.totalAmount as string}</strong></p>}
+        {items.length > 0 ? (
+          <table className="w-full text-xs border-collapse">
+            <thead><tr className="border-b bg-slate-50">
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
+              <th className="text-right px-3 py-2 font-medium text-slate-600">Amount</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Bank Account</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Flag</th>
+            </tr></thead>
+            <tbody>
+              {items.map((item, i) => (
+                <tr key={i} className={`border-b ${item.flag ? 'bg-amber-50/50' : ''}`}>
+                  <td className="px-3 py-1.5">{item.date}</td>
+                  <td className="px-3 py-1.5 max-w-xs truncate">{item.description}</td>
+                  <td className="px-3 py-1.5 text-right font-mono">{item.amount}</td>
+                  <td className="px-3 py-1.5">{item.bankAccount}</td>
+                  <td className="px-3 py-1.5 text-amber-700 text-[11px]">{item.flag}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-xs text-green-700 bg-green-50 rounded px-3 py-2">
+            {isReceipts ? 'No subsequent receipts identified.' : 'No subsequent payments identified.'}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Capital Transactions ──
+  if (type === 'capital_transactions') {
+    const txns = (data.transactions || []) as { date: string; description: string; investment: string; disinvestment: string; bankAccount: string }[];
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-slate-600">{summary}</p>
+        {txns.length > 0 ? (
+          <table className="w-full text-xs border-collapse">
+            <thead><tr className="border-b bg-slate-50">
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
+              <th className="text-right px-3 py-2 font-medium text-slate-600">Investment</th>
+              <th className="text-right px-3 py-2 font-medium text-slate-600">Disinvestment</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Bank Account</th>
+            </tr></thead>
+            <tbody>
+              {txns.map((t, i) => (
+                <tr key={i} className="border-b">
+                  <td className="px-3 py-1.5">{t.date}</td>
+                  <td className="px-3 py-1.5 max-w-xs truncate">{t.description}</td>
+                  <td className="px-3 py-1.5 text-right font-mono text-red-600">{t.investment}</td>
+                  <td className="px-3 py-1.5 text-right font-mono text-green-600">{t.disinvestment}</td>
+                  <td className="px-3 py-1.5 text-slate-500">{t.bankAccount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-xs text-green-700 bg-green-50 rounded px-3 py-2">No potential capital transactions identified.</p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Transfers Match ──
+  if (type === 'transfers_match') {
+    const matched = (data.matched || []) as { date: string; description: string; amount: string; fromAccount: string; toAccount: string }[];
+    const unmatched = (data.unmatched || []) as { date: string; description: string; payment: string; receipt: string; bankAccount: string }[];
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-slate-600">{summary}</p>
+        {matched.length > 0 && (
+          <>
+            <p className="text-xs font-medium text-slate-700">Matched Transfers</p>
+            <table className="w-full text-xs border-collapse">
+              <thead><tr className="border-b bg-green-50">
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
+                <th className="text-right px-3 py-2 font-medium text-slate-600">Amount</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">From</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">To</th>
+              </tr></thead>
+              <tbody>
+                {matched.map((m, i) => (
+                  <tr key={i} className="border-b"><td className="px-3 py-1.5">{m.date}</td><td className="px-3 py-1.5">{m.description}</td><td className="px-3 py-1.5 text-right font-mono">{m.amount}</td><td className="px-3 py-1.5 text-slate-500">{m.fromAccount}</td><td className="px-3 py-1.5 text-slate-500">{m.toAccount}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+        {unmatched.length > 0 && (
+          <>
+            <p className="text-xs font-medium text-red-700 mt-2">Unmatched Items</p>
+            <table className="w-full text-xs border-collapse">
+              <thead><tr className="border-b bg-red-50">
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
+                <th className="text-right px-3 py-2 font-medium text-slate-600">Payment</th>
+                <th className="text-right px-3 py-2 font-medium text-slate-600">Receipt</th>
+                <th className="text-left px-3 py-2 font-medium text-slate-600">Account</th>
+              </tr></thead>
+              <tbody>
+                {unmatched.map((u, i) => (
+                  <tr key={i} className="border-b bg-red-50/30"><td className="px-3 py-1.5">{u.date}</td><td className="px-3 py-1.5">{u.description}</td><td className="px-3 py-1.5 text-right font-mono">{u.payment}</td><td className="px-3 py-1.5 text-right font-mono">{u.receipt}</td><td className="px-3 py-1.5 text-slate-500">{u.bankAccount}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+        {matched.length === 0 && unmatched.length === 0 && (
+          <p className="text-xs text-green-700 bg-green-50 rounded px-3 py-2">No inter-account transfers identified.</p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Page Continuity ──
+  if (type === 'page_continuity') {
+    const accounts = (data.accounts || []) as { bankAccount: string; startDot: string; continuityDot: string; endDot: string; startNote: string; continuityNote: string; endNote: string; pages: string[] }[];
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-slate-600">{summary}</p>
+        <table className="w-full text-xs border-collapse">
+          <thead><tr className="border-b bg-slate-50">
+            <th className="text-left px-3 py-2 font-medium text-slate-600">Bank Account</th>
+            <th className="text-center px-3 py-2 font-medium text-slate-600">Start</th>
+            <th className="text-center px-3 py-2 font-medium text-slate-600">Continuity</th>
+            <th className="text-center px-3 py-2 font-medium text-slate-600">End</th>
+          </tr></thead>
+          <tbody>
+            {accounts.map((a, i) => (
+              <tr key={i} className="border-b">
+                <td className="px-3 py-2 text-slate-700">{a.bankAccount}</td>
+                <td className="px-3 py-2 text-center" title={a.startNote}><Dot colour={a.startDot} /><div className="text-[10px] text-slate-500 mt-0.5">{a.startNote}</div></td>
+                <td className="px-3 py-2 text-center" title={a.continuityNote}><Dot colour={a.continuityDot} /><div className="text-[10px] text-slate-500 mt-0.5">{a.continuityNote}</div></td>
+                <td className="px-3 py-2 text-center" title={a.endNote}><Dot colour={a.endDot} /><div className="text-[10px] text-slate-500 mt-0.5">{a.endNote}</div></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // ── Custom Test ──
+  if (type === 'custom_test') {
+    const txns = (data.transactions || []) as { date: string; description: string; amount: string; type: string }[];
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-slate-600">{summary}</p>
+        {txns.length > 0 ? (
+          <table className="w-full text-xs border-collapse">
+            <thead><tr className="border-b bg-slate-50">
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Date</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Description</th>
+              <th className="text-right px-3 py-2 font-medium text-slate-600">Amount</th>
+              <th className="text-left px-3 py-2 font-medium text-slate-600">Type</th>
+            </tr></thead>
+            <tbody>
+              {txns.map((t, i) => (
+                <tr key={i} className="border-b"><td className="px-3 py-1.5">{t.date}</td><td className="px-3 py-1.5">{t.description}</td><td className="px-3 py-1.5 text-right font-mono">{t.amount}</td><td className="px-3 py-1.5">{t.type}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-xs text-slate-500 bg-slate-50 rounded px-3 py-2">No matching transactions found.</p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Fallback (shouldn't happen but safe) ──
+  return (
+    <div className="text-xs text-slate-600 bg-slate-50 rounded px-3 py-2">
+      {summary || note || 'Test completed.'}
+    </div>
+  );
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function BankAuditClient({
@@ -727,11 +1016,7 @@ export function BankAuditClient({
                     <p className="text-sm text-red-600 bg-red-50 rounded p-2">{test.errorMsg}</p>
                   )}
 
-                  {test.resultData && (
-                    <div className="text-xs font-mono bg-slate-50 rounded p-3 max-h-60 overflow-auto">
-                      <pre>{JSON.stringify(test.resultData, null, 2)}</pre>
-                    </div>
-                  )}
+                  {test.resultData && <TestResultRenderer data={test.resultData} />}
                 </div>
               ))}
 
