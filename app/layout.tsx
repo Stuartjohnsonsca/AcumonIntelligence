@@ -5,6 +5,7 @@ import { Navbar } from '@/components/Navbar';
 import { AuthProvider } from '@/components/AuthProvider';
 import { BackgroundTaskProvider } from '@/components/BackgroundTaskProvider';
 import { Toaster } from '@/components/ui/toaster';
+import { KeyboardShortcutProvider } from '@/components/ui/KeyboardShortcutProvider';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -28,6 +29,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <AuthProvider>
           <BackgroundTaskProvider>
+          <KeyboardShortcutProvider>
           <div className="min-h-screen flex flex-col">
             <Navbar />
             <main className="flex-1">{children}</main>
@@ -40,6 +42,7 @@ export default function RootLayout({
             </footer>
           </div>
           <Toaster />
+          </KeyboardShortcutProvider>
           </BackgroundTaskProvider>
         </AuthProvider>
       </body>
