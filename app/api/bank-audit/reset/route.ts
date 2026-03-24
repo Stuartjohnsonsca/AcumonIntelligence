@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
       where: { id: sessionId },
       data: {
         dataSource: null,
-        bankData: null,
+        bankData: Prisma.DbNull,
       },
     });
 
