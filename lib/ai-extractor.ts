@@ -631,7 +631,7 @@ async function extractFromText(text: string, pageCount: number, fileName: string
 // Extract from scanned PDF by splitting into single-page PDFs and using vision model
 async function extractFromScannedPdf(pdfBuffer: Buffer, fileName: string): Promise<BankStatementResult> {
   const { PDFDocument } = await import('pdf-lib');
-  const pdfDoc = await PDFDocument.load(pdfBuffer);
+  const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
   const pageCount = pdfDoc.getPageCount();
   const maxPages = Math.min(pageCount, 10);
 
