@@ -8,6 +8,9 @@ import { PermanentFileTab } from './tabs/PermanentFileTab';
 import { EthicsTab } from './tabs/EthicsTab';
 import { ContinuanceTab } from './tabs/ContinuanceTab';
 import { MaterialityTab } from './tabs/MaterialityTab';
+import { TrialBalanceTab } from './tabs/TrialBalanceTab';
+import { PARTab } from './tabs/PARTab';
+import { RMMTab } from './tabs/RMMTab';
 
 // Tab placeholder for tabs not yet built
 function TabPlaceholder({ name }: { name: string }) {
@@ -71,13 +74,13 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'continuance':
         return <ContinuanceTab engagementId={engagement.id} />;
       case 'tb':
-        return <TabPlaceholder name="Trial Balance CY vs PY" />;
+        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} />;
       case 'materiality':
         return <MaterialityTab engagementId={engagement.id} />;
       case 'par':
-        return <TabPlaceholder name="Preliminary Analytical Review" />;
+        return <PARTab engagementId={engagement.id} />;
       case 'rmm':
-        return <TabPlaceholder name="Identifying & Assessing Risk of Material Misstatement" />;
+        return <RMMTab engagementId={engagement.id} auditType={auditType} />;
       case 'documents':
         return <TabPlaceholder name="Document Repository" />;
       case 'portal':
