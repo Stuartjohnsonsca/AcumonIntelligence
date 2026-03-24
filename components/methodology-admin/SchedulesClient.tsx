@@ -35,10 +35,10 @@ const LIST_TEMPLATE_TYPES = [
 
 // Structured appendix templates (TemplateQuestion arrays)
 const APPENDIX_TEMPLATE_TYPES = [
-  { key: 'permanent_file_questions', label: 'Appendix A: Questions', sectionDefaults: PERMANENT_FILE_SECTIONS.map(s => s.label) },
-  { key: 'ethics_questions', label: 'Appendix B: Questions', sectionDefaults: ['Non Audit Services', 'Threats', 'Relationships', 'Other Considerations', 'Fee Assessment', 'ORITP'] },
-  { key: 'continuance_questions', label: 'Appendix C: Questions', sectionDefaults: ['Entity Details', 'Ownership', 'Continuity', 'Management Info', 'Nature of Business', 'Fee Considerations', 'Resourcing', 'EQR', 'AML', 'MLRO', 'Final Conclusion'] },
-  { key: 'materiality_questions', label: 'Appendix E: Questions', sectionDefaults: ['Benchmark', 'Justification', 'Overall Materiality Assessment', 'Performance Materiality'] },
+  { key: 'permanent_file_questions', label: 'Permanent', sectionDefaults: PERMANENT_FILE_SECTIONS.map(s => s.label) },
+  { key: 'ethics_questions', label: 'Ethics', sectionDefaults: ['Non Audit Services', 'Threats', 'Relationships', 'Other Considerations', 'Fee Assessment', 'ORITP'] },
+  { key: 'continuance_questions', label: 'Continuance', sectionDefaults: ['Entity Details', 'Ownership', 'Continuity', 'Management Info', 'Nature of Business', 'Fee Considerations', 'Resourcing', 'EQR', 'AML', 'MLRO', 'Final Conclusion'] },
+  { key: 'materiality_questions', label: 'Materiality', sectionDefaults: ['Benchmark', 'Justification', 'Overall Materiality Assessment', 'Performance Materiality'] },
 ];
 
 const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;
@@ -148,7 +148,7 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
           onClick={() => setViewMode('appendix')}
           className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'appendix' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
         >
-          Appendix Questions
+          Schedules
         </button>
       </div>
 
