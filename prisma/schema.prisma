@@ -44,6 +44,7 @@ model Firm {
   methodologyIndustries    MethodologyIndustry[]
   methodologyTestTypes     MethodologyTestType[]
   methodologyTestBanks     MethodologyTestBank[]
+  methodologyFsLines       MethodologyFsLine[]
   methodologyToolSettings  MethodologyToolSetting[]
   methodologyRiskTables    MethodologyRiskTable[]
 
@@ -1860,6 +1861,7 @@ model MethodologyIndustry {
 
   firm      Firm                @relation(fields: [firmId], references: [id], onDelete: Cascade)
   testBanks MethodologyTestBank[]
+  fsLineMappings MethodologyFsLineIndustry[]
 
   @@unique([firmId, code])
   @@index([firmId])
@@ -1895,6 +1897,36 @@ model MethodologyTestBank {
   @@index([firmId])
   @@index([industryId])
   @@map("methodology_test_banks")
+}
+
+model MethodologyFsLine {
+  id         String  @id @default(uuid())
+  firmId     String  @map("firm_id")
+  name       String  // e.g. "Revenue", "Trade Debtors", "Going Concern"
+  lineType   String  @map("line_type") // fs_line_item | note_item
+  fsCategory String  @map("fs_category") // pnl | balance_sheet | cashflow | notes
+  sortOrder  Int     @default(0) @map("sort_order")
+  isActive   Boolean @default(true) @map("is_active")
+  isMandatory Boolean @default(false) @map("is_mandatory") // Going Concern, Management Override, Notes & Disclosures
+
+  firm       Firm    @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  industryMappings MethodologyFsLineIndustry[]
+
+  @@unique([firmId, name])
+  @@index([firmId])
+  @@map("methodology_fs_lines")
+}
+
+model MethodologyFsLineIndustry {
+  id         String @id @default(uuid())
+  fsLineId   String @map("fs_line_id")
+  industryId String @map("industry_id")
+
+  fsLine     MethodologyFsLine  @relation(fields: [fsLineId], references: [id], onDelete: Cascade)
+  industry   MethodologyIndustry @relation(fields: [industryId], references: [id], onDelete: Cascade)
+
+  @@unique([fsLineId, industryId])
+  @@map("methodology_fs_line_industries")
 }
 
 model MethodologyToolSetting {

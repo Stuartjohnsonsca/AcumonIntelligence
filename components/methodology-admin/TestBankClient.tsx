@@ -199,34 +199,92 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           .map(line => (line.match(/(".*?"|[^,]*),?/g) || []).map(s => s.replace(/,$/, '').replace(/^"|"$/g, '').trim()));
       }
 
-      // Skip header row
+      // Validate header row
+      const headerRow = rows[0]?.map(h => (h || '').toString().trim().toLowerCase()) || [];
+      const expectedHeaders = ['fs line item', 'test description', 'type', 'assertion', 'framework', 'significant risk'];
+      const headerValid = expectedHeaders.every((h, i) => headerRow[i]?.includes(h.split(' ')[0].toLowerCase()));
+      if (rows.length < 2) {
+        setUploadResult('Upload failed: File is empty or has no data rows');
+        return;
+      }
+      if (!headerValid && headerRow.length < 4) {
+        setUploadResult('Upload failed: Invalid headers. Expected: FS Line Item, Test Description, Type, Assertion, Framework, Significant Risk');
+        return;
+      }
+
+      // Parse and validate each row
       const dataRows = rows.slice(1);
       let imported = 0;
-      let errors = 0;
+      let apiErrors = 0;
+      const validationErrors: string[] = [];
+      const validTypeNames = testTypes.map(t => t.name.toLowerCase());
+      const validTypeCodes = testTypes.map(t => t.code.toLowerCase());
+      const validAssertions = ASSERTION_TYPES.map(a => a.toLowerCase());
+      const validFrameworks = frameworkOptions.map(f => f.toLowerCase());
 
-      const grouped: Record<string, { description: string; testTypeCode: string; assertion: string; significantRisk: boolean }[]> = {};
+      const grouped: Record<string, { description: string; testTypeCode: string; assertion: string; framework: string; significantRisk: boolean }[]> = {};
 
-      for (const parts of dataRows) {
+      for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx++) {
+        const parts = dataRows[rowIdx];
         const [fsLine, description, typeName, assertion, framework, sigRisk] = parts.map(p => (p || '').toString().trim());
-        if (!fsLine || !description) continue;
+        if (!fsLine && !description) continue; // skip blank rows
 
-        const matchedType = testTypes.find(t =>
-          t.name.toLowerCase() === typeName.toLowerCase() || t.code.toLowerCase() === typeName.toLowerCase()
-        );
+        const rowNum = rowIdx + 2; // 1-indexed + header
+        const rowErrors: string[] = [];
+
+        if (!fsLine) rowErrors.push('FS Line Item is required');
+        if (!description) rowErrors.push('Test Description is required');
+
+        // Validate Type
+        const typeLC = (typeName || '').toLowerCase();
+        const matchedType = testTypes.find(t => t.name.toLowerCase() === typeLC || t.code.toLowerCase() === typeLC);
+        if (typeName && !matchedType) {
+          rowErrors.push(`Invalid Type "${typeName}" (valid: ${testTypes.map(t => t.name).join(', ')})`);
+        }
         const typeCode = matchedType?.code || testTypes[0]?.code || '';
-        const matchedAssertion = ASSERTION_TYPES.find(a => a.toLowerCase() === (assertion || '').toLowerCase()) || '';
-        const matchedFramework = frameworkOptions.find(f => f.toLowerCase() === (framework || '').toLowerCase()) || '';
 
+        // Validate Assertion
+        const assertionLC = (assertion || '').toLowerCase();
+        const matchedAssertion = ASSERTION_TYPES.find(a => a.toLowerCase() === assertionLC) || '';
+        if (assertion && !matchedAssertion) {
+          rowErrors.push(`Invalid Assertion "${assertion}"`);
+        }
+
+        // Validate Framework
+        const frameworkLC = (framework || '').toLowerCase();
+        const matchedFramework = frameworkOptions.find(f => f.toLowerCase() === frameworkLC) || '';
+        if (framework && !matchedFramework && framework.toLowerCase() !== 'all') {
+          rowErrors.push(`Invalid Framework "${framework}" (valid: ${frameworkOptions.join(', ')})`);
+        }
+
+        // Validate Significant Risk
+        if (sigRisk && !['Y', 'N', 'YES', 'NO', ''].includes(sigRisk.toUpperCase())) {
+          rowErrors.push(`Invalid Significant Risk "${sigRisk}" (use Y or N)`);
+        }
+
+        if (rowErrors.length > 0) {
+          validationErrors.push(`Row ${rowNum}: ${rowErrors.join('; ')}`);
+          continue;
+        }
+
+        if (!fsLine || !description) continue;
         if (!grouped[fsLine]) grouped[fsLine] = [];
         grouped[fsLine].push({
           description,
           testTypeCode: typeCode,
           assertion: matchedAssertion,
           framework: matchedFramework,
-          significantRisk: (sigRisk || '').toUpperCase() === 'Y',
+          significantRisk: ['Y', 'YES'].includes((sigRisk || '').toUpperCase()),
         });
       }
 
+      // Show validation errors if any
+      if (validationErrors.length > 0 && Object.keys(grouped).length === 0) {
+        setUploadResult(`Upload failed - validation errors:\n${validationErrors.slice(0, 10).join('\n')}${validationErrors.length > 10 ? `\n...and ${validationErrors.length - 10} more` : ''}`);
+        return;
+      }
+
+      // Import valid rows
       for (const [fsLine, tests] of Object.entries(grouped)) {
         if (!fsLines.includes(fsLine)) setFsLines(prev => [...prev, fsLine]);
         try {
@@ -242,11 +300,14 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
               return [...filtered, data.entry];
             });
             imported += tests.length;
-          } else { errors++; }
-        } catch { errors++; }
+          } else { apiErrors++; }
+        } catch { apiErrors++; }
       }
 
-      setUploadResult(`Imported ${imported} tests across ${Object.keys(grouped).length} FS lines${errors > 0 ? ` (${errors} errors)` : ''}`);
+      const parts: string[] = [`Imported ${imported} tests across ${Object.keys(grouped).length} FS lines`];
+      if (validationErrors.length > 0) parts.push(`${validationErrors.length} rows skipped due to validation errors`);
+      if (apiErrors > 0) parts.push(`${apiErrors} API errors`);
+      setUploadResult(parts.join('. '));
     } catch (err) {
       setUploadResult('Upload failed: invalid file format');
     } finally {

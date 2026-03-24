@@ -11,3 +11,9 @@ expire-all.mjs
 test-xero-template.mjs
 expire-pending.mjs
 .vercel
+
+.env.prod
+.env.vercel
+.claude/worktrees/
+docs/*.docx
+scripts/generate-docs.mjs

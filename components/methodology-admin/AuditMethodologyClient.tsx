@@ -1,16 +1,24 @@
 'use client';
 
 import Link from 'next/link';
-import { Wrench, Factory, FlaskConical, Calendar, ClipboardList } from 'lucide-react';
+import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3 } from 'lucide-react';
 
 const tiles = [
   {
     title: 'Audit Types',
-    description: 'Configure which schedules apply to each audit type (SME, PIE, Controls, Group)',
+    description: 'Configure accounting frameworks and which schedules apply to each audit type',
     href: '/methodology-admin/audit-methodology/audit-types',
     icon: ClipboardList,
     color: 'bg-rose-50 border-rose-200 hover:bg-rose-100',
     iconColor: 'text-rose-600',
+  },
+  {
+    title: 'FS Lines',
+    description: 'Define financial statement lines and map them to industries',
+    href: '/methodology-admin/audit-methodology/fs-lines',
+    icon: BarChart3,
+    color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100',
+    iconColor: 'text-cyan-600',
   },
   {
     title: 'Tools',
@@ -38,7 +46,7 @@ const tiles = [
   },
   {
     title: 'Schedules',
-    description: 'Edit default templates for audit appendices A-E',
+    description: 'Edit default templates for audit schedules',
     href: '/methodology-admin/audit-methodology/schedules',
     icon: Calendar,
     color: 'bg-amber-50 border-amber-200 hover:bg-amber-100',
