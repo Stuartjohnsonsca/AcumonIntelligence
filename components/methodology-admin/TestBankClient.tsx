@@ -235,94 +235,128 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       const iFramework = colFramework; // -1 if not present
       const iSigRisk = colSigRisk >= 0 ? colSigRisk : (iFramework >= 0 ? 5 : 4);
 
-      // Parse and validate each row
-      const dataRows = rows.slice(1);
-      let imported = 0;
-      let apiErrors = 0;
-      const validationErrors: string[] = [];
+      // Column letter helper
+      const colLetter = (idx: number) => String.fromCharCode(65 + idx);
 
-      const grouped: Record<string, { description: string; testTypeCode: string; assertion: string; framework: string; significantRisk: boolean }[]> = {};
+      // PHASE 1: Validate ALL rows first (all-or-nothing)
+      const dataRows = rows.slice(1);
+      const validationErrors: string[] = [];
+      let lastFsLine = '';
+
+      type ParsedRow = { fsLine: string; description: string; typeCode: string; assertion: string; framework: string; significantRisk: boolean };
+      const parsedRows: ParsedRow[] = [];
 
       for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx++) {
         const parts = dataRows[rowIdx];
         const get = (idx: number) => idx >= 0 && idx < parts.length ? (parts[idx] || '').toString().trim() : '';
-        const fsLine = get(iFS);
+        let fsLine = get(iFS);
         const description = get(iDesc);
         const typeName = get(iType);
         const assertion = get(iAssert);
         const framework = iFramework >= 0 ? get(iFramework) : '';
         const sigRisk = get(iSigRisk);
-        if (!fsLine && !description) continue; // skip blank rows
+
+        // Skip completely blank rows
+        if (!fsLine && !description && !typeName && !assertion) continue;
+
+        // Inherit FS Line from row above if empty (merged cell pattern)
+        if (!fsLine && description && lastFsLine) {
+          fsLine = lastFsLine;
+        }
+        if (fsLine) lastFsLine = fsLine;
 
         const rowNum = rowIdx + 2; // 1-indexed + header
         const rowErrors: string[] = [];
 
-        if (!fsLine) rowErrors.push('FS Line Item is required');
-        if (!description) rowErrors.push('Test Description is required');
+        if (!fsLine) rowErrors.push(`Col ${colLetter(iFS)}: FS Line Item is empty`);
+        if (!description) rowErrors.push(`Col ${colLetter(iDesc)}: Test Description is empty`);
 
         // Validate Type
         const typeLC = (typeName || '').toLowerCase();
         const matchedType = testTypes.find(t => t.name.toLowerCase() === typeLC || t.code.toLowerCase() === typeLC);
         if (typeName && !matchedType) {
-          rowErrors.push(`Invalid Type "${typeName}" (valid: ${testTypes.map(t => t.name).join(', ')})`);
+          rowErrors.push(`Col ${colLetter(iType)}: Invalid Type "${typeName}" (valid: ${testTypes.map(t => t.name).join(', ')})`);
         }
         const typeCode = matchedType?.code || testTypes[0]?.code || '';
 
-        // Validate Assertion (flexible matching: allow common typos, partial matches)
+        // Validate Assertion (flexible matching)
         const assertionLC = (assertion || '').toLowerCase().replace(/\s+/g, ' ');
         const matchedAssertion = ASSERTION_TYPES.find(a => {
           const aLC = a.toLowerCase();
           return aLC === assertionLC
-            || aLC.replace('occurrence', 'occurence') === assertionLC  // common typo
+            || aLC.replace('occurrence', 'occurence') === assertionLC
             || aLC.replace('&', 'and') === assertionLC.replace('&', 'and')
             || aLC.startsWith(assertionLC) || assertionLC.startsWith(aLC);
         }) || '';
         if (assertion && !matchedAssertion) {
-          rowErrors.push(`Invalid Assertion "${assertion}"`);
+          rowErrors.push(`Col ${colLetter(iAssert)}: Invalid Assertion "${assertion}"`);
         }
 
         // Validate Framework
         const frameworkLC = (framework || '').toLowerCase();
         const matchedFramework = frameworkOptions.find(f => f.toLowerCase() === frameworkLC) || '';
         if (framework && !matchedFramework && framework.toLowerCase() !== 'all') {
-          rowErrors.push(`Invalid Framework "${framework}" (valid: ${frameworkOptions.join(', ')})`);
+          rowErrors.push(`Col ${colLetter(iFramework)}: Invalid Framework "${framework}" (valid: ${frameworkOptions.join(', ')})`);
         }
 
         // Validate Significant Risk
         if (sigRisk && !['Y', 'N', 'YES', 'NO', ''].includes(sigRisk.toUpperCase())) {
-          rowErrors.push(`Invalid Significant Risk "${sigRisk}" (use Y or N)`);
+          rowErrors.push(`Col ${colLetter(iSigRisk)}: Invalid Significant Risk "${sigRisk}" (use Y or N)`);
         }
 
         if (rowErrors.length > 0) {
           validationErrors.push(`Row ${rowNum}: ${rowErrors.join('; ')}`);
-          continue;
+        } else if (fsLine && description) {
+          parsedRows.push({
+            fsLine,
+            description,
+            typeCode,
+            assertion: matchedAssertion,
+            framework: matchedFramework,
+            significantRisk: ['Y', 'YES'].includes((sigRisk || '').toUpperCase()),
+          });
         }
-
-        if (!fsLine || !description) continue;
-        if (!grouped[fsLine]) grouped[fsLine] = [];
-        grouped[fsLine].push({
-          description,
-          testTypeCode: typeCode,
-          assertion: matchedAssertion,
-          framework: matchedFramework,
-          significantRisk: ['Y', 'YES'].includes((sigRisk || '').toUpperCase()),
-        });
       }
 
-      // Show validation errors if any
-      if (validationErrors.length > 0 && Object.keys(grouped).length === 0) {
-        setUploadResult(`Upload failed - validation errors:\n${validationErrors.slice(0, 10).join('\n')}${validationErrors.length > 10 ? `\n...and ${validationErrors.length - 10} more` : ''}`);
+      // ALL-OR-NOTHING: If any validation errors, reject entire upload
+      if (validationErrors.length > 0) {
+        const errorList = validationErrors.slice(0, 20).join('\n');
+        const more = validationErrors.length > 20 ? `\n...and ${validationErrors.length - 20} more errors` : '';
+        setUploadResult(`Upload rejected — ${validationErrors.length} validation error${validationErrors.length > 1 ? 's' : ''} found. Fix all errors and re-upload.\n\n${errorList}${more}`);
         return;
       }
 
-      // Import valid rows
+      if (parsedRows.length === 0) {
+        setUploadResult('Upload failed: No valid data rows found');
+        return;
+      }
+
+      // PHASE 2: Group and import (only reached if zero errors)
+      const grouped: Record<string, ParsedRow[]> = {};
+      for (const row of parsedRows) {
+        if (!grouped[row.fsLine]) grouped[row.fsLine] = [];
+        grouped[row.fsLine].push(row);
+      }
+
+      let imported = 0;
+      let apiErrors = 0;
+
       for (const [fsLine, tests] of Object.entries(grouped)) {
         if (!fsLines.includes(fsLine)) setFsLines(prev => [...prev, fsLine]);
         try {
           const res = await fetch('/api/methodology-admin/test-bank', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ firmId, industryId: selectedIndustry, fsLine, tests }),
+            body: JSON.stringify({
+              firmId, industryId: selectedIndustry, fsLine,
+              tests: tests.map(t => ({
+                description: t.description,
+                testTypeCode: t.typeCode,
+                assertion: t.assertion,
+                framework: t.framework,
+                significantRisk: t.significantRisk,
+              })),
+            }),
           });
           if (res.ok) {
             const data = await res.json();
@@ -335,10 +369,11 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         } catch { apiErrors++; }
       }
 
-      const parts: string[] = [`Imported ${imported} tests across ${Object.keys(grouped).length} FS lines`];
-      if (validationErrors.length > 0) parts.push(`${validationErrors.length} rows skipped due to validation errors`);
-      if (apiErrors > 0) parts.push(`${apiErrors} API errors`);
-      setUploadResult(parts.join('. '));
+      if (apiErrors > 0) {
+        setUploadResult(`Upload partially failed: ${imported} tests imported, ${apiErrors} FS lines had API errors`);
+      } else {
+        setUploadResult(`Successfully imported ${imported} tests across ${Object.keys(grouped).length} FS lines`);
+      }
     } catch (err: any) {
       console.error('Upload error:', err);
       setUploadResult(`Upload failed: ${err?.message || 'invalid file format'}`);
