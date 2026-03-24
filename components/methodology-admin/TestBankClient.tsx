@@ -188,26 +188,45 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       let rows: string[][] = [];
 
       if (isXlsx) {
+        // Upload XLSX server-side for reliable multi-line cell parsing
         try {
-          const XLSX = (await import('xlsx')).default;
-          const buffer = await file.arrayBuffer();
-          const workbook = XLSX.read(buffer, { type: 'array', raw: false });
-          const sheet = workbook.Sheets[workbook.SheetNames[0]];
-          // Use cell-by-cell reading to preserve multi-line text
-          const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
-          for (let r = range.s.r; r <= range.e.r; r++) {
-            const row: string[] = [];
-            for (let c = range.s.c; c <= Math.min(range.e.c, 10); c++) {
-              const addr = XLSX.utils.encode_cell({ r, c });
-              const cell = sheet[addr];
-              row.push(cell ? String(cell.v ?? cell.w ?? '') : '');
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('industryId', selectedIndustry);
+          const res = await fetch('/api/methodology-admin/test-bank/upload', {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            if (data.error === 'validation') {
+              const errorList = data.errors.join('\n');
+              const more = data.hasMore ? `\n...and ${data.count - 20} more errors` : '';
+              setUploadResult(`Upload rejected — ${data.count} validation error${data.count > 1 ? 's' : ''} found. Fix all errors and re-upload.\n\n${errorList}${more}`);
+            } else {
+              setUploadResult(`Upload failed: ${data.error}`);
             }
-            rows.push(row);
+          } else {
+            // Refresh test bank data
+            const tbRes = await fetch(`/api/methodology-admin/test-bank?industryId=${selectedIndustry}`);
+            if (tbRes.ok) {
+              const tbData = await tbRes.json();
+              setTestBanks(prev => {
+                const filtered = prev.filter(tb => tb.industryId !== selectedIndustry);
+                return [...filtered, ...(tbData.entries || [])];
+              });
+              const newFsLineNames = (tbData.entries || []).map((e: any) => e.fsLine);
+              setFsLines(prev => {
+                const set = new Set([...prev, ...newFsLineNames]);
+                return Array.from(set);
+              });
+            }
+            setUploadResult(`Successfully imported ${data.imported} tests across ${data.fsLines} FS lines`);
           }
-        } catch (xlsxErr: any) {
-          setUploadResult(`Upload failed: Could not parse XLSX file. ${xlsxErr?.message || 'Unknown error'}`);
-          return;
+        } catch (err: any) {
+          setUploadResult(`Upload failed: ${err?.message || 'Network error'}`);
         }
+        return; // Skip the client-side CSV path below
       } else {
         // CSV parsing
         const text = await file.text();
