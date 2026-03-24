@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { processPdf, isPdf } from '@/lib/pdf-to-images';
 
 const client = new OpenAI({
-  apiKey: process.env.TOGETHER_API_KEY!,
+  apiKey: process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY || '',
   baseURL: 'https://api.together.xyz/v1',
 });
 

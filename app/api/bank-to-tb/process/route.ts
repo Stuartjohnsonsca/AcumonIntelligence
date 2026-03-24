@@ -33,8 +33,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No files to process' }, { status: 400 });
   }
 
-  if (!process.env.TOGETHER_API_KEY) {
-    console.error('[BankToTB] No TOGETHER_API_KEY set');
+  if (!process.env.TOGETHER_DOC_SUMMARY_KEY && !process.env.TOGETHER_API_KEY) {
+    console.error('[BankToTB] No TOGETHER_API_KEY or TOGETHER_DOC_SUMMARY_KEY set');
     await prisma.bankToTBFile.updateMany({
       where: { sessionId, status: 'uploaded' },
       data: { status: 'failed', errorMessage: 'AI extraction service not configured (TOGETHER_API_KEY missing).' },
