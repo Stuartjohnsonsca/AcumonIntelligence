@@ -40,7 +40,7 @@ export default async function TestBankPage() {
         firmId={firmId}
         initialIndustries={industries}
         initialTestTypes={testTypes}
-        initialTestBanks={testBanks}
+        initialTestBanks={testBanks as any}
       />
     </div>
   );
