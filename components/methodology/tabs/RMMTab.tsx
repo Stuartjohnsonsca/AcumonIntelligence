@@ -276,10 +276,10 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Final Risk</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Control Risk</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Overall</th>
-              <th className="text-center px-1 py-2 text-slate-500 font-medium w-14">
-                <div className="flex gap-1 justify-center">
-                  <span className="text-[8px]">Rev</span>
-                  <span className="text-[8px]">Ptr</span>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-40">
+                <div className="flex gap-4 justify-center">
+                  <span className="text-[7px]">Reviewer</span>
+                  <span className="text-[7px]">Partner</span>
                 </div>
               </th>
               <th className="w-6"></th>
@@ -382,14 +382,14 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                       </span>
                     </td>
                     {/* Row-level sign-off dots */}
-                    <td className="px-1 py-1">
-                      <div className="flex gap-1 justify-center items-start">
+                    <td className="px-2 py-1">
+                      <div className="flex gap-4 justify-center items-start">
                         {/* Reviewer dot */}
-                        <div className="flex flex-col items-center">
+                        <div className="flex flex-col items-center min-w-[50px]">
                           <button
                             onClick={() => userIsReviewer && signOffRow(i, 'reviewer')}
                             disabled={!userIsReviewer}
-                            className={`w-3.5 h-3.5 rounded-full border-2 transition-all ${
+                            className={`w-4 h-4 rounded-full border-2 transition-all ${
                               reviewerSO && !reviewerStale
                                 ? 'bg-green-500 border-green-500'
                                 : reviewerStale
@@ -398,18 +398,21 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                                     ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
                                     : 'bg-white border-slate-200 opacity-50'
                             }`}
-                            title={reviewerSO ? `${reviewerSO.userName} ${new Date(reviewerSO.timestamp).toLocaleDateString('en-GB')}` : 'Reviewer sign-off'}
+                            title={reviewerSO ? `${reviewerSO.userName} — ${new Date(reviewerSO.timestamp).toLocaleString('en-GB')}` : 'Reviewer sign-off'}
                           />
                           {reviewerSO && !reviewerStale && (
-                            <span className="text-[7px] text-slate-400 mt-0.5 leading-none truncate max-w-[40px]">{reviewerSO.userName.split(' ')[0]}</span>
+                            <div className="text-center mt-0.5">
+                              <p className="text-[7px] text-slate-500 leading-tight">{reviewerSO.userName}</p>
+                              <p className="text-[6px] text-slate-400 leading-tight">{new Date(reviewerSO.timestamp).toLocaleDateString('en-GB')} {new Date(reviewerSO.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
+                            </div>
                           )}
                         </div>
                         {/* Partner dot */}
-                        <div className="flex flex-col items-center">
+                        <div className="flex flex-col items-center min-w-[50px]">
                           <button
                             onClick={() => userIsPartner && signOffRow(i, 'partner')}
                             disabled={!userIsPartner}
-                            className={`w-3.5 h-3.5 rounded-full border-2 transition-all ${
+                            className={`w-4 h-4 rounded-full border-2 transition-all ${
                               partnerSO && !partnerStale
                                 ? 'bg-green-500 border-green-500'
                                 : partnerStale
@@ -418,10 +421,13 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                                     ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
                                     : 'bg-white border-slate-200 opacity-50'
                             }`}
-                            title={partnerSO ? `${partnerSO.userName} ${new Date(partnerSO.timestamp).toLocaleDateString('en-GB')}` : 'Partner sign-off'}
+                            title={partnerSO ? `${partnerSO.userName} — ${new Date(partnerSO.timestamp).toLocaleString('en-GB')}` : 'Partner sign-off'}
                           />
                           {partnerSO && !partnerStale && (
-                            <span className="text-[7px] text-slate-400 mt-0.5 leading-none truncate max-w-[40px]">{partnerSO.userName.split(' ')[0]}</span>
+                            <div className="text-center mt-0.5">
+                              <p className="text-[7px] text-slate-500 leading-tight">{partnerSO.userName}</p>
+                              <p className="text-[6px] text-slate-400 leading-tight">{new Date(partnerSO.timestamp).toLocaleDateString('en-GB')} {new Date(partnerSO.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
+                            </div>
                           )}
                         </div>
                       </div>
