@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -37,7 +38,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
       lineType: (row.lineType as string) || 'fs_line',
       riskIdentified: row.riskIdentified as string || null,
       amount: row.amount != null ? Number(row.amount) : null,
-      assertions: row.assertions || null,
+      assertions: row.assertions ? (row.assertions as Prisma.InputJsonValue) : Prisma.JsonNull,
       relevance: row.relevance as string || null,
       complexityText: row.complexityText as string || null,
       subjectivityText: row.subjectivityText as string || null,
