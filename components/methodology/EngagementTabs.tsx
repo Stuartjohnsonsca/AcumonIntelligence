@@ -15,6 +15,7 @@ import { RMMTab } from './tabs/RMMTab';
 import { DocumentRepositoryTab } from './tabs/DocumentRepositoryTab';
 import { ClientPortalTab } from './tabs/ClientPortalTab';
 import { OpeningTab } from './tabs/OpeningTab';
+import { PriorPeriodTab } from './tabs/PriorPeriodTab';
 
 interface Props {
   engagement: EngagementData;
@@ -26,6 +27,7 @@ interface Props {
 
 const TABS = [
   { key: 'opening', label: 'Opening' },
+  { key: 'prior-period', label: 'Prior Period' },
   { key: 'permanent-file', label: 'Permanent' },
   { key: 'ethics', label: 'Ethics' },
   { key: 'continuance', label: 'Continuance' },
@@ -40,6 +42,7 @@ const TABS = [
 // Tabs that get sign-off dots — everything except Documents and Portal
 const SIGNOFF_TABS: Record<string, string> = {
   'opening': 'Opening',
+  'prior-period': 'Prior Period',
   'permanent-file': 'Client Permanent File',
   'ethics': 'Ethics',
   'continuance': 'Continuance',
@@ -52,6 +55,7 @@ const SIGNOFF_TABS: Record<string, string> = {
 // Map tab key to API endpoint for sign-offs
 const TAB_ENDPOINTS: Record<string, string> = {
   'opening': 'permanent-file', // shares with permanent-file for now
+  'prior-period': 'prior-period',
   'permanent-file': 'permanent-file',
   'ethics': 'ethics',
   'continuance': 'continuance',
@@ -90,6 +94,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     switch (activeTab) {
       case 'opening':
         return <OpeningTab engagement={engagement} auditType={auditType} clientName={clientName} periodEndDate={periodEndDate} />;
+      case 'prior-period':
+        return <PriorPeriodTab engagementId={engagement.id} />;
       case 'permanent-file':
         return <PermanentFileTab engagementId={engagement.id} teamMembers={teamMembers} />;
       case 'ethics':
