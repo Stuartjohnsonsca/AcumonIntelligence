@@ -331,10 +331,19 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                       </select>
                     </td>
                     <td className="px-2 py-1 text-center">
-                      <button onClick={() => setExpandedRow(isExpanded ? null : rowKey)}
-                        className={`px-1.5 py-0.5 text-[10px] rounded border transition-colors ${isExpanded ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-                        {isExpanded ? '▼' : '▶'} IR
-                      </button>
+                      {(() => {
+                        const hasIRData = !!(row.complexityText || row.subjectivityText || row.changeText || row.uncertaintyText || row.susceptibilityText || row.inherentRiskLevel);
+                        return (
+                          <button onClick={() => setExpandedRow(isExpanded ? null : rowKey)}
+                            className={`px-1.5 py-0.5 text-[10px] rounded border transition-colors ${
+                              isExpanded ? 'bg-blue-100 border-blue-300 text-blue-700' :
+                              hasIRData ? 'bg-blue-50 border-blue-200 text-blue-600 font-medium' :
+                              'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                            }`}>
+                            {isExpanded ? '▼' : '▶'} IR{hasIRData && !isExpanded ? ' ●' : ''}
+                          </button>
+                        );
+                      })()}
                     </td>
                     <td className="px-2 py-1">
                       <div className={`relative rounded border-2 ${row.aiSummary && !row.isAiEdited ? 'border-orange-300' : row.isAiEdited ? 'border-green-300' : 'border-transparent'}`}>
