@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import type { AuditType } from '@/types/methodology';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
+import { TeamPanel } from '../panels/TeamPanel';
+import { ClientContactsPanel } from '../panels/ClientContactsPanel';
 
 // Extended type for info requests that may have a receivedAt field
 type InfoRequestWithReceived = { receivedAt?: string | null };
@@ -114,99 +116,27 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
           </dl>
         </div>
 
-        {/* Team Summary */}
-        <div className="bg-slate-50 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-slate-800 mb-3 border-b border-slate-200 pb-2">Team Summary</h3>
-          {engagement.teamMembers.length === 0 ? (
-            <p className="text-xs text-slate-400 italic">No team members assigned</p>
-          ) : (
-            <div className="space-y-3 text-xs">
-              {riMembers.length > 0 && (
-                <div>
-                  <span className="text-slate-500 font-medium">Responsible Individual</span>
-                  {riMembers.map(m => (
-                    <p key={m.id} className="text-slate-800 mt-0.5">{getMemberName(m)}</p>
-                  ))}
-                </div>
-              )}
-              {managers.length > 0 && (
-                <div>
-                  <span className="text-slate-500 font-medium">Managers</span>
-                  {managers.map(m => (
-                    <p key={m.id} className="text-slate-800 mt-0.5">{getMemberName(m)}</p>
-                  ))}
-                </div>
-              )}
-              {juniors.length > 0 && (
-                <div>
-                  <span className="text-slate-500 font-medium">Juniors</span>
-                  {juniors.map(m => (
-                    <p key={m.id} className="text-slate-800 mt-0.5">{getMemberName(m)}</p>
-                  ))}
-                </div>
-              )}
-              {engagement.specialists.length > 0 && (
-                <div className="border-t border-slate-200 pt-2 mt-2">
-                  <span className="text-slate-500 font-medium">Specialists</span>
-                  {engagement.specialists.map(s => (
-                    <p key={s.id} className="text-slate-800 mt-0.5">
-                      {s.name} <span className="text-slate-400">({s.specialistType})</span>
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+        {/* Client Contacts - editable */}
+        <div>
+          <ClientContactsPanel
+            engagementId={engagement.id}
+            initialContacts={engagement.contacts}
+          />
         </div>
 
-        {/* Key Contacts & Dates */}
-        <div className="bg-slate-50 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-slate-800 mb-3 border-b border-slate-200 pb-2">Key Information</h3>
-          <div className="space-y-3 text-xs">
-            {/* Main Contact */}
-            <div>
-              <span className="text-slate-500 font-medium">Main Client Contact</span>
-              {mainContact ? (
-                <div className="mt-0.5">
-                  <p className="text-slate-800">{mainContact.name}</p>
-                  {mainContact.email && <p className="text-slate-500">{mainContact.email}</p>}
-                  {mainContact.phone && <p className="text-slate-500">{mainContact.phone}</p>}
-                </div>
-              ) : (
-                <p className="text-slate-400 italic mt-0.5">Not set</p>
-              )}
-            </div>
-
-            {/* Key Dates */}
-            <div className="border-t border-slate-200 pt-2">
-              <span className="text-slate-500 font-medium">Key Dates</span>
-              <div className="mt-1 space-y-1">
-                {engagement.agreedDates.length > 0 ? (
-                  engagement.agreedDates
-                    .sort((a, b) => a.sortOrder - b.sortOrder)
-                    .map(d => (
-                      <div key={d.id} className="flex justify-between">
-                        <span className="text-slate-600">{d.description}</span>
-                        <span className={`font-medium ${
-                          d.progress === 'Complete' ? 'text-green-600' :
-                          d.progress === 'Overdue' ? 'text-red-600' :
-                          d.progress === 'In Progress' ? 'text-blue-600' :
-                          'text-slate-700'
-                        }`}>
-                          {d.revisedTarget
-                            ? new Date(d.revisedTarget).toLocaleDateString('en-GB')
-                            : d.targetDate
-                              ? new Date(d.targetDate).toLocaleDateString('en-GB')
-                              : '—'}
-                        </span>
-                      </div>
-                    ))
-                ) : (
-                  <p className="text-slate-400 italic">No dates set</p>
-                )}
-              </div>
-            </div>
-          </div>
+        {/* Team - editable */}
+        <div>
+          <TeamPanel
+            engagementId={engagement.id}
+            initialTeamMembers={engagement.teamMembers.map(m => ({
+              id: m.id,
+              userId: m.userId,
+              role: m.role,
+              userName: getMemberName(m as MemberWithUser),
+              userEmail: m.userEmail || (m as MemberWithUser).user?.email,
+            }))}
+            initialSpecialists={engagement.specialists}
+          />
         </div>
       </div>
 
