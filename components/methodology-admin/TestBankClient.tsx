@@ -57,7 +57,11 @@ const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
   const [industries] = useState(initialIndustries);
-  const [testTypes] = useState(initialTestTypes);
+  const [testTypes, setTestTypes] = useState(initialTestTypes);
+  const [showTestTypes, setShowTestTypes] = useState(false);
+  const [newTestTypeName, setNewTestTypeName] = useState('');
+  const [editingTestType, setEditingTestType] = useState<string | null>(null);
+  const [editTestTypeName, setEditTestTypeName] = useState('');
   const [testBanks, setTestBanks] = useState(initialTestBanks);
   const [selectedIndustry, setSelectedIndustry] = useState<string>(industries[0]?.id || '');
   const [fsLines, setFsLines] = useState<string[]>(() => {
@@ -383,8 +387,94 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     }
   }
 
+  async function addTestType() {
+    const name = newTestTypeName.trim();
+    if (!name) return;
+    const code = name.toLowerCase().replace(/\s+/g, '_');
+    const res = await fetch('/api/methodology-admin/test-types', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, code }),
+    });
+    if (res.ok) {
+      const { testType } = await res.json();
+      setTestTypes(prev => [...prev, testType]);
+      setNewTestTypeName('');
+    }
+  }
+
+  async function updateTestType(id: string, name: string) {
+    const res = await fetch('/api/methodology-admin/test-types', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name }),
+    });
+    if (res.ok) {
+      setTestTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t));
+      setEditingTestType(null);
+    }
+  }
+
+  async function deleteTestType(id: string) {
+    if (testTypes.length <= 1) return; // Must have at least one
+    const res = await fetch('/api/methodology-admin/test-types', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (res.ok) {
+      setTestTypes(prev => prev.filter(t => t.id !== id));
+    }
+  }
+
   return (
     <div className="space-y-6">
+      {/* Test Types management (collapsible) */}
+      <div className="border border-slate-200 rounded-lg">
+        <button onClick={() => setShowTestTypes(!showTestTypes)}
+          className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+          <span>Test Types ({testTypes.length}) — e.g. Analytical Review, Test of Details, Judgement</span>
+          <span className="text-slate-400">{showTestTypes ? '▲' : '▼'}</span>
+        </button>
+        {showTestTypes && (
+          <div className="px-4 pb-4 border-t border-slate-100">
+            <div className="flex flex-wrap gap-2 mt-3">
+              {testTypes.map(tt => (
+                <div key={tt.id} className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+                  {editingTestType === tt.id ? (
+                    <>
+                      <input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') updateTestType(tt.id, editTestTypeName); if (e.key === 'Escape') setEditingTestType(null); }}
+                        className="border border-blue-300 rounded px-2 py-0.5 text-sm w-36" autoFocus />
+                      <button onClick={() => updateTestType(tt.id, editTestTypeName)} className="text-xs text-blue-600 hover:text-blue-800">✓</button>
+                      <button onClick={() => setEditingTestType(null)} className="text-xs text-slate-400">✕</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-sm text-slate-700">{tt.name}</span>
+                      <button onClick={() => { setEditingTestType(tt.id); setEditTestTypeName(tt.name); }}
+                        className="text-xs text-blue-400 hover:text-blue-600 ml-1" title="Edit">✏️</button>
+                      {testTypes.length > 1 && (
+                        <button onClick={() => deleteTestType(tt.id)}
+                          className="text-xs text-red-300 hover:text-red-500" title="Delete">×</button>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+              <div className="flex items-center gap-1">
+                <input value={newTestTypeName} onChange={e => setNewTestTypeName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addTestType()}
+                  placeholder="Add type..." className="border border-slate-200 rounded px-2 py-1 text-sm w-32" />
+                <button onClick={addTestType} disabled={!newTestTypeName.trim()}
+                  className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 disabled:opacity-40">+ Add</button>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-2">These types appear as dropdowns in tests and the upload template.</p>
+          </div>
+        )}
+      </div>
+
       {/* Industry selector and Copy */}
       <div className="flex items-end space-x-4 flex-wrap gap-y-3">
         <div>
