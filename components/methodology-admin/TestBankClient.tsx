@@ -191,10 +191,19 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         try {
           const XLSX = (await import('xlsx')).default;
           const buffer = await file.arrayBuffer();
-          const workbook = XLSX.read(buffer, { type: 'array' });
+          const workbook = XLSX.read(buffer, { type: 'array', raw: false });
           const sheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '' });
-          rows = jsonData as string[][];
+          // Use cell-by-cell reading to preserve multi-line text
+          const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+          for (let r = range.s.r; r <= range.e.r; r++) {
+            const row: string[] = [];
+            for (let c = range.s.c; c <= Math.min(range.e.c, 10); c++) {
+              const addr = XLSX.utils.encode_cell({ r, c });
+              const cell = sheet[addr];
+              row.push(cell ? String(cell.v ?? cell.w ?? '') : '');
+            }
+            rows.push(row);
+          }
         } catch (xlsxErr: any) {
           setUploadResult(`Upload failed: Could not parse XLSX file. ${xlsxErr?.message || 'Unknown error'}`);
           return;
