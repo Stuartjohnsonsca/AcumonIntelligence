@@ -19,7 +19,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   const body = await req.json();
   const { rowId, complexityText, subjectivityText, changeText, uncertaintyText, susceptibilityText, lineItem } = body;
 
-  if (!rowId) return NextResponse.json({ error: 'rowId required' }, { status: 400 });
+  // rowId may be empty for unsaved rows — that's OK, we just won't persist to DB
 
   // Build prompt from the 5 sub-components
   const components = [
@@ -44,7 +44,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+        model: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
         messages: [
           {
             role: 'system',
@@ -67,11 +67,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const data = await response.json();
     const summary = data.choices?.[0]?.message?.content?.trim() || '';
 
-    // Update the RMM row with the AI summary
-    await prisma.auditRMMRow.update({
-      where: { id: rowId },
-      data: { aiSummary: summary, isAiEdited: false },
-    });
+    // Update the RMM row with the AI summary (only if row is saved)
+    if (rowId) {
+      await prisma.auditRMMRow.update({
+        where: { id: rowId },
+        data: { aiSummary: summary, isAiEdited: false },
+      });
+    }
 
     return NextResponse.json({ summary });
   } catch (err) {
