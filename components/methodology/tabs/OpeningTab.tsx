@@ -5,6 +5,9 @@ import type { AuditType } from '@/types/methodology';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
 
+// Extended type for info requests that may have a receivedAt field
+type InfoRequestWithReceived = { receivedAt?: string | null };
+
 interface Props {
   engagement: EngagementData;
   auditType: AuditType;
@@ -42,9 +45,15 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   }
 
   const mainContact = engagement.contacts.find(c => c.isMainContact) || engagement.contacts[0];
-  const riMembers = engagement.teamMembers.filter(m => m.role === 'RI');
-  const managers = engagement.teamMembers.filter(m => m.role === 'Manager');
-  const juniors = engagement.teamMembers.filter(m => m.role === 'Junior');
+
+  // Team members may have userName directly or nested user.name from API
+  type MemberWithUser = typeof engagement.teamMembers[number] & { user?: { name: string; email: string } };
+  function getMemberName(m: MemberWithUser) {
+    return m.userName || m.user?.name || m.userId;
+  }
+  const riMembers = engagement.teamMembers.filter(m => m.role === 'RI') as MemberWithUser[];
+  const managers = engagement.teamMembers.filter(m => m.role === 'Manager') as MemberWithUser[];
+  const juniors = engagement.teamMembers.filter(m => m.role === 'Junior') as MemberWithUser[];
 
   const startedDate = engagement.startedAt ? new Date(engagement.startedAt).toLocaleDateString('en-GB') : null;
   const createdDate = new Date(engagement.createdAt).toLocaleDateString('en-GB');
@@ -116,7 +125,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
                 <div>
                   <span className="text-slate-500 font-medium">Responsible Individual</span>
                   {riMembers.map(m => (
-                    <p key={m.id} className="text-slate-800 mt-0.5">{m.userName || m.userId}</p>
+                    <p key={m.id} className="text-slate-800 mt-0.5">{getMemberName(m)}</p>
                   ))}
                 </div>
               )}
@@ -124,7 +133,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
                 <div>
                   <span className="text-slate-500 font-medium">Managers</span>
                   {managers.map(m => (
-                    <p key={m.id} className="text-slate-800 mt-0.5">{m.userName || m.userId}</p>
+                    <p key={m.id} className="text-slate-800 mt-0.5">{getMemberName(m)}</p>
                   ))}
                 </div>
               )}
@@ -132,7 +141,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
                 <div>
                   <span className="text-slate-500 font-medium">Juniors</span>
                   {juniors.map(m => (
-                    <p key={m.id} className="text-slate-800 mt-0.5">{m.userName || m.userId}</p>
+                    <p key={m.id} className="text-slate-800 mt-0.5">{getMemberName(m)}</p>
                   ))}
                 </div>
               )}
@@ -277,16 +286,28 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
         <div className="grid grid-cols-2 gap-2">
           {engagement.informationRequests
             .sort((a, b) => a.sortOrder - b.sortOrder)
-            .map(req => (
-              <div key={req.id} className="flex items-center gap-2 text-xs py-1">
-                <span className={`w-4 h-4 rounded flex items-center justify-center text-[10px] ${
-                  req.isIncluded ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-400'
-                }`}>
-                  {req.isIncluded ? '✓' : '—'}
-                </span>
-                <span className={req.isIncluded ? 'text-slate-700' : 'text-slate-400 line-through'}>{req.description}</span>
-              </div>
-            ))}
+            .map(req => {
+              // isIncluded = requested, receivedAt would indicate received (future field)
+              const received = (req as InfoRequestWithReceived).receivedAt;
+              return (
+                <div key={req.id} className="flex items-center gap-2 text-xs py-1">
+                  <span className={`w-4 h-4 rounded flex items-center justify-center text-[10px] ${
+                    !req.isIncluded ? 'bg-slate-100 text-slate-400' :
+                    received ? 'bg-green-100 text-green-600' :
+                    'bg-orange-100 text-orange-600'
+                  }`}>
+                    {!req.isIncluded ? '—' : received ? '✓' : '○'}
+                  </span>
+                  <span className={req.isIncluded ? 'text-slate-700' : 'text-slate-400 line-through'}>{req.description}</span>
+                  {req.isIncluded && !received && (
+                    <span className="text-[10px] text-orange-500">Pending</span>
+                  )}
+                  {received && (
+                    <span className="text-[10px] text-green-500">Received</span>
+                  )}
+                </div>
+              );
+            })}
         </div>
       </div>
     </div>
