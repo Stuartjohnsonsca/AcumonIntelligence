@@ -15,12 +15,14 @@ interface Props {
 }
 
 const INPUT_TYPE_OPTIONS: { value: QuestionInputType; label: string }[] = [
-  { value: 'text', label: 'Text (single line)' },
-  { value: 'textarea', label: 'Text (multi-line)' },
-  { value: 'yesno', label: 'Yes/No dropdown' },
-  { value: 'yna', label: 'Yes/No/N/A dropdown' },
-  { value: 'dropdown', label: 'Custom dropdown' },
+  { value: 'text', label: 'Free Text (single line)' },
+  { value: 'textarea', label: 'Free Text (multi-line)' },
+  { value: 'yesno', label: 'Y/N' },
+  { value: 'yes_only', label: 'Y only' },
+  { value: 'yna', label: 'Y/N/N/A' },
+  { value: 'dropdown', label: 'Bespoke Dropdown' },
   { value: 'number', label: 'Number' },
+  { value: 'currency', label: 'Currency (£)' },
   { value: 'date', label: 'Date picker' },
   { value: 'formula', label: 'Formula (computed)' },
   { value: 'checkbox', label: 'Checkbox' },

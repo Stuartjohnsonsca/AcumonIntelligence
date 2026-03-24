@@ -69,6 +69,12 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
   const [activeTemplateType, setActiveTemplateType] = useState(TEMPLATE_TYPES[0].key);
   const [activeAppendixType, setActiveAppendixType] = useState(APPENDIX_TEMPLATE_TYPES[0].key);
   const [activeAuditType, setActiveAuditType] = useState('ALL');
+  const [tabLabels, setTabLabels] = useState<Record<string, string>>(() => {
+    const m: Record<string, string> = {};
+    APPENDIX_TEMPLATE_TYPES.forEach(t => { m[t.key] = t.label; });
+    return m;
+  });
+  const [editingLabel, setEditingLabel] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [newItem, setNewItem] = useState('');
@@ -157,10 +163,22 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
           {/* Appendix Type Tabs */}
           <div className="flex flex-wrap gap-2 border-b pb-2">
             {APPENDIX_TEMPLATE_TYPES.map(tt => (
-              <button key={tt.key} onClick={() => setActiveAppendixType(tt.key)}
-                className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${activeAppendixType === tt.key ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-                {tt.label}
-              </button>
+              <div key={tt.key} className="relative">
+                {editingLabel === tt.key ? (
+                  <input type="text" value={tabLabels[tt.key] || tt.label} autoFocus
+                    onChange={e => setTabLabels(prev => ({ ...prev, [tt.key]: e.target.value }))}
+                    onBlur={() => setEditingLabel(null)}
+                    onKeyDown={e => { if (e.key === 'Enter') setEditingLabel(null); }}
+                    className="px-4 py-2 text-sm font-medium rounded-t-md border border-blue-400 focus:outline-none w-32" />
+                ) : (
+                  <button onClick={() => setActiveAppendixType(tt.key)}
+                    onDoubleClick={() => setEditingLabel(tt.key)}
+                    className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${activeAppendixType === tt.key ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                    title="Double-click to rename">
+                    {tabLabels[tt.key] || tt.label}
+                  </button>
+                )}
+              </div>
             ))}
           </div>
 

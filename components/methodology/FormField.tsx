@@ -84,6 +84,20 @@ export function FormField({
         </select>
       );
 
+    case 'yes_only':
+      return (
+        <select
+          id={questionId}
+          value={typeof value === 'string' ? value : ''}
+          onChange={e => onChange(e.target.value)}
+          disabled={disabled}
+          className={`${baseClass} ${className}`}
+        >
+          <option value="">Select...</option>
+          <option value="Y">Y</option>
+        </select>
+      );
+
     case 'yna':
       return (
         <select
@@ -98,6 +112,24 @@ export function FormField({
           <option value="N">N</option>
           <option value="N/A">N/A</option>
         </select>
+      );
+
+    case 'currency':
+      return (
+        <div className="relative">
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-sm">£</span>
+          <input
+            type="number"
+            id={questionId}
+            value={value !== null && value !== undefined && value !== '' ? Number(value) : ''}
+            onChange={e => onChange(e.target.value === '' ? null : Number(e.target.value))}
+            min={validationMin}
+            max={validationMax}
+            disabled={disabled}
+            placeholder={placeholder}
+            className={`${baseClass} pl-6 ${className}`}
+          />
+        </div>
       );
 
     case 'dropdown':
