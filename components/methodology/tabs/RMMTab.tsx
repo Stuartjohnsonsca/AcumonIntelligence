@@ -10,6 +10,7 @@ interface Props {
   engagementId: string;
   auditType: string;
   teamMembers?: { userId: string; userName?: string; role: string }[];
+  showCategoryOption?: boolean; // from TBCYvPY setting
 }
 
 interface RowSignOff { userId: string; userName: string; timestamp: string; }
@@ -19,6 +20,7 @@ interface RMMRow {
   id: string;
   lineItem: string;
   lineType: string;
+  category: string | null;
   riskIdentified: string | null;
   amount: number | null;
   assertions: string[] | null;
@@ -65,12 +67,13 @@ function AutoTextarea({ value, onChange, className, readOnly, placeholder }: {
   );
 }
 
-export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
+export function RMMTab({ engagementId, auditType, teamMembers = [], showCategoryOption = false }: Props) {
   const { data: session } = useSession();
   const [rows, setRows] = useState<RMMRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialRows, setInitialRows] = useState<RMMRow[]>([]);
   const [viewMode, setViewMode] = useState<'fs_line' | 'tb_account'>('fs_line');
+  const [showCategory, setShowCategory] = useState(false);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
   const [importingTB, setImportingTB] = useState(false);
@@ -115,7 +118,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
 
   function makeEmptyRow(): RMMRow {
     return {
-      id: '', lineItem: '', lineType: viewMode, riskIdentified: null, amount: null,
+      id: '', lineItem: '', lineType: viewMode, category: null, riskIdentified: null, amount: null,
       assertions: [], relevance: null, complexityText: null, subjectivityText: null,
       changeText: null, uncertaintyText: null, susceptibilityText: null,
       inherentRiskLevel: null, aiSummary: null, isAiEdited: false,
@@ -213,6 +216,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
           ...makeEmptyRow(),
           lineItem,
           lineType: 'tb_account',
+          category: tb.category || null,
           amount: tb.periodEnd ?? tb.currentYear ?? null,
           sortOrder: rows.length + newRows.length,
         });
@@ -314,6 +318,12 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
               {importingTB ? 'Importing...' : '📥 Import from TB'}
             </button>
           )}
+          {showCategoryOption && (
+            <button onClick={() => setShowCategory(!showCategory)}
+              className={`text-xs px-3 py-1 rounded transition-colors ${showCategory ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+              {showCategory ? '☑ Category' : '☐ Category'}
+            </button>
+          )}
           <button onClick={splitByAssertion}
             className="text-xs px-3 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100">
             ✂ Split by Assertion
@@ -333,6 +343,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
               <th className="w-8 px-1 py-2"></th>
+              {showCategory && <th className="text-left px-2 py-2 text-slate-500 font-medium w-28">Category</th>}
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">{viewMode === 'fs_line' ? 'FS Line Item' : 'TB Account'}</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">Risk Identified</th>
               <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">Amount</th>
@@ -373,6 +384,12 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                     <td className="px-1 py-1 align-top text-center">
                       <button onClick={() => duplicateRow(i)} className="text-slate-300 hover:text-blue-500 text-[10px]" title="Duplicate row">⧉</button>
                     </td>
+                    {showCategory && (
+                      <td className="px-2 py-1 align-top">
+                        <input type="text" value={row.category || ''} onChange={e => updateRow(i, 'category', e.target.value)}
+                          className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" placeholder="—" />
+                      </td>
+                    )}
                     <td className="px-2 py-1 align-top">
                       <AutoTextarea value={row.lineItem} onChange={v => updateRow(i, 'lineItem', v)} readOnly={row.isMandatory}
                         className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 ${row.isMandatory ? 'font-medium' : ''}`} />
@@ -506,7 +523,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                   </tr>
                   {isExpanded && (
                     <tr className="bg-blue-50/30 border-b border-slate-200">
-                      <td colSpan={17} className="px-4 py-3">
+                      <td colSpan={showCategory ? 18 : 17} className="px-4 py-3">
                         <div className="grid grid-cols-5 gap-3">
                           {INHERENT_RISK_COMPONENTS.map(comp => {
                             const textKey = `${comp.key}Text` as keyof RMMRow;
