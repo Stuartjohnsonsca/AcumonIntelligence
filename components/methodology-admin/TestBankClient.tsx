@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Plus, X, Copy, Loader2, Save, Download, Upload } from 'lucide-react';
-import { MANDATORY_FS_LINES } from '@/types/methodology';
+import { MANDATORY_FS_LINES, ASSERTION_TYPES } from '@/types/methodology';
 
 interface Industry {
   id: string;
@@ -23,7 +23,7 @@ interface TestBankEntry {
   firmId: string;
   industryId: string;
   fsLine: string;
-  tests: { description: string; testTypeCode: string; significantRisk?: boolean }[];
+  tests: { description: string; testTypeCode: string; significantRisk?: boolean; assertion?: string }[];
   assertions: string[] | null;
 }
 
@@ -85,7 +85,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   const openPopup = (fsLine: string) => {
     const entry = testBanks.find((tb) => tb.industryId === selectedIndustry && tb.fsLine === fsLine);
     setPopupFsLine(fsLine);
-    setPopupTests(entry?.tests as any[] || [{ description: '', testTypeCode: '', significantRisk: false }]);
+    setPopupTests(entry?.tests as any[] || [{ description: '', testTypeCode: '', assertion: '', significantRisk: false }]);
     setPopupOpen(true);
   };
 
@@ -165,22 +165,31 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   function downloadTemplate() {
     const selectedInd = industries.find(i => i.id === selectedIndustry);
     const indName = selectedInd?.name || 'Industry';
-    const typeOptions = testTypes.map(t => t.name).join(' | ');
 
-    // CSV header
-    const header = 'FS Line Item,Test Description,Type (' + typeOptions + '),Significant Risk (Y/N)';
-    const exampleRows = [
-      'Revenue,Agree revenue to underlying sales records and contracts,Test of Details,N',
-      'Revenue,Compare revenue trends to prior year and budget,Analytical Review,N',
-      'Going Concern,Review cash flow forecasts and underlying assumptions,Judgement,Y',
+    // Build XLSX-compatible CSV with data validation hints in header
+    const header = 'FS Line Item,Test Description,Type,Assertion,Significant Risk';
+
+    // Pre-populate rows with FS lines
+    const rows = fsLines.map(line => `"${line}",,,,`);
+
+    // Add a hidden validation sheet as comments won't work in CSV
+    // Instead, create a second "Lookups" section that tools can reference
+    const typeList = testTypes.map(t => t.name);
+    const assertionList = [...ASSERTION_TYPES];
+    const sigRiskList = ['Y', 'N'];
+
+    // Lookups block (separate sheet-like section)
+    const lookups = [
+      '',
+      'LOOKUPS (for reference - use these values in the columns above)',
+      'Type Options:,' + typeList.join(','),
+      'Assertion Options:,' + assertionList.join(','),
+      'Significant Risk Options:,' + sigRiskList.join(','),
     ];
 
-    // Include existing FS lines as empty rows for convenience
-    const fsRows = fsLines.map(line => `${line},,,`);
+    const csv = [header, ...rows, ...lookups].join('\n');
 
-    const csv = [header, '', '// Example rows (delete these):', ...exampleRows, '', '// FS Lines for ' + indName + ':', ...fsRows].join('\n');
-
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }); // BOM for Excel
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -199,7 +208,8 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     reader.onload = async (ev) => {
       try {
         const text = ev.target?.result as string;
-        const lines = text.split('\n').filter(l => l.trim() && !l.trim().startsWith('//'));
+        // Filter out empty lines and the LOOKUPS reference section
+        const lines = text.split('\n').filter(l => l.trim() && !l.trim().startsWith('LOOKUPS') && !l.trim().startsWith('Type Options') && !l.trim().startsWith('Assertion Options') && !l.trim().startsWith('Significant Risk Options'));
 
         // Skip header row
         const dataLines = lines.slice(1);
@@ -207,26 +217,30 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         let errors = 0;
 
         // Group by FS Line
-        const grouped: Record<string, { description: string; testTypeCode: string; significantRisk: boolean }[]> = {};
+        const grouped: Record<string, { description: string; testTypeCode: string; assertion: string; significantRisk: boolean }[]> = {};
 
         for (const line of dataLines) {
-          // Parse CSV (handle quoted fields)
           const parts = line.match(/(".*?"|[^,]*),?/g)?.map(s => s.replace(/,$/, '').replace(/^"|"$/g, '').trim()) || [];
-          const [fsLine, description, typeName, sigRisk] = parts;
+          const [fsLine, description, typeName, assertion, sigRisk] = parts;
 
           if (!fsLine || !description) continue;
 
-          // Match type name to code
           const matchedType = testTypes.find(t =>
             t.name.toLowerCase() === (typeName || '').toLowerCase() ||
             t.code.toLowerCase() === (typeName || '').toLowerCase()
           );
           const typeCode = matchedType?.code || testTypes[0]?.code || '';
 
+          // Match assertion
+          const matchedAssertion = ASSERTION_TYPES.find(a =>
+            a.toLowerCase() === (assertion || '').toLowerCase()
+          ) || '';
+
           if (!grouped[fsLine]) grouped[fsLine] = [];
           grouped[fsLine].push({
             description,
             testTypeCode: typeCode,
+            assertion: matchedAssertion,
             significantRisk: (sigRisk || '').toUpperCase() === 'Y',
           });
         }
@@ -394,7 +408,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       {/* Popup for editing tests */}
       {popupOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-lg shadow-xl w-[700px] max-h-[80vh] overflow-y-auto p-6">
+          <div className="bg-white rounded-lg shadow-xl w-[900px] max-h-[80vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-slate-900">
                 Tests: {popupFsLine}
@@ -408,9 +422,10 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
               <thead>
                 <tr>
                   <th className="text-left text-sm font-medium text-slate-600 p-2 border-b">Test Description</th>
-                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-44">Type</th>
-                  <th className="text-center text-sm font-medium text-slate-600 p-2 border-b w-20" title="Significant Risk">Sig. Risk</th>
-                  <th className="w-10"></th>
+                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-40">Type</th>
+                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-48">Assertion</th>
+                  <th className="text-center text-sm font-medium text-slate-600 p-2 border-b w-16" title="Significant Risk">Sig. Risk</th>
+                  <th className="w-8"></th>
                 </tr>
               </thead>
               <tbody>
@@ -444,6 +459,22 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                         ))}
                       </select>
                     </td>
+                    <td className="p-2 border-b">
+                      <select
+                        value={test.assertion || ''}
+                        onChange={(e) => {
+                          const updated = [...popupTests];
+                          updated[i] = { ...updated[i], assertion: e.target.value };
+                          setPopupTests(updated);
+                        }}
+                        className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"
+                      >
+                        <option value="">Select...</option>
+                        {ASSERTION_TYPES.map(a => (
+                          <option key={a} value={a}>{a}</option>
+                        ))}
+                      </select>
+                    </td>
                     <td className="p-2 border-b text-center">
                       <input
                         type="checkbox"
@@ -472,7 +503,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
 
             <div className="flex items-center justify-between">
               <Button
-                onClick={() => setPopupTests((prev) => [...prev, { description: '', testTypeCode: '', significantRisk: false }])}
+                onClick={() => setPopupTests((prev) => [...prev, { description: '', testTypeCode: '', assertion: '', significantRisk: false }])}
                 size="sm"
                 variant="outline"
               >
