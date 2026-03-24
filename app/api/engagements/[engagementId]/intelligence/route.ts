@@ -60,14 +60,15 @@ export async function PUT(
     });
     if (!client) return NextResponse.json({ error: 'Client not found' }, { status: 404 });
 
+    // Keys MUST match INTELLIGENCE_CATEGORIES in types/methodology.ts
     const categories = [
       { key: 'background', prompt: `Provide a brief background of the company "${client.clientName}"${client.sector ? ` in the ${client.sector} sector` : ''}. Include founding details, headquarters, and key business lines.` },
-      { key: 'financial_position', prompt: `Summarise the financial position of "${client.clientName}". Review any publicly available accounts, revenue trends, profitability, and cash position.` },
+      { key: 'financial', prompt: `Summarise the financial position of "${client.clientName}". Review any publicly available accounts, revenue trends, profitability, and cash position.` },
       { key: 'positive_adverse', prompt: `List positive and adverse news or developments for "${client.clientName}". Include recent press, awards, controversies, or legal matters.` },
-      { key: 'competitor_landscape', prompt: `Describe the competitive landscape for "${client.clientName}". Who are their main competitors and how do they differentiate?` },
-      { key: 'regulatory_issues', prompt: `Identify regulatory issues relevant to "${client.clientName}"${client.sector ? ` in the ${client.sector} sector` : ''}. Include any compliance requirements or regulatory changes.` },
-      { key: 'sector_developments', prompt: `Describe recent sector developments relevant to "${client.clientName}"${client.sector ? ` in ${client.sector}` : ''}. Include industry trends and outlook.` },
-      { key: 'other_news', prompt: `Provide any other noteworthy news about "${client.clientName}" not covered above. Include ESG, M&A activity, leadership changes, etc.` },
+      { key: 'competitors', prompt: `Describe the competitive landscape for "${client.clientName}". Who are their main competitors and how do they differentiate?` },
+      { key: 'regulatory', prompt: `Identify regulatory issues relevant to "${client.clientName}"${client.sector ? ` in the ${client.sector} sector` : ''}. Include any compliance requirements or regulatory changes.` },
+      { key: 'sector', prompt: `Describe recent sector developments relevant to "${client.clientName}"${client.sector ? ` in ${client.sector}` : ''}. Include industry trends and outlook.` },
+      { key: 'other', prompt: `Provide any other noteworthy news about "${client.clientName}" not covered above. Include ESG, M&A activity, leadership changes, etc.` },
     ];
 
     const apiKey = process.env.TOGETHER_API_KEY;
