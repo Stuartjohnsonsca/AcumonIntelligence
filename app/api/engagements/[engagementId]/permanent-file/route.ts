@@ -114,5 +114,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     return NextResponse.json({ signOffs });
   }
 
+  // Unsign-off: remove a sign-off for a role
+  if (action === 'unsignoff' && ['operator', 'reviewer', 'partner'].includes(role)) {
+    const existing = await prisma.auditPermanentFile.findUnique({
+      where: { engagementId_sectionKey: { engagementId, sectionKey: SIGNOFF_KEY } },
+    });
+    if (existing) {
+      const signOffs = (existing.data || {}) as Record<string, unknown>;
+      // Only allow removing your own sign-off
+      const current = signOffs[role] as { userId?: string } | undefined;
+      if (current?.userId === session.user.id) {
+        delete signOffs[role];
+        await prisma.auditPermanentFile.update({
+          where: { id: existing.id },
+          data: { data: signOffs as object },
+        });
+      }
+      return NextResponse.json({ signOffs });
+    }
+    return NextResponse.json({ signOffs: {} });
+  }
+
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 }

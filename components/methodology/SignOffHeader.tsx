@@ -115,11 +115,15 @@ export function SignOffHeader({ engagementId, endpoint, title, teamMembers, chil
   }
 
   async function handleSignOff(role: 'operator' | 'reviewer' | 'partner') {
+    // Toggle: if user already signed this role, unsign it
+    const existing = signOffs[role];
+    const isUnsigning = existing?.userId === session?.user?.id;
+
     try {
       const res = await fetch(`/api/engagements/${engagementId}/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'signoff', role }),
+        body: JSON.stringify({ action: isUnsigning ? 'unsignoff' : 'signoff', role }),
       });
       if (res.ok) {
         const json = await res.json();

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { getJsonTableSignOffs, handleJsonTableSignOff, saveJsonTableFieldMeta } from '@/lib/signoff-handler';
+import { getJsonTableSignOffs, handleJsonTableSignOff, handleJsonTableUnsignOff, saveJsonTableFieldMeta } from '@/lib/signoff-handler';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -58,6 +58,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       userName: session.user.name || session.user.email || 'Unknown',
       role: body.role,
     });
+  }
+  if (body.action === 'unsignoff') {
+    return handleJsonTableUnsignOff(prisma.auditEthics, engagementId, session.user.id, body.role);
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });

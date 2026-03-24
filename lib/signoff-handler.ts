@@ -140,6 +140,52 @@ export async function handleJsonTableSignOff(
 }
 
 /**
+ * Remove a sign-off for a role from a single-record JSON table.
+ * Only the user who signed can unsign.
+ */
+export async function handleJsonTableUnsignOff(
+  model: any,
+  engagementId: string,
+  userId: string,
+  role: string,
+) {
+  const record = await model.findUnique({ where: { engagementId } });
+  if (!record?.data) return NextResponse.json({ signOffs: {} });
+
+  const data = record.data as Record<string, unknown>;
+  const signOffs = (data.__signoffs || {}) as Record<string, unknown>;
+  const current = signOffs[role] as { userId?: string } | undefined;
+  if (current?.userId === userId) {
+    delete signOffs[role];
+    data.__signoffs = signOffs;
+    await model.update({ where: { id: record.id }, data: { data: data as object } });
+  }
+  return NextResponse.json({ signOffs });
+}
+
+/**
+ * Remove a sign-off for a role from AuditPermanentFile sectionKey storage.
+ */
+export async function handlePermanentFileUnsignOff(engagementId: string, userId: string, role: string, sectionKeySuffix?: string) {
+  const signoffKey = sectionKeySuffix ? `${SIGNOFF_SECTION_KEY}_${sectionKeySuffix}` : SIGNOFF_SECTION_KEY;
+  const existing = await prisma.auditPermanentFile.findUnique({
+    where: { engagementId_sectionKey: { engagementId, sectionKey: signoffKey } },
+  });
+  if (!existing) return NextResponse.json({ signOffs: {} });
+
+  const signOffs = (existing.data || {}) as Record<string, unknown>;
+  const current = signOffs[role] as { userId?: string } | undefined;
+  if (current?.userId === userId) {
+    delete signOffs[role];
+    await prisma.auditPermanentFile.update({
+      where: { id: existing.id },
+      data: { data: signOffs as object },
+    });
+  }
+  return NextResponse.json({ signOffs });
+}
+
+/**
  * Get sign-offs from a single-record JSON table.
  */
 export async function getJsonTableSignOffs(model: any, engagementId: string) {

@@ -327,8 +327,8 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="border border-slate-200 rounded-lg overflow-auto">
+      {/* Table — max height with frozen header */}
+      <div className="border border-slate-200 rounded-lg overflow-auto max-h-[calc(100vh-280px)]">
         <table className="w-full text-xs">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">

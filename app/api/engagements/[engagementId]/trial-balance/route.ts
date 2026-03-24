@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { getPermanentFileSignOffs, handlePermanentFileSignOff, savePermanentFileFieldMeta } from '@/lib/signoff-handler';
+import { getPermanentFileSignOffs, handlePermanentFileSignOff, handlePermanentFileUnsignOff, savePermanentFileFieldMeta } from '@/lib/signoff-handler';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -75,6 +75,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       userName: session.user.name || session.user.email || 'Unknown',
       role: body.role,
     }, 'trial-balance');
+  }
+  if (body.action === 'unsignoff') {
+    return handlePermanentFileUnsignOff(engagementId, session.user.id, body.role, 'trial-balance');
   }
   if (body.action === 'fieldMeta') {
     await savePermanentFileFieldMeta(engagementId, body.fieldMeta, 'trial-balance');
