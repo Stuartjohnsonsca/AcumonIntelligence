@@ -7,7 +7,7 @@ import { ClientsTab } from './ClientsTab';
 import { SubscriptionsTab } from './SubscriptionsTab';
 import { AiUsageTab } from './AiUsageTab';
 import { FirmSettingsTab } from './FirmSettingsTab';
-import { Shield } from 'lucide-react';
+import { Shield, BookOpen } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 
@@ -17,9 +17,10 @@ interface Props {
   isSuperAdmin: boolean;
   isFirmAdmin: boolean;
   isPortfolioOwner: boolean;
+  isMethodologyAdmin: boolean;
 }
 
-export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isPortfolioOwner }: Props) {
+export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isPortfolioOwner, isMethodologyAdmin }: Props) {
   const canManageUsers = isSuperAdmin || isFirmAdmin;
   const canManageClients = isSuperAdmin || isFirmAdmin || isPortfolioOwner;
 
@@ -35,6 +36,18 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
           </div>
           <Button asChild size="sm" className="bg-blue-600 hover:bg-blue-700">
             <Link href="/my-account/admin">Administration Panel</Link>
+          </Button>
+        </div>
+      )}
+
+      {(isMethodologyAdmin || isSuperAdmin) && (
+        <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <BookOpen className="h-5 w-5 text-emerald-600" />
+            <span className="text-sm font-medium text-emerald-800">Methodology Administrator</span>
+          </div>
+          <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-700">
+            <Link href="/methodology-admin">Methodology Admin</Link>
           </Button>
         </div>
       )}

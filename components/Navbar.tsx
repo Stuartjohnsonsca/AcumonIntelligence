@@ -19,6 +19,7 @@ export function Navbar() {
   const [assuranceOpen, setAssuranceOpen] = useState(false);
   const [financialOpen, setFinancialOpen] = useState(false);
   const [clientsOpen, setClientsOpen] = useState(false);
+  const [methodologyOpen, setMethodologyOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [toolSessions, setToolSessions] = useState<{toolKey: string; toolLabel: string; clients: {clientId: string; clientName: string; periods: {id: string; periodLabel: string; toolPath: string}[]}[]}[]>([]);
 
@@ -164,6 +165,45 @@ export function Navbar() {
                 </div>
               )}
             </div>
+
+            {/* Methodology Dropdown */}
+            {isAuthenticated && (
+              <div
+                className="relative"
+                onMouseEnter={() => setMethodologyOpen(true)}
+                onMouseLeave={() => setMethodologyOpen(false)}
+              >
+                <button
+                  onClick={() => setMethodologyOpen(!methodologyOpen)}
+                  className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                >
+                  <span>Methodology</span>
+                  <ChevronDown className={cn('h-4 w-4 transition-transform', methodologyOpen && 'rotate-180')} />
+                </button>
+                {methodologyOpen && (
+                  <div className="absolute top-full left-0 pt-1 w-64 z-50">
+                    <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                      {[
+                        { label: 'SME Audit', href: '/tools/methodology/sme-audit' },
+                        { label: 'PIE Audit', href: '/tools/methodology/pie-audit' },
+                        { label: 'SME Controls Based Audit', href: '/tools/methodology/sme-controls-audit' },
+                        { label: 'PIE Controls Based Audit', href: '/tools/methodology/pie-controls-audit' },
+                        { label: 'Group', href: '/tools/methodology/group' },
+                      ].map((item) => (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setMethodologyOpen(false)}
+                          className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                        >
+                          {item.label}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Clients Dropdown */}
             {isAuthenticated && (
@@ -343,6 +383,23 @@ export function Navbar() {
               </button>
             ))}
           </div>
+
+          {isAuthenticated && (
+            <div>
+              <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Methodology</p>
+              {[
+                { label: 'SME Audit', href: '/tools/methodology/sme-audit' },
+                { label: 'PIE Audit', href: '/tools/methodology/pie-audit' },
+                { label: 'SME Controls Based Audit', href: '/tools/methodology/sme-controls-audit' },
+                { label: 'PIE Controls Based Audit', href: '/tools/methodology/pie-controls-audit' },
+                { label: 'Group', href: '/tools/methodology/group' },
+              ].map((item) => (
+                <Link key={item.href} href={item.href} className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          )}
 
           {isAuthenticated && (
             <div>
