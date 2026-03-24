@@ -4,19 +4,25 @@ import { prisma } from '@/lib/db';
 
 export async function GET(req: Request) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  // All authenticated users can READ templates (needed for audit tabs)
+  if (!session?.user?.twoFactorVerified) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { searchParams } = new URL(req.url);
-  const templateType = searchParams.get('type');
+  const templateType = searchParams.get('type') || searchParams.get('templateType');
   const auditType = searchParams.get('auditType');
 
-  const where: any = { firmId: session.user.firmId };
+  const where: Record<string, unknown> = { firmId: session.user.firmId };
   if (templateType) where.templateType = templateType;
   if (auditType) where.auditType = auditType;
 
-  const templates = await prisma.methodologyTemplate.findMany({ where });
+  const templates = await prisma.methodologyTemplate.findMany({ where: where as any });
+
+  // If requesting a single template type, return it directly for convenience
+  if (templateType && auditType && templates.length > 0) {
+    return NextResponse.json({ template: templates[0], templates });
+  }
 
   return NextResponse.json({ templates });
 }
