@@ -422,7 +422,7 @@ export async function POST(req: Request) {
       console.log(`[BankAudit] Starting extraction of ${files.length} files`);
 
       // Create file records with 'extracting' status
-      const fileRecords = [];
+      const fileRecords: { id: string; fileName: string }[] = [];
       for (const file of files) {
         const record = await prisma.bankAuditFile.create({
           data: {
