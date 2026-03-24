@@ -562,8 +562,6 @@ export async function extractBankStatementFromBase64(
   fileName: string,
 ): Promise<BankStatementResult> {
   type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
-  let contentParts: ContentPart[];
-  let requireVision = true;
 
   if (isPdf(mimeType)) {
     const pdfBuffer = Buffer.from(base64Data, 'base64');
@@ -571,24 +569,31 @@ export async function extractBankStatementFromBase64(
     console.log(`[BankToTB:AI] PDF mode=${pdfContent.mode} pages=${pdfContent.pageCount} textLen=${pdfContent.text?.length ?? 0} file=${fileName}`);
 
     if (pdfContent.mode === 'text' && pdfContent.text) {
-      requireVision = false;
-      contentParts = [
-        { type: 'text', text: `${BANK_STATEMENT_PROMPT}\n\n--- BANK STATEMENT TEXT (${pdfContent.pageCount} pages) ---\n${pdfContent.text}` },
-      ];
+      // Text-based PDF — use text extraction (no vision needed)
+      return await extractFromText(pdfContent.text, pdfContent.pageCount, fileName);
     } else {
-      contentParts = [
-        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
-        { type: 'text', text: BANK_STATEMENT_PROMPT },
-      ];
+      // Scanned/image PDF — split into single pages and process each with vision
+      console.log(`[BankToTB:AI] Scanned PDF detected, splitting into pages for vision extraction`);
+      return await extractFromScannedPdf(pdfBuffer, fileName);
     }
   } else {
-    contentParts = [
+    // Image file (JPG/PNG) — send directly to vision model
+    const contentParts: ContentPart[] = [
       { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
       { type: 'text', text: BANK_STATEMENT_PROMPT },
     ];
+    return await extractWithVision(contentParts, fileName);
   }
+}
 
-  const models = selectModels(EXTRACTION_PRIORITIES, requireVision);
+// Extract from text-based PDF using LLM (no vision)
+async function extractFromText(text: string, pageCount: number, fileName: string): Promise<BankStatementResult> {
+  type ContentPart = { type: 'text'; text: string };
+  const contentParts: ContentPart[] = [
+    { type: 'text', text: `${BANK_STATEMENT_PROMPT}\n\n--- BANK STATEMENT TEXT (${pageCount} pages) ---\n${text}` },
+  ];
+
+  const models = selectModels(EXTRACTION_PRIORITIES, false);
   let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
   let usedModel = models[0];
   const errors: string[] = [];
@@ -604,7 +609,7 @@ export async function extractBankStatementFromBase64(
         }),
         `bank-stmt:${fileName}`,
       );
-      console.log(`[BankToTB:AI] Success | file=${fileName} | model=${modelId}`);
+      console.log(`[BankToTB:AI] Text extraction success | file=${fileName} | model=${modelId}`);
       break;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -620,6 +625,164 @@ export async function extractBankStatementFromBase64(
     throw new Error(`[bank-stmt:${fileName}] All models failed. ${errors.join(' | ')}`);
   }
 
+  return parseResult(result, usedModel, fileName);
+}
+
+// Extract from scanned PDF by splitting into single-page PDFs and using vision model
+async function extractFromScannedPdf(pdfBuffer: Buffer, fileName: string): Promise<BankStatementResult> {
+  const { PDFDocument } = await import('pdf-lib');
+  const pdfDoc = await PDFDocument.load(pdfBuffer);
+  const pageCount = pdfDoc.getPageCount();
+  const maxPages = Math.min(pageCount, 10);
+
+  console.log(`[BankToTB:AI] Processing ${maxPages} pages from scanned PDF: ${fileName}`);
+
+  const allTransactions: { date: string; description: string; reference: string; debit: number; credit: number; balance: number }[] = [];
+  let metadata: Record<string, unknown> = {};
+  let lastUsage: ReturnType<typeof extractUsageMetadata> | null = null;
+  let lastModel = '';
+
+  for (let pi = 0; pi < maxPages; pi++) {
+    // Create a single-page PDF
+    const singlePageDoc = await PDFDocument.create();
+    const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [pi]);
+    singlePageDoc.addPage(copiedPage);
+    const singlePageBytes = await singlePageDoc.save();
+    const base64Pdf = Buffer.from(singlePageBytes).toString('base64');
+
+    const visionPrompt = pi === 0
+      ? BANK_STATEMENT_PROMPT
+      : `Continue extracting transactions from this bank statement page (page ${pi + 1}). Extract bankName, sortCode, accountNumber, statementDate, statementPage if visible. Return ONLY valid JSON with the same format as before.`;
+
+    type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
+    const contentParts: ContentPart[] = [
+      { type: 'image_url', image_url: { url: `data:application/pdf;base64,${base64Pdf}` } },
+      { type: 'text', text: visionPrompt },
+    ];
+
+    const models = selectModels(EXTRACTION_PRIORITIES, true);
+    let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+
+    for (const modelId of models) {
+      try {
+        result = await retryWithBackoff(
+          () => client.chat.completions.create({
+            model: modelId,
+            messages: [{ role: 'user', content: contentParts }],
+            max_tokens: 8000,
+          }),
+          `bank-stmt:${fileName}:p${pi + 1}`,
+        );
+        lastModel = modelId;
+        console.log(`[BankToTB:AI] Vision page ${pi + 1}/${maxPages} success | file=${fileName} | model=${modelId}`);
+        break;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(`[BankToTB:AI] Vision model ${modelId} failed page ${pi + 1}: ${errMsg}`);
+        if (isModelUnavailableError(err)) { markModelUnavailable(modelId); continue; }
+        if (err instanceof Error && err.message.includes('400')) { continue; }
+        // Don't throw — try next model
+      }
+    }
+
+    if (!result) {
+      console.warn(`[BankToTB:AI] All vision models failed for page ${pi + 1} of ${fileName} — skipping`);
+      continue;
+    }
+
+    lastUsage = extractUsageMetadata(result);
+    const text = result.choices[0]?.message?.content || '';
+    const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/) || cleaned.match(/(\{[\s\S]*\})/);
+
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1].trim());
+        if (pi === 0) {
+          metadata = { ...parsed };
+          delete metadata.transactions;
+        }
+        if (Array.isArray(parsed.transactions)) {
+          for (const t of parsed.transactions) {
+            allTransactions.push({
+              date: String(t.date || ''),
+              description: String(t.description || ''),
+              reference: String(t.reference || ''),
+              debit: Number(t.debit) || 0,
+              credit: Number(t.credit) || 0,
+              balance: Number(t.balance) || 0,
+            });
+          }
+        }
+      } catch { /* skip malformed JSON from this page */ }
+    }
+  }
+
+  if (allTransactions.length === 0) {
+    throw new Error(`[bank-stmt:${fileName}] No transactions extracted from ${maxPages} pages. The PDF may be encrypted or in an unsupported format.`);
+  }
+
+  const usage = lastUsage || { promptTokens: 0, completionTokens: 0, totalTokens: 0, model: lastModel, costUsd: 0 };
+  usage.model = lastModel;
+
+  console.log(`[BankToTB:AI] Scanned PDF complete: ${allTransactions.length} txns from ${maxPages} pages | file=${fileName}`);
+
+  return {
+    bankName: (metadata.bankName as string) || null,
+    sortCode: (metadata.sortCode as string) || null,
+    accountNumber: (metadata.accountNumber as string) || null,
+    statementDate: (metadata.statementDate as string) || null,
+    statementPage: metadata.statementPage ? Number(metadata.statementPage) : null,
+    openingBalance: metadata.openingBalance != null ? Number(metadata.openingBalance) : null,
+    closingBalance: metadata.closingBalance != null ? Number(metadata.closingBalance) : null,
+    currency: (metadata.currency as string) || null,
+    transactions: allTransactions,
+    usage,
+  };
+}
+
+// Extract from image using vision model
+async function extractWithVision(
+  contentParts: ({ type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string })[],
+  fileName: string,
+): Promise<BankStatementResult> {
+  const models = selectModels(EXTRACTION_PRIORITIES, true);
+  let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+  let usedModel = models[0];
+  const errors: string[] = [];
+
+  for (const modelId of models) {
+    usedModel = modelId;
+    try {
+      result = await retryWithBackoff(
+        () => client.chat.completions.create({
+          model: modelId,
+          messages: [{ role: 'user', content: contentParts }],
+          max_tokens: 16000,
+        }),
+        `bank-stmt:${fileName}`,
+      );
+      console.log(`[BankToTB:AI] Vision success | file=${fileName} | model=${modelId}`);
+      break;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      errors.push(`${modelId}: ${errMsg}`);
+      console.warn(`[BankToTB:AI] Model ${modelId} failed for ${fileName}: ${errMsg}`);
+      if (isModelUnavailableError(err)) { markModelUnavailable(modelId); continue; }
+      if (err instanceof Error && err.message.includes('400')) { continue; }
+      throw err;
+    }
+  }
+
+  if (!result) {
+    throw new Error(`[bank-stmt:${fileName}] All models failed. ${errors.join(' | ')}`);
+  }
+
+  return parseResult(result, usedModel, fileName);
+}
+
+// Parse AI result into BankStatementResult
+function parseResult(result: OpenAI.Chat.Completions.ChatCompletion, usedModel: string, fileName: string): BankStatementResult {
   const usage = extractUsageMetadata(result);
   usage.model = usedModel;
   const text = result.choices[0]?.message?.content || '';
