@@ -184,13 +184,17 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       let rows: string[][] = [];
 
       if (isXlsx) {
-        // Use the XLSX library to parse
-        const XLSX = (await import('xlsx')).default;
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: 'array' });
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '' });
-        rows = jsonData as string[][];
+        try {
+          const XLSX = (await import('xlsx')).default;
+          const buffer = await file.arrayBuffer();
+          const workbook = XLSX.read(buffer, { type: 'array' });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '' });
+          rows = jsonData as string[][];
+        } catch (xlsxErr: any) {
+          setUploadResult(`Upload failed: Could not parse XLSX file. ${xlsxErr?.message || 'Unknown error'}`);
+          return;
+        }
       } else {
         // CSV parsing
         const text = await file.text();
@@ -199,43 +203,55 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           .map(line => (line.match(/(".*?"|[^,]*),?/g) || []).map(s => s.replace(/,$/, '').replace(/^"|"$/g, '').trim()));
       }
 
-      // Detect format: 5-col (old: no Framework) vs 6-col (new: with Framework)
+      // Detect column positions from headers (flexible: any order)
       const headerRow = rows[0]?.map(h => (h || '').toString().trim().toLowerCase()) || [];
-      const hasFrameworkCol = headerRow.some(h => h.includes('framework'));
-      const colCount = hasFrameworkCol ? 6 : 5;
 
       if (rows.length < 2) {
         setUploadResult('Upload failed: File is empty or has no data rows');
         return;
       }
-      if (headerRow.length < 4) {
-        setUploadResult('Upload failed: Invalid headers. Expected at least: FS Line Item, Test Description, Type, Assertion, Significant Risk');
-        return;
+
+      // Find column indices by header keywords
+      function findCol(keywords: string[]): number {
+        return headerRow.findIndex(h => keywords.some(k => h.includes(k)));
       }
+      const colFsLine = findCol(['fs line', 'line item', 'fs statement']);
+      const colDesc = findCol(['test desc', 'description']);
+      const colType = Math.max(findCol(['type']), 0);
+      const colAssertion = findCol(['assertion']);
+      const colFramework = findCol(['framework', 'accounting']);
+      const colSigRisk = findCol(['significant', 'sig risk', 'sig.']);
+
+      if (colFsLine < 0 && colDesc < 0) {
+        // Fallback: assume positional A=fsLine, B=desc, C=type, D=assertion
+        // This handles files with no recognizable headers
+      }
+
+      // Use detected indices or fallback to positional
+      const iFS = colFsLine >= 0 ? colFsLine : 0;
+      const iDesc = colDesc >= 0 ? colDesc : 1;
+      const iType = colType >= 0 ? colType : 2;
+      const iAssert = colAssertion >= 0 ? colAssertion : 3;
+      const iFramework = colFramework; // -1 if not present
+      const iSigRisk = colSigRisk >= 0 ? colSigRisk : (iFramework >= 0 ? 5 : 4);
 
       // Parse and validate each row
       const dataRows = rows.slice(1);
       let imported = 0;
       let apiErrors = 0;
       const validationErrors: string[] = [];
-      const validTypeNames = testTypes.map(t => t.name.toLowerCase());
-      const validTypeCodes = testTypes.map(t => t.code.toLowerCase());
-      const validAssertions = ASSERTION_TYPES.map(a => a.toLowerCase());
-      const validFrameworks = frameworkOptions.map(f => f.toLowerCase());
 
       const grouped: Record<string, { description: string; testTypeCode: string; assertion: string; framework: string; significantRisk: boolean }[]> = {};
 
       for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx++) {
         const parts = dataRows[rowIdx];
-        const mapped = parts.map(p => (p || '').toString().trim());
-        // Handle both 5-col (no framework) and 6-col (with framework) formats
-        let fsLine: string, description: string, typeName: string, assertion: string, framework: string, sigRisk: string;
-        if (hasFrameworkCol) {
-          [fsLine, description, typeName, assertion, framework, sigRisk] = mapped;
-        } else {
-          [fsLine, description, typeName, assertion, sigRisk] = mapped;
-          framework = '';
-        }
+        const get = (idx: number) => idx >= 0 && idx < parts.length ? (parts[idx] || '').toString().trim() : '';
+        const fsLine = get(iFS);
+        const description = get(iDesc);
+        const typeName = get(iType);
+        const assertion = get(iAssert);
+        const framework = iFramework >= 0 ? get(iFramework) : '';
+        const sigRisk = get(iSigRisk);
         if (!fsLine && !description) continue; // skip blank rows
 
         const rowNum = rowIdx + 2; // 1-indexed + header
@@ -323,8 +339,9 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       if (validationErrors.length > 0) parts.push(`${validationErrors.length} rows skipped due to validation errors`);
       if (apiErrors > 0) parts.push(`${apiErrors} API errors`);
       setUploadResult(parts.join('. '));
-    } catch (err) {
-      setUploadResult('Upload failed: invalid file format');
+    } catch (err: any) {
+      console.error('Upload error:', err);
+      setUploadResult(`Upload failed: ${err?.message || 'invalid file format'}`);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
