@@ -102,7 +102,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'par':
         return <PARTab engagementId={engagement.id} />;
       case 'rmm':
-        return <RMMTab engagementId={engagement.id} auditType={auditType} />;
+        return <RMMTab engagementId={engagement.id} auditType={auditType} teamMembers={teamMembers} />;
       case 'documents':
         return <DocumentRepositoryTab engagementId={engagement.id} />;
       case 'portal':
