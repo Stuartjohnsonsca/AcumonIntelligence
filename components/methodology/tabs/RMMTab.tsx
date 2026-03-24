@@ -233,15 +233,23 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
       if (assertions.length <= 1) {
         newRows.push(row);
       } else {
-        for (const assertion of assertions) {
+        // First assertion keeps the original row (with its ID)
+        newRows.push({
+          ...row,
+          assertions: [assertions[0]],
+          rowSignOffs: {}, // Clear sign-offs - needs re-review
+        });
+        // Remaining assertions get new duplicate rows
+        for (let a = 1; a < assertions.length; a++) {
           newRows.push({
             ...row,
-            id: row === rows.find(r => r === row && (r.assertions || [])[0] === assertion) ? row.id : '', // Keep ID only for first
-            assertions: [assertion],
-            aiSummary: null,
+            id: '', // New row, no DB ID
+            assertions: [assertions[a]],
+            aiSummary: null, // Needs regeneration
             isAiEdited: false,
-            rowSignOffs: {},
+            rowSignOffs: {}, // No sign-offs on new rows
             lastEditedAt: undefined,
+            isMandatory: false, // Splits of mandatory rows are not mandatory
           });
         }
       }
