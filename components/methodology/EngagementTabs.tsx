@@ -4,8 +4,12 @@ import { useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
+import { PermanentFileTab } from './tabs/PermanentFileTab';
+import { EthicsTab } from './tabs/EthicsTab';
+import { ContinuanceTab } from './tabs/ContinuanceTab';
+import { MaterialityTab } from './tabs/MaterialityTab';
 
-// Tab placeholder components - will be replaced with full implementations
+// Tab placeholder for tabs not yet built
 function TabPlaceholder({ name }: { name: string }) {
   return (
     <div className="py-12 text-center">
@@ -61,15 +65,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'opening':
         return <TabPlaceholder name="Opening" />;
       case 'permanent-file':
-        return <TabPlaceholder name="Client Permanent File (Appendix A)" />;
+        return <PermanentFileTab engagementId={engagement.id} />;
       case 'ethics':
-        return <TabPlaceholder name="Ethics (Appendix B)" />;
+        return <EthicsTab engagementId={engagement.id} />;
       case 'continuance':
-        return <TabPlaceholder name={`${continuanceLabel} (Appendix C/D)`} />;
+        return <ContinuanceTab engagementId={engagement.id} />;
       case 'tb':
         return <TabPlaceholder name="Trial Balance CY vs PY" />;
       case 'materiality':
-        return <TabPlaceholder name="Materiality (Appendix E)" />;
+        return <MaterialityTab engagementId={engagement.id} />;
       case 'par':
         return <TabPlaceholder name="Preliminary Analytical Review" />;
       case 'rmm':
