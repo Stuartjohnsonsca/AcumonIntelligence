@@ -8,16 +8,37 @@ async function verifyAccess(engagementId: string, firmId: string | undefined, is
   return e;
 }
 
+// Sign-offs and field meta are stored in a special section key
+const SIGNOFF_KEY = '__signoffs';
+const FIELDMETA_KEY = '__fieldmeta';
+
 export async function GET(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { engagementId } = await params;
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+  const url = new URL(req.url);
+  const meta = url.searchParams.get('meta');
+
   const sections = await prisma.auditPermanentFile.findMany({ where: { engagementId }, orderBy: { sectionKey: 'asc' } });
-  // Merge into single data object keyed by sectionKey
+
+  if (meta === 'signoffs') {
+    const signOffSection = sections.find(s => s.sectionKey === SIGNOFF_KEY);
+    const fieldMetaSection = sections.find(s => s.sectionKey === FIELDMETA_KEY);
+    return NextResponse.json({
+      signOffs: signOffSection?.data || {},
+      fieldMeta: fieldMetaSection?.data || {},
+    });
+  }
+
+  // Merge into single data object keyed by sectionKey (excluding meta keys)
   const data: Record<string, unknown> = {};
-  for (const s of sections) { data[s.sectionKey] = s.data; }
+  for (const s of sections) {
+    if (s.sectionKey !== SIGNOFF_KEY && s.sectionKey !== FIELDMETA_KEY) {
+      data[s.sectionKey] = s.data;
+    }
+  }
   return NextResponse.json({ data });
 }
 
@@ -28,16 +49,60 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
-  const { data } = body as { data: Record<string, unknown> };
+  const { data, fieldMeta } = body as { data: Record<string, unknown>; fieldMeta?: Record<string, unknown> };
 
-  // Upsert each section
-  for (const [sectionKey, sectionData] of Object.entries(data)) {
+  // Save form data - flatten all values into a single section for simplicity
+  if (data && typeof data === 'object') {
     await prisma.auditPermanentFile.upsert({
-      where: { engagementId_sectionKey: { engagementId, sectionKey } },
-      create: { engagementId, sectionKey, data: sectionData as object },
-      update: { data: sectionData as object },
+      where: { engagementId_sectionKey: { engagementId, sectionKey: 'all' } },
+      create: { engagementId, sectionKey: 'all', data: data as object },
+      update: { data: data as object },
+    });
+  }
+
+  // Save field metadata (edit timestamps)
+  if (fieldMeta && typeof fieldMeta === 'object') {
+    await prisma.auditPermanentFile.upsert({
+      where: { engagementId_sectionKey: { engagementId, sectionKey: FIELDMETA_KEY } },
+      create: { engagementId, sectionKey: FIELDMETA_KEY, data: fieldMeta as object },
+      update: { data: fieldMeta as object },
     });
   }
 
   return NextResponse.json({ success: true });
+}
+
+// POST for sign-off actions
+export async function POST(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
+  const session = await auth();
+  if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const { engagementId } = await params;
+  if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const body = await req.json();
+  const { action, role } = body as { action: string; role: string };
+
+  if (action === 'signoff' && ['operator', 'reviewer', 'partner'].includes(role)) {
+    // Load existing sign-offs
+    const existing = await prisma.auditPermanentFile.findUnique({
+      where: { engagementId_sectionKey: { engagementId, sectionKey: SIGNOFF_KEY } },
+    });
+
+    const signOffs = (existing?.data || {}) as Record<string, unknown>;
+    signOffs[role] = {
+      userId: session.user.id,
+      userName: session.user.name || session.user.email,
+      timestamp: new Date().toISOString(),
+    };
+
+    await prisma.auditPermanentFile.upsert({
+      where: { engagementId_sectionKey: { engagementId, sectionKey: SIGNOFF_KEY } },
+      create: { engagementId, sectionKey: SIGNOFF_KEY, data: signOffs as object },
+      update: { data: signOffs as object },
+    });
+
+    return NextResponse.json({ signOffs });
+  }
+
+  return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 }

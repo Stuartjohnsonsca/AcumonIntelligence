@@ -60,7 +60,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'opening':
         return <OpeningTab engagement={engagement} auditType={auditType} clientName={clientName} periodEndDate={periodEndDate} />;
       case 'permanent-file':
-        return <PermanentFileTab engagementId={engagement.id} />;
+        return <PermanentFileTab engagementId={engagement.id} teamMembers={engagement.teamMembers.map(m => ({ userId: m.userId, userName: m.userName || (m as any).user?.name, role: m.role }))} />;
       case 'ethics':
         return <EthicsTab engagementId={engagement.id} />;
       case 'continuance':

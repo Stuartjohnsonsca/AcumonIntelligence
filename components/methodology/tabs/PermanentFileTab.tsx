@@ -5,8 +5,15 @@ import { DynamicAppendixForm } from '../DynamicAppendixForm';
 import { PERMANENT_FILE_SECTIONS } from '@/types/methodology';
 import type { TemplateQuestion } from '@/types/methodology';
 
+interface TeamMember {
+  userId: string;
+  userName?: string;
+  role: string;
+}
+
 interface Props {
   engagementId: string;
+  teamMembers?: TeamMember[];
 }
 
 /**
@@ -87,7 +94,7 @@ function getDefaultQuestions(): TemplateQuestion[] {
   ];
 }
 
-export function PermanentFileTab({ engagementId }: Props) {
+export function PermanentFileTab({ engagementId, teamMembers = [] }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
 
@@ -126,7 +133,8 @@ export function PermanentFileTab({ engagementId }: Props) {
       endpoint="permanent-file"
       questions={questions}
       initialData={data as Record<string, string | number | boolean | null>}
-      title="Client Permanent File (Appendix A)"
+      title="Client Permanent File"
+      teamMembers={teamMembers}
     />
   );
 }
