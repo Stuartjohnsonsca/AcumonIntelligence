@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -65,6 +65,21 @@ const TAB_ENDPOINTS: Record<string, string> = {
   'rmm': 'rmm',
 };
 
+// Map tab key → schedule config key (used in audit type → schedule mapping)
+const TAB_TO_SCHEDULE: Record<string, string> = {
+  'opening': 'opening', // Opening always shown
+  'prior-period': 'prior_period',
+  'permanent-file': 'permanent_file_questions',
+  'ethics': 'ethics_questions',
+  'continuance': 'continuance_questions',
+  'tb': 'trial_balance',
+  'materiality': 'materiality_questions',
+  'par': 'par',
+  'rmm': 'rmm',
+  'documents': 'documents',
+  'portal': 'portal',
+};
+
 type TabKey = typeof TABS[number]['key'];
 
 export function EngagementTabs({ engagement, auditType, clientName, periodEndDate, currentUserId }: Props) {
@@ -73,6 +88,28 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const initialTab = (searchParams.get('tab') as TabKey) || 'opening';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [tbShowCategory, setTbShowCategory] = useState(true);
+  const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
+
+  // Fetch audit type → schedule mapping
+  useEffect(() => {
+    fetch('/api/methodology-admin/audit-type-schedules')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.mappings?.[auditType]) {
+          setEnabledSchedules(new Set(data.mappings[auditType]));
+        }
+        // If no mapping configured, all tabs are enabled (null = show all)
+      })
+      .catch(() => {}); // Fail silently, show all tabs
+  }, [auditType]);
+
+  // Filter tabs based on audit type schedule config
+  const visibleTabs = TABS.filter(tab => {
+    if (tab.key === 'opening') return true; // Opening always visible
+    if (!enabledSchedules) return true; // Not loaded yet or no config = show all
+    const scheduleKey = TAB_TO_SCHEDULE[tab.key];
+    return scheduleKey ? enabledSchedules.has(scheduleKey) : true;
+  });
 
   function switchTab(key: TabKey) {
     setActiveTab(key);
@@ -129,7 +166,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       {/* Tab Bar */}
       <div className="border-b border-slate-200 bg-white rounded-t-lg overflow-x-auto">
         <nav className="flex -mb-px" aria-label="Engagement tabs">
-          {TABS.map(tab => {
+          {visibleTabs.map(tab => {
             const isActive = activeTab === tab.key;
             const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
             return (

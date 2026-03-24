@@ -1,9 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { Wrench, Factory, FlaskConical, Calendar } from 'lucide-react';
+import { Wrench, Factory, FlaskConical, Calendar, ClipboardList } from 'lucide-react';
 
 const tiles = [
+  {
+    title: 'Audit Types',
+    description: 'Configure which schedules apply to each audit type (SME, PIE, Controls, Group)',
+    href: '/methodology-admin/audit-methodology/audit-types',
+    icon: ClipboardList,
+    color: 'bg-rose-50 border-rose-200 hover:bg-rose-100',
+    iconColor: 'text-rose-600',
+  },
   {
     title: 'Tools',
     description: 'Configure tool method availability per audit type',
