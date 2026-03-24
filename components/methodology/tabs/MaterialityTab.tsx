@@ -86,7 +86,7 @@ export function MaterialityTab({ engagementId }: Props) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-base font-semibold text-slate-800">Materiality (Appendix E)</h2>
+        <h2 className="text-base font-semibold text-slate-800">Materiality</h2>
         <div className="flex items-center gap-2 text-xs">
           {saving && <span className="text-blue-500 animate-pulse">Saving...</span>}
           {lastSaved && !saving && <span className="text-green-500">Saved</span>}

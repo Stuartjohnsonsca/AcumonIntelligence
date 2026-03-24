@@ -114,7 +114,7 @@ export function PARTab({ engagementId }: Props) {
     <div>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-base font-semibold text-slate-800">Preliminary Analytical Review</h2>
+          {/* Title provided by SignOffHeader wrapper */}
           {pmThreshold !== null && (
             <span className="text-xs text-slate-400">PM Threshold: £{pmThreshold.toLocaleString()}</span>
           )}
