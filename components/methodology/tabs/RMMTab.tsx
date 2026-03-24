@@ -54,7 +54,7 @@ interface RMMRow {
 
 const RISK_LEVELS = ['Remote', 'Low', 'Medium', 'High', 'Very High'] as const;
 const LIKELIHOODS = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'] as const;
-const MAGNITUDES = ['Remote', 'Low', 'Medium', 'High', 'Very High'] as const;
+const MAGNITUDES = ['Very Low', 'Low', 'Medium', 'High', 'Very High'] as const;
 const CONTROL_OPTIONS = ['Not Tested', 'Not Effective', 'Partially Effective', 'Effective'] as const;
 
 const ROLE_MAP: Record<string, string> = { Junior: 'operator', Manager: 'reviewer', RI: 'partner' };
@@ -265,11 +265,11 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-36">{viewMode === 'fs_line' ? 'FS Line Item' : 'TB Account'}</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-36">Risk Identified</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-20">Amount</th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">Risk Identified</th>
+              <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">Amount</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-28">Assertions</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-14">Rel.</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-16">IR</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-14" title="Relevant?">Rel. <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span></th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-16" title="Inherent Risk">IR <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span></th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-36">Risk Summation</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Likelihood</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Magnitude</th>
@@ -298,16 +298,20 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
               return (
                 <Fragment key={rowKey}>
                   <tr className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.isMandatory ? 'bg-amber-50/20' : ''} ${outline}`}>
-                    <td className="px-2 py-1">
-                      <input type="text" value={row.lineItem} onChange={e => updateRow(i, 'lineItem', e.target.value)}
-                        className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 ${row.isMandatory ? 'font-medium' : ''}`}
-                        readOnly={row.isMandatory} />
+                    <td className="px-2 py-1 align-top">
+                      <textarea value={row.lineItem} onChange={e => updateRow(i, 'lineItem', e.target.value)}
+                        className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none overflow-hidden ${row.isMandatory ? 'font-medium' : ''}`}
+                        readOnly={row.isMandatory} rows={1}
+                        style={{ height: 'auto', minHeight: '24px' }}
+                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }} />
                     </td>
-                    <td className="px-2 py-1">
+                    <td className="px-2 py-1 align-top">
                       <textarea value={row.riskIdentified || ''} onChange={e => updateRow(i, 'riskIdentified', e.target.value)}
-                        className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none min-h-[24px]" rows={1} />
+                        className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none overflow-hidden" rows={1}
+                        style={{ height: 'auto', minHeight: '24px' }}
+                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }} />
                     </td>
-                    <td className="px-2 py-1">
+                    <td className="px-2 py-1 align-top">
                       <input type="number" value={row.amount ?? ''} onChange={e => updateRow(i, 'amount', e.target.value ? Number(e.target.value) : null)}
                         className="w-full border-0 bg-transparent text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" />
                     </td>
