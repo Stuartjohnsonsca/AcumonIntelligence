@@ -23,7 +23,7 @@ interface TestBankEntry {
   firmId: string;
   industryId: string;
   fsLine: string;
-  tests: { description: string; testTypeCode: string }[];
+  tests: { description: string; testTypeCode: string; significantRisk?: boolean }[];
   assertions: string[] | null;
 }
 
@@ -82,7 +82,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   const openPopup = (fsLine: string) => {
     const entry = testBanks.find((tb) => tb.industryId === selectedIndustry && tb.fsLine === fsLine);
     setPopupFsLine(fsLine);
-    setPopupTests(entry?.tests as any[] || [{ description: '', testTypeCode: testTypes[0]?.code || '' }]);
+    setPopupTests(entry?.tests as any[] || [{ description: '', testTypeCode: '', significantRisk: false }]);
     setPopupOpen(true);
   };
 
@@ -279,7 +279,8 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
               <thead>
                 <tr>
                   <th className="text-left text-sm font-medium text-slate-600 p-2 border-b">Test Description</th>
-                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-48">Type</th>
+                  <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-44">Type</th>
+                  <th className="text-center text-sm font-medium text-slate-600 p-2 border-b w-20" title="Significant Risk">Sig. Risk</th>
                   <th className="w-10"></th>
                 </tr>
               </thead>
@@ -308,10 +309,24 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                         }}
                         className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"
                       >
+                        <option value="">Select type...</option>
                         {testTypes.map((tt) => (
                           <option key={tt.code} value={tt.code}>{tt.name}</option>
                         ))}
                       </select>
+                    </td>
+                    <td className="p-2 border-b text-center">
+                      <input
+                        type="checkbox"
+                        checked={test.significantRisk || false}
+                        onChange={(e) => {
+                          const updated = [...popupTests];
+                          updated[i] = { ...updated[i], significantRisk: e.target.checked };
+                          setPopupTests(updated);
+                        }}
+                        className="w-4 h-4 rounded border-slate-300 text-red-500 focus:ring-red-400"
+                        title="Mark as Significant Risk test"
+                      />
                     </td>
                     <td className="p-2 border-b text-center">
                       <button
@@ -328,7 +343,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
 
             <div className="flex items-center justify-between">
               <Button
-                onClick={() => setPopupTests((prev) => [...prev, { description: '', testTypeCode: testTypes[0]?.code || '' }])}
+                onClick={() => setPopupTests((prev) => [...prev, { description: '', testTypeCode: '', significantRisk: false }])}
                 size="sm"
                 variant="outline"
               >

@@ -65,10 +65,9 @@ export interface TestBankEntry {
 }
 
 export const DEFAULT_TEST_TYPES = [
-  { code: 'tod', name: 'Test of Details' },
-  { code: 'pv', name: 'Physical Verification' },
-  { code: 'tpc', name: 'Third Party Confirmation' },
   { code: 'ar', name: 'Analytical Review' },
+  { code: 'tod', name: 'Test of Details' },
+  { code: 'jdg', name: 'Judgement' },
 ] as const;
 
 export const MANDATORY_FS_LINES = [
