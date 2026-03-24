@@ -13,17 +13,7 @@ import { PARTab } from './tabs/PARTab';
 import { RMMTab } from './tabs/RMMTab';
 import { DocumentRepositoryTab } from './tabs/DocumentRepositoryTab';
 import { ClientPortalTab } from './tabs/ClientPortalTab';
-
-// Tab placeholder for tabs not yet built
-function TabPlaceholder({ name }: { name: string }) {
-  return (
-    <div className="py-12 text-center">
-      <div className="text-3xl mb-2">🔧</div>
-      <h3 className="text-lg font-medium text-slate-600">{name}</h3>
-      <p className="text-sm text-slate-400 mt-1">This tab is under construction</p>
-    </div>
-  );
-}
+import { OpeningTab } from './tabs/OpeningTab';
 
 interface Props {
   engagement: EngagementData;
@@ -68,7 +58,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   function renderTabContent() {
     switch (activeTab) {
       case 'opening':
-        return <TabPlaceholder name="Opening" />;
+        return <OpeningTab engagement={engagement} auditType={auditType} clientName={clientName} periodEndDate={periodEndDate} />;
       case 'permanent-file':
         return <PermanentFileTab engagementId={engagement.id} />;
       case 'ethics':
