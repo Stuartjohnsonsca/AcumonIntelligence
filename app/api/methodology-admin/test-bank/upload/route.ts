@@ -49,12 +49,22 @@ export async function POST(req: Request) {
   function findCol(keywords: string[]): number {
     return headers.findIndex(h => h && keywords.some(k => h.includes(k)));
   }
-  const iFS = Math.max(findCol(['fs line', 'line item', 'fs statement']), 0);
-  const iDesc = Math.max(findCol(['test desc', 'description']), 1);
-  const iType = Math.max(findCol(['type']), 2);
-  const iAssert = Math.max(findCol(['assertion']), 3);
+  const iFS = findCol(['fs line', 'line item', 'fs statement']);
+  const iDesc = findCol(['test desc', 'description']);
+  const iType = findCol(['type']);
+  const iAssert = findCol(['assertion']);
   const iFramework = findCol(['framework', 'accounting']);
-  const iSigRisk = Math.max(findCol(['significant', 'sig risk', 'sig.']), iFramework >= 0 ? 5 : 4);
+  const iSigRisk = findCol(['significant', 'sig risk', 'sig.']);
+
+  // Fallback to positional if not detected
+  const col = {
+    fs: iFS >= 0 ? iFS : 0,
+    desc: iDesc >= 0 ? iDesc : 1,
+    type: iType >= 0 ? iType : 2,
+    assert: iAssert >= 0 ? iAssert : 3,
+    framework: iFramework, // -1 if not present
+    sigRisk: iSigRisk >= 0 ? iSigRisk : (iFramework >= 0 ? (iFramework === 4 ? 5 : 4) : 4),
+  };
 
   // Parse and validate ALL rows
   const validationErrors: string[] = [];
@@ -82,12 +92,12 @@ export async function POST(req: Request) {
       return String(v).trim();
     };
 
-    let fsLine = get(iFS);
-    const description = get(iDesc);
-    const typeName = get(iType);
-    const assertion = get(iAssert);
-    const framework = iFramework >= 0 ? get(iFramework) : '';
-    const sigRisk = get(iSigRisk);
+    let fsLine = get(col.fs);
+    const description = get(col.desc);
+    const typeName = get(col.type);
+    const assertion = get(col.assert);
+    const framework = col.framework >= 0 ? get(col.framework) : '';
+    const sigRisk = get(col.sigRisk);
 
     // Skip completely blank rows
     if (!fsLine && !description && !typeName && !assertion) return;
@@ -98,8 +108,8 @@ export async function POST(req: Request) {
 
     const rowErrors: string[] = [];
 
-    if (!fsLine) rowErrors.push(`Col ${colLetter(iFS)}: FS Line Item is empty`);
-    if (!description) rowErrors.push(`Col ${colLetter(iDesc)}: Test Description is empty`);
+    if (!fsLine) rowErrors.push(`Col ${colLetter(col.fs)}: FS Line Item is empty`);
+    if (!description) rowErrors.push(`Col ${colLetter(col.desc)}: Test Description is empty`);
 
     // Validate Type
     const typeLC = (typeName || '').toLowerCase();
@@ -107,7 +117,7 @@ export async function POST(req: Request) {
       t.name.toLowerCase() === typeLC || t.code.toLowerCase() === typeLC
     );
     if (typeName && !matchedType) {
-      rowErrors.push(`Col ${colLetter(iType)}: Invalid Type "${typeName}" (valid: ${testTypes.map(t => t.name).join(', ')})`);
+      rowErrors.push(`Col ${colLetter(col.type)}: Invalid Type "${typeName}" (valid: ${testTypes.map(t => t.name).join(', ')})`);
     }
     const typeCode = matchedType?.code || testTypes[0]?.code || '';
 
@@ -121,19 +131,19 @@ export async function POST(req: Request) {
         || aLC.startsWith(assertionLC) || assertionLC.startsWith(aLC);
     }) || '';
     if (assertion && !matchedAssertion) {
-      rowErrors.push(`Col ${colLetter(iAssert)}: Invalid Assertion "${assertion}"`);
+      rowErrors.push(`Col ${colLetter(col.assert)}: Invalid Assertion "${assertion}"`);
     }
 
     // Validate Framework
     const frameworkLC = (framework || '').toLowerCase();
     const matchedFramework = frameworkOptions.find(f => f.toLowerCase() === frameworkLC) || '';
     if (framework && !matchedFramework && framework.toLowerCase() !== 'all') {
-      rowErrors.push(`Col ${colLetter(iFramework)}: Invalid Framework "${framework}" (valid: ${frameworkOptions.join(', ')})`);
+      rowErrors.push(`Col ${colLetter(col.framework)}: Invalid Framework "${framework}" (valid: ${frameworkOptions.join(', ')})`);
     }
 
     // Validate Significant Risk
     if (sigRisk && !['Y', 'N', 'YES', 'NO', ''].includes(sigRisk.toUpperCase())) {
-      rowErrors.push(`Col ${colLetter(iSigRisk)}: Invalid Significant Risk "${sigRisk}" (use Y or N)`);
+      rowErrors.push(`Col ${colLetter(col.sigRisk)}: Invalid Significant Risk "${sigRisk}" (use Y or N)`);
     }
 
     if (rowErrors.length > 0) {
