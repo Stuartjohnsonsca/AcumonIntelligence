@@ -199,16 +199,17 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           .map(line => (line.match(/(".*?"|[^,]*),?/g) || []).map(s => s.replace(/,$/, '').replace(/^"|"$/g, '').trim()));
       }
 
-      // Validate header row
+      // Detect format: 5-col (old: no Framework) vs 6-col (new: with Framework)
       const headerRow = rows[0]?.map(h => (h || '').toString().trim().toLowerCase()) || [];
-      const expectedHeaders = ['fs line item', 'test description', 'type', 'assertion', 'framework', 'significant risk'];
-      const headerValid = expectedHeaders.every((h, i) => headerRow[i]?.includes(h.split(' ')[0].toLowerCase()));
+      const hasFrameworkCol = headerRow.some(h => h.includes('framework'));
+      const colCount = hasFrameworkCol ? 6 : 5;
+
       if (rows.length < 2) {
         setUploadResult('Upload failed: File is empty or has no data rows');
         return;
       }
-      if (!headerValid && headerRow.length < 4) {
-        setUploadResult('Upload failed: Invalid headers. Expected: FS Line Item, Test Description, Type, Assertion, Framework, Significant Risk');
+      if (headerRow.length < 4) {
+        setUploadResult('Upload failed: Invalid headers. Expected at least: FS Line Item, Test Description, Type, Assertion, Significant Risk');
         return;
       }
 
@@ -226,7 +227,15 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
 
       for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx++) {
         const parts = dataRows[rowIdx];
-        const [fsLine, description, typeName, assertion, framework, sigRisk] = parts.map(p => (p || '').toString().trim());
+        const mapped = parts.map(p => (p || '').toString().trim());
+        // Handle both 5-col (no framework) and 6-col (with framework) formats
+        let fsLine: string, description: string, typeName: string, assertion: string, framework: string, sigRisk: string;
+        if (hasFrameworkCol) {
+          [fsLine, description, typeName, assertion, framework, sigRisk] = mapped;
+        } else {
+          [fsLine, description, typeName, assertion, sigRisk] = mapped;
+          framework = '';
+        }
         if (!fsLine && !description) continue; // skip blank rows
 
         const rowNum = rowIdx + 2; // 1-indexed + header
@@ -243,9 +252,15 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         }
         const typeCode = matchedType?.code || testTypes[0]?.code || '';
 
-        // Validate Assertion
-        const assertionLC = (assertion || '').toLowerCase();
-        const matchedAssertion = ASSERTION_TYPES.find(a => a.toLowerCase() === assertionLC) || '';
+        // Validate Assertion (flexible matching: allow common typos, partial matches)
+        const assertionLC = (assertion || '').toLowerCase().replace(/\s+/g, ' ');
+        const matchedAssertion = ASSERTION_TYPES.find(a => {
+          const aLC = a.toLowerCase();
+          return aLC === assertionLC
+            || aLC.replace('occurrence', 'occurence') === assertionLC  // common typo
+            || aLC.replace('&', 'and') === assertionLC.replace('&', 'and')
+            || aLC.startsWith(assertionLC) || assertionLC.startsWith(aLC);
+        }) || '';
         if (assertion && !matchedAssertion) {
           rowErrors.push(`Invalid Assertion "${assertion}"`);
         }
