@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { ASSERTION_TYPES, INHERENT_RISK_COMPONENTS } from '@/types/methodology';
@@ -12,16 +12,8 @@ interface Props {
   teamMembers?: { userId: string; userName?: string; role: string }[];
 }
 
-interface RowSignOff {
-  userId: string;
-  userName: string;
-  timestamp: string;
-}
-
-interface RowSignOffs {
-  reviewer?: RowSignOff;
-  partner?: RowSignOff;
-}
+interface RowSignOff { userId: string; userName: string; timestamp: string; }
+interface RowSignOffs { reviewer?: RowSignOff; partner?: RowSignOff; }
 
 interface RMMRow {
   id: string;
@@ -47,7 +39,6 @@ interface RMMRow {
   isHidden: boolean;
   isMandatory: boolean;
   sortOrder: number;
-  // Row-level sign-offs
   rowSignOffs?: RowSignOffs;
   lastEditedAt?: string;
 }
@@ -57,9 +48,22 @@ const LIKELIHOODS = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'] a
 const MAGNITUDES = ['Very Low', 'Low', 'Medium', 'High', 'Very High'] as const;
 const CONTROL_OPTIONS = ['Not Tested', 'Not Effective', 'Partially Effective', 'Effective'] as const;
 
-const ROLE_MAP: Record<string, string> = { Junior: 'operator', Manager: 'reviewer', RI: 'partner' };
-
 const isControlsBased = (type: string) => type === 'SME_CONTROLS' || type === 'PIE_CONTROLS';
+
+// Auto-expanding textarea helper
+function AutoTextarea({ value, onChange, className, readOnly, placeholder }: {
+  value: string; onChange: (v: string) => void; className?: string; readOnly?: boolean; placeholder?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (ref.current) { ref.current.style.height = 'auto'; ref.current.style.height = ref.current.scrollHeight + 'px'; }
+  }, [value]);
+  return (
+    <textarea ref={ref} value={value} onChange={e => onChange(e.target.value)} readOnly={readOnly} placeholder={placeholder}
+      className={className} rows={1} style={{ minHeight: '24px', overflow: 'hidden', resize: 'none' }}
+      onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }} />
+  );
+}
 
 export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
   const { data: session } = useSession();
@@ -69,6 +73,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
   const [viewMode, setViewMode] = useState<'fs_line' | 'tb_account'>('fs_line');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
+  const [importingTB, setImportingTB] = useState(false);
 
   const { saving, lastSaved, error } = useAutoSave(
     `/api/engagements/${engagementId}/rmm`,
@@ -104,53 +109,55 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
     });
   }, [rows]);
 
-  // Current user's sign-off role
   const currentUserId = session?.user?.id;
   const userIsReviewer = currentUserId && teamMembers.some(m => m.role === 'Manager' && m.userId === currentUserId);
   const userIsPartner = currentUserId && teamMembers.some(m => m.role === 'RI' && m.userId === currentUserId);
 
-  function addRow() {
-    setRows(prev => [...prev, {
+  function makeEmptyRow(): RMMRow {
+    return {
       id: '', lineItem: '', lineType: viewMode, riskIdentified: null, amount: null,
       assertions: [], relevance: null, complexityText: null, subjectivityText: null,
       changeText: null, uncertaintyText: null, susceptibilityText: null,
       inherentRiskLevel: null, aiSummary: null, isAiEdited: false,
       likelihood: null, magnitude: null, finalRiskAssessment: null,
       controlRisk: isControlsBased(auditType) ? null : 'Not Tested',
-      overallRisk: null, isHidden: false, isMandatory: false, sortOrder: prev.length,
+      overallRisk: null, isHidden: false, isMandatory: false, sortOrder: 0,
       rowSignOffs: {},
-    }]);
+    };
+  }
+
+  function addRow() {
+    setRows(prev => [...prev, { ...makeEmptyRow(), sortOrder: prev.length }]);
+  }
+
+  function duplicateRow(index: number) {
+    const source = rows[index];
+    const newRow: RMMRow = {
+      ...source,
+      id: '', // New row, no DB ID
+      aiSummary: null, // Needs regeneration
+      isAiEdited: false,
+      rowSignOffs: {}, // Don't copy sign-offs
+      lastEditedAt: undefined,
+      sortOrder: index + 1,
+      isMandatory: false, // Duplicated rows are never mandatory
+    };
+    setRows(prev => {
+      const copy = [...prev];
+      copy.splice(index + 1, 0, newRow);
+      return copy.map((r, i) => ({ ...r, sortOrder: i }));
+    });
   }
 
   function updateRow(index: number, field: keyof RMMRow, value: unknown) {
     setRows(prev => prev.map((r, i) => {
       if (i !== index) return r;
       const updated = { ...r, [field]: value, lastEditedAt: new Date().toISOString() };
-      // When a field changes, reset sign-offs for more senior staff
       if (field !== 'rowSignOffs' && field !== 'lastEditedAt') {
         const signOffs = { ...(updated.rowSignOffs || {}) };
-        // If edited by operator-level or reviewer, reset partner sign-off
-        if (signOffs.partner) {
-          const editTime = new Date().getTime();
-          const partnerTime = new Date(signOffs.partner.timestamp).getTime();
-          if (editTime > partnerTime) {
-            delete signOffs.partner;
-          }
-        }
-        // If edited by operator-level, reset reviewer sign-off
-        if (signOffs.reviewer) {
-          const editTime = new Date().getTime();
-          const reviewerTime = new Date(signOffs.reviewer.timestamp).getTime();
-          if (editTime > reviewerTime) {
-            // Only reset reviewer if the editor is not the reviewer themselves
-            if (!userIsReviewer) {
-              delete signOffs.reviewer;
-            } else {
-              // Reviewer editing their own row — still reset partner
-              delete signOffs.partner;
-            }
-          }
-        }
+        if (signOffs.partner) delete signOffs.partner;
+        if (signOffs.reviewer && !userIsReviewer) delete signOffs.reviewer;
+        else if (signOffs.reviewer && userIsReviewer) delete signOffs.partner;
         updated.rowSignOffs = signOffs;
       }
       return updated;
@@ -162,18 +169,9 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
     setRows(prev => prev.map((r, i) => {
       if (i !== index) return r;
       const signOffs = { ...(r.rowSignOffs || {}) };
-      const signOffData: RowSignOff = {
-        userId: currentUserId || '',
-        userName,
-        timestamp: new Date().toISOString(),
-      };
-      if (role === 'partner') {
-        // Partner sign-off implies reviewer approval too
-        signOffs.partner = signOffData;
-        signOffs.reviewer = signOffData;
-      } else {
-        signOffs.reviewer = signOffData;
-      }
+      const signOffData: RowSignOff = { userId: currentUserId || '', userName, timestamp: new Date().toISOString() };
+      if (role === 'partner') { signOffs.partner = signOffData; signOffs.reviewer = signOffData; }
+      else { signOffs.reviewer = signOffData; }
       return { ...r, rowSignOffs: signOffs };
     }));
   }
@@ -184,7 +182,6 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
       const current = r.assertions || [];
       const has = current.includes(assertion);
       const updated = { ...r, assertions: has ? current.filter(a => a !== assertion) : [...current, assertion], lastEditedAt: new Date().toISOString() };
-      // Reset sign-offs on change
       const signOffs = { ...(updated.rowSignOffs || {}) };
       delete signOffs.partner;
       if (!userIsReviewer) delete signOffs.reviewer;
@@ -194,17 +191,69 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
   }
 
   function removeRow(index: number) {
-    const row = rows[index];
-    if (row.isMandatory) return;
+    if (rows[index].isMandatory) return;
     setRows(prev => prev.filter((_, i) => i !== index));
   }
 
-  // Get outline for a row's cells based on sign-off state
+  // Import rows from Trial Balance
+  async function importFromTB() {
+    setImportingTB(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/trial-balance`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const tbRows = json.rows || [];
+      const existingLineItems = new Set(rows.map(r => r.lineItem.toLowerCase().trim()));
+
+      const newRows: RMMRow[] = [];
+      for (const tb of tbRows) {
+        const lineItem = tb.description || tb.accountCode || '';
+        if (!lineItem || existingLineItems.has(lineItem.toLowerCase().trim())) continue;
+        newRows.push({
+          ...makeEmptyRow(),
+          lineItem,
+          lineType: 'tb_account',
+          amount: tb.periodEnd ?? tb.currentYear ?? null,
+          sortOrder: rows.length + newRows.length,
+        });
+      }
+
+      if (newRows.length > 0) {
+        setRows(prev => [...prev, ...newRows]);
+      }
+    } catch (err) { console.error('Failed to import TB:', err); }
+    finally { setImportingTB(false); }
+  }
+
+  // Split rows by assertion — rows with >1 assertion get duplicated with 1 assertion each
+  function splitByAssertion() {
+    const newRows: RMMRow[] = [];
+    for (const row of rows) {
+      const assertions = row.assertions || [];
+      if (assertions.length <= 1) {
+        newRows.push(row);
+      } else {
+        for (const assertion of assertions) {
+          newRows.push({
+            ...row,
+            id: row === rows.find(r => r === row && (r.assertions || [])[0] === assertion) ? row.id : '', // Keep ID only for first
+            assertions: [assertion],
+            aiSummary: null,
+            isAiEdited: false,
+            rowSignOffs: {},
+            lastEditedAt: undefined,
+          });
+        }
+      }
+    }
+    setRows(newRows.map((r, i) => ({ ...r, sortOrder: i })));
+  }
+
   function getRowOutline(row: RMMRow): string {
     if (!row.lastEditedAt) return '';
     const editTime = new Date(row.lastEditedAt).getTime();
-    const reviewerTime = row.rowSignOffs?.reviewer?.timestamp ? new Date(row.rowSignOffs.reviewer.timestamp).getTime() : 0;
     const partnerTime = row.rowSignOffs?.partner?.timestamp ? new Date(row.rowSignOffs.partner.timestamp).getTime() : 0;
+    const reviewerTime = row.rowSignOffs?.reviewer?.timestamp ? new Date(row.rowSignOffs.reviewer.timestamp).getTime() : 0;
     if (partnerTime > 0 && editTime > partnerTime) return 'ring-2 ring-red-400 ring-offset-1';
     if (reviewerTime > 0 && editTime > reviewerTime) return 'ring-2 ring-orange-400 ring-offset-1';
     return '';
@@ -212,7 +261,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
 
   async function generateAISummary(index: number) {
     const row = rows[index];
-    if (!row.id && !row.lineItem) return;
+    if (!row.lineItem) return;
     setGeneratingAI(row.id || `new-${index}`);
     try {
       const res = await fetch(`/api/engagements/${engagementId}/rmm/ai-summary`, {
@@ -238,9 +287,9 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex items-center gap-3">
-          {/* Toggle: FS Line Items vs TB Accounts */}
           <div className="flex bg-slate-100 rounded-lg p-0.5">
             <button onClick={() => setViewMode('fs_line')}
               className={`px-3 py-1 text-xs rounded-md transition-colors ${viewMode === 'fs_line' ? 'bg-white text-blue-600 shadow-sm font-medium' : 'text-slate-500'}`}>
@@ -251,6 +300,16 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
               TB Accounts
             </button>
           </div>
+          {viewMode === 'tb_account' && (
+            <button onClick={importFromTB} disabled={importingTB}
+              className="text-xs px-3 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 disabled:opacity-50">
+              {importingTB ? 'Importing...' : '📥 Import from TB'}
+            </button>
+          )}
+          <button onClick={splitByAssertion}
+            className="text-xs px-3 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100">
+            ✂ Split by Assertion
+          </button>
         </div>
         <div className="flex items-center gap-2">
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
@@ -260,11 +319,13 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
         </div>
       </div>
 
+      {/* Table */}
       <div className="border border-slate-200 rounded-lg overflow-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-36">{viewMode === 'fs_line' ? 'FS Line Item' : 'TB Account'}</th>
+              <th className="w-8 px-1 py-2"></th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">{viewMode === 'fs_line' ? 'FS Line Item' : 'TB Account'}</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">Risk Identified</th>
               <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">Amount</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-28">Assertions</th>
@@ -274,10 +335,10 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Likelihood</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Magnitude</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Final Risk</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Control Risk</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-24">Control Risk</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Overall</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-40">
-                <div className="flex gap-4 justify-center">
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-44">
+                <div className="flex gap-6 justify-center">
                   <span className="text-[7px]">Reviewer</span>
                   <span className="text-[7px]">Partner</span>
                 </div>
@@ -294,28 +355,28 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
               const partnerSO = row.rowSignOffs?.partner;
               const reviewerStale = reviewerSO && row.lastEditedAt && new Date(row.lastEditedAt).getTime() > new Date(reviewerSO.timestamp).getTime();
               const partnerStale = partnerSO && row.lastEditedAt && new Date(row.lastEditedAt).getTime() > new Date(partnerSO.timestamp).getTime();
+              const hasIRData = !!(row.complexityText || row.subjectivityText || row.changeText || row.uncertaintyText || row.susceptibilityText || row.inherentRiskLevel);
 
               return (
                 <Fragment key={rowKey}>
                   <tr className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.isMandatory ? 'bg-amber-50/20' : ''} ${outline}`}>
-                    <td className="px-2 py-1 align-top">
-                      <textarea value={row.lineItem} onChange={e => updateRow(i, 'lineItem', e.target.value)}
-                        className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none overflow-hidden ${row.isMandatory ? 'font-medium' : ''}`}
-                        readOnly={row.isMandatory} rows={1}
-                        style={{ height: 'auto', minHeight: '24px' }}
-                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }} />
+                    {/* Duplicate button */}
+                    <td className="px-1 py-1 align-top text-center">
+                      <button onClick={() => duplicateRow(i)} className="text-slate-300 hover:text-blue-500 text-[10px]" title="Duplicate row">⧉</button>
                     </td>
                     <td className="px-2 py-1 align-top">
-                      <textarea value={row.riskIdentified || ''} onChange={e => updateRow(i, 'riskIdentified', e.target.value)}
-                        className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none overflow-hidden" rows={1}
-                        style={{ height: 'auto', minHeight: '24px' }}
-                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }} />
+                      <AutoTextarea value={row.lineItem} onChange={v => updateRow(i, 'lineItem', v)} readOnly={row.isMandatory}
+                        className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 ${row.isMandatory ? 'font-medium' : ''}`} />
+                    </td>
+                    <td className="px-2 py-1 align-top">
+                      <AutoTextarea value={row.riskIdentified || ''} onChange={v => updateRow(i, 'riskIdentified', v)}
+                        className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" />
                     </td>
                     <td className="px-2 py-1 align-top">
                       <input type="number" value={row.amount ?? ''} onChange={e => updateRow(i, 'amount', e.target.value ? Number(e.target.value) : null)}
                         className="w-full border-0 bg-transparent text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" />
                     </td>
-                    <td className="px-2 py-1">
+                    <td className="px-2 py-1 align-top">
                       <div className="flex flex-wrap gap-0.5 justify-center">
                         {ASSERTION_TYPES.map(a => {
                           const short = a.split(' ')[0].slice(0, 3);
@@ -328,133 +389,111 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                         })}
                       </div>
                     </td>
-                    <td className="px-2 py-1 text-center">
+                    <td className="px-2 py-1 text-center align-top">
                       <select value={row.relevance || ''} onChange={e => updateRow(i, 'relevance', e.target.value)}
                         className="border border-slate-200 rounded px-0.5 py-0.5 text-xs bg-white w-10">
                         <option value="">-</option><option value="Y">Y</option><option value="N">N</option>
                       </select>
                     </td>
-                    <td className="px-2 py-1 text-center">
-                      {(() => {
-                        const hasIRData = !!(row.complexityText || row.subjectivityText || row.changeText || row.uncertaintyText || row.susceptibilityText || row.inherentRiskLevel);
-                        return (
-                          <button onClick={() => setExpandedRow(isExpanded ? null : rowKey)}
-                            className={`px-1.5 py-0.5 text-[10px] rounded border transition-colors ${
-                              isExpanded ? 'bg-blue-100 border-blue-300 text-blue-700' :
-                              hasIRData ? 'bg-blue-50 border-blue-200 text-blue-600 font-medium' :
-                              'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
-                            }`}>
-                            {isExpanded ? '▼' : '▶'} IR{hasIRData && !isExpanded ? ' ●' : ''}
-                          </button>
-                        );
-                      })()}
+                    <td className="px-2 py-1 text-center align-top">
+                      <button onClick={() => setExpandedRow(isExpanded ? null : rowKey)}
+                        className={`px-1.5 py-0.5 text-[10px] rounded border transition-colors ${
+                          isExpanded ? 'bg-blue-100 border-blue-300 text-blue-700' :
+                          hasIRData ? 'bg-blue-50 border-blue-200 text-blue-600 font-medium' :
+                          'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                        }`}>
+                        {isExpanded ? '▼' : '▶'} IR{hasIRData && !isExpanded ? ' ●' : ''}
+                      </button>
                     </td>
-                    <td className="px-2 py-1">
+                    <td className="px-2 py-1 align-top">
                       <div className={`relative rounded border-2 ${row.aiSummary && !row.isAiEdited ? 'border-orange-300' : row.isAiEdited ? 'border-green-300' : 'border-transparent'}`}>
-                        <textarea value={row.aiSummary || ''}
-                          onChange={e => { updateRow(i, 'aiSummary', e.target.value); if (row.aiSummary) updateRow(i, 'isAiEdited', true); }}
-                          className="w-full border-0 bg-transparent text-xs focus:outline-none rounded px-1 py-0.5 resize-none min-h-[24px]" rows={1} placeholder="AI summary..." />
+                        <AutoTextarea value={row.aiSummary || ''} onChange={v => { updateRow(i, 'aiSummary', v); if (row.aiSummary) updateRow(i, 'isAiEdited', true); }}
+                          className="w-full border-0 bg-transparent text-xs focus:outline-none rounded px-1 py-0.5" placeholder="AI summary..." />
                         <button onClick={() => generateAISummary(i)} disabled={generatingAI === rowKey}
                           className="absolute -top-2 -right-2 w-4 h-4 bg-blue-500 text-white rounded-full text-[8px] hover:bg-blue-600 disabled:bg-slate-300"
-                          title="Generate AI summary">✦</button>
+                          title="Generate AI risk summary">✦</button>
                       </div>
                     </td>
-                    <td className="px-2 py-1 text-center">
+                    <td className="px-2 py-1 text-center align-top">
                       <select value={row.likelihood || ''} onChange={e => updateRow(i, 'likelihood', e.target.value)}
                         className="border border-slate-200 rounded px-0.5 py-0.5 text-[10px] bg-white w-16">
                         <option value="">-</option>
                         {LIKELIHOODS.map(l => <option key={l} value={l}>{l}</option>)}
                       </select>
                     </td>
-                    <td className="px-2 py-1 text-center">
+                    <td className="px-2 py-1 text-center align-top">
                       <select value={row.magnitude || ''} onChange={e => updateRow(i, 'magnitude', e.target.value)}
                         className="border border-slate-200 rounded px-0.5 py-0.5 text-[10px] bg-white w-16">
                         <option value="">-</option>
                         {MAGNITUDES.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </td>
-                    <td className="px-2 py-1 text-center">
+                    <td className="px-2 py-1 text-center align-top">
                       <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${riskColor(row.finalRiskAssessment)}`}>
                         {row.finalRiskAssessment || '—'}
                       </span>
                     </td>
-                    <td className="px-2 py-1 text-center">
-                      {isControlsBased(auditType) ? (
-                        <select value={row.controlRisk || ''} onChange={e => updateRow(i, 'controlRisk', e.target.value)}
-                          className="border border-slate-200 rounded px-0.5 py-0.5 text-[10px] bg-white w-16">
-                          <option value="">-</option>
-                          {CONTROL_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">Not Tested</span>
-                      )}
+                    <td className="px-2 py-1 text-center align-top">
+                      <select value={row.controlRisk || ''} onChange={e => updateRow(i, 'controlRisk', e.target.value)}
+                        className="border border-slate-200 rounded px-0.5 py-0.5 text-[10px] bg-white w-20"
+                        disabled={!isControlsBased(auditType)}>
+                        <option value="">-</option>
+                        {CONTROL_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
                     </td>
-                    <td className="px-2 py-1 text-center">
+                    <td className="px-2 py-1 text-center align-top">
                       <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${riskColor(row.overallRisk)}`}>
                         {row.overallRisk || '—'}
                       </span>
                     </td>
                     {/* Row-level sign-off dots */}
-                    <td className="px-2 py-1">
-                      <div className="flex gap-4 justify-center items-start">
-                        {/* Reviewer dot */}
-                        <div className="flex flex-col items-center min-w-[50px]">
-                          <button
-                            onClick={() => userIsReviewer && signOffRow(i, 'reviewer')}
-                            disabled={!userIsReviewer}
+                    <td className="px-2 py-1 align-top">
+                      <div className="flex gap-6 justify-center items-start">
+                        {/* Reviewer */}
+                        <div className="flex flex-col items-center min-w-[60px]">
+                          <button onClick={() => userIsReviewer && signOffRow(i, 'reviewer')} disabled={!userIsReviewer}
                             className={`w-4 h-4 rounded-full border-2 transition-all ${
-                              reviewerSO && !reviewerStale
-                                ? 'bg-green-500 border-green-500'
-                                : reviewerStale
-                                  ? 'bg-white border-green-500'
-                                  : userIsReviewer
-                                    ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
-                                    : 'bg-white border-slate-200 opacity-50'
+                              reviewerSO && !reviewerStale ? 'bg-green-500 border-green-500'
+                              : reviewerStale ? 'bg-white border-green-500'
+                              : userIsReviewer ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
+                              : 'bg-white border-slate-200 opacity-50'
                             }`}
-                            title={reviewerSO ? `${reviewerSO.userName} — ${new Date(reviewerSO.timestamp).toLocaleString('en-GB')}` : 'Reviewer sign-off'}
-                          />
+                            title={reviewerSO ? `${reviewerSO.userName} — ${new Date(reviewerSO.timestamp).toLocaleString('en-GB')}` : 'Reviewer sign-off'} />
                           {reviewerSO && !reviewerStale && (
                             <div className="text-center mt-0.5">
-                              <p className="text-[7px] text-slate-500 leading-tight">{reviewerSO.userName}</p>
+                              <p className="text-[6px] text-slate-500 leading-tight">{reviewerSO.userName}</p>
                               <p className="text-[6px] text-slate-400 leading-tight">{new Date(reviewerSO.timestamp).toLocaleDateString('en-GB')} {new Date(reviewerSO.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
                             </div>
                           )}
                         </div>
-                        {/* Partner dot */}
-                        <div className="flex flex-col items-center min-w-[50px]">
-                          <button
-                            onClick={() => userIsPartner && signOffRow(i, 'partner')}
-                            disabled={!userIsPartner}
+                        {/* Partner */}
+                        <div className="flex flex-col items-center min-w-[60px]">
+                          <button onClick={() => userIsPartner && signOffRow(i, 'partner')} disabled={!userIsPartner}
                             className={`w-4 h-4 rounded-full border-2 transition-all ${
-                              partnerSO && !partnerStale
-                                ? 'bg-green-500 border-green-500'
-                                : partnerStale
-                                  ? 'bg-white border-green-500'
-                                  : userIsPartner
-                                    ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
-                                    : 'bg-white border-slate-200 opacity-50'
+                              partnerSO && !partnerStale ? 'bg-green-500 border-green-500'
+                              : partnerStale ? 'bg-white border-green-500'
+                              : userIsPartner ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
+                              : 'bg-white border-slate-200 opacity-50'
                             }`}
-                            title={partnerSO ? `${partnerSO.userName} — ${new Date(partnerSO.timestamp).toLocaleString('en-GB')}` : 'Partner sign-off'}
-                          />
+                            title={partnerSO ? `${partnerSO.userName} — ${new Date(partnerSO.timestamp).toLocaleString('en-GB')}` : 'Partner sign-off'} />
                           {partnerSO && !partnerStale && (
                             <div className="text-center mt-0.5">
-                              <p className="text-[7px] text-slate-500 leading-tight">{partnerSO.userName}</p>
+                              <p className="text-[6px] text-slate-500 leading-tight">{partnerSO.userName}</p>
                               <p className="text-[6px] text-slate-400 leading-tight">{new Date(partnerSO.timestamp).toLocaleDateString('en-GB')} {new Date(partnerSO.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
                             </div>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className="px-1 py-1">
+                    <td className="px-1 py-1 align-top">
                       {!row.isMandatory && (
                         <button onClick={() => removeRow(i)} className="text-red-400 hover:text-red-600">×</button>
                       )}
                     </td>
                   </tr>
-                  {/* Expanded Inherent Risk Sub-components */}
                   {isExpanded && (
                     <tr className="bg-blue-50/30 border-b border-slate-200">
-                      <td colSpan={15} className="px-4 py-3">
+                      <td colSpan={16} className="px-4 py-3">
                         <div className="grid grid-cols-5 gap-3">
                           {INHERENT_RISK_COMPONENTS.map(comp => {
                             const textKey = `${comp.key}Text` as keyof RMMRow;
