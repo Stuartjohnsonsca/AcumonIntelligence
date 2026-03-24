@@ -434,10 +434,8 @@ export function RMMTab({ engagementId, auditType, teamMembers = [] }: Props) {
                       </span>
                     </td>
                     <td className="px-2 py-1 text-center align-top">
-                      <select value={row.controlRisk || ''} onChange={e => updateRow(i, 'controlRisk', e.target.value)}
-                        className="border border-slate-200 rounded px-0.5 py-0.5 text-[10px] bg-white w-20"
-                        disabled={!isControlsBased(auditType)}>
-                        <option value="">-</option>
+                      <select value={row.controlRisk || 'Not Tested'} onChange={e => updateRow(i, 'controlRisk', e.target.value)}
+                        className="border border-slate-200 rounded px-0.5 py-0.5 text-[10px] bg-white w-20">
                         {CONTROL_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </td>
