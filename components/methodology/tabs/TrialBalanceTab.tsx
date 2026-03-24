@@ -7,6 +7,7 @@ interface Props {
   engagementId: string;
   isGroupAudit?: boolean;
   showCategory?: boolean;
+  onShowCategoryChange?: (show: boolean) => void;
 }
 
 interface TBRow {
@@ -23,11 +24,16 @@ interface TBRow {
   sortOrder: number;
 }
 
-export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCategory: initialShowCategory = true }: Props) {
+export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCategory: initialShowCategory = true, onShowCategoryChange }: Props) {
   const [rows, setRows] = useState<TBRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
-  const [showCategory, setShowCategory] = useState(initialShowCategory);
+  const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
+
+  function setShowCategory(show: boolean) {
+    setShowCategoryLocal(show);
+    onShowCategoryChange?.(show);
+  }
 
   const { saving, lastSaved, error } = useAutoSave(
     `/api/engagements/${engagementId}/trial-balance`,

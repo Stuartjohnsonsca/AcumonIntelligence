@@ -68,6 +68,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const router = useRouter();
   const initialTab = (searchParams.get('tab') as TabKey) || 'opening';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
+  const [tbShowCategory, setTbShowCategory] = useState(true);
 
   function switchTab(key: TabKey) {
     setActiveTab(key);
@@ -96,13 +97,13 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'continuance':
         return <ContinuanceTab engagementId={engagement.id} />;
       case 'tb':
-        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} />;
+        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} onShowCategoryChange={setTbShowCategory} />;
       case 'materiality':
         return <MaterialityTab engagementId={engagement.id} />;
       case 'par':
         return <PARTab engagementId={engagement.id} />;
       case 'rmm':
-        return <RMMTab engagementId={engagement.id} auditType={auditType} teamMembers={teamMembers} showCategoryOption={true} />;
+        return <RMMTab engagementId={engagement.id} auditType={auditType} teamMembers={teamMembers} showCategoryOption={tbShowCategory} />;
       case 'documents':
         return <DocumentRepositoryTab engagementId={engagement.id} />;
       case 'portal':
