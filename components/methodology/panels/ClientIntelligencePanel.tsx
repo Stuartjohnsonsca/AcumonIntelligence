@@ -15,13 +15,15 @@ interface IntelligenceItem {
 
 interface Props {
   engagementId: string;
+  clientId?: string;
   teamMemberCount: number;
   currentUserId: string;
 }
 
-export function ClientIntelligencePanel({ engagementId, teamMemberCount, currentUserId }: Props) {
+export function ClientIntelligencePanel({ engagementId, clientId, teamMemberCount, currentUserId }: Props) {
   const [intelligence, setIntelligence] = useState<IntelligenceItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [aiPopulating, setAiPopulating] = useState(false);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const [savingCategory, setSavingCategory] = useState<string | null>(null);
@@ -41,6 +43,32 @@ export function ClientIntelligencePanel({ engagementId, teamMemberCount, current
   }, [engagementId]);
 
   useEffect(() => { loadIntelligence(); }, [loadIntelligence]);
+
+  // Auto-populate with AI when intelligence is empty and clientId is available
+  useEffect(() => {
+    if (!loading && intelligence.length === 0 && clientId && engagementId) {
+      populateWithAI();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, intelligence.length, clientId, engagementId]);
+
+  async function populateWithAI() {
+    setAiPopulating(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/intelligence`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'ai_populate', clientId }),
+      });
+      if (res.ok) {
+        await loadIntelligence();
+      }
+    } catch (err) {
+      console.error('Failed to AI populate:', err);
+    } finally {
+      setAiPopulating(false);
+    }
+  }
 
   async function saveCategory(category: string) {
     setSavingCategory(category);
@@ -85,19 +113,37 @@ export function ClientIntelligencePanel({ engagementId, teamMemberCount, current
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-4 h-full">
-      <h3 className="text-sm font-semibold text-slate-800 mb-3">Client Intelligence</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-800">Client Intelligence</h3>
+        <div className="flex items-center gap-2">
+          {aiPopulating && (
+            <span className="text-xs text-purple-500 animate-pulse flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-full bg-purple-400 animate-ping" />
+              AI researching...
+            </span>
+          )}
+          <button
+            onClick={populateWithAI}
+            disabled={aiPopulating}
+            className="text-xs px-2 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 disabled:opacity-50"
+            title="Research client using AI"
+          >
+            🔍 AI Refresh
+          </button>
+        </div>
+      </div>
 
-      <div className="space-y-2 max-h-[450px] overflow-auto">
+      <div className="space-y-2 max-h-[550px] overflow-auto">
         {INTELLIGENCE_CATEGORIES.map(cat => {
           const item = intelligence.find(i => i.category === cat.key);
           const isEditing = editingCategory === cat.key;
           const hasContent = item && item.content?.length > 0;
           const hasUpdate = item?.significantChange;
-          const userReviewed = item?.reviews?.some(r => r.userId === currentUserId);
           const reviewCount = item?.reviews?.length || 0;
+          const isAiSource = item?.source === 'ai';
 
           return (
-            <div key={cat.key} className="border border-slate-100 rounded p-2">
+            <div key={cat.key} className={`border rounded p-2 ${hasUpdate ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100'}`}>
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-1.5">
                   {/* Status dot */}
@@ -107,6 +153,9 @@ export function ClientIntelligencePanel({ engagementId, teamMemberCount, current
                     'bg-gray-300'
                   }`} />
                   <span className="text-xs font-medium text-slate-700">{cat.label}</span>
+                  {isAiSource && hasContent && (
+                    <span className="text-[9px] bg-purple-100 text-purple-600 px-1 rounded">AI</span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   {/* Review dots */}
@@ -161,7 +210,7 @@ export function ClientIntelligencePanel({ engagementId, teamMemberCount, current
                   className="text-xs text-slate-500 mt-1 cursor-pointer hover:bg-slate-50 rounded p-1 min-h-[20px]"
                 >
                   {hasContent ? (
-                    <span className="line-clamp-2">{item.content}</span>
+                    <span className="line-clamp-3">{item.content}</span>
                   ) : (
                     <span className="italic text-slate-300">Click to add details...</span>
                   )}

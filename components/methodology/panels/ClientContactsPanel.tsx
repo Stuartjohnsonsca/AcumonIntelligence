@@ -44,7 +44,7 @@ export function ClientContactsPanel({ engagementId, initialContacts }: Props) {
   }
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-4 h-full">
+    <div className="bg-white rounded-lg border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-slate-800">Client Contacts</h3>
         <div className="flex items-center gap-2">
@@ -56,13 +56,13 @@ export function ClientContactsPanel({ engagementId, initialContacts }: Props) {
         </div>
       </div>
 
-      <div className="space-y-3 max-h-[400px] overflow-auto">
+      <div className="space-y-2 max-h-[250px] overflow-auto">
         {contacts.length === 0 && (
           <p className="text-xs text-slate-400 italic">No contacts added yet</p>
         )}
         {contacts.map((contact, i) => (
           <div key={contact.id || `new-${i}`} className={`p-2 rounded border ${contact.isMainContact ? 'border-blue-300 bg-blue-50/30' : 'border-slate-100'}`}>
-            <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center justify-between mb-1.5">
               <label className="flex items-center gap-1.5 text-xs">
                 <input
                   type="radio"
@@ -74,28 +74,30 @@ export function ClientContactsPanel({ engagementId, initialContacts }: Props) {
               </label>
               <button onClick={() => removeContact(i)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1.5">
               <input
                 type="text"
                 value={contact.name}
                 onChange={e => updateContact(i, 'name', e.target.value)}
                 placeholder="Name"
-                className="border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
+                className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
               />
-              <input
-                type="email"
-                value={contact.email || ''}
-                onChange={e => updateContact(i, 'email', e.target.value)}
-                placeholder="Email"
-                className="border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
-              <input
-                type="tel"
-                value={contact.phone || ''}
-                onChange={e => updateContact(i, 'phone', e.target.value)}
-                placeholder="Phone"
-                className="border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
+              <div className="grid grid-cols-2 gap-1.5">
+                <input
+                  type="email"
+                  value={contact.email || ''}
+                  onChange={e => updateContact(i, 'email', e.target.value)}
+                  placeholder="Email"
+                  className="border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
+                />
+                <input
+                  type="tel"
+                  value={contact.phone || ''}
+                  onChange={e => updateContact(i, 'phone', e.target.value)}
+                  placeholder="Phone"
+                  className="border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
+                />
+              </div>
             </div>
           </div>
         ))}

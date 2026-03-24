@@ -51,6 +51,76 @@ export async function PUT(
   }
 
   const body = await req.json();
+
+  // AI auto-populate action
+  if (body.action === 'ai_populate') {
+    const client = await prisma.client.findUnique({
+      where: { id: engagement.clientId },
+      select: { clientName: true, sector: true },
+    });
+    if (!client) return NextResponse.json({ error: 'Client not found' }, { status: 404 });
+
+    const categories = [
+      { key: 'background', prompt: `Provide a brief background of the company "${client.clientName}"${client.sector ? ` in the ${client.sector} sector` : ''}. Include founding details, headquarters, and key business lines.` },
+      { key: 'financial_position', prompt: `Summarise the financial position of "${client.clientName}". Review any publicly available accounts, revenue trends, profitability, and cash position.` },
+      { key: 'positive_adverse', prompt: `List positive and adverse news or developments for "${client.clientName}". Include recent press, awards, controversies, or legal matters.` },
+      { key: 'competitor_landscape', prompt: `Describe the competitive landscape for "${client.clientName}". Who are their main competitors and how do they differentiate?` },
+      { key: 'regulatory_issues', prompt: `Identify regulatory issues relevant to "${client.clientName}"${client.sector ? ` in the ${client.sector} sector` : ''}. Include any compliance requirements or regulatory changes.` },
+      { key: 'sector_developments', prompt: `Describe recent sector developments relevant to "${client.clientName}"${client.sector ? ` in ${client.sector}` : ''}. Include industry trends and outlook.` },
+      { key: 'other_news', prompt: `Provide any other noteworthy news about "${client.clientName}" not covered above. Include ESG, M&A activity, leadership changes, etc.` },
+    ];
+
+    const apiKey = process.env.TOGETHER_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: 'AI API key not configured' }, { status: 500 });
+    }
+
+    const results = [];
+    for (const cat of categories) {
+      try {
+        const aiRes = await fetch('https://api.together.xyz/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: process.env.AI_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',
+            messages: [
+              { role: 'system', content: 'You are an audit research assistant. Provide concise, factual business intelligence for audit planning. Keep responses to 2-3 paragraphs. If you cannot find specific information, say so briefly.' },
+              { role: 'user', content: cat.prompt },
+            ],
+            max_tokens: 500,
+            temperature: 0.3,
+          }),
+        });
+
+        if (aiRes.ok) {
+          const aiData = await aiRes.json();
+          const aiContent = aiData.choices?.[0]?.message?.content?.trim() || '';
+          if (aiContent) {
+            const existing = await prisma.clientIntelligence.findFirst({
+              where: { clientId: engagement.clientId, firmId: engagement.firmId, category: cat.key },
+            });
+            if (existing) {
+              await prisma.clientIntelligence.update({
+                where: { id: existing.id },
+                data: { content: aiContent, source: 'ai', significantChange: existing.content.length > 0, lastUpdated: new Date() },
+              });
+            } else {
+              await prisma.clientIntelligence.create({
+                data: { clientId: engagement.clientId, firmId: engagement.firmId, category: cat.key, content: aiContent, source: 'ai' },
+              });
+            }
+            results.push({ category: cat.key, status: 'ok' });
+          }
+        }
+      } catch (err) {
+        console.error(`AI populate failed for ${cat.key}:`, err);
+        results.push({ category: cat.key, status: 'error' });
+      }
+    }
+
+    return NextResponse.json({ success: true, results });
+  }
+
   const { category, content, source } = body as { category: string; content: string; source?: string };
 
   if (!category || content === undefined) {

@@ -200,7 +200,7 @@ export function AuditEngagementPage({ auditType }: Props) {
         {/* Pre-start view */}
         {engagement && !isActive && (
           <div>
-            {/* 4-panel layout */}
+            {/* 3-column layout: Dates | Intelligence | Contacts+Team */}
             <div className="grid grid-cols-12 gap-4 mb-6">
               {/* Agreed Dates - far left */}
               <div className="col-span-3">
@@ -210,25 +210,22 @@ export function AuditEngagementPage({ auditType }: Props) {
                 />
               </div>
 
-              {/* Client Intelligence - left-center */}
-              <div className="col-span-3">
+              {/* Client Intelligence - expanded center */}
+              <div className="col-span-5">
                 <ClientIntelligencePanel
                   engagementId={engagement.id}
+                  clientId={clientId}
                   teamMemberCount={engagement.teamMembers.length || 1}
                   currentUserId={session?.user?.id || ''}
                 />
               </div>
 
-              {/* Client Contacts - right-center */}
-              <div className="col-span-2">
+              {/* Client Contacts + Team - stacked on right */}
+              <div className="col-span-4 space-y-4">
                 <ClientContactsPanel
                   engagementId={engagement.id}
                   initialContacts={engagement.contacts}
                 />
-              </div>
-
-              {/* Team - right third */}
-              <div className="col-span-4">
                 <TeamPanel
                   engagementId={engagement.id}
                   initialTeamMembers={engagement.teamMembers.map(m => ({
