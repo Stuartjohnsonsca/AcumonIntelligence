@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 interface FsLine {
   id: string;
@@ -51,6 +51,21 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
   const [editName, setEditName] = useState('');
   const [editLineType, setEditLineType] = useState('');
   const [editCategory, setEditCategory] = useState('');
+  const [sortBy, setSortBy] = useState<'order' | 'category'>('order');
+
+  const sortedNonMandatory = useMemo(() => {
+    const items = fsLines.filter(f => !f.isMandatory);
+    if (sortBy === 'category') {
+      const catOrder: Record<string, number> = { pnl: 0, balance_sheet: 1, cashflow: 2, notes: 3 };
+      return [...items].sort((a, b) => {
+        const ca = catOrder[a.fsCategory] ?? 99;
+        const cb = catOrder[b.fsCategory] ?? 99;
+        if (ca !== cb) return ca - cb;
+        return a.sortOrder - b.sortOrder;
+      });
+    }
+    return items;
+  }, [fsLines, sortBy]);
 
   async function addFsLine() {
     if (!newName.trim()) return;
@@ -113,17 +128,20 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
   }
 
   async function moveRow(index: number, direction: 'up' | 'down') {
+    if (sortBy !== 'order') return; // Only allow reorder in manual order mode
+    const nonMandatory = fsLines.filter(f => !f.isMandatory);
     const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= fsLines.length) return;
-    const reordered = [...fsLines];
+    if (newIndex < 0 || newIndex >= nonMandatory.length) return;
+    const reordered = [...nonMandatory];
     [reordered[index], reordered[newIndex]] = [reordered[newIndex], reordered[index]];
-    // Update sort orders
-    const updates = reordered.map((line, i) => ({ ...line, sortOrder: i }));
-    setFsLines(updates);
+    // Rebuild full list: mandatory first, then reordered non-mandatory
+    const mandatory = fsLines.filter(f => f.isMandatory);
+    const updated = [...mandatory, ...reordered.map((line, i) => ({ ...line, sortOrder: i }))];
+    setFsLines(updated);
     // Save both changed rows
     await Promise.all([
-      updateFsLine(updates[index].id, { sortOrder: index } as any),
-      updateFsLine(updates[newIndex].id, { sortOrder: newIndex } as any),
+      updateFsLine(reordered[index].id, { sortOrder: index } as any),
+      updateFsLine(reordered[newIndex].id, { sortOrder: newIndex } as any),
     ]);
   }
 
@@ -195,7 +213,31 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
       )}
 
       {/* List view */}
-      {view === 'list' && (
+      {view === 'list' && (<>
+        {/* Mandatory items - permanent audit focus areas */}
+        {fsLines.filter(f => f.isMandatory).length > 0 && (
+          <div className="border border-amber-200 bg-amber-50/30 rounded-lg overflow-hidden mb-4">
+            <div className="px-4 py-2 bg-amber-100/50 border-b border-amber-200">
+              <h3 className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Permanent Audit Focus Areas</h3>
+              <p className="text-[10px] text-amber-600 mt-0.5">These are always included regardless of industry. They appear in RMM but are not financial statement lines.</p>
+            </div>
+            <table className="w-full text-sm">
+              <tbody>
+                {fsLines.filter(f => f.isMandatory).map((line) => (
+                  <tr key={line.id} className="border-b border-amber-100 last:border-0">
+                    <td className="px-4 py-2.5 text-slate-800 font-medium">
+                      {line.name}
+                      <span className="ml-2 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Mandatory</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-500 text-xs w-48">Always included in RMM</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* FS Lines table */}
         <div className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -203,13 +245,22 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 <th className="text-center px-2 py-2.5 text-slate-600 font-semibold w-12">Order</th>
                 <th className="text-left px-4 py-2.5 text-slate-600 font-semibold">Name</th>
                 <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">Type</th>
-                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">FS Category</th>
+                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">
+                  <button onClick={() => setSortBy(prev => prev === 'category' ? 'order' : 'category')}
+                    className="flex items-center gap-1 hover:text-blue-600 transition-colors"
+                    title={sortBy === 'category' ? 'Sorted by category — click for manual order' : 'Click to sort by category'}>
+                    FS Category
+                    <span className={`text-[10px] ${sortBy === 'category' ? 'text-blue-500' : 'text-slate-400'}`}>
+                      {sortBy === 'category' ? '▼' : '⇅'}
+                    </span>
+                  </button>
+                </th>
                 <th className="text-center px-4 py-2.5 text-slate-600 font-semibold w-24">Industries</th>
                 <th className="text-center px-4 py-2.5 text-slate-600 font-semibold w-20">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {fsLines.map((line, idx) => (
+              {sortedNonMandatory.map((line, idx) => (
                 <tr key={line.id} className={`border-b border-slate-100 ${!line.isActive ? 'opacity-40' : ''} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
                   {editingId === line.id ? (
                     <>
@@ -283,7 +334,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
             </tbody>
           </table>
         </div>
-      )}
+      </>)}
 
       {/* Matrix view - FS Lines × Industries */}
       {view === 'matrix' && (
