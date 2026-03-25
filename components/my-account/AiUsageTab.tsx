@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Loader2, ChevronDown, ChevronUp, BarChart3 } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronUp, BarChart3, Download } from 'lucide-react';
 
 interface ClientUsage {
   clientId: string;
@@ -90,11 +90,52 @@ function formatGbp(usd: number): string {
   return `£${gbp.toFixed(2)}`;
 }
 
-type Period = 'all' | 'month' | 'week';
+type Period = 'all' | 'month' | 'week' | 'custom';
+
+function toISODate(d: Date): string {
+  return d.toISOString().split('T')[0];
+}
+
+function getPresetRange(preset: string): { from: string; to: string } {
+  const now = new Date();
+  const to = toISODate(now);
+  switch (preset) {
+    case 'this_week': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - d.getDay() + 1); // Monday
+      return { from: toISODate(d), to };
+    }
+    case 'last_week': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - d.getDay() - 6); // Last Monday
+      const end = new Date(d);
+      end.setDate(end.getDate() + 6); // Last Sunday
+      return { from: toISODate(d), to: toISODate(end) };
+    }
+    case 'this_month': {
+      return { from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`, to };
+    }
+    case 'last_month': {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { from: toISODate(d), to: toISODate(end) };
+    }
+    case 'this_year': {
+      return { from: `${now.getFullYear()}-01-01`, to };
+    }
+    case 'last_year': {
+      return { from: `${now.getFullYear() - 1}-01-01`, to: `${now.getFullYear() - 1}-12-31` };
+    }
+    default:
+      return { from: '', to };
+  }
+}
 
 export function AiUsageTab() {
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [firmSummary, setFirmSummary] = useState<FirmSummary | null>(null);
   const [clients, setClients] = useState<ClientUsage[]>([]);
   const [byAction, setByAction] = useState<ActionSummary[]>([]);
@@ -103,10 +144,13 @@ export function AiUsageTab() {
   const [clientDetail, setClientDetail] = useState<ClientDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
-  const fetchData = useCallback(async (p: Period) => {
+  const fetchData = useCallback(async (p: Period, from?: string, to?: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/ai-usage?period=${p}`);
+      let url = `/api/ai-usage?period=${p}`;
+      if (p === 'custom' && from) url += `&from=${from}`;
+      if (p === 'custom' && to) url += `&to=${to}`;
+      const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
       setFirmSummary(data.firmSummary);
@@ -117,7 +161,38 @@ export function AiUsageTab() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchData(period); }, [period, fetchData]);
+  useEffect(() => {
+    if (period === 'custom') {
+      if (dateFrom) fetchData('custom', dateFrom, dateTo || undefined);
+    } else {
+      fetchData(period);
+    }
+  }, [period, dateFrom, dateTo, fetchData]);
+
+  function handlePreset(preset: string) {
+    const { from, to } = getPresetRange(preset);
+    setDateFrom(from);
+    setDateTo(to);
+    setPeriod('custom');
+  }
+
+  function downloadCSV() {
+    if (!clients || clients.length === 0) return;
+    const headers = ['Client', 'Calls', 'Input Tokens', 'Output Tokens', 'Total Tokens', 'Cost (USD)', 'Cost (GBP)'];
+    const rows = clients.map(c => [
+      c.clientName, c.totalCalls, c.promptTokens, c.completionTokens, c.totalTokens,
+      c.estimatedCostUsd.toFixed(6), (c.estimatedCostUsd * 0.79).toFixed(6),
+    ]);
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const rangeLabel = period === 'custom' ? `${dateFrom}_to_${dateTo}` : period;
+    a.download = `ai-usage-${rangeLabel}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   async function toggleClient(clientId: string) {
     if (expandedClient === clientId) {
@@ -139,23 +214,55 @@ export function AiUsageTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <BarChart3 className="h-5 w-5 text-slate-600" />
-          <h2 className="text-lg font-semibold text-slate-800">AI Usage & Costs</h2>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-slate-600" />
+            <h2 className="text-lg font-semibold text-slate-800">AI Usage & Costs</h2>
+          </div>
+          <Button size="sm" variant="outline" className="text-xs h-7" onClick={downloadCSV} disabled={!clients.length}>
+            <Download className="h-3.5 w-3.5 mr-1" /> Export CSV
+          </Button>
         </div>
-        <div className="flex gap-1">
-          {(['week', 'month', 'all'] as Period[]).map(p => (
-            <Button
-              key={p}
-              size="sm"
-              variant={period === p ? 'default' : 'outline'}
-              className="text-xs h-7"
-              onClick={() => setPeriod(p)}
-            >
-              {p === 'week' ? '7 days' : p === 'month' ? '30 days' : 'All time'}
-            </Button>
-          ))}
+
+        {/* Period buttons */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1">
+            {(['week', 'month', 'all'] as Period[]).map(p => (
+              <Button key={p} size="sm" variant={period === p ? 'default' : 'outline'} className="text-xs h-7"
+                onClick={() => { setPeriod(p); setDateFrom(''); setDateTo(''); }}>
+                {p === 'week' ? '7 days' : p === 'month' ? '30 days' : 'All time'}
+              </Button>
+            ))}
+          </div>
+
+          <span className="text-slate-300">|</span>
+
+          {/* Preset shortcuts */}
+          <select onChange={e => { if (e.target.value) handlePreset(e.target.value); e.target.value = ''; }}
+            className="text-xs h-7 border border-slate-200 rounded px-2 bg-white text-slate-600" defaultValue="">
+            <option value="" disabled>Quick select...</option>
+            <option value="this_week">This week</option>
+            <option value="last_week">Last week</option>
+            <option value="this_month">This month</option>
+            <option value="last_month">Last month</option>
+            <option value="this_year">This year</option>
+            <option value="last_year">Last year</option>
+          </select>
+
+          <span className="text-slate-300">|</span>
+
+          {/* Date pickers */}
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-slate-500">From</label>
+            <input type="date" value={dateFrom}
+              onChange={e => { setDateFrom(e.target.value); setPeriod('custom'); }}
+              className="text-xs h-7 border border-slate-200 rounded px-2 bg-white text-slate-700" />
+            <label className="text-xs text-slate-500">To</label>
+            <input type="date" value={dateTo}
+              onChange={e => { setDateTo(e.target.value); setPeriod('custom'); }}
+              className="text-xs h-7 border border-slate-200 rounded px-2 bg-white text-slate-700" />
+          </div>
         </div>
       </div>
 

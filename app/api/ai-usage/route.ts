@@ -14,8 +14,22 @@ export async function GET(req: Request) {
   const firmId = (session.user as { firmId: string }).firmId;
 
   let dateFilter: Date | undefined;
-  if (period === 'month') dateFilter = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  else if (period === 'week') dateFilter = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  let dateFilterEnd: Date | undefined;
+  const fromParam = searchParams.get('from');
+  const toParam = searchParams.get('to');
+
+  if (period === 'custom' && fromParam) {
+    dateFilter = new Date(fromParam);
+    if (toParam) {
+      const end = new Date(toParam);
+      end.setHours(23, 59, 59, 999);
+      dateFilterEnd = end;
+    }
+  } else if (period === 'month') {
+    dateFilter = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  } else if (period === 'week') {
+    dateFilter = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  }
 
   if (clientId) {
     const client = await prisma.client.findUnique({
@@ -26,9 +40,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    const createdAtFilter: Record<string, Date> = {};
+    if (dateFilter) createdAtFilter.gte = dateFilter;
+    if (dateFilterEnd) createdAtFilter.lte = dateFilterEnd;
     const where = {
       clientId,
-      ...(dateFilter ? { createdAt: { gte: dateFilter } } : {}),
+      ...(Object.keys(createdAtFilter).length > 0 ? { createdAt: createdAtFilter } : {}),
     };
 
     const [records, aggregation, byAction, byModel] = await Promise.all([
@@ -121,9 +138,12 @@ export async function GET(req: Request) {
   const clientIds = firmClients.map(c => c.id);
   const clientNameMap = new Map(firmClients.map(c => [c.id, c.clientName]));
 
+  const firmCreatedAtFilter: Record<string, Date> = {};
+  if (dateFilter) firmCreatedAtFilter.gte = dateFilter;
+  if (dateFilterEnd) firmCreatedAtFilter.lte = dateFilterEnd;
   const where = {
     clientId: { in: clientIds },
-    ...(dateFilter ? { createdAt: { gte: dateFilter } } : {}),
+    ...(Object.keys(firmCreatedAtFilter).length > 0 ? { createdAt: firmCreatedAtFilter } : {}),
   };
 
   const [firmTotal, perClient, firmByAction, firmByModel] = await Promise.all([
