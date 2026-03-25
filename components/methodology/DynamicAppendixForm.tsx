@@ -15,6 +15,7 @@ interface Props {
   questions: TemplateQuestion[];
   initialData: FormValues;
   crossRefData?: Record<string, FormValues>;
+  currencySymbol?: string;
 }
 
 export function DynamicAppendixForm({

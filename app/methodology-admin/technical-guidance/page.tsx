@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { FileText } from 'lucide-react';
+import { BackButton } from '@/components/methodology-admin/BackButton';
 
 export default async function TechnicalGuidancePage() {
   const session = await auth();
@@ -13,6 +14,7 @@ export default async function TechnicalGuidancePage() {
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-6xl">
+      <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Audit Technical Guidance</h1>
         <p className="text-slate-600 mt-1">Technical guidance documentation and standards</p>

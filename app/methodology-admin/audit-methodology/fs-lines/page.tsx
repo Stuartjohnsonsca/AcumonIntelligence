@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { FsLinesClient } from '@/components/methodology-admin/FsLinesClient';
+import { BackButton } from '@/components/methodology-admin/BackButton';
 
 export default async function FsLinesPage() {
   const session = await auth();
@@ -24,6 +25,7 @@ export default async function FsLinesPage() {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
+      <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Financial Statement Lines</h1>
         <p className="text-slate-600 mt-1">Define FS line items and map them to industries</p>

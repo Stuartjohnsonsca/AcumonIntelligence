@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { TestBankClient } from '@/components/methodology-admin/TestBankClient';
+import { BackButton } from '@/components/methodology-admin/BackButton';
 
 export default async function TestBankPage() {
   const session = await auth();
@@ -37,6 +38,7 @@ export default async function TestBankPage() {
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-7xl">
+      <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Test Bank</h1>
         <p className="text-slate-600 mt-1">Define audit tests by industry and FS statement line</p>

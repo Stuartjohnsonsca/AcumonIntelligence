@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { AuditTypeSchedulesClient } from '@/components/methodology-admin/AuditTypeSchedulesClient';
+import { BackButton } from '@/components/methodology-admin/BackButton';
 
 export default async function AuditTypesPage() {
   const session = await auth();
@@ -37,6 +38,7 @@ export default async function AuditTypesPage() {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
+      <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Audit Type Configuration</h1>
         <p className="text-slate-600 mt-1">Configure accounting frameworks and schedules for each audit type</p>
