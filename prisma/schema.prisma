@@ -151,6 +151,7 @@ model Client {
   contactEmail        String?  @map("contact_email")
   sector              String?  // Financial Services, Healthcare, Manufacturing, Technology, Public Sector, Retail, Energy, Education, Construction, Legal, Charities & Non-Profit
   portfolioManagerId  String?  @map("portfolio_manager_id")
+  crmAccountId        String?  @unique @map("crm_account_id") // Dynamics 365 account GUID
   isActive            Boolean  @default(true) @map("is_active")
   readOnly            Boolean  @default(false) @map("read_only")
   createdAt           DateTime @default(now()) @map("created_at")
