@@ -39,6 +39,7 @@ const APPENDIX_TEMPLATE_TYPES = [
   { key: 'ethics_questions', label: 'Ethics', sectionDefaults: ['Non Audit Services', 'Threats', 'Relationships', 'Other Considerations', 'Fee Assessment', 'ORITP'] },
   { key: 'continuance_questions', label: 'Continuance', sectionDefaults: ['Entity Details', 'Ownership', 'Continuity', 'Management Info', 'Nature of Business', 'Fee Considerations', 'Resourcing', 'EQR', 'AML', 'MLRO', 'Final Conclusion'] },
   { key: 'materiality_questions', label: 'Materiality', sectionDefaults: ['Benchmark', 'Justification', 'Overall Materiality Assessment', 'Performance Materiality'] },
+  { key: 'new_client_takeon_questions', label: 'New Client Take-on', sectionDefaults: ['Client Information', 'Services to be Provided', 'Client Introduction', 'Previous Auditors', 'Ownership Information', 'Management Information', 'Nature of Business', 'Latest Financial Information', 'Ethical & Independence', 'Audit Risk Assessment', 'Fee Considerations', 'Resourcing Considerations', 'EQR Considerations', 'AML - Nature of Client', 'AML - Nature of Assignment', 'AML - Organisation Environment', 'AML - Fraud, Theft & Error', 'AML - Laws & Regulations', 'Discussion with MLRO', 'Proposed Conclusion', 'Discussion with Management Board', 'Next Steps', 'Final Conclusion'] },
 ];
 
 const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;
