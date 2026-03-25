@@ -142,7 +142,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
         const sorted = [...sectionQs].sort((a, b) => a.sortOrder - b.sortOrder);
 
         return (
-          <div key={sectionKey} className="border border-slate-200 rounded-lg overflow-hidden">
+          <div key={sectionKey} className="border border-slate-200 rounded-lg overflow-hidden w-full">
             {/* Section header */}
             <div
               className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b border-slate-200 cursor-pointer hover:bg-slate-100"
