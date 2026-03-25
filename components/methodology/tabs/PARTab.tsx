@@ -5,6 +5,23 @@ import { useAutoSave } from '@/hooks/useAutoSave';
 
 interface Props {
   engagementId: string;
+  userId?: string;
+  userName?: string;
+}
+
+interface SendMgtStatus {
+  checked: boolean;
+  checkedBy?: string;
+  checkedAt?: string;
+  sentAt?: string;
+  respondedAt?: string;
+  clientExplanation?: string;
+}
+
+interface AcceptedDots {
+  operator?: { name: string; at: string };
+  reviewer?: { name: string; at: string };
+  partner?: { name: string; at: string };
 }
 
 interface PARRow {
@@ -14,19 +31,38 @@ interface PARRow {
   priorYear: number | null;
   absVariance: number | null;
   absVariancePercent: number | null;
-  significantChange: boolean;
-  sentToManagement: boolean;
-  managementResponseStatus: string | null;
+  significantChange: string;
+  sendMgt: SendMgtStatus;
   reasons: string | null;
+  auditorView: string | null;
+  accepted: AcceptedDots;
   sortOrder: number;
 }
 
-export function PARTab({ engagementId }: Props) {
+function formatDate(d: Date | string | null | undefined): string {
+  if (!d) return '';
+  const date = typeof d === 'string' ? new Date(d) : d;
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function fmtTimestamp(iso: string | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${formatDate(d)} ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+export function PARTab({ engagementId, userId, userName }: Props) {
   const [rows, setRows] = useState<PARRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialRows, setInitialRows] = useState<PARRow[]>([]);
   const [pmThreshold, setPmThreshold] = useState<number | null>(null);
-  const [varianceThreshold] = useState(0.10); // 10% default
+  const [absVarThreshold, setAbsVarThreshold] = useState(10); // default 10%
+  const [periodEnd, setPeriodEnd] = useState<string>('');
+  const [periodStartMinus1, setPeriodStartMinus1] = useState<string>('');
+  const [sending, setSending] = useState(false);
 
   const { saving, lastSaved, error } = useAutoSave(
     `/api/engagements/${engagementId}/par`,
@@ -34,16 +70,39 @@ export function PARTab({ engagementId }: Props) {
     { enabled: JSON.stringify(rows) !== JSON.stringify(initialRows) }
   );
 
-  // Load PAR rows
   const loadData = useCallback(async () => {
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/par`);
-      if (res.ok) { const json = await res.json(); setRows(json.rows || []); setInitialRows(json.rows || []); }
+      const [parRes, engRes] = await Promise.all([
+        fetch(`/api/engagements/${engagementId}/par`),
+        fetch(`/api/engagements/${engagementId}`),
+      ]);
+      if (parRes.ok) {
+        const json = await parRes.json();
+        const loadedRows = (json.rows || []).map((r: any) => ({
+          ...r,
+          sendMgt: r.sendMgt || { checked: false },
+          accepted: r.accepted || {},
+        }));
+        setRows(loadedRows);
+        setInitialRows(loadedRows);
+        if (json.absVarThreshold != null) setAbsVarThreshold(json.absVarThreshold);
+      }
+      if (engRes.ok) {
+        const eng = await engRes.json();
+        const period = eng.period || eng.engagement?.period;
+        if (period) {
+          setPeriodEnd(formatDate(period.endDate));
+          // Period Start - 1 day
+          const start = new Date(period.startDate);
+          start.setDate(start.getDate() - 1);
+          setPeriodStartMinus1(formatDate(start));
+        }
+      }
     } catch (err) { console.error('Failed to load:', err); }
     finally { setLoading(false); }
   }, [engagementId]);
 
-  // Load PM from materiality tab
+  // Load PM from materiality
   useEffect(() => {
     async function loadPM() {
       try {
@@ -51,6 +110,9 @@ export function PARTab({ engagementId }: Props) {
         if (res.ok) {
           const json = await res.json();
           const data = json.data || {};
+          const pm = Number(data.performance_materiality);
+          if (pm && pm > 0) { setPmThreshold(pm); return; }
+          // Fallback: calculate from benchmark
           const benchmark = data.benchmark as string;
           const pct = Number(data.percentage) || 0;
           const amount = Number(data[`benchmark_amount_${benchmark?.replace(/\s+/g, '_')}`]) || 0;
@@ -66,30 +128,43 @@ export function PARTab({ engagementId }: Props) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Auto-calculate variance fields
+  // Auto-calculate fields
   const computedRows = useMemo(() => {
     return rows.map(row => {
-      const cy = row.currentYear ?? 0;
-      const py = row.priorYear ?? 0;
-      const variance = Math.abs(cy - py);
-      const variancePct = py !== 0 ? Math.abs((cy - py) / py) : (cy !== 0 ? 1 : 0);
-      const isSignificant = pmThreshold !== null
-        ? variance > pmThreshold && variancePct > varianceThreshold
-        : false;
-      return { ...row, absVariance: variance, absVariancePercent: variancePct, significantChange: isSignificant };
+      const cy = row.currentYear;
+      const py = row.priorYear;
+      if (cy == null && py == null) return { ...row, absVariance: null, absVariancePercent: null, significantChange: '' };
+
+      const cyVal = cy ?? 0;
+      const pyVal = py ?? 0;
+      const variance = Math.abs(cyVal - pyVal);
+      const variancePct = pyVal !== 0 ? Math.round((Math.abs((cyVal - pyVal) / pyVal)) * 10000) / 100 : (cyVal !== 0 ? 100 : 0);
+
+      let sigChange = '';
+      if (cy != null || py != null) {
+        if (pmThreshold !== null) {
+          if (variance > pmThreshold && variancePct > absVarThreshold) {
+            sigChange = 'Material';
+          } else {
+            sigChange = 'Not Material';
+          }
+        }
+      }
+
+      return { ...row, absVariance: variance, absVariancePercent: variancePct, significantChange: sigChange };
     });
-  }, [rows, pmThreshold, varianceThreshold]);
+  }, [rows, pmThreshold, absVarThreshold]);
 
   function addRow() {
     setRows(prev => [...prev, {
       id: '', particulars: '', currentYear: null, priorYear: null,
-      absVariance: null, absVariancePercent: null, significantChange: false,
-      sentToManagement: false, managementResponseStatus: null, reasons: null,
+      absVariance: null, absVariancePercent: null, significantChange: '',
+      sendMgt: { checked: false }, reasons: null, auditorView: null, accepted: {},
       sortOrder: prev.length,
     }]);
   }
 
-  function updateRow(index: number, field: keyof PARRow, value: string | number | boolean | null) {
+  function updateRow(index: number, field: string, value: any) {
     setRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
   }
 
@@ -97,101 +172,228 @@ export function PARTab({ engagementId }: Props) {
     setRows(prev => prev.filter((_, i) => i !== index));
   }
 
-  function toggleSendToManagement(index: number) {
+  function toggleSendMgtCheckbox(index: number) {
     const row = computedRows[index];
-    const newVal = !row.sentToManagement;
-    updateRow(index, 'sentToManagement', newVal);
-    if (newVal) {
-      updateRow(index, 'managementResponseStatus', 'pending');
+    const current = row.sendMgt || { checked: false };
+    if (!current.checked) {
+      // Mark as checked (orange)
+      updateRow(index, 'sendMgt', {
+        checked: true,
+        checkedBy: userName || 'User',
+        checkedAt: new Date().toISOString(),
+      });
+    } else if (!current.sentAt) {
+      // Uncheck
+      updateRow(index, 'sendMgt', { checked: false });
     }
+  }
+
+  async function sendToManagement() {
+    setSending(true);
+    try {
+      const itemsToSend = computedRows.filter(r => r.sendMgt?.checked && !r.sendMgt?.sentAt);
+      if (itemsToSend.length === 0) { setSending(false); return; }
+
+      const res = await fetch(`/api/engagements/${engagementId}/par/send-management`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: itemsToSend.map(r => ({ id: r.id, particulars: r.particulars })) }),
+      });
+
+      if (res.ok) {
+        const now = new Date().toISOString();
+        setRows(prev => prev.map(r => {
+          if (r.sendMgt?.checked && !r.sendMgt?.sentAt) {
+            return { ...r, sendMgt: { ...r.sendMgt, sentAt: now } };
+          }
+          return r;
+        }));
+      }
+    } catch (err) { console.error('Send failed:', err); }
+    finally { setSending(false); }
+  }
+
+  function toggleAccepted(index: number, role: 'operator' | 'reviewer' | 'partner') {
+    const row = computedRows[index];
+    const accepted = { ...(row.accepted || {}) };
+    if (accepted[role]) {
+      // Unclaim
+      delete accepted[role];
+    } else {
+      const now = new Date().toISOString();
+      accepted[role] = { name: userName || 'User', at: now };
+      // Partner signs: also sign reviewer and operator
+      if (role === 'partner') {
+        if (!accepted.reviewer) accepted.reviewer = { name: userName || 'User', at: now };
+        if (!accepted.operator) accepted.operator = { name: userName || 'User', at: now };
+      }
+    }
+    updateRow(index, 'accepted', accepted);
   }
 
   if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading PAR...</div>;
 
   const numCls = 'w-full border-0 bg-transparent text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5';
+  const orangeCount = computedRows.filter(r => r.sendMgt?.checked && !r.sendMgt?.sentAt).length;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between mb-3 flex-shrink-0 flex-wrap gap-2">
         <div className="flex items-center gap-3">
-          {/* Title provided by SignOffHeader wrapper */}
           {pmThreshold !== null && (
-            <span className="text-xs text-slate-400">PM Threshold: £{pmThreshold.toLocaleString()}</span>
+            <span className="text-xs text-slate-400">PM: £{pmThreshold.toLocaleString()} | Var Threshold: {absVarThreshold}%</span>
           )}
         </div>
         <div className="flex items-center gap-2">
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
+          {orangeCount > 0 && (
+            <button onClick={sendToManagement} disabled={sending}
+              className="text-xs px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:opacity-50">
+              {sending ? 'Sending...' : `Send to Management (${orangeCount})`}
+            </button>
+          )}
           <button onClick={addRow} className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
         </div>
       </div>
 
       <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 280px)' }}>
-        <table className="w-full text-xs">
+        <table className="w-full text-xs border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-48">Particulars</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24">Period End</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24">Period Start - 1</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24">ABS Variance</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-20">ABS Var %</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-24">Significant?</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Send Mgmt</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium">Reasons</th>
-              <th className="w-8"></th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium w-44 whitespace-nowrap">Particulars</th>
+              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24 whitespace-nowrap">{periodEnd || 'Period End'}</th>
+              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24 whitespace-nowrap">{periodStartMinus1 || 'PY End'}</th>
+              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24 whitespace-nowrap">ABS Variance</th>
+              <th className="text-right px-2 py-2 text-slate-500 font-medium w-20 whitespace-nowrap">ABS Var %</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-28 whitespace-nowrap">
+                <span title="Material if ABS Variance > PM AND ABS Var % > Threshold">Significant Change</span>
+              </th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-20 whitespace-nowrap">
+                <span title="Send to Management">Send Mgt</span>
+              </th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium min-w-[200px]">Reasons</th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium min-w-[180px]">Auditor View</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-36 whitespace-nowrap">Accepted</th>
+              <th className="w-6"></th>
             </tr>
           </thead>
           <tbody>
             {computedRows.length === 0 ? (
-              <tr><td colSpan={9} className="text-center py-8 text-slate-400 italic">No PAR rows. Click &quot;Add Row&quot; or populate from Trial Balance.</td></tr>
-            ) : computedRows.map((row, i) => (
-              <tr key={row.id || `new-${i}`} className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.significantChange ? 'bg-yellow-50/30' : ''}`}>
-                <td className="px-2 py-0.5">
-                  <input type="text" value={row.particulars} onChange={e => updateRow(i, 'particulars', e.target.value)} className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" placeholder="Line item..." />
-                </td>
-                <td className="px-2 py-0.5">
-                  <input type="number" value={row.currentYear ?? ''} onChange={e => updateRow(i, 'currentYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
-                </td>
-                <td className="px-2 py-0.5">
-                  <input type="number" value={row.priorYear ?? ''} onChange={e => updateRow(i, 'priorYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
-                </td>
-                <td className="px-2 py-0.5 text-right text-slate-500">
-                  {row.absVariance !== null && row.absVariance > 0 ? row.absVariance.toLocaleString(undefined, { maximumFractionDigits: 0 }) : ''}
-                </td>
-                <td className="px-2 py-0.5 text-right text-slate-500">
-                  {row.absVariancePercent !== null && row.absVariancePercent > 0 ? `${(row.absVariancePercent * 100).toFixed(1)}%` : ''}
-                </td>
-                <td className="px-2 py-0.5 text-center">
-                  {row.significantChange ? (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-medium">
-                      &gt;PM &amp; {(varianceThreshold * 100)}%
-                    </span>
-                  ) : (
-                    <span className="text-slate-300">—</span>
-                  )}
-                </td>
-                <td className="px-2 py-0.5 text-center">
-                  <button
-                    onClick={() => toggleSendToManagement(i)}
-                    className={`w-5 h-5 rounded border-2 inline-flex items-center justify-center transition-colors ${
-                      row.sentToManagement
-                        ? row.managementResponseStatus === 'responded' ? 'bg-green-500 border-green-500 text-white' : 'bg-orange-400 border-orange-400 text-white'
-                        : 'border-slate-300 hover:border-blue-400'
-                    }`}
-                    title={row.sentToManagement ? (row.managementResponseStatus === 'responded' ? 'Client responded' : 'Awaiting response') : 'Send to management'}
-                  >
-                    {row.sentToManagement && <span className="text-[10px]">✓</span>}
-                  </button>
-                </td>
-                <td className="px-2 py-0.5">
-                  <input type="text" value={row.reasons || ''} onChange={e => updateRow(i, 'reasons', e.target.value || null)} className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" placeholder="Reason..." />
-                </td>
-                <td className="px-2 py-0.5">
-                  <button onClick={() => removeRow(i)} className="text-red-400 hover:text-red-600">×</button>
-                </td>
-              </tr>
-            ))}
+              <tr><td colSpan={11} className="text-center py-8 text-slate-400 italic">No PAR rows. Click &quot;+ Add Row&quot; or populate from Trial Balance.</td></tr>
+            ) : computedRows.map((row, i) => {
+              const mgt = row.sendMgt || { checked: false };
+              const acc = row.accepted || {};
+              return (
+                <tr key={row.id || `new-${i}`} className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.significantChange === 'Material' ? 'bg-yellow-50/30' : ''}`}>
+                  <td className="px-2 py-0.5">
+                    <input type="text" value={row.particulars} onChange={e => updateRow(i, 'particulars', e.target.value)}
+                      className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" placeholder="Line item..." />
+                  </td>
+                  <td className="px-2 py-0.5">
+                    <input type="number" value={row.currentYear ?? ''} onChange={e => updateRow(i, 'currentYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
+                  </td>
+                  <td className="px-2 py-0.5">
+                    <input type="number" value={row.priorYear ?? ''} onChange={e => updateRow(i, 'priorYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
+                  </td>
+                  {/* ABS Variance = |CY - PY| */}
+                  <td className="px-2 py-0.5 text-right text-slate-500 font-mono">
+                    {row.absVariance != null && row.absVariance > 0 ? row.absVariance.toLocaleString(undefined, { maximumFractionDigits: 0 }) : ''}
+                  </td>
+                  {/* ABS Var % = |CY-PY|/PY * 100, rounded 2dp */}
+                  <td className="px-2 py-0.5 text-right text-slate-500 font-mono">
+                    {row.absVariancePercent != null && (row.currentYear != null || row.priorYear != null) ? `${row.absVariancePercent.toFixed(2)}%` : ''}
+                  </td>
+                  {/* Significant Change */}
+                  <td className="px-2 py-0.5 text-center">
+                    {row.significantChange === 'Material' ? (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-medium">Material</span>
+                    ) : row.significantChange === 'Not Material' ? (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 text-[10px] font-medium">Not Material</span>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
+                  {/* Send Mgt checkbox with status */}
+                  <td className="px-2 py-0.5 text-center">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <button
+                        onClick={() => toggleSendMgtCheckbox(i)}
+                        disabled={!!mgt.sentAt}
+                        className={`w-5 h-5 rounded border-2 inline-flex items-center justify-center transition-colors ${
+                          mgt.respondedAt ? 'bg-green-500 border-green-500 text-white' :
+                          mgt.sentAt ? 'bg-transparent border-green-500 text-green-500' :
+                          mgt.checked ? 'bg-orange-400 border-orange-400 text-white' :
+                          'border-slate-300 hover:border-orange-400'
+                        }`}
+                        title={mgt.respondedAt ? 'Client responded' : mgt.sentAt ? 'Sent to management' : mgt.checked ? 'Marked to send' : 'Mark to send'}
+                      >
+                        {(mgt.checked || mgt.sentAt) && <span className="text-[10px]">✓</span>}
+                      </button>
+                      {mgt.checkedBy && !mgt.sentAt && (
+                        <span className="text-[8px] text-orange-500 leading-tight">{mgt.checkedBy}<br/>{fmtTimestamp(mgt.checkedAt)}</span>
+                      )}
+                      {mgt.sentAt && !mgt.respondedAt && (
+                        <span className="text-[8px] text-green-600 leading-tight">Sent<br/>{fmtTimestamp(mgt.sentAt)}</span>
+                      )}
+                      {mgt.respondedAt && (
+                        <span className="text-[8px] text-green-700 leading-tight">Response<br/>{fmtTimestamp(mgt.respondedAt)}</span>
+                      )}
+                    </div>
+                  </td>
+                  {/* Reasons */}
+                  <td className="px-2 py-0.5">
+                    <textarea
+                      value={row.reasons || ''}
+                      onChange={e => updateRow(i, 'reasons', e.target.value || null)}
+                      className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none"
+                      rows={1}
+                      placeholder="Reason..."
+                      onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
+                    />
+                  </td>
+                  {/* Auditor View */}
+                  <td className="px-2 py-0.5">
+                    <textarea
+                      value={row.auditorView || ''}
+                      onChange={e => updateRow(i, 'auditorView', e.target.value || null)}
+                      className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none"
+                      rows={1}
+                      placeholder="Auditor view..."
+                      onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
+                    />
+                  </td>
+                  {/* Accepted dots */}
+                  <td className="px-2 py-0.5">
+                    <div className="flex items-start gap-1.5 justify-center">
+                      {(['operator', 'reviewer', 'partner'] as const).map(role => {
+                        const dot = acc[role];
+                        const label = role === 'operator' ? 'Op' : role === 'reviewer' ? 'Rv' : 'Pt';
+                        return (
+                          <div key={role} className="flex flex-col items-center">
+                            <span className="text-[7px] text-slate-400 leading-none mb-0.5">{label}</span>
+                            <button
+                              onClick={() => toggleAccepted(i, role)}
+                              className={`w-4 h-4 rounded-full border-2 transition-colors ${
+                                dot ? 'bg-green-500 border-green-500' : 'border-slate-300 hover:border-green-400'
+                              }`}
+                              title={dot ? `${dot.name} - ${fmtTimestamp(dot.at)}` : `Sign as ${role}`}
+                            />
+                            {dot && (
+                              <span className="text-[6px] text-green-600 leading-tight mt-0.5 text-center max-w-[40px] truncate" title={`${dot.name} ${fmtTimestamp(dot.at)}`}>
+                                {dot.name.split(' ')[0]}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </td>
+                  <td className="px-2 py-0.5">
+                    <button onClick={() => removeRow(i)} className="text-red-400 hover:text-red-600">×</button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
