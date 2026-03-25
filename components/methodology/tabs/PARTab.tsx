@@ -94,7 +94,8 @@ export function PARTab({ engagementId, userId, userName }: Props) {
   }
 
   // Build PAR rows from TB data, grouped by FS Statement → FS Level
-  function buildRowsFromTB(tbRows: TBRow[]): PARRow[] {
+  // Uses methodology admin sort order for proper financial statement ordering
+  function buildRowsFromTB(tbRows: TBRow[], fsOrder: Record<string, number> = {}): PARRow[] {
     // Group by fsStatement then fsLevel, summing amounts
     const groups: Record<string, Record<string, { cy: number; py: number }>> = {};
     for (const tb of tbRows) {
@@ -107,52 +108,42 @@ export function PARTab({ engagementId, userId, userName }: Props) {
     }
 
     const result: PARRow[] = [];
-    let sortOrder = 0;
+    let idx = 0;
 
-    for (const stmt of FS_STATEMENT_ORDER) {
-      const fsGroup = groups[stmt];
-      if (!fsGroup || Object.keys(fsGroup).length === 0) continue;
+    const makeSection = (stmt: string): PARRow => ({
+      id: `section-${stmt}`, particulars: stmt,
+      currentYear: null, priorYear: null, absVariance: null, absVariancePercent: null,
+      significantChange: '', sendMgt: { checked: false }, reasons: null, auditorView: null,
+      accepted: {}, sortOrder: idx++, fsStatement: stmt, isSection: true,
+    });
 
-      // Section header
-      result.push({
-        id: `section-${stmt}`, particulars: stmt,
-        currentYear: null, priorYear: null, absVariance: null, absVariancePercent: null,
-        significantChange: '', sendMgt: { checked: false }, reasons: null, auditorView: null,
-        accepted: {}, sortOrder: sortOrder++, fsStatement: stmt, isSection: true,
+    const makeLine = (level: string, amounts: { cy: number; py: number }, stmt: string): PARRow => ({
+      id: '', particulars: level,
+      currentYear: Math.round(amounts.cy * 100) / 100,
+      priorYear: Math.round(amounts.py * 100) / 100,
+      absVariance: null, absVariancePercent: null, significantChange: '',
+      sendMgt: { checked: false }, reasons: null, auditorView: null,
+      accepted: {}, sortOrder: idx++, fsStatement: stmt,
+    });
+
+    // Sort FS lines by methodology admin sortOrder, then alphabetically as fallback
+    function sortLines(entries: [string, { cy: number; py: number }][]): [string, { cy: number; py: number }][] {
+      return entries.sort(([a], [b]) => {
+        const orderA = fsOrder[a] ?? 9999;
+        const orderB = fsOrder[b] ?? 9999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.localeCompare(b);
       });
-
-      // FS line items within this statement
-      const lines = Object.entries(fsGroup).sort(([a], [b]) => a.localeCompare(b));
-      for (const [level, amounts] of lines) {
-        result.push({
-          id: '', particulars: level,
-          currentYear: Math.round(amounts.cy * 100) / 100,
-          priorYear: Math.round(amounts.py * 100) / 100,
-          absVariance: null, absVariancePercent: null, significantChange: '',
-          sendMgt: { checked: false }, reasons: null, auditorView: null,
-          accepted: {}, sortOrder: sortOrder++, fsStatement: stmt,
-        });
-      }
     }
 
-    // Any statements not in the standard order
-    for (const [stmt, fsGroup] of Object.entries(groups)) {
-      if (FS_STATEMENT_ORDER.includes(stmt)) continue;
-      result.push({
-        id: `section-${stmt}`, particulars: stmt,
-        currentYear: null, priorYear: null, absVariance: null, absVariancePercent: null,
-        significantChange: '', sendMgt: { checked: false }, reasons: null, auditorView: null,
-        accepted: {}, sortOrder: sortOrder++, fsStatement: stmt, isSection: true,
-      });
-      for (const [level, amounts] of Object.entries(fsGroup).sort(([a], [b]) => a.localeCompare(b))) {
-        result.push({
-          id: '', particulars: level,
-          currentYear: Math.round(amounts.cy * 100) / 100,
-          priorYear: Math.round(amounts.py * 100) / 100,
-          absVariance: null, absVariancePercent: null, significantChange: '',
-          sendMgt: { checked: false }, reasons: null, auditorView: null,
-          accepted: {}, sortOrder: sortOrder++, fsStatement: stmt,
-        });
+    // Process in standard FS order
+    const allStatements = [...FS_STATEMENT_ORDER, ...Object.keys(groups).filter(s => !FS_STATEMENT_ORDER.includes(s))];
+    for (const stmt of allStatements) {
+      const fsGroup = groups[stmt];
+      if (!fsGroup || Object.keys(fsGroup).length === 0) continue;
+      result.push(makeSection(stmt));
+      for (const [level, amounts] of sortLines(Object.entries(fsGroup))) {
+        result.push(makeLine(level, amounts, stmt));
       }
     }
 
@@ -161,11 +152,24 @@ export function PARTab({ engagementId, userId, userName }: Props) {
 
   const loadData = useCallback(async () => {
     try {
-      const [parRes, engRes, tbRes] = await Promise.all([
+      const [parRes, engRes, tbRes, fsLinesRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/par`),
         fetch(`/api/engagements/${engagementId}`),
         fetch(`/api/engagements/${engagementId}/trial-balance`),
+        fetch('/api/methodology-admin/fs-lines'),
       ]);
+
+      // Get FS line ordering from methodology admin
+      let fsLineOrder: Record<string, number> = {};
+      let fsLineCategories: Record<string, string> = {};
+      if (fsLinesRes.ok) {
+        const fsData = await fsLinesRes.json();
+        const fsLines = fsData.fsLines || [];
+        fsLines.forEach((fl: any, idx: number) => {
+          fsLineOrder[fl.name] = fl.sortOrder ?? idx;
+          fsLineCategories[fl.name] = fl.fsCategory || '';
+        });
+      }
 
       let existingRows: PARRow[] = [];
       if (parRes.ok) {
@@ -198,8 +202,8 @@ export function PARTab({ engagementId, userId, userName }: Props) {
 
       // Auto-populate from TB if PAR is empty, or refresh amounts from TB
       if (existingRows.length === 0 && tbRows.length > 0) {
-        // First time: build entirely from TB
-        const built = buildRowsFromTB(tbRows);
+        // First time: build entirely from TB with methodology ordering
+        const built = buildRowsFromTB(tbRows, fsLineOrder);
         setRows(built);
         setInitialRows(built);
       } else if (existingRows.length > 0 && tbRows.length > 0) {
