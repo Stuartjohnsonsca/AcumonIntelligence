@@ -505,7 +505,7 @@ export function PARTab({ engagementId, userId, userName }: Props) {
                     <div className="flex items-start gap-1.5 justify-center">
                       {(['operator', 'reviewer', 'partner'] as const).map(role => {
                         const dot = acc[role];
-                        const label = role === 'operator' ? 'Op' : role === 'reviewer' ? 'Rv' : 'Pt';
+                        const label = role === 'operator' ? 'Pr' : role === 'reviewer' ? 'Rv' : 'Pt';
                         return (
                           <div key={role} className="flex flex-col items-center">
                             <span className="text-[7px] text-slate-400 leading-none mb-0.5">{label}</span>

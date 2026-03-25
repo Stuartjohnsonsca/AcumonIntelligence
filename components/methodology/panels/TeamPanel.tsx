@@ -18,7 +18,7 @@ interface Props {
 }
 
 const TEAM_ROLES = [
-  { value: 'Junior', label: 'Operative' },
+  { value: 'Junior', label: 'Preparer' },
   { value: 'Manager', label: 'Reviewer' },
   { value: 'RI', label: 'Partner' },
 ] as const;
@@ -63,7 +63,7 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
     setTeamMembers(prev => [...prev, {
       id: '',
       userId,
-      role: 'Junior', // stored as Junior internally, displayed as Operator
+      role: 'Junior', // stored as Junior internally, displayed as Preparer
       userName: user.name,
       userEmail: user.email,
     }]);

@@ -49,7 +49,7 @@ export function useSignOff() {
 const ROLE_MAP: Record<string, string> = { Junior: 'operator', Manager: 'reviewer', RI: 'partner' };
 
 const SIGN_OFF_ROLES = [
-  { key: 'operator' as const, label: 'Operative' },
+  { key: 'operator' as const, label: 'Preparer' },
   { key: 'reviewer' as const, label: 'Reviewer' },
   { key: 'partner' as const, label: 'Partner' },
 ];

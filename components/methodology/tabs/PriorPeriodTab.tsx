@@ -267,7 +267,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                           const can = canSignAs(role);
                           return (
                             <div key={role} className="flex flex-col items-center">
-                              <span className="text-[7px] text-slate-400 mb-0.5">{role === 'operator' ? 'O' : role === 'reviewer' ? 'R' : 'P'}</span>
+                              <span className="text-[7px] text-slate-400 mb-0.5">{role === 'operator' ? 'Pr' : role === 'reviewer' ? 'Rv' : 'Pt'}</span>
                               <button onClick={() => can && signOffPoint(doc.key, idx, role)} disabled={!can}
                                 className={`w-3.5 h-3.5 rounded-full border-2 transition-all ${
                                   so ? 'bg-green-500 border-green-500' : can ? 'bg-white border-slate-300 hover:border-blue-400' : 'bg-white border-slate-200 opacity-40'
@@ -301,7 +301,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
             {/* 3 approval dots at heading level */}
             {(['operator', 'reviewer', 'partner'] as const).map(role => (
               <div key={role} className="flex flex-col items-center">
-                <span className="text-[8px] text-slate-500">{role === 'operator' ? 'Operative' : role === 'reviewer' ? 'Reviewer' : 'Partner'}</span>
+                <span className="text-[8px] text-slate-500">{role === 'operator' ? 'Preparer' : role === 'reviewer' ? 'Reviewer' : 'Partner'}</span>
                 <div className="w-4 h-4 rounded-full border-2 bg-white border-slate-300" />
               </div>
             ))}
