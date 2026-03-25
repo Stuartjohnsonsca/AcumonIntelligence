@@ -18,7 +18,7 @@ interface Props {
 }
 
 const TEAM_ROLES = [
-  { value: 'Junior', label: 'Operator' },
+  { value: 'Junior', label: 'Operative' },
   { value: 'Manager', label: 'Reviewer' },
   { value: 'RI', label: 'Partner' },
 ] as const;
