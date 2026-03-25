@@ -37,7 +37,18 @@ interface PARRow {
   auditorView: string | null;
   accepted: AcceptedDots;
   sortOrder: number;
+  fsStatement?: string; // P&L | Balance Sheet | Cashflow
+  isSection?: boolean;  // section header row (not editable)
 }
+
+interface TBRow {
+  fsLevel: string | null;
+  fsStatement: string | null;
+  currentYear: number | null;
+  priorYear: number | null;
+}
+
+const FS_STATEMENT_ORDER = ['P&L', 'Balance Sheet', 'Cashflow', 'Notes'];
 
 function formatDate(d: Date | string | null | undefined): string {
   if (!d) return '';
@@ -70,33 +81,144 @@ export function PARTab({ engagementId, userId, userName }: Props) {
     { enabled: JSON.stringify(rows) !== JSON.stringify(initialRows) }
   );
 
+  // Build a flat summary from TB: fsLevel → { cy, py }
+  function buildTBSummary(tbRows: TBRow[]): Record<string, { cy: number; py: number }> {
+    const summary: Record<string, { cy: number; py: number }> = {};
+    for (const tb of tbRows) {
+      const level = tb.fsLevel || tb.fsStatement || 'Unclassified';
+      if (!summary[level]) summary[level] = { cy: 0, py: 0 };
+      summary[level].cy += tb.currentYear ?? 0;
+      summary[level].py += tb.priorYear ?? 0;
+    }
+    return summary;
+  }
+
+  // Build PAR rows from TB data, grouped by FS Statement → FS Level
+  function buildRowsFromTB(tbRows: TBRow[]): PARRow[] {
+    // Group by fsStatement then fsLevel, summing amounts
+    const groups: Record<string, Record<string, { cy: number; py: number }>> = {};
+    for (const tb of tbRows) {
+      const stmt = tb.fsStatement || 'Other';
+      const level = tb.fsLevel || tb.fsStatement || 'Unclassified';
+      if (!groups[stmt]) groups[stmt] = {};
+      if (!groups[stmt][level]) groups[stmt][level] = { cy: 0, py: 0 };
+      groups[stmt][level].cy += tb.currentYear ?? 0;
+      groups[stmt][level].py += tb.priorYear ?? 0;
+    }
+
+    const result: PARRow[] = [];
+    let sortOrder = 0;
+
+    for (const stmt of FS_STATEMENT_ORDER) {
+      const fsGroup = groups[stmt];
+      if (!fsGroup || Object.keys(fsGroup).length === 0) continue;
+
+      // Section header
+      result.push({
+        id: `section-${stmt}`, particulars: stmt,
+        currentYear: null, priorYear: null, absVariance: null, absVariancePercent: null,
+        significantChange: '', sendMgt: { checked: false }, reasons: null, auditorView: null,
+        accepted: {}, sortOrder: sortOrder++, fsStatement: stmt, isSection: true,
+      });
+
+      // FS line items within this statement
+      const lines = Object.entries(fsGroup).sort(([a], [b]) => a.localeCompare(b));
+      for (const [level, amounts] of lines) {
+        result.push({
+          id: '', particulars: level,
+          currentYear: Math.round(amounts.cy * 100) / 100,
+          priorYear: Math.round(amounts.py * 100) / 100,
+          absVariance: null, absVariancePercent: null, significantChange: '',
+          sendMgt: { checked: false }, reasons: null, auditorView: null,
+          accepted: {}, sortOrder: sortOrder++, fsStatement: stmt,
+        });
+      }
+    }
+
+    // Any statements not in the standard order
+    for (const [stmt, fsGroup] of Object.entries(groups)) {
+      if (FS_STATEMENT_ORDER.includes(stmt)) continue;
+      result.push({
+        id: `section-${stmt}`, particulars: stmt,
+        currentYear: null, priorYear: null, absVariance: null, absVariancePercent: null,
+        significantChange: '', sendMgt: { checked: false }, reasons: null, auditorView: null,
+        accepted: {}, sortOrder: sortOrder++, fsStatement: stmt, isSection: true,
+      });
+      for (const [level, amounts] of Object.entries(fsGroup).sort(([a], [b]) => a.localeCompare(b))) {
+        result.push({
+          id: '', particulars: level,
+          currentYear: Math.round(amounts.cy * 100) / 100,
+          priorYear: Math.round(amounts.py * 100) / 100,
+          absVariance: null, absVariancePercent: null, significantChange: '',
+          sendMgt: { checked: false }, reasons: null, auditorView: null,
+          accepted: {}, sortOrder: sortOrder++, fsStatement: stmt,
+        });
+      }
+    }
+
+    return result;
+  }
+
   const loadData = useCallback(async () => {
     try {
-      const [parRes, engRes] = await Promise.all([
+      const [parRes, engRes, tbRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/par`),
         fetch(`/api/engagements/${engagementId}`),
+        fetch(`/api/engagements/${engagementId}/trial-balance`),
       ]);
+
+      let existingRows: PARRow[] = [];
       if (parRes.ok) {
         const json = await parRes.json();
-        const loadedRows = (json.rows || []).map((r: any) => ({
+        existingRows = (json.rows || []).map((r: any) => ({
           ...r,
           sendMgt: r.sendMgt || { checked: false },
           accepted: r.accepted || {},
         }));
-        setRows(loadedRows);
-        setInitialRows(loadedRows);
         if (json.absVarThreshold != null) setAbsVarThreshold(json.absVarThreshold);
       }
+
+      // Load TB data for auto-population
+      let tbRows: TBRow[] = [];
+      if (tbRes.ok) {
+        const tbJson = await tbRes.json();
+        tbRows = (tbJson.rows || []).filter((r: any) => r.fsLevel || r.fsStatement);
+      }
+
       if (engRes.ok) {
         const eng = await engRes.json();
         const period = eng.period || eng.engagement?.period;
         if (period) {
           setPeriodEnd(formatDate(period.endDate));
-          // Period Start - 1 day
           const start = new Date(period.startDate);
           start.setDate(start.getDate() - 1);
           setPeriodStartMinus1(formatDate(start));
         }
+      }
+
+      // Auto-populate from TB if PAR is empty, or refresh amounts from TB
+      if (existingRows.length === 0 && tbRows.length > 0) {
+        // First time: build entirely from TB
+        const built = buildRowsFromTB(tbRows);
+        setRows(built);
+        setInitialRows(built);
+      } else if (existingRows.length > 0 && tbRows.length > 0) {
+        // Update existing rows' CY/PY from TB (keep user edits to other fields)
+        const tbSummary = buildTBSummary(tbRows);
+        const updated = existingRows.map(r => {
+          if (r.isSection) return r;
+          const key = r.particulars;
+          const tbData = tbSummary[key];
+          if (tbData) {
+            return { ...r, currentYear: Math.round(tbData.cy * 100) / 100, priorYear: Math.round(tbData.py * 100) / 100 };
+          }
+          return r;
+        });
+        setRows(updated);
+        setInitialRows(updated);
+      } else {
+        setRows(existingRows);
+        setInitialRows(existingRows);
       }
     } catch (err) { console.error('Failed to load:', err); }
     finally { setLoading(false); }
@@ -283,6 +405,18 @@ export function PARTab({ engagementId, userId, userName }: Props) {
             {computedRows.length === 0 ? (
               <tr><td colSpan={11} className="text-center py-8 text-slate-400 italic">No PAR rows. Click &quot;+ Add Row&quot; or populate from Trial Balance.</td></tr>
             ) : computedRows.map((row, i) => {
+              // Section header row
+              if (row.isSection) {
+                const sectionColor = row.particulars === 'P&L' ? 'bg-green-50 text-green-800' :
+                  row.particulars === 'Balance Sheet' ? 'bg-blue-50 text-blue-800' :
+                  row.particulars === 'Cashflow' ? 'bg-purple-50 text-purple-800' :
+                  'bg-slate-100 text-slate-700';
+                return (
+                  <tr key={`section-${row.particulars}`} className={`${sectionColor} border-b border-slate-200`}>
+                    <td colSpan={11} className="px-3 py-1.5 font-semibold text-xs tracking-wide uppercase">{row.particulars}</td>
+                  </tr>
+                );
+              }
               const mgt = row.sendMgt || { checked: false };
               const acc = row.accepted || {};
               return (
