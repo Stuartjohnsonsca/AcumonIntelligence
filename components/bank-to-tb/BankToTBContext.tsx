@@ -78,6 +78,7 @@ export interface BankToTBState {
   sessionId: string | null;
   clientId: string | null;
   periodId: string | null;
+  accountingFramework: string | null;
   activeView: 'bank-transactions' | 'trial-balance';
   activeAccountTab: string | null;
   files: BTBFile[];
@@ -115,12 +116,14 @@ type Action =
   | { type: 'SET_BALANCE_ERRORS'; payload: { type: string; message: string }[] }
   | { type: 'SET_MULTI_ACCOUNTS'; payload: boolean }
   | { type: 'SET_OUT_OF_PERIOD'; payload: boolean }
+  | { type: 'SET_FRAMEWORK'; payload: string | null }
   | { type: 'RESET' };
 
 const initialState: BankToTBState = {
   sessionId: null,
   clientId: null,
   periodId: null,
+  accountingFramework: null,
   activeView: 'bank-transactions',
   activeAccountTab: null,
   files: [],
@@ -186,6 +189,8 @@ function reducer(state: BankToTBState, action: Action): BankToTBState {
       return { ...state, hasMultipleAccounts: action.payload };
     case 'SET_OUT_OF_PERIOD':
       return { ...state, hasOutOfPeriodTxns: action.payload };
+    case 'SET_FRAMEWORK':
+      return { ...state, accountingFramework: action.payload };
     case 'RESET':
       return initialState;
     default:

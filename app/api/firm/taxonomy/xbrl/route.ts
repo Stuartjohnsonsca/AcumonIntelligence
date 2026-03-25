@@ -100,10 +100,15 @@ export async function GET(req: Request) {
       }
 
       case 'search': {
-        const taxonomyId = parseInt(searchParams.get('taxonomyId') || '0');
+        let taxonomyId = parseInt(searchParams.get('taxonomyId') || '0');
+        const framework = searchParams.get('framework');
         const query = searchParams.get('q') || '';
+        // Resolve framework to taxonomyId if not provided directly
+        if (!taxonomyId && framework) {
+          taxonomyId = getTaxonomyIdForFramework(framework) || 0;
+        }
         if (!taxonomyId || !query) {
-          return NextResponse.json({ error: 'taxonomyId and q parameters required' }, { status: 400 });
+          return NextResponse.json({ error: 'taxonomyId (or framework) and q parameters required' }, { status: 400 });
         }
         const concepts = await searchConcepts(taxonomyId, query);
         return NextResponse.json({

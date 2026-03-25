@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { X, Plus, Loader2 } from 'lucide-react';
 import { useBankToTB, type BTBJournal } from './BankToTBContext';
+import { TaxonomyAutocomplete } from './TaxonomyAutocomplete';
 
 interface Props {
   isOpen: boolean;
@@ -272,18 +273,14 @@ export function JournalPopup({ isOpen, onClose, category, chartOfAccounts, sessi
                   {lines.map((line, i) => (
                     <tr key={i} className="border-b">
                       <td className="px-1 py-1">
-                        <select
+                        <TaxonomyAutocomplete
                           value={line.accountCode}
-                          onChange={e => handleAccountSelect(i, e.target.value)}
+                          onSelect={(code, name) => handleAccountSelect(i, code)}
+                          framework={state.accountingFramework}
+                          chartOfAccounts={chartOfAccounts}
+                          placeholder="Type account code or name..."
                           className="w-full border border-slate-200 rounded px-1 py-1 text-xs"
-                        >
-                          <option value="">Select...</option>
-                          {chartOfAccounts.map(a => (
-                            <option key={a.accountCode} value={a.accountCode}>
-                              {a.accountCode} - {a.accountName}
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </td>
                       <td className="px-1 py-1">
                         <input

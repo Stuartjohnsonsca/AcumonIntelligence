@@ -79,6 +79,21 @@ function BankToTBInner({ assignedClients, chartOfAccounts, userId }: {
           <div className="flex-1">
             <ClientPeriodSelector clients={assignedClients} />
           </div>
+          {/* Accounting Framework selector */}
+          <div className="px-3 border-l border-slate-200">
+            <label className="text-[10px] text-slate-400 block leading-none mb-0.5">Framework</label>
+            <select
+              value={state.accountingFramework || ''}
+              onChange={e => dispatch({ type: 'SET_FRAMEWORK', payload: e.target.value || null })}
+              className="text-xs border border-slate-200 rounded px-2 py-1 bg-white text-slate-700 w-28"
+            >
+              <option value="">Select...</option>
+              <option value="IFRS">IFRS</option>
+              <option value="FRS102">FRS 102</option>
+              <option value="FRS101">FRS 101</option>
+              <option value="Charities">Charities</option>
+            </select>
+          </div>
           {/* Always-visible Reset button when session is active */}
           {state.sessionId && (
             <div className="pr-4">
