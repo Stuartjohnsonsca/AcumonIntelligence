@@ -127,22 +127,32 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
     }
   }
 
-  async function moveRow(index: number, direction: 'up' | 'down') {
-    if (sortBy !== 'order') return; // Only allow reorder in manual order mode
+  function moveRow(index: number, direction: 'up' | 'down') {
+    if (sortBy !== 'order') return;
     const nonMandatory = fsLines.filter(f => !f.isMandatory);
     const newIndex = direction === 'up' ? index - 1 : index + 1;
     if (newIndex < 0 || newIndex >= nonMandatory.length) return;
+
+    // Swap immediately in state
     const reordered = [...nonMandatory];
     [reordered[index], reordered[newIndex]] = [reordered[newIndex], reordered[index]];
-    // Rebuild full list: mandatory first, then reordered non-mandatory
+    const withOrder = reordered.map((line, i) => ({ ...line, sortOrder: i }));
     const mandatory = fsLines.filter(f => f.isMandatory);
-    const updated = [...mandatory, ...reordered.map((line, i) => ({ ...line, sortOrder: i }))];
-    setFsLines(updated);
-    // Save both changed rows
-    await Promise.all([
-      updateFsLine(reordered[index].id, { sortOrder: index } as any),
-      updateFsLine(reordered[newIndex].id, { sortOrder: newIndex } as any),
-    ]);
+    setFsLines([...mandatory, ...withOrder]);
+
+    // Fire-and-forget API saves (don't await, don't update state from response)
+    const id1 = withOrder[index].id;
+    const id2 = withOrder[newIndex].id;
+    fetch('/api/methodology-admin/fs-lines', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id1, sortOrder: index }),
+    }).catch(() => {});
+    fetch('/api/methodology-admin/fs-lines', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id2, sortOrder: newIndex }),
+    }).catch(() => {});
   }
 
   function startEdit(line: FsLine) {
