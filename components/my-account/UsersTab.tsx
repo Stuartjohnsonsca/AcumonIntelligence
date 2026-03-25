@@ -58,6 +58,7 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
   const [syncPreview, setSyncPreview] = useState<SyncPreview | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<{ created: number; updated: number; deactivated: number } | null>(null);
+  const [excludedEmails, setExcludedEmails] = useState<Set<string>>(new Set());
   const [showUnchanged, setShowUnchanged] = useState(false);
 
   async function loadUsers() {
@@ -105,6 +106,7 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
       }
       const data: SyncPreview = await res.json();
       setSyncPreview(data);
+      setExcludedEmails(new Set());
     } catch (err: any) {
       setSyncError(err.message || 'Failed to fetch AD users');
     } finally {
@@ -112,12 +114,25 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
     }
   }
 
+  function toggleExclude(email: string) {
+    setExcludedEmails(prev => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email);
+      else next.add(email);
+      return next;
+    });
+  }
+
   async function handleSyncExecute() {
     setSyncing(true);
     setSyncError(null);
 
     try {
-      const res = await fetch('/api/users/sync-ad', { method: 'POST' });
+      const res = await fetch('/api/users/sync-ad', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ excludeEmails: Array.from(excludedEmails) }),
+      });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || `HTTP ${res.status}`);
@@ -210,42 +225,56 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
           <CardContent>
             <div className="space-y-1 max-h-80 overflow-y-auto">
               {/* Create */}
-              {syncPreview.actions.filter(a => a.action === 'create').map((a, i) => (
-                <div key={`c-${i}`} className="flex items-center gap-3 px-3 py-2 bg-green-50 border border-green-100 rounded text-sm">
-                  <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
-                  <span className="font-medium text-green-800">{a.name}</span>
-                  <span className="text-green-600 text-xs">{a.email}</span>
-                  {a.jobTitle && <span className="text-green-500 text-xs">• {a.jobTitle}</span>}
-                  {a.department && <span className="text-green-500 text-xs">• {a.department}</span>}
-                  <span className="ml-auto text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">New</span>
-                </div>
-              ))}
+              {syncPreview.actions.filter(a => a.action === 'create').map((a, i) => {
+                const excluded = excludedEmails.has(a.email);
+                return (
+                  <div key={`c-${i}`} className={`flex items-center gap-3 px-3 py-2 border rounded text-sm ${excluded ? 'bg-slate-50 border-slate-200 opacity-50' : 'bg-green-50 border-green-100'}`}>
+                    <input type="checkbox" checked={!excluded} onChange={() => toggleExclude(a.email)}
+                      className="w-4 h-4 rounded border-slate-300 text-green-600 focus:ring-green-400 flex-shrink-0" />
+                    <span className={`font-medium ${excluded ? 'text-slate-500 line-through' : 'text-green-800'}`}>{a.name}</span>
+                    <span className={`text-xs ${excluded ? 'text-slate-400' : 'text-green-600'}`}>{a.email}</span>
+                    {a.jobTitle && <span className="text-green-500 text-xs">• {a.jobTitle}</span>}
+                    {a.department && <span className="text-green-500 text-xs">• {a.department}</span>}
+                    <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${excluded ? 'bg-slate-100 text-slate-500' : 'bg-green-100 text-green-700'}`}>{excluded ? 'Skipped' : 'New'}</span>
+                  </div>
+                );
+              })}
 
               {/* Update */}
-              {syncPreview.actions.filter(a => a.action === 'update').map((a, i) => (
-                <div key={`u-${i}`} className="flex items-center gap-3 px-3 py-2 bg-amber-50 border border-amber-100 rounded text-sm">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                  <span className="font-medium text-amber-800">{a.name}</span>
-                  <span className="text-amber-600 text-xs">{a.email}</span>
-                  <div className="ml-auto flex gap-1">
-                    {a.changes && Object.entries(a.changes).map(([field, val]) => (
-                      <span key={field} className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
-                        {field}: {val.from || '—'} → {val.to || '—'}
-                      </span>
-                    ))}
+              {syncPreview.actions.filter(a => a.action === 'update').map((a, i) => {
+                const excluded = excludedEmails.has(a.email);
+                return (
+                  <div key={`u-${i}`} className={`flex items-center gap-3 px-3 py-2 border rounded text-sm ${excluded ? 'bg-slate-50 border-slate-200 opacity-50' : 'bg-amber-50 border-amber-100'}`}>
+                    <input type="checkbox" checked={!excluded} onChange={() => toggleExclude(a.email)}
+                      className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-400 flex-shrink-0" />
+                    <span className={`font-medium ${excluded ? 'text-slate-500 line-through' : 'text-amber-800'}`}>{a.name}</span>
+                    <span className={`text-xs ${excluded ? 'text-slate-400' : 'text-amber-600'}`}>{a.email}</span>
+                    <div className="ml-auto flex gap-1">
+                      {!excluded && a.changes && Object.entries(a.changes).map(([field, val]) => (
+                        <span key={field} className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                          {field}: {val.from || '—'} → {val.to || '—'}
+                        </span>
+                      ))}
+                      {excluded && <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">Skipped</span>}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {/* Deactivate */}
-              {syncPreview.actions.filter(a => a.action === 'deactivate').map((a, i) => (
-                <div key={`d-${i}`} className="flex items-center gap-3 px-3 py-2 bg-red-50 border border-red-100 rounded text-sm">
-                  <MinusCircle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
-                  <span className="font-medium text-red-800">{a.name}</span>
-                  <span className="text-red-600 text-xs">{a.email}</span>
-                  <span className="ml-auto text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Deactivate</span>
-                </div>
-              ))}
+              {syncPreview.actions.filter(a => a.action === 'deactivate').map((a, i) => {
+                const excluded = excludedEmails.has(a.email);
+                return (
+                  <div key={`d-${i}`} className={`flex items-center gap-3 px-3 py-2 border rounded text-sm ${excluded ? 'bg-slate-50 border-slate-200 opacity-50' : 'bg-red-50 border-red-100'}`}>
+                    <input type="checkbox" checked={!excluded} onChange={() => toggleExclude(a.email)}
+                      className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-400 flex-shrink-0" />
+                    {!excluded && <MinusCircle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />}
+                    <span className={`font-medium ${excluded ? 'text-slate-500 line-through' : 'text-red-800'}`}>{a.name}</span>
+                    <span className={`text-xs ${excluded ? 'text-slate-400' : 'text-red-600'}`}>{a.email}</span>
+                    <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${excluded ? 'bg-slate-100 text-slate-500' : 'bg-red-100 text-red-700'}`}>{excluded ? 'Skipped' : 'Deactivate'}</span>
+                  </div>
+                );
+              })}
 
               {/* Unchanged (collapsed) */}
               {syncPreview.summary.unchanged > 0 && (

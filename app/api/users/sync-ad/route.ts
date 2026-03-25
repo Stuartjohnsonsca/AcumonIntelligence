@@ -169,7 +169,7 @@ export async function GET() {
 }
 
 // POST — Execute sync
-export async function POST() {
+export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -179,7 +179,21 @@ export async function POST() {
   }
 
   try {
-    const actions = await computeSyncActions(session.user.firmId);
+    // Parse exclusions from request body
+    let excludeEmails: Set<string> = new Set();
+    try {
+      const body = await req.json();
+      if (body.excludeEmails && Array.isArray(body.excludeEmails)) {
+        excludeEmails = new Set(body.excludeEmails.map((e: string) => e.toLowerCase()));
+      }
+    } catch { /* no body or invalid JSON — proceed without exclusions */ }
+
+    const allActions = await computeSyncActions(session.user.firmId);
+    // Filter out excluded users
+    const actions = allActions.filter(a => {
+      const email = (a.adUser.mail || a.adUser.userPrincipalName || '').toLowerCase();
+      return !excludeEmails.has(email);
+    });
     const firmId = session.user.firmId;
     const now = new Date();
 

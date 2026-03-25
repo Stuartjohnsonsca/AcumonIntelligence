@@ -110,12 +110,14 @@ export async function fetchAllADUsers(): Promise<ADUser[]> {
     url = data['@odata.nextLink'] || null;
   }
 
-  return allUsers;
+  // Filter out disabled accounts
+  return allUsers.filter(u => u.accountEnabled !== false);
 }
 
 /**
  * Fetch filtered AD users: Audit department + specific named users.
  * This is the primary sync function — only imports relevant users.
+ * Only returns enabled (active) accounts.
  */
 export async function fetchAuditDeptUsers(additionalEmails?: string[]): Promise<ADUser[]> {
   const allUsers = await fetchAllADUsers();
