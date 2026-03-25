@@ -7,7 +7,7 @@ import { ClientsTab } from './ClientsTab';
 import { SubscriptionsTab } from './SubscriptionsTab';
 import { AiUsageTab } from './AiUsageTab';
 import { FirmSettingsTab } from './FirmSettingsTab';
-import { Shield, BookOpen } from 'lucide-react';
+import { Shield, BookOpen, Keyboard } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 
@@ -51,6 +51,16 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
           </Button>
         </div>
       )}
+
+      <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          <Keyboard className="h-5 w-5 text-slate-600" />
+          <span className="text-sm font-medium text-slate-700">Keyboard Shortcuts Reference</span>
+        </div>
+        <Button asChild size="sm" variant="outline">
+          <Link href="/my-account/keyboard-shortcuts">View Shortcuts</Link>
+        </Button>
+      </div>
 
       <Tabs defaultValue={defaultTab} className="w-full">
         <TabsList className="mb-6">
