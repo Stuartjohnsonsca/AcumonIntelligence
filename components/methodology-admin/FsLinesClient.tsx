@@ -51,21 +51,32 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
   const [editName, setEditName] = useState('');
   const [editLineType, setEditLineType] = useState('');
   const [editCategory, setEditCategory] = useState('');
-  const [sortBy, setSortBy] = useState<'order' | 'category'>('order');
-
   const sortedNonMandatory = useMemo(() => {
-    const items = fsLines.filter(f => !f.isMandatory);
-    if (sortBy === 'category') {
-      const catOrder: Record<string, number> = { pnl: 0, balance_sheet: 1, cashflow: 2, notes: 3 };
-      return [...items].sort((a, b) => {
-        const ca = catOrder[a.fsCategory] ?? 99;
-        const cb = catOrder[b.fsCategory] ?? 99;
-        if (ca !== cb) return ca - cb;
-        return a.sortOrder - b.sortOrder;
-      });
-    }
-    return items;
-  }, [fsLines, sortBy]);
+    return fsLines.filter(f => !f.isMandatory);
+  }, [fsLines]);
+
+  function sortByCategory() {
+    const nonMandatory = fsLines.filter(f => !f.isMandatory);
+    const catOrder: Record<string, number> = { pnl: 0, balance_sheet: 1, cashflow: 2, notes: 3 };
+    const sorted = [...nonMandatory].sort((a, b) => {
+      const ca = catOrder[a.fsCategory] ?? 99;
+      const cb = catOrder[b.fsCategory] ?? 99;
+      if (ca !== cb) return ca - cb;
+      return a.sortOrder - b.sortOrder;
+    });
+    // Renumber and save
+    const withOrder = sorted.map((line, i) => ({ ...line, sortOrder: i }));
+    const mandatory = fsLines.filter(f => f.isMandatory);
+    setFsLines([...mandatory, ...withOrder]);
+    // Fire-and-forget save all new sort orders
+    withOrder.forEach(line => {
+      fetch('/api/methodology-admin/fs-lines', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: line.id, sortOrder: line.sortOrder }),
+      }).catch(() => {});
+    });
+  }
 
   async function addFsLine() {
     if (!newName.trim()) return;
@@ -128,19 +139,15 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
   }
 
   function moveRow(index: number, direction: 'up' | 'down') {
-    // Use the currently displayed list (which may be sorted by category)
-    const displayed = sortBy === 'category' ? sortedNonMandatory : fsLines.filter(f => !f.isMandatory);
+    const nonMandatory = fsLines.filter(f => !f.isMandatory);
     const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= displayed.length) return;
+    if (newIndex < 0 || newIndex >= nonMandatory.length) return;
 
-    // Swap in the displayed order
-    const reordered = [...displayed];
+    const reordered = [...nonMandatory];
     [reordered[index], reordered[newIndex]] = [reordered[newIndex], reordered[index]];
     const withOrder = reordered.map((line, i) => ({ ...line, sortOrder: i }));
     const mandatory = fsLines.filter(f => f.isMandatory);
     setFsLines([...mandatory, ...withOrder]);
-    // Switch to manual order mode so the new order sticks
-    if (sortBy !== 'order') setSortBy('order');
 
     // Fire-and-forget API saves (don't await, don't update state from response)
     const id1 = withOrder[index].id;
@@ -258,13 +265,11 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 <th className="text-left px-4 py-2.5 text-slate-600 font-semibold">Name</th>
                 <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">Type</th>
                 <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">
-                  <button onClick={() => setSortBy(prev => prev === 'category' ? 'order' : 'category')}
+                  <button onClick={sortByCategory}
                     className="flex items-center gap-1 hover:text-blue-600 transition-colors"
-                    title={sortBy === 'category' ? 'Sorted by category — click for manual order' : 'Click to sort by category'}>
+                    title="Sort by FS Category (P&L → Balance Sheet → Cashflow → Notes) and renumber">
                     FS Category
-                    <span className={`text-[10px] ${sortBy === 'category' ? 'text-blue-500' : 'text-slate-400'}`}>
-                      {sortBy === 'category' ? '▼' : '⇅'}
-                    </span>
+                    <span className="text-[10px] text-slate-400">⇅</span>
                   </button>
                 </th>
                 <th className="text-center px-4 py-2.5 text-slate-600 font-semibold w-24">Industries</th>
