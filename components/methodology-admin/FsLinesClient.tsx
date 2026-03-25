@@ -112,6 +112,21 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
     }
   }
 
+  async function moveRow(index: number, direction: 'up' | 'down') {
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= fsLines.length) return;
+    const reordered = [...fsLines];
+    [reordered[index], reordered[newIndex]] = [reordered[newIndex], reordered[index]];
+    // Update sort orders
+    const updates = reordered.map((line, i) => ({ ...line, sortOrder: i }));
+    setFsLines(updates);
+    // Save both changed rows
+    await Promise.all([
+      updateFsLine(updates[index].id, { sortOrder: index } as any),
+      updateFsLine(updates[newIndex].id, { sortOrder: newIndex } as any),
+    ]);
+  }
+
   function startEdit(line: FsLine) {
     setEditingId(line.id);
     setEditName(line.name);
@@ -185,6 +200,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-100 border-b border-slate-200">
+                <th className="text-center px-2 py-2.5 text-slate-600 font-semibold w-12">Order</th>
                 <th className="text-left px-4 py-2.5 text-slate-600 font-semibold">Name</th>
                 <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">Type</th>
                 <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">FS Category</th>
@@ -197,6 +213,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 <tr key={line.id} className={`border-b border-slate-100 ${!line.isActive ? 'opacity-40' : ''} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
                   {editingId === line.id ? (
                     <>
+                      <td className="text-center px-2 py-2 text-slate-400 text-xs">{idx + 1}</td>
                       <td className="px-4 py-2">
                         <input value={editName} onChange={e => setEditName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveEdit()}
                           className="w-full border border-blue-300 rounded px-2 py-1 text-sm" autoFocus />
@@ -223,6 +240,15 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                     </>
                   ) : (
                     <>
+                      <td className="text-center px-2 py-2.5">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <button onClick={() => moveRow(idx, 'up')} disabled={idx === 0}
+                            className="text-slate-400 hover:text-blue-600 disabled:opacity-20 text-[10px] leading-none">▲</button>
+                          <span className="text-[10px] text-slate-400">{idx + 1}</span>
+                          <button onClick={() => moveRow(idx, 'down')} disabled={idx === fsLines.length - 1}
+                            className="text-slate-400 hover:text-blue-600 disabled:opacity-20 text-[10px] leading-none">▼</button>
+                        </div>
+                      </td>
                       <td className="px-4 py-2.5 text-slate-800 font-medium">
                         {line.name}
                         {line.isMandatory && <span className="ml-2 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Mandatory</span>}
@@ -252,7 +278,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 </tr>
               ))}
               {fsLines.length === 0 && (
-                <tr><td colSpan={5} className="text-center py-8 text-slate-400 italic">No FS lines defined. Click &quot;+ Add FS Line&quot; to start.</td></tr>
+                <tr><td colSpan={6} className="text-center py-8 text-slate-400 italic">No FS lines defined. Click &quot;+ Add FS Line&quot; to start.</td></tr>
               )}
             </tbody>
           </table>
