@@ -22,6 +22,7 @@ interface Props {
   auditType: AuditType;
   clientName: string;
   periodEndDate: string | null;
+  periodStartDate: string | null;
   currentUserId: string;
 }
 
@@ -82,7 +83,7 @@ const TAB_TO_SCHEDULE: Record<string, string> = {
 
 type TabKey = typeof TABS[number]['key'];
 
-export function EngagementTabs({ engagement, auditType, clientName, periodEndDate, currentUserId }: Props) {
+export function EngagementTabs({ engagement, auditType, clientName, periodEndDate, periodStartDate, currentUserId }: Props) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const initialTab = (searchParams.get('tab') as TabKey) || 'opening';
@@ -140,7 +141,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'continuance':
         return <ContinuanceTab engagementId={engagement.id} />;
       case 'tb':
-        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} onShowCategoryChange={setTbShowCategory} />;
+        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} onShowCategoryChange={setTbShowCategory} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />;
       case 'materiality':
         return <MaterialityTab engagementId={engagement.id} />;
       case 'par':

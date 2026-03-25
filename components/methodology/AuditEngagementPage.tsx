@@ -129,7 +129,9 @@ export function AuditEngagementPage({ auditType }: Props) {
   }
 
   const isActive = engagement?.status !== 'pre_start';
-  const periodEndDate = engagement ? (engagement as EngagementData & { period?: { endDate: string } }).period?.endDate || null : null;
+  const engPeriod = (engagement as EngagementData & { period?: { startDate: string; endDate: string } })?.period;
+  const periodEndDate = engPeriod?.endDate || null;
+  const periodStartDate = engPeriod?.startDate || null;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -276,6 +278,7 @@ export function AuditEngagementPage({ auditType }: Props) {
             auditType={auditType}
             clientName={clientName}
             periodEndDate={periodEndDate}
+            periodStartDate={periodStartDate}
             currentUserId={session?.user?.id || ''}
           />
         )}

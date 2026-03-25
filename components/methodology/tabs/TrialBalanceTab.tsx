@@ -8,6 +8,23 @@ interface Props {
   isGroupAudit?: boolean;
   showCategory?: boolean;
   onShowCategoryChange?: (show: boolean) => void;
+  periodEndDate?: string | null;
+  periodStartDate?: string | null;
+}
+
+function formatDateDDMMYYYY(dateStr: string | null | undefined): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function dayBefore(dateStr: string | null | undefined): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() - 1);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 interface TBRow {
@@ -24,7 +41,7 @@ interface TBRow {
   sortOrder: number;
 }
 
-export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCategory: initialShowCategory = true, onShowCategoryChange }: Props) {
+export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCategory: initialShowCategory = true, onShowCategoryChange, periodEndDate, periodStartDate }: Props) {
   const [rows, setRows] = useState<TBRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
@@ -97,8 +114,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-24">Account Code</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-48">Description</th>
               {showCategory && <th className="text-left px-2 py-2 text-slate-500 font-medium w-24">Category</th>}
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">Period End</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">Period Start - 1</th>
+              <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">{formatDateDDMMYYYY(periodEndDate) || 'Period End'}</th>
+              <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">{dayBefore(periodStartDate) || 'Period Start - 1'}</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-20">FS Note</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-20">FS Level</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-28">FS Statement</th>
