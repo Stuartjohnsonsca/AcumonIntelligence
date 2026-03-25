@@ -63,6 +63,11 @@ model User {
   isFirmAdmin        Boolean   @default(false) @map("is_firm_admin")
   isPortfolioOwner   Boolean   @default(false) @map("is_portfolio_owner")
   isMethodologyAdmin Boolean   @default(false) @map("is_methodology_admin")
+  entraObjectId     String?   @unique @map("entra_object_id")
+  jobTitle          String?   @map("job_title")
+  department        String?
+  officeLocation    String?   @map("office_location")
+  lastSyncedAt      DateTime? @map("last_synced_at")
   expiryDate        DateTime? @map("expiry_date")
   isActive          Boolean   @default(true) @map("is_active")
   createdAt         DateTime  @default(now()) @map("created_at")

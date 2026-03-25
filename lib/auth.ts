@@ -197,6 +197,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return token;
         }
 
+        // Store Azure AD object ID if not already set
+        const entraObjId = (account as any)?.providerAccountId || (profile as any)?.sub || (profile as any)?.oid;
+        if (entraObjId && !dbUser.entraObjectId) {
+          await prisma.user.update({
+            where: { id: dbUser.id },
+            data: { entraObjectId: entraObjId },
+          }).catch(() => {}); // Non-critical — don't fail login
+        }
+
         token.id = dbUser.id;
         token.email = dbUser.email;
         token.name = dbUser.name;
