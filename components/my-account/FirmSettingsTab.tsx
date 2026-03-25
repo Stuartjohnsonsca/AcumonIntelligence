@@ -314,6 +314,18 @@ export function FirmSettingsTab({ firmId }: Props) {
 
   return (
     <div className="space-y-8">
+      {/* Notice about Methodology Admin */}
+      <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+        <p className="text-sm text-amber-800 font-medium">Sampling settings have moved to Methodology Admin</p>
+        <p className="text-xs text-amber-600 mt-1">
+          Firm-wide sampling settings (confidence level, confidence table) are now managed under{' '}
+          <a href="/methodology-admin/firm-assumptions" className="text-blue-600 hover:text-blue-800 underline">
+            Methodology Admin → Firm Wide Assumptions
+          </a>.
+          The settings below are retained for reference but changes should be made there.
+        </p>
+      </div>
+
       <div>
         <h2 className="text-lg font-semibold text-slate-800 mb-1">Firm Sampling Settings</h2>
         <p className="text-sm text-slate-500">
