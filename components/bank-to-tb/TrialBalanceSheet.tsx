@@ -11,6 +11,20 @@ function formatGBP(amount: number): string {
   return '£' + Math.abs(amount).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Friendly labels for journal categories
+const JOURNAL_LABELS: Record<string, string> = {
+  depreciation: 'Depreciation',
+  prepayments: 'Prepayments',
+  accruals: 'Accruals',
+  distributions: 'Distributions',
+  unbundle_fa: 'Unbundle FA',
+  general: 'Journals',
+};
+
+function journalLabel(key: string): string {
+  return JOURNAL_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
+}
+
 const SCOPE_ID = 'trial-balance';
 
 export function TrialBalanceSheet() {
@@ -29,7 +43,7 @@ export function TrialBalanceSheet() {
     return Array.from(cats);
   }, [state.trialBalance]);
 
-  // Dynamic column count: 3 fixed + 2 opening + 2 bank + journal dr/cr pairs + 2 totals
+  // Dynamic column count: 3 fixed + 2 opening + 2 bank + (journal Dr+Cr pairs) + 2 totals
   const columnCount = useMemo(
     () => 3 + 2 + 2 + journalCategories.length * 2 + 2,
     [journalCategories]
@@ -78,17 +92,23 @@ export function TrialBalanceSheet() {
       let rowDr = tb.openingDebit + tb.combinedDebit;
       let rowCr = tb.openingCredit + tb.combinedCredit;
 
-      if (tb.journalData) {
-        for (const [cat, vals] of Object.entries(tb.journalData)) {
-          if (jrnlTotals[cat]) {
-            jrnlTotals[cat].debit += vals.debit;
-            jrnlTotals[cat].credit += vals.credit;
-          }
-          rowDr += vals.debit;
-          rowCr += vals.credit;
+      for (const cat of journalCategories) {
+        const jd = tb.journalData?.[cat];
+        if (jd) {
+          jrnlTotals[cat].debit += jd.debit;
+          jrnlTotals[cat].credit += jd.credit;
+          rowDr += jd.debit;
+          rowCr += jd.credit;
         }
       }
-
+      // Also add columnData
+      if (tb.columnData) {
+        for (const v of Object.values(tb.columnData)) {
+          const cd = v as { debit: number; credit: number };
+          rowDr += cd.debit;
+          rowCr += cd.credit;
+        }
+      }
       totalDr += rowDr;
       totalCr += rowCr;
     }
@@ -96,28 +116,34 @@ export function TrialBalanceSheet() {
     return { openDr, openCr, combDr, combCr, jrnlTotals, totalDr, totalCr };
   }, [state.trialBalance, journalCategories]);
 
+  // Summary calculations
   const summary = useMemo(() => {
-    let revenue = 0, directCosts = 0, overheads = 0, otherIncome = 0, taxCharge = 0;
+    let revenue = 0, otherIncome = 0, directCosts = 0, overheads = 0;
     let totalAssets = 0, totalLiabilities = 0;
 
     for (const tb of state.trialBalance) {
-      let rowNet = (tb.openingDebit + tb.combinedDebit) - (tb.openingCredit + tb.combinedCredit);
-      if (tb.journalData) {
-        for (const vals of Object.values(tb.journalData)) {
-          rowNet += vals.debit - vals.credit;
+      let rowDr = tb.openingDebit + tb.combinedDebit;
+      let rowCr = tb.openingCredit + tb.combinedCredit;
+      for (const cat of journalCategories) {
+        const jd = tb.journalData?.[cat];
+        if (jd) { rowDr += jd.debit; rowCr += jd.credit; }
+      }
+      if (tb.columnData) {
+        for (const v of Object.values(tb.columnData)) {
+          const cd = v as { debit: number; credit: number };
+          rowDr += cd.debit; rowCr += cd.credit;
         }
       }
+      const rowNet = rowDr - rowCr;
 
       switch (tb.categoryType) {
         case 'Revenue': revenue += rowNet; break;
+        case 'Other Income': otherIncome += rowNet; break;
         case 'Direct Costs': directCosts += rowNet; break;
         case 'Overheads': overheads += rowNet; break;
-        case 'Other Income': otherIncome += rowNet; break;
-        case 'Tax Charge': taxCharge += rowNet; break;
-        case 'Fixed Asset': case 'Investment': case 'Current Asset':
-          totalAssets += rowNet; break;
-        case 'Current Liability': case 'Long-term Liability':
-          totalLiabilities += rowNet; break;
+        case 'Fixed Asset': case 'Current Asset': case 'Bank': totalAssets += rowNet; break;
+        case 'Current Liability': case 'Long Term Liability':
+        case 'Equity': totalLiabilities += rowNet; break;
       }
     }
 
@@ -125,7 +151,7 @@ export function TrialBalanceSheet() {
     const netAssets = totalAssets + totalLiabilities;
 
     return { revenue: -revenue, profitBeforeTax: -profitBeforeTax, netAssets };
-  }, [state.trialBalance]);
+  }, [state.trialBalance, journalCategories]);
 
   return (
     <div
@@ -152,23 +178,24 @@ export function TrialBalanceSheet() {
                   <th key="bcr" className="px-2 py-2 text-right font-medium text-slate-600 border-b whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={(e) => onColumnHeaderClick(6, e)}>Bank Cr</th>,
                 );
                 colIdx = 7;
+
+                // Journal columns — PAIRED (Dr + Cr together per category)
                 for (const cat of journalCategories) {
                   const ci = colIdx;
+                  const label = journalLabel(cat);
                   headers.push(
-                    <th key={`${cat}-dr`} className="px-2 py-2 text-right font-medium text-slate-600 border-b whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={(e) => onColumnHeaderClick(ci, e)}>{cat} Dr</th>
+                    <th key={`${cat}-dr`} className="px-2 py-2 text-right font-medium text-blue-700 border-b whitespace-nowrap cursor-pointer hover:bg-blue-50 bg-blue-50/30" onClick={(e) => onColumnHeaderClick(ci, e)}>{label} Dr</th>
+                  );
+                  colIdx++;
+                  headers.push(
+                    <th key={`${cat}-cr`} className="px-2 py-2 text-right font-medium text-blue-700 border-b whitespace-nowrap cursor-pointer hover:bg-blue-50 bg-blue-50/30" onClick={(e) => onColumnHeaderClick(ci + 1, e)}>{label} Cr</th>
                   );
                   colIdx++;
                 }
-                for (const cat of journalCategories) {
-                  const ci = colIdx;
-                  headers.push(
-                    <th key={`${cat}-cr`} className="px-2 py-2 text-right font-medium text-slate-600 border-b whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={(e) => onColumnHeaderClick(ci, e)}>{cat} Cr</th>
-                  );
-                  colIdx++;
-                }
+
                 headers.push(
-                  <th key="tdr" className="px-2 py-2 text-right font-medium text-slate-600 border-b whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={(e) => onColumnHeaderClick(colIdx, e)}>Total Dr</th>,
-                  <th key="tcr" className="px-2 py-2 text-right font-medium text-slate-600 border-b whitespace-nowrap cursor-pointer hover:bg-slate-200" onClick={(e) => onColumnHeaderClick(colIdx + 1, e)}>Total Cr</th>,
+                  <th key="tdr" className="px-2 py-2 text-right font-medium text-slate-800 border-b whitespace-nowrap cursor-pointer hover:bg-slate-200 bg-slate-200/50" onClick={(e) => onColumnHeaderClick(colIdx, e)}>Total Dr</th>,
+                  <th key="tcr" className="px-2 py-2 text-right font-medium text-slate-800 border-b whitespace-nowrap cursor-pointer hover:bg-slate-200 bg-slate-200/50" onClick={(e) => onColumnHeaderClick(colIdx + 1, e)}>Total Cr</th>,
                 );
                 return headers;
               })()}
@@ -183,12 +210,17 @@ export function TrialBalanceSheet() {
               </tr>
             ) : (
               state.trialBalance.map((tb, i) => {
+                // Calculate row total
                 let rowDr = tb.openingDebit + tb.combinedDebit;
                 let rowCr = tb.openingCredit + tb.combinedCredit;
-                if (tb.journalData) {
-                  for (const vals of Object.values(tb.journalData)) {
-                    rowDr += vals.debit;
-                    rowCr += vals.credit;
+                for (const cat of journalCategories) {
+                  const jd = tb.journalData?.[cat];
+                  if (jd) { rowDr += jd.debit; rowCr += jd.credit; }
+                }
+                if (tb.columnData) {
+                  for (const v of Object.values(tb.columnData)) {
+                    const cd = v as { debit: number; credit: number };
+                    rowDr += cd.debit; rowCr += cd.credit;
                   }
                 }
 
@@ -241,23 +273,19 @@ export function TrialBalanceSheet() {
                 );
                 colIdx++;
 
-                // Journal Dr columns
+                // Journal columns — PAIRED (Dr + Cr together per category)
                 for (const cat of journalCategories) {
                   const ci = colIdx;
+                  const jd = tb.journalData?.[cat];
                   cells.push(
-                    <td key={`${cat}-dr`} className={cn('px-2 py-1.5 border-b border-slate-100 text-right font-mono cursor-cell', isCellSelected(i, ci) && 'bg-blue-50 ring-2 ring-inset ring-blue-300')} onClick={(e) => onCellClick(i, ci, e)}>
-                      {formatGBP(tb.journalData?.[cat]?.debit || 0)}
+                    <td key={`${cat}-dr`} className={cn('px-2 py-1.5 border-b border-slate-100 text-right font-mono cursor-cell bg-blue-50/20', isCellSelected(i, ci) && 'bg-blue-50 ring-2 ring-inset ring-blue-300')} onClick={(e) => onCellClick(i, ci, e)}>
+                      {formatGBP(jd?.debit || 0)}
                     </td>
                   );
                   colIdx++;
-                }
-
-                // Journal Cr columns
-                for (const cat of journalCategories) {
-                  const ci = colIdx;
                   cells.push(
-                    <td key={`${cat}-cr`} className={cn('px-2 py-1.5 border-b border-slate-100 text-right font-mono cursor-cell', isCellSelected(i, ci) && 'bg-blue-50 ring-2 ring-inset ring-blue-300')} onClick={(e) => onCellClick(i, ci, e)}>
-                      {formatGBP(tb.journalData?.[cat]?.credit || 0)}
+                    <td key={`${cat}-cr`} className={cn('px-2 py-1.5 border-b border-slate-100 text-right font-mono cursor-cell bg-blue-50/20', isCellSelected(i, ci + 1) && 'bg-blue-50 ring-2 ring-inset ring-blue-300')} onClick={(e) => onCellClick(i, ci + 1, e)}>
+                      {formatGBP(jd?.credit || 0)}
                     </td>
                   );
                   colIdx++;
@@ -265,11 +293,11 @@ export function TrialBalanceSheet() {
 
                 // Totals
                 cells.push(
-                  <td key="tdr" className={cn('px-2 py-1.5 border-b border-slate-100 text-right font-mono font-semibold cursor-cell', isCellSelected(i, colIdx) && 'bg-blue-50 ring-2 ring-inset ring-blue-300')} onClick={(e) => onCellClick(i, colIdx, e)}>{formatGBP(rowDr)}</td>
+                  <td key="tdr" className={cn('px-2 py-1.5 border-b border-slate-100 text-right font-mono font-semibold cursor-cell bg-slate-50', isCellSelected(i, colIdx) && 'bg-blue-50 ring-2 ring-inset ring-blue-300')} onClick={(e) => onCellClick(i, colIdx, e)}>{formatGBP(rowDr)}</td>
                 );
                 colIdx++;
                 cells.push(
-                  <td key="tcr" className={cn('px-2 py-1.5 border-b border-slate-100 text-right font-mono font-semibold cursor-cell', isCellSelected(i, colIdx) && 'bg-blue-50 ring-2 ring-inset ring-blue-300')} onClick={(e) => onCellClick(i, colIdx, e)}>{formatGBP(rowCr)}</td>
+                  <td key="tcr" className={cn('px-2 py-1.5 border-b border-slate-100 text-right font-mono font-semibold cursor-cell bg-slate-50', isCellSelected(i, colIdx) && 'bg-blue-50 ring-2 ring-inset ring-blue-300')} onClick={(e) => onCellClick(i, colIdx, e)}>{formatGBP(rowCr)}</td>
                 );
 
                 return (
@@ -285,50 +313,37 @@ export function TrialBalanceSheet() {
                 );
               })
             )}
-            {/* Totals row */}
-            {state.trialBalance.length > 0 && (
-              <tr className="bg-slate-200 font-semibold">
-                <td className="px-1 py-2 border-t-2 border-slate-400"></td>
-                <td colSpan={3} className="px-2 py-2 border-t-2 border-slate-400">Totals</td>
-                <td className="px-2 py-2 border-t-2 border-slate-400 text-right font-mono">{formatGBP(totals.openDr)}</td>
-                <td className="px-2 py-2 border-t-2 border-slate-400 text-right font-mono">{formatGBP(totals.openCr)}</td>
-                <td className="px-2 py-2 border-t-2 border-slate-400 text-right font-mono">{formatGBP(totals.combDr)}</td>
-                <td className="px-2 py-2 border-t-2 border-slate-400 text-right font-mono">{formatGBP(totals.combCr)}</td>
-                {journalCategories.map(cat => (
-                  <td key={`${cat}-dr-total`} className="px-2 py-2 border-t-2 border-slate-400 text-right font-mono">
-                    {formatGBP(totals.jrnlTotals[cat]?.debit || 0)}
-                  </td>
-                ))}
-                {journalCategories.map(cat => (
-                  <td key={`${cat}-cr-total`} className="px-2 py-2 border-t-2 border-slate-400 text-right font-mono">
-                    {formatGBP(totals.jrnlTotals[cat]?.credit || 0)}
-                  </td>
-                ))}
-                <td className="px-2 py-2 border-t-2 border-slate-400 text-right font-mono">{formatGBP(totals.totalDr)}</td>
-                <td className="px-2 py-2 border-t-2 border-slate-400 text-right font-mono">{formatGBP(totals.totalCr)}</td>
-              </tr>
-            )}
           </tbody>
+          {state.trialBalance.length > 0 && (
+            <tfoot className="sticky bottom-0 bg-slate-200 font-semibold text-xs">
+              <tr>
+                <td className="px-1 py-2 border-t"></td>
+                <td className="px-2 py-2 border-t" colSpan={3}>Totals</td>
+                <td className="px-2 py-2 border-t text-right font-mono">{formatGBP(totals.openDr)}</td>
+                <td className="px-2 py-2 border-t text-right font-mono">{formatGBP(totals.openCr)}</td>
+                <td className="px-2 py-2 border-t text-right font-mono">{formatGBP(totals.combDr)}</td>
+                <td className="px-2 py-2 border-t text-right font-mono">{formatGBP(totals.combCr)}</td>
+                {journalCategories.map(cat => (
+                  <>
+                    <td key={`${cat}-tdr`} className="px-2 py-2 border-t text-right font-mono text-blue-700">{formatGBP(totals.jrnlTotals[cat]?.debit || 0)}</td>
+                    <td key={`${cat}-tcr`} className="px-2 py-2 border-t text-right font-mono text-blue-700">{formatGBP(totals.jrnlTotals[cat]?.credit || 0)}</td>
+                  </>
+                ))}
+                <td className="px-2 py-2 border-t text-right font-mono font-bold">{formatGBP(totals.totalDr)}</td>
+                <td className="px-2 py-2 border-t text-right font-mono font-bold">{formatGBP(totals.totalCr)}</td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 
-      {/* Summary */}
-      {state.trialBalance.length > 0 && (
-        <div className="px-4 py-3 bg-white border-t flex gap-6">
-          <div className="text-sm">
-            <span className="text-slate-500">Revenue:</span>
-            <span className="ml-2 font-semibold">£{summary.revenue.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</span>
-          </div>
-          <div className="text-sm">
-            <span className="text-slate-500">Profit before Tax:</span>
-            <span className="ml-2 font-semibold">£{summary.profitBeforeTax.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</span>
-          </div>
-          <div className="text-sm">
-            <span className="text-slate-500">Net Assets:</span>
-            <span className="ml-2 font-semibold">£{summary.netAssets.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</span>
-          </div>
-        </div>
-      )}
+      {/* Summary bar */}
+      <div className="sticky bottom-0 bg-slate-800 text-white px-4 py-2 flex items-center gap-6 text-xs">
+        <span>Revenue: <span className="font-mono font-semibold">{formatGBP(summary.revenue)}</span></span>
+        <span>PBT: <span className="font-mono font-semibold">{formatGBP(summary.profitBeforeTax)}</span></span>
+        <span>Net Assets: <span className="font-mono font-semibold">{formatGBP(summary.netAssets)}</span></span>
+        <span className="ml-auto text-slate-400">{state.trialBalance.length} rows</span>
+      </div>
     </div>
   );
 }

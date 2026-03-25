@@ -74,11 +74,11 @@ export function TaxonomyMatchPopup({ isOpen, onClose, sessionId }: Props) {
         proposedCode: m.proposedCode,
         proposedName: m.proposedName,
         confidence: m.confidence || 0,
-        accepted: m.proposedCode !== m.currentCode, // Pre-accept if there's a change
+        accepted: true, // Pre-accept all proposals
       }));
 
-      // Only show rows where there's a proposed change
-      setProposals(matches.filter(m => m.proposedCode !== m.currentCode));
+      // Show all proposals that have a proposedCode (even if current is blank/0)
+      setProposals(matches.filter(m => m.proposedCode && m.proposedCode.trim() !== ''));
     } catch (err: any) {
       setError(err.message || 'Failed to match accounts');
     } finally {

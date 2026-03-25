@@ -68,23 +68,25 @@ export async function POST(req: Request) {
 
     const prompt = `You are an audit assistant matching Chart of Accounts entries to ${framework} XBRL taxonomy concepts.
 
-Here are some reference taxonomy concepts:
+The goal is to find the BEST matching XBRL taxonomy concept for each account based on its ACCOUNT NAME and CATEGORY. The current account code may be blank, a number, or something unrelated to the taxonomy — that's fine, we want to REPLACE it with the correct taxonomy concept code.
+
+Here are reference taxonomy concepts from ${framework}:
 ${taxonomyConcepts}
 
-Here are the current accounts to match (format: index|currentCode|accountName|category):
+Here are the accounts to match (format: index|currentCode|accountName|category):
 ${accountsList}
 
-For each account, suggest the most appropriate XBRL taxonomy concept name. Only suggest changes where the current code doesn't already match a standard taxonomy concept.
+For EVERY account, suggest the most appropriate XBRL taxonomy concept. Include ALL rows — even those with blank or numeric codes. The match should be based on the ACCOUNT NAME meaning, not the current code.
 
 Respond in JSON format only:
-[{"index":0,"currentCode":"xxx","currentName":"yyy","proposedCode":"TaxonomyConceptName","proposedName":"Human-readable label","confidence":0.85}]
+[{"index":0,"currentCode":"xxx","currentName":"Account Name","proposedCode":"TaxonomyConceptName","proposedName":"Human-readable label","confidence":0.85}]
 
 Rules:
+- Include EVERY row — we need a proposed taxonomy code for each account
 - confidence should be 0.0-1.0 based on how certain the match is
-- Only include rows where you propose a different code
 - Use actual XBRL concept names from the ${framework} taxonomy
-- If the current code is already a valid taxonomy code, skip it
-- Match based on account name semantics, not just string similarity`;
+- Match based on account name semantics (e.g. "Sales" → "Revenue", "Trade Debtors" → "TradeAndOtherReceivables")
+- If unsure, still provide best guess with lower confidence`;
 
     const aiRes = await fetch('https://api.together.xyz/v1/chat/completions', {
       method: 'POST',
