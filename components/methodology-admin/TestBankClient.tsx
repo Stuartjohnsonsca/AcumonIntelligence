@@ -448,13 +448,15 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       {topTab === 'test-bank' && (
         <div className="space-y-4">
           {/* Industry selector and Copy */}
-          <div className="flex items-end space-x-4 flex-wrap gap-y-3">
-            <div>
-              <label className="text-xs text-slate-500 mb-1 block">Industry</label>
+          <div className="flex items-end gap-6 flex-wrap gap-y-3">
+            <div className="min-w-[250px]">
+              <label className="text-xs font-medium text-slate-600 mb-1.5 block">Industry</label>
               <select
                 value={selectedIndustry}
                 onChange={(e) => setSelectedIndustry(e.target.value)}
-                className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border border-slate-300 rounded-md px-4 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                size={1}
+                style={{ minHeight: '42px' }}
               >
                 {industries.map((ind) => (
                   <option key={ind.id} value={ind.id}>{ind.name}{ind.isDefault ? ' (Default)' : ''}</option>
@@ -462,22 +464,24 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
               </select>
             </div>
 
-            <div className="flex items-end space-x-2 ml-auto">
-              <div>
-                <label className="text-xs text-slate-500 mb-1 block">Copy From</label>
-                <select value={copySourceIndustry} onChange={(e) => setCopySourceIndustry(e.target.value)} className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                  <option value="">Select...</option>
+            <div className="flex items-end gap-3 ml-auto">
+              <div className="min-w-[200px]">
+                <label className="text-xs font-medium text-slate-600 mb-1.5 block">Copy From</label>
+                <select value={copySourceIndustry} onChange={(e) => setCopySourceIndustry(e.target.value)}
+                  className="w-full border border-slate-300 rounded-md px-4 py-2.5 text-sm bg-white" style={{ minHeight: '42px' }}>
+                  <option value="">Select industry...</option>
                   {industries.map((ind) => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="text-xs text-slate-500 mb-1 block">Copy To</label>
-                <select value={copyTargetIndustry} onChange={(e) => setCopyTargetIndustry(e.target.value)} className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-                  <option value="">Select...</option>
+              <div className="min-w-[200px]">
+                <label className="text-xs font-medium text-slate-600 mb-1.5 block">Copy To</label>
+                <select value={copyTargetIndustry} onChange={(e) => setCopyTargetIndustry(e.target.value)}
+                  className="w-full border border-slate-300 rounded-md px-4 py-2.5 text-sm bg-white" style={{ minHeight: '42px' }}>
+                  <option value="">Select industry...</option>
                   {industries.map((ind) => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
                 </select>
               </div>
-              <Button onClick={handleCopyIndustry} size="sm" variant="outline" disabled={saving}>
+              <Button onClick={handleCopyIndustry} size="sm" variant="outline" disabled={saving} className="h-[42px]">
                 <Copy className="h-4 w-4 mr-1" /> Copy
               </Button>
             </div>
@@ -516,57 +520,86 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
             </div>
           )}
 
-          {/* Grid */}
-          <div className="border rounded-lg overflow-x-auto">
-            <table className="w-full border-collapse min-w-[800px]">
+          {/* Grid - FS Lines as rows */}
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full border-collapse">
               <thead>
-                <tr>
-                  <th className="border border-slate-300 p-2 bg-slate-100 text-left text-sm font-medium sticky left-0 bg-slate-100 z-10 min-w-[180px]">
-                    Industry / FS Line
-                  </th>
-                  {fsLines.map((line) => (
-                    <th key={line} className="border border-slate-300 p-2 bg-slate-100 text-center text-sm font-medium min-w-[120px]">
-                      <div className="flex items-center justify-center space-x-1">
-                        <span className="truncate">{line}</span>
-                        {!MANDATORY_FS_LINES.includes(line as any) && (
-                          <button onClick={() => handleRemoveFsLine(line)} className="text-red-400 hover:text-red-600 flex-shrink-0">
-                            <X className="h-3 w-3" />
-                          </button>
-                        )}
-                      </div>
-                    </th>
-                  ))}
+                <tr className="bg-slate-100">
+                  <th className="text-left text-sm font-medium text-slate-700 p-3 w-64">FS Statement Line</th>
+                  <th className="text-center text-sm font-medium text-slate-700 p-3 w-24">Tests</th>
+                  <th className="text-left text-sm font-medium text-slate-700 p-3">Test Descriptions</th>
+                  <th className="text-center text-sm font-medium text-slate-700 p-3 w-20">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {industries.filter((i) => i.id === selectedIndustry).map((ind) => (
-                  <tr key={ind.id}>
-                    <td className="border border-slate-300 p-2 bg-slate-50 text-sm font-medium sticky left-0 z-10">
-                      {ind.name}
-                    </td>
-                    {fsLines.map((line) => {
-                      const count = getTestCount(ind.id, line);
-                      const has = count > 0;
-                      return (
-                        <td
-                          key={line}
-                          className="border border-slate-300 p-2 text-center cursor-pointer hover:bg-blue-50 transition-colors"
-                          onClick={() => openPopup(line)}
-                        >
-                          {has ? (
-                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
-                              {count}
-                            </span>
-                          ) : (
-                            <span className="text-slate-300">&mdash;</span>
+                {fsLines.map((line) => {
+                  const count = getTestCount(selectedIndustry, line);
+                  const entry = testBanks.find((tb) => tb.industryId === selectedIndustry && tb.fsLine === line);
+                  const tests = (entry?.tests as any[]) || [];
+                  return (
+                    <tr key={line} className="border-t hover:bg-slate-50 transition-colors">
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-slate-700">{line}</span>
+                          {!MANDATORY_FS_LINES.includes(line as any) && (
+                            <button onClick={() => handleRemoveFsLine(line)} className="text-red-400 hover:text-red-600" title="Remove">
+                              <X className="h-3.5 w-3.5" />
+                            </button>
                           )}
-                        </td>
-                      );
-                    })}
+                        </div>
+                      </td>
+                      <td className="p-3 text-center">
+                        {count > 0 ? (
+                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
+                            {count}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 text-sm">0</span>
+                        )}
+                      </td>
+                      <td className="p-3">
+                        {tests.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {tests.slice(0, 3).map((t: any, i: number) => (
+                              <span key={i} className="text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded truncate max-w-[200px]">
+                                {t.description}
+                              </span>
+                            ))}
+                            {tests.length > 3 && (
+                              <span className="text-xs text-slate-400">+{tests.length - 3} more</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">No tests defined</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <Button
+                          onClick={() => openPopup(line)}
+                          size="sm"
+                          variant="outline"
+                          className="text-xs h-7 px-2"
+                        >
+                          {count > 0 ? 'Edit' : 'Add'}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {fsLines.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="p-8 text-center text-slate-400 text-sm">
+                      No FS lines defined. Add one above to get started.
+                    </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
+          </div>
+
+          {/* Summary */}
+          <div className="text-xs text-slate-500">
+            {fsLines.length} FS lines &middot; {testBanks.filter(tb => tb.industryId === selectedIndustry).reduce((sum, tb) => sum + ((tb.tests as any[])?.length || 0), 0)} total tests for {industries.find(i => i.id === selectedIndustry)?.name || 'selected industry'}
           </div>
         </div>
       )}
