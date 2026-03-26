@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Save, Upload, Link2, Check, X, Search, ChevronRight, BookOpen } from 'lucide-react';
+import { Loader2, Save, Upload, Link2, Check, X, Search, ChevronRight, BookOpen, Plug, Eye, EyeOff, RefreshCw } from 'lucide-react';
 
 interface TaxonomyConfig {
   taxonomySourceType: string | null;
@@ -14,6 +14,147 @@ interface TaxonomyConfig {
 interface Props {
   firmId: string;
   isFirmAdmin?: boolean;
+}
+
+function PowerAppsSettings({ firmId }: { firmId: string }) {
+  const [config, setConfig] = useState<{ clientId: string | null; clientSecret: string | null; baseUrl: string | null; tenantId: string | null }>({
+    clientId: null, clientSecret: null, baseUrl: null, tenantId: null,
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; error?: string; data?: any } | null>(null);
+  const [showSecret, setShowSecret] = useState(false);
+  const [editClientId, setEditClientId] = useState('');
+  const [editSecret, setEditSecret] = useState('');
+  const [editBaseUrl, setEditBaseUrl] = useState('');
+  const [editTenantId, setEditTenantId] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/firm/power-apps');
+        if (res.ok) {
+          const data = await res.json();
+          setConfig(data);
+          setEditClientId(data.clientId || '');
+          setEditSecret(data.clientSecret || '');
+          setEditBaseUrl(data.baseUrl || '');
+          setEditTenantId(data.tenantId || '');
+        }
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    setSaved(false);
+    try {
+      const res = await fetch('/api/firm/power-apps', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: editClientId,
+          clientSecret: editSecret,
+          baseUrl: editBaseUrl,
+          tenantId: editTenantId,
+        }),
+      });
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+        // Reload to get masked secret
+        const reload = await fetch('/api/firm/power-apps');
+        if (reload.ok) {
+          const data = await reload.json();
+          setConfig(data);
+          setEditSecret(data.clientSecret || '');
+        }
+      }
+    } catch {}
+    setSaving(false);
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/firm/power-apps', { method: 'POST' });
+      const data = await res.json();
+      setTestResult(data);
+    } catch (err: any) {
+      setTestResult({ success: false, error: err.message });
+    }
+    setTesting(false);
+  }
+
+  if (loading) return null;
+
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-5">
+      <div className="flex items-center gap-2 mb-1">
+        <Plug className="h-4 w-4 text-purple-600" />
+        <h3 className="text-sm font-semibold text-slate-700">PowerApps / Dynamics 365</h3>
+      </div>
+      <p className="text-xs text-slate-400 mb-4">
+        Connect to Dynamics 365 / Dataverse to sync clients and jobs. Uses client credentials (app-only) authentication.
+      </p>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs text-slate-500 mb-1 font-medium">Client ID</label>
+          <input type="text" value={editClientId} onChange={e => setEditClientId(e.target.value)}
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-purple-500" />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1 font-medium">Client Secret</label>
+          <div className="relative">
+            <input type={showSecret ? 'text' : 'password'} value={editSecret} onChange={e => setEditSecret(e.target.value)}
+              placeholder="Enter client secret"
+              className="w-full px-3 py-2 pr-10 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            <button onClick={() => setShowSecret(!showSecret)} type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+              {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1 font-medium">Dataverse URL</label>
+          <input type="url" value={editBaseUrl} onChange={e => setEditBaseUrl(e.target.value)}
+            placeholder="https://yourorg.crm11.dynamics.com"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-purple-500" />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1 font-medium">Tenant ID</label>
+          <input type="text" value={editTenantId} onChange={e => setEditTenantId(e.target.value)}
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-purple-500" />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 mt-4">
+        <button onClick={handleSave} disabled={saving}
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          {saved ? 'Saved ✓' : 'Save'}
+        </button>
+        <button onClick={handleTest} disabled={testing || !editClientId || !editBaseUrl}
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40">
+          {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Test Connection
+        </button>
+
+        {testResult && (
+          <span className={`text-xs font-medium ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
+            {testResult.success ? '✓ Connected — ' + (testResult.data?.UserId ? 'User ID: ' + testResult.data.UserId.substring(0, 8) + '...' : 'OK') : '✗ ' + testResult.error}
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function FirmSettingsTab({ firmId }: Props) {
@@ -276,6 +417,9 @@ export function FirmSettingsTab({ firmId }: Props) {
         )}
         {taxonomySaved && <span className="text-sm text-green-600 font-medium mt-2 block">Saved</span>}
       </div>
+
+      {/* ─── PowerApps / Dynamics 365 ─────────────────────────────────────── */}
+      <PowerAppsSettings firmId={firmId} />
 
       {/* ─── XBRL Taxonomy per Accounting Framework ─────────────────────────── */}
       <div className="bg-white rounded-lg border border-slate-200 p-5">
