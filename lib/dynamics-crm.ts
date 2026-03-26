@@ -1,15 +1,20 @@
 /**
  * Dynamics 365 / Power Apps CRM client.
- * Connects to the firm's CRM to pull audit clients from Jobs.
  *
- * Filters: Organisations with uncompleted Jobs where ServiceTypeGroup
- * contains AUD, AUDIT, Assurance, or Internal.
+ * Uses MSAL On-Behalf-Of (OBO) flow to authenticate:
+ * 1. User signs in via Microsoft Entra ID (NextAuth stores their access token)
+ * 2. Server exchanges that token for a Dynamics-scoped token via MSAL OBO
+ * 3. Dynamics API calls use the delegated token (as the user)
+ *
+ * Falls back to client credentials if no user token is available.
  */
+
+import { ConfidentialClientApplication } from '@azure/msal-node';
+import { prisma } from '@/lib/db';
 
 export interface CRMOrganisation {
   accountId: string;
   name: string;
-  // Extended fields from account entity
   address1?: string;
   city?: string;
   postcode?: string;
@@ -34,66 +39,96 @@ export interface CRMJob {
   year: number | null;
 }
 
-interface TokenResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-}
-
-// Token cache
-let cachedToken: { token: string; expiresAt: number } | null = null;
-
-const CRM_BASE_URL = process.env.DYNAMICS_CRM_BASE_URL || 'https://org4572af51.crm11.dynamics.com';
-const CRM_CLIENT_ID = process.env.DYNAMICS_CRM_CLIENT_ID || '';
-const CRM_CLIENT_SECRET = process.env.DYNAMICS_CRM_CLIENT_SECRET || '';
-const CRM_TENANT_ID = process.env.DYNAMICS_CRM_TENANT_ID || process.env.AZURE_AD_TENANT_ID || '';
-
 // Service type group keywords that indicate audit/assurance work
 const AUDIT_KEYWORDS = ['aud', 'audit', 'assurance', 'internal'];
 
+// MSAL app cache (per-firm)
+const msalApps = new Map<string, ConfidentialClientApplication>();
+
 /**
- * Get access token for Dynamics CRM using client credentials flow.
+ * Get or create an MSAL ConfidentialClientApplication for a firm.
+ * Uses the firm's PowerApps credentials or falls back to env vars.
  */
-async function getToken(): Promise<string> {
-  if (cachedToken && Date.now() < cachedToken.expiresAt - 60000) {
-    return cachedToken.token;
+async function getMsalApp(firmId: string): Promise<{ app: ConfidentialClientApplication; baseUrl: string }> {
+  if (msalApps.has(firmId)) {
+    const firm = await prisma.firm.findUnique({ where: { id: firmId }, select: { powerAppsBaseUrl: true } });
+    return { app: msalApps.get(firmId)!, baseUrl: firm?.powerAppsBaseUrl || '' };
   }
 
-  if (!CRM_CLIENT_ID || !CRM_CLIENT_SECRET || !CRM_TENANT_ID) {
-    throw new Error('Missing Dynamics CRM configuration: DYNAMICS_CRM_CLIENT_ID, DYNAMICS_CRM_CLIENT_SECRET, DYNAMICS_CRM_TENANT_ID');
-  }
-
-  const tokenUrl = `https://login.microsoftonline.com/${CRM_TENANT_ID}/oauth2/v2.0/token`;
-
-  const body = new URLSearchParams({
-    client_id: CRM_CLIENT_ID,
-    client_secret: CRM_CLIENT_SECRET,
-    scope: `${CRM_BASE_URL}/.default`,
-    grant_type: 'client_credentials',
+  const firm = await prisma.firm.findUnique({
+    where: { id: firmId },
+    select: {
+      powerAppsClientId: true,
+      powerAppsClientSecret: true,
+      powerAppsBaseUrl: true,
+      powerAppsTenantId: true,
+    },
   });
 
-  const res = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
+  const clientId = firm?.powerAppsClientId || process.env.AZURE_AD_CLIENT_ID || '';
+  const clientSecret = firm?.powerAppsClientSecret || process.env.AZURE_AD_CLIENT_SECRET || '';
+  const tenantId = firm?.powerAppsTenantId || process.env.AZURE_AD_TENANT_ID || '';
+  const baseUrl = firm?.powerAppsBaseUrl || process.env.DYNAMICS_CRM_BASE_URL || '';
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to get Dynamics CRM token: ${res.status} ${err}`);
+  if (!clientId || !clientSecret || !tenantId) {
+    throw new Error('Missing PowerApps/Dynamics CRM configuration for this firm');
   }
 
-  const data: TokenResponse = await res.json();
-  cachedToken = { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
-  return data.access_token;
+  const app = new ConfidentialClientApplication({
+    auth: {
+      clientId,
+      clientSecret,
+      authority: `https://login.microsoftonline.com/${tenantId}`,
+    },
+  });
+
+  msalApps.set(firmId, app);
+  return { app, baseUrl };
+}
+
+/**
+ * Get a Dynamics CRM access token using MSAL.
+ *
+ * Strategy:
+ * 1. If userAccessToken provided → OBO flow (delegated, acts as the user)
+ * 2. Otherwise → Client Credentials flow (app-only)
+ */
+async function getDynamicsToken(firmId: string, userAccessToken?: string): Promise<string> {
+  const { app, baseUrl } = await getMsalApp(firmId);
+  const scope = `${baseUrl}/.default`;
+
+  if (userAccessToken) {
+    // On-Behalf-Of flow — exchange user's Entra ID token for Dynamics token
+    try {
+      const result = await app.acquireTokenOnBehalfOf({
+        oboAssertion: userAccessToken,
+        scopes: [scope],
+      });
+      if (result?.accessToken) return result.accessToken;
+    } catch (oboErr: any) {
+      console.warn('OBO flow failed, falling back to client credentials:', oboErr.message);
+    }
+  }
+
+  // Client Credentials flow (fallback)
+  const result = await app.acquireTokenByClientCredential({
+    scopes: [scope],
+  });
+
+  if (!result?.accessToken) {
+    throw new Error('Failed to acquire Dynamics CRM token via MSAL');
+  }
+
+  return result.accessToken;
 }
 
 /**
  * Make a GET request to the Dynamics Web API.
  */
-async function crmGet<T>(path: string): Promise<T> {
-  const token = await getToken();
-  const url = `${CRM_BASE_URL}/api/data/v9.2/${path}`;
+async function crmGet<T>(firmId: string, path: string, userAccessToken?: string): Promise<T> {
+  const token = await getDynamicsToken(firmId, userAccessToken);
+  const { baseUrl } = await getMsalApp(firmId);
+  const url = `${baseUrl}/api/data/v9.2/${path}`;
 
   const res = await fetch(url, {
     headers: {
@@ -114,11 +149,23 @@ async function crmGet<T>(path: string): Promise<T> {
 }
 
 /**
+ * Test the CRM connection. Returns WhoAmI data or an error.
+ */
+export async function testConnection(firmId: string, userAccessToken?: string): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const data = await crmGet(firmId, 'WhoAmI', userAccessToken);
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Fetch all service groups that match audit/assurance keywords.
  */
-export async function fetchAuditServiceGroups(): Promise<{ id: string; name: string }[]> {
+export async function fetchAuditServiceGroups(firmId: string, userAccessToken?: string): Promise<{ id: string; name: string }[]> {
   const data = await crmGet<{ value: Array<{ jca_servicegroupreferenceid: string; jca_servicegroup: string }> }>(
-    'jca_servicegroupreferences?$select=jca_servicegroup,jca_servicegroupreferenceid'
+    firmId, 'jca_servicegroupreferences?$select=jca_servicegroup,jca_servicegroupreferenceid', userAccessToken
   );
 
   return data.value
@@ -130,17 +177,15 @@ export async function fetchAuditServiceGroups(): Promise<{ id: string; name: str
 }
 
 /**
- * Fetch uncompleted jobs. Optionally filter by service type keywords.
- * Returns jobs where jca_completed = false and service type matches audit keywords.
+ * Fetch uncompleted jobs filtered by audit keywords.
  */
-export async function fetchUncompletedAuditJobs(): Promise<CRMJob[]> {
-  // Fetch all uncompleted jobs
+export async function fetchUncompletedAuditJobs(firmId: string, userAccessToken?: string): Promise<CRMJob[]> {
   const data = await crmGet<{ value: Array<Record<string, any>> }>(
-    `jca_jobs?$filter=jca_completed eq false&$select=jca_jobid,jca_name,jca_customername,jca_clientguid,jca_jobtyperef,jca_completed,jca_startdate,jca_completiondate,jca_budget,jca_year&$top=5000`
+    firmId,
+    `jca_jobs?$filter=jca_completed eq false&$select=jca_jobid,jca_name,jca_customername,jca_clientguid,jca_jobtyperef,jca_completed,jca_startdate,jca_completiondate,jca_budget,jca_year&$top=5000`,
+    userAccessToken
   );
 
-  // Filter by service type containing audit keywords
-  // jca_jobtyperef contains the service type name as text
   const auditJobs = data.value.filter(job => {
     const serviceType = (job.jca_jobtyperef || '').toLowerCase();
     return AUDIT_KEYWORDS.some(kw => serviceType.includes(kw));
@@ -152,7 +197,7 @@ export async function fetchUncompletedAuditJobs(): Promise<CRMJob[]> {
     clientName: job.jca_customername || '',
     clientGuid: job.jca_clientguid || '',
     serviceType: job.jca_jobtyperef || '',
-    serviceGroup: '', // Would need join to service group table
+    serviceGroup: '',
     completed: job.jca_completed || false,
     startDate: job.jca_startdate || null,
     completionDate: job.jca_completiondate || null,
@@ -164,10 +209,12 @@ export async function fetchUncompletedAuditJobs(): Promise<CRMJob[]> {
 /**
  * Fetch account (organisation) details by ID.
  */
-export async function fetchAccount(accountId: string): Promise<CRMOrganisation | null> {
+export async function fetchAccount(firmId: string, accountId: string, userAccessToken?: string): Promise<CRMOrganisation | null> {
   try {
     const data = await crmGet<Record<string, any>>(
-      `accounts(${accountId})?$select=name,accountid,address1_line1,address1_city,address1_postalcode,telephone1,emailaddress1,websiteurl,industrycode,sic`
+      firmId,
+      `accounts(${accountId})?$select=name,accountid,address1_line1,address1_city,address1_postalcode,telephone1,emailaddress1,websiteurl,industrycode,sic`,
+      userAccessToken
     );
 
     return {
@@ -189,19 +236,14 @@ export async function fetchAccount(accountId: string): Promise<CRMOrganisation |
 
 /**
  * Main sync function: Find all organisations with uncompleted audit jobs.
- * Returns unique organisations that should be clients.
  */
-export async function fetchAuditClients(): Promise<CRMOrganisation[]> {
-  const jobs = await fetchUncompletedAuditJobs();
-
-  // Get unique client GUIDs
+export async function fetchAuditClients(firmId: string, userAccessToken?: string): Promise<CRMOrganisation[]> {
+  const jobs = await fetchUncompletedAuditJobs(firmId, userAccessToken);
   const uniqueClientGuids = [...new Set(jobs.map(j => j.clientGuid).filter(Boolean))];
-
   if (uniqueClientGuids.length === 0) return [];
 
-  // Fetch account details for each unique client
   const accounts = await Promise.all(
-    uniqueClientGuids.map(guid => fetchAccount(guid))
+    uniqueClientGuids.map(guid => fetchAccount(firmId, guid, userAccessToken))
   );
 
   return accounts.filter((a): a is CRMOrganisation => a !== null);

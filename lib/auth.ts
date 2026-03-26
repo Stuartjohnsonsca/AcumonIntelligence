@@ -170,6 +170,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user, account, profile }) {
       // Microsoft Entra ID sign-in — look up or create user in our DB
       if (account?.provider === 'microsoft-entra-id' && profile?.email) {
+        // Store Microsoft access token for OBO flow (Dynamics CRM, Graph API)
+        if (account.access_token) {
+          token.msAccessToken = account.access_token;
+        }
+
         const email = profile.email as string;
         let dbUser = await prisma.user.findUnique({
           where: { email },
