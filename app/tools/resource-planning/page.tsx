@@ -41,7 +41,7 @@ export default async function ResourcePlanningPage() {
     orderBy: { name: 'asc' },
   });
 
-  const staff = staffRaw.map((s) => ({
+  const staff = staffRaw.map((s: any) => ({
     id: s.id,
     displayId: s.displayId,
     name: s.name,
@@ -51,15 +51,15 @@ export default async function ResourcePlanningPage() {
     resourceSetting: s.resourceStaffSetting
       ? {
           id: s.resourceStaffSetting.id,
-          resourceRole: s.resourceStaffSetting.resourceRole as ResourceRole,
-          concurrentJobLimit: s.resourceStaffSetting.concurrentJobLimit,
-          isRI: s.resourceStaffSetting.isRI,
-          weeklyCapacityHrs: s.resourceStaffSetting.weeklyCapacityHrs,
-          overtimeHrs: s.resourceStaffSetting.overtimeHrs,
-          preparerJobLimit: s.resourceStaffSetting.preparerJobLimit,
-          reviewerJobLimit: s.resourceStaffSetting.reviewerJobLimit,
-          riJobLimit: s.resourceStaffSetting.riJobLimit,
-          specialistJobLimit: s.resourceStaffSetting.specialistJobLimit,
+          resourceRole: (s.resourceStaffSetting.resourceRole ?? 'Preparer') as ResourceRole,
+          concurrentJobLimit: s.resourceStaffSetting.concurrentJobLimit ?? 3,
+          isRI: s.resourceStaffSetting.isRI ?? false,
+          weeklyCapacityHrs: s.resourceStaffSetting.weeklyCapacityHrs ?? 37.5,
+          overtimeHrs: s.resourceStaffSetting.overtimeHrs ?? 0,
+          preparerJobLimit: s.resourceStaffSetting.preparerJobLimit ?? null,
+          reviewerJobLimit: s.resourceStaffSetting.reviewerJobLimit ?? null,
+          riJobLimit: s.resourceStaffSetting.riJobLimit ?? null,
+          specialistJobLimit: s.resourceStaffSetting.specialistJobLimit ?? null,
         }
       : null,
   }));
@@ -81,28 +81,28 @@ export default async function ResourcePlanningPage() {
     engagementMap.set(`${e.clientId}:${e.auditType}`, e.id);
   }
 
-  const jobs = jobsRaw.map((j) => ({
+  const jobs = jobsRaw.map((j: any) => ({
     id: j.id,
     clientId: j.clientId,
     clientName: j.client.clientName,
     auditType: j.auditType,
     periodEnd: j.periodEnd.toISOString(),
     targetCompletion: j.targetCompletion.toISOString(),
-    budgetHoursSpecialist: j.budgetHoursSpecialist,
-    budgetHoursRI: j.budgetHoursRI,
-    budgetHoursReviewer: j.budgetHoursReviewer,
-    budgetHoursPreparer: j.budgetHoursPreparer,
+    budgetHoursSpecialist: j.budgetHoursSpecialist ?? 0,
+    budgetHoursRI: j.budgetHoursRI ?? 0,
+    budgetHoursReviewer: j.budgetHoursReviewer ?? 0,
+    budgetHoursPreparer: j.budgetHoursPreparer ?? 0,
     engagementId: engagementMap.get(`${j.clientId}:${j.auditType}`) ?? null,
-    schedulingStatus: j.schedulingStatus as SchedulingStatus,
+    schedulingStatus: (j.schedulingStatus ?? 'unscheduled') as SchedulingStatus,
     complianceDeadline: j.complianceDeadline?.toISOString() ?? null,
     customDeadline: j.customDeadline?.toISOString() ?? null,
-    jobProfileId: j.jobProfileId,
-    crmJobId: j.crmJobId,
-    actualHoursSpecialist: j.actualHoursSpecialist,
-    actualHoursRI: j.actualHoursRI,
-    actualHoursReviewer: j.actualHoursReviewer,
-    actualHoursPreparer: j.actualHoursPreparer,
-    previousJobId: j.previousJobId,
+    jobProfileId: j.jobProfileId ?? null,
+    crmJobId: j.crmJobId ?? null,
+    actualHoursSpecialist: j.actualHoursSpecialist ?? 0,
+    actualHoursRI: j.actualHoursRI ?? 0,
+    actualHoursReviewer: j.actualHoursReviewer ?? 0,
+    actualHoursPreparer: j.actualHoursPreparer ?? 0,
+    previousJobId: j.previousJobId ?? null,
   }));
 
   // Fetch allocations (3-month window)
@@ -122,7 +122,7 @@ export default async function ResourcePlanningPage() {
     orderBy: { startDate: 'asc' },
   });
 
-  const allocations = allocsRaw.map((a) => ({
+  const allocations = allocsRaw.map((a: any) => ({
     id: a.id,
     engagementId: a.engagementId,
     userId: a.userId,
@@ -131,17 +131,23 @@ export default async function ResourcePlanningPage() {
     startDate: a.startDate.toISOString(),
     endDate: a.endDate.toISOString(),
     hoursPerDay: a.hoursPerDay,
-    totalHours: a.totalHours,
+    totalHours: a.totalHours ?? null,
     notes: a.notes,
   }));
 
-  // Fetch scheduling status counts
-  const unscheduledCount = await prisma.resourceJob.count({
-    where: { firmId, schedulingStatus: 'unscheduled' },
-  });
-  const completedUnscheduledCount = await prisma.resourceJob.count({
-    where: { firmId, schedulingStatus: 'completed' },
-  });
+  // Fetch scheduling status counts (safe fallback if column doesn't exist yet)
+  let unscheduledCount = 0;
+  let completedUnscheduledCount = 0;
+  try {
+    unscheduledCount = await prisma.resourceJob.count({
+      where: { firmId, schedulingStatus: 'unscheduled' },
+    });
+    completedUnscheduledCount = await prisma.resourceJob.count({
+      where: { firmId, schedulingStatus: 'completed' },
+    });
+  } catch {
+    // schedulingStatus column may not exist yet
+  }
 
   return (
     <Suspense fallback={null}>
