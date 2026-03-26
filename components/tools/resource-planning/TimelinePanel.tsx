@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import { DateBar } from './DateBar';
 import { AllocationGrid } from './AllocationGrid';
@@ -18,20 +18,27 @@ export function TimelinePanel({ isResourceAdmin }: Props) {
   const getSortedJobs = useResourcePlanningStore((s) => s.getSortedJobs);
   const zoomLevel = useResourcePlanningStore((s) => s.zoomLevel);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
   const sortedJobs = useMemo(() => getSortedJobs(), [jobs, allocations, focusedDays, lockedFocusDays, isLocked, getSortedJobs]);
+
+  // Zoom scales the entire timeline (DateBar + grid) together so dates stay aligned
+  const zoomStyle = zoomLevel !== 1
+    ? { transform: `scaleX(${zoomLevel})`, transformOrigin: 'left top', width: `${100 / zoomLevel}%` }
+    : undefined;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <DateBar />
+      {/* Zoom wrapper around both DateBar and grid so they scale together */}
+      <div style={zoomStyle}>
+        <DateBar />
+      </div>
       <div
-        className="flex-1 overflow-y-auto overflow-x-hidden"
-        style={{
-          transform: zoomLevel !== 1 ? `scale(${zoomLevel})` : undefined,
-          transformOrigin: 'top left',
-          width: zoomLevel !== 1 ? `${100 / zoomLevel}%` : undefined,
-        }}
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto overflow-x-hidden resource-scroll"
       >
-        <AllocationGrid jobs={sortedJobs} isResourceAdmin={isResourceAdmin} />
+        <div style={zoomStyle}>
+          <AllocationGrid jobs={sortedJobs} isResourceAdmin={isResourceAdmin} />
+        </div>
       </div>
     </div>
   );
