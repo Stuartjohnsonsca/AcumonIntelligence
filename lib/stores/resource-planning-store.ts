@@ -9,9 +9,11 @@ import type {
   StaffAbsence,
   ViewMode,
   EditMode,
+  ResourceRole,
+  ResourceJobProfile,
 } from '@/lib/resource-planning/types';
 import { computeStaffCapacity } from '@/lib/resource-planning/capacity';
-import { allocationOverlaps, getDefaultDateRange, getWeekStart } from '@/lib/resource-planning/date-utils';
+import { allocationOverlaps, getDefaultDateRange } from '@/lib/resource-planning/date-utils';
 
 interface ResourcePlanningState {
   // Data
@@ -19,6 +21,7 @@ interface ResourcePlanningState {
   jobs: ResourceJobView[];
   allocations: Allocation[];
   absences: StaffAbsence[];
+  jobProfiles: ResourceJobProfile[];
 
   // View state
   visibleStart: string;
@@ -30,16 +33,38 @@ interface ResourcePlanningState {
   searchQuery: string;
   isInitialized: boolean;
 
-  // New view controls
+  // View controls
   zoomLevel: number;
+  focusWindowWeeks: number;
   viewMode: ViewMode;
   editMode: EditMode;
   selectedAllocationId: string | null;
   leftPanelFilter: string[];
+
+  // Job status counts
+  unscheduledJobCount: number;
+  completedJobCount: number;
+
+  // Dynamic role lanes: extra roles added per job beyond defaults
+  dynamicRoleLanes: Record<string, ResourceRole[]>;
+
+  // Current user context
+  currentUserId: string | null;
+  isResourceAdmin: boolean;
 }
 
 interface ResourcePlanningActions {
-  init: (data: { staff: StaffMember[]; jobs: ResourceJobView[]; allocations: Allocation[]; absences?: StaffAbsence[] }) => void;
+  init: (data: {
+    staff: StaffMember[];
+    jobs: ResourceJobView[];
+    allocations: Allocation[];
+    absences?: StaffAbsence[];
+    jobProfiles?: ResourceJobProfile[];
+    unscheduledJobCount?: number;
+    completedJobCount?: number;
+    currentUserId?: string;
+    isResourceAdmin?: boolean;
+  }) => void;
   setVisibleRange: (start: Date, end: Date) => void;
   setFocusedDays: (days: Date[]) => void;
   toggleFocusLock: () => void;
@@ -50,6 +75,7 @@ interface ResourcePlanningActions {
 
   // View controls
   setZoomLevel: (level: number) => void;
+  setFocusWindowWeeks: (weeks: number) => void;
   setViewMode: (mode: ViewMode) => void;
   setEditMode: (mode: EditMode) => void;
   setSelectedAllocation: (id: string | null) => void;
@@ -63,12 +89,23 @@ interface ResourcePlanningActions {
   // Staff settings
   updateStaffSetting: (userId: string, changes: Partial<StaffMember['resourceSetting']>) => void;
 
+  // Job management
+  updateJob: (jobId: string, changes: Partial<ResourceJobView>) => void;
+  setUnscheduledCount: (n: number) => void;
+  setCompletedCount: (n: number) => void;
+  setJobProfiles: (profiles: ResourceJobProfile[]) => void;
+
+  // Dynamic role lanes
+  addRoleLane: (jobId: string, role: ResourceRole) => void;
+  removeRoleLane: (jobId: string, role: ResourceRole, index: number) => void;
+
   // Computed
   getStaffCapacity: () => StaffCapacity[];
   getFocusedCapacity: () => StaffCapacity[];
   getSortedJobs: () => ResourceJobView[];
   getViewAxis: () => 'client' | 'staff';
   getIsAvailabilityMode: () => boolean;
+  getJobRoles: (jobId: string) => ResourceRole[];
 }
 
 const defaultRange = getDefaultDateRange();
@@ -79,6 +116,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     jobs: [],
     allocations: [],
     absences: [],
+    jobProfiles: [],
     visibleStart: defaultRange.start.toISOString(),
     visibleEnd: defaultRange.end.toISOString(),
     focusedDays: [],
@@ -88,10 +126,16 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     searchQuery: '',
     isInitialized: false,
     zoomLevel: 1.0,
+    focusWindowWeeks: 4,
     viewMode: 'client-bookings',
     editMode: 'edit',
     selectedAllocationId: null,
     leftPanelFilter: [],
+    unscheduledJobCount: 0,
+    completedJobCount: 0,
+    dynamicRoleLanes: {},
+    currentUserId: null,
+    isResourceAdmin: false,
 
     init: (data) => {
       set({
@@ -99,6 +143,11 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
         jobs: data.jobs,
         allocations: data.allocations,
         absences: data.absences ?? [],
+        jobProfiles: data.jobProfiles ?? [],
+        unscheduledJobCount: data.unscheduledJobCount ?? 0,
+        completedJobCount: data.completedJobCount ?? 0,
+        currentUserId: data.currentUserId ?? null,
+        isResourceAdmin: data.isResourceAdmin ?? false,
         isInitialized: true,
       });
     },
@@ -109,17 +158,15 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
 
     setFocusedDays: (days) => {
       const { isLocked } = get();
-      if (isLocked) return; // Don't update focused days when locked
+      if (isLocked) return;
       set({ focusedDays: days.map((d) => d.toISOString()) });
     },
 
     toggleFocusLock: () => {
       const { isLocked, focusedDays } = get();
       if (isLocked) {
-        // Unlock
         set({ isLocked: false, lockedFocusDays: [], focusedDays: [] });
       } else {
-        // Lock current focused days
         set({ isLocked: true, lockedFocusDays: [...focusedDays] });
       }
     },
@@ -148,6 +195,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     },
 
     setZoomLevel: (level) => set({ zoomLevel: Math.max(0.75, Math.min(1.25, level)) }),
+    setFocusWindowWeeks: (weeks) => set({ focusWindowWeeks: Math.max(1, Math.min(6, weeks)) }),
     setViewMode: (mode) => set({ viewMode: mode }),
     setEditMode: (mode) => set({ editMode: mode }),
     setSelectedAllocation: (id) => set({ selectedAllocationId: id }),
@@ -178,6 +226,41 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
             : s,
         ),
       }));
+    },
+
+    updateJob: (jobId, changes) => {
+      set((state) => ({
+        jobs: state.jobs.map((j) => (j.id === jobId ? { ...j, ...changes } : j)),
+      }));
+    },
+
+    setUnscheduledCount: (n) => set({ unscheduledJobCount: n }),
+    setCompletedCount: (n) => set({ completedJobCount: n }),
+    setJobProfiles: (profiles) => set({ jobProfiles: profiles }),
+
+    addRoleLane: (jobId, role) => {
+      set((state) => {
+        const existing = state.dynamicRoleLanes[jobId] || [];
+        return {
+          dynamicRoleLanes: {
+            ...state.dynamicRoleLanes,
+            [jobId]: [...existing, role],
+          },
+        };
+      });
+    },
+
+    removeRoleLane: (jobId, role, index) => {
+      set((state) => {
+        const existing = state.dynamicRoleLanes[jobId] || [];
+        const updated = existing.filter((_, i) => i !== index);
+        return {
+          dynamicRoleLanes: {
+            ...state.dynamicRoleLanes,
+            [jobId]: updated,
+          },
+        };
+      });
     },
 
     getStaffCapacity: () => {
@@ -229,6 +312,20 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     getIsAvailabilityMode: () => {
       const { viewMode } = get();
       return viewMode.endsWith('availability');
+    },
+
+    getJobRoles: (jobId: string) => {
+      const { dynamicRoleLanes } = get();
+      const defaults: ResourceRole[] = ['Specialist', 'RI', 'Reviewer', 'Preparer'];
+      const extras = dynamicRoleLanes[jobId] || [];
+      // Merge: for each default role, if extra has more of the same, add them
+      const result: ResourceRole[] = [];
+      for (const role of defaults) {
+        result.push(role);
+        const extraOfThisRole = extras.filter((r) => r === role);
+        for (const e of extraOfThisRole) result.push(e);
+      }
+      return result;
     },
   }),
 );

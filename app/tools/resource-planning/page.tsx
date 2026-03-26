@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { ResourcePlanningClient } from '@/components/tools/resource-planning/ResourcePlanningClient';
+import type { ResourceRole, SchedulingStatus } from '@/lib/resource-planning/types';
 
 export default async function ResourcePlanningPage() {
   const session = await auth();
@@ -29,6 +30,11 @@ export default async function ResourcePlanningPage() {
           concurrentJobLimit: true,
           isRI: true,
           weeklyCapacityHrs: true,
+          overtimeHrs: true,
+          preparerJobLimit: true,
+          reviewerJobLimit: true,
+          riJobLimit: true,
+          specialistJobLimit: true,
         },
       },
     },
@@ -45,10 +51,15 @@ export default async function ResourcePlanningPage() {
     resourceSetting: s.resourceStaffSetting
       ? {
           id: s.resourceStaffSetting.id,
-          resourceRole: s.resourceStaffSetting.resourceRole as 'Preparer' | 'Reviewer' | 'RI',
+          resourceRole: s.resourceStaffSetting.resourceRole as ResourceRole,
           concurrentJobLimit: s.resourceStaffSetting.concurrentJobLimit,
           isRI: s.resourceStaffSetting.isRI,
           weeklyCapacityHrs: s.resourceStaffSetting.weeklyCapacityHrs,
+          overtimeHrs: s.resourceStaffSetting.overtimeHrs,
+          preparerJobLimit: s.resourceStaffSetting.preparerJobLimit,
+          reviewerJobLimit: s.resourceStaffSetting.reviewerJobLimit,
+          riJobLimit: s.resourceStaffSetting.riJobLimit,
+          specialistJobLimit: s.resourceStaffSetting.specialistJobLimit,
         }
       : null,
   }));
@@ -77,10 +88,21 @@ export default async function ResourcePlanningPage() {
     auditType: j.auditType,
     periodEnd: j.periodEnd.toISOString(),
     targetCompletion: j.targetCompletion.toISOString(),
+    budgetHoursSpecialist: j.budgetHoursSpecialist,
     budgetHoursRI: j.budgetHoursRI,
     budgetHoursReviewer: j.budgetHoursReviewer,
     budgetHoursPreparer: j.budgetHoursPreparer,
     engagementId: engagementMap.get(`${j.clientId}:${j.auditType}`) ?? null,
+    schedulingStatus: j.schedulingStatus as SchedulingStatus,
+    complianceDeadline: j.complianceDeadline?.toISOString() ?? null,
+    customDeadline: j.customDeadline?.toISOString() ?? null,
+    jobProfileId: j.jobProfileId,
+    crmJobId: j.crmJobId,
+    actualHoursSpecialist: j.actualHoursSpecialist,
+    actualHoursRI: j.actualHoursRI,
+    actualHoursReviewer: j.actualHoursReviewer,
+    actualHoursPreparer: j.actualHoursPreparer,
+    previousJobId: j.previousJobId,
   }));
 
   // Fetch allocations (3-month window)
@@ -105,12 +127,21 @@ export default async function ResourcePlanningPage() {
     engagementId: a.engagementId,
     userId: a.userId,
     userName: a.user.name,
-    role: a.role as 'Preparer' | 'Reviewer' | 'RI',
+    role: a.role as ResourceRole,
     startDate: a.startDate.toISOString(),
     endDate: a.endDate.toISOString(),
     hoursPerDay: a.hoursPerDay,
+    totalHours: a.totalHours,
     notes: a.notes,
   }));
+
+  // Fetch scheduling status counts
+  const unscheduledCount = await prisma.resourceJob.count({
+    where: { firmId, schedulingStatus: 'unscheduled' },
+  });
+  const completedUnscheduledCount = await prisma.resourceJob.count({
+    where: { firmId, schedulingStatus: 'completed' },
+  });
 
   return (
     <Suspense fallback={null}>
@@ -120,6 +151,8 @@ export default async function ResourcePlanningPage() {
         allocations={allocations}
         isResourceAdmin={session.user.isResourceAdmin || session.user.isSuperAdmin}
         userId={session.user.id}
+        unscheduledCount={unscheduledCount}
+        completedUnscheduledCount={completedUnscheduledCount}
       />
     </Suspense>
   );

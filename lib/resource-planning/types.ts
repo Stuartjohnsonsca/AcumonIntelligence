@@ -12,12 +12,13 @@ export interface StaffMember {
 
 export interface StaffSetting {
   id: string;
-  resourceRole: 'Preparer' | 'Reviewer' | 'RI'; // Primary/display role
+  resourceRole: ResourceRole; // Primary/display role
   concurrentJobLimit: number; // Legacy - limit for primary role
   isRI: boolean;
   weeklyCapacityHrs: number;
-  overtimeHrs?: number;
+  overtimeHrs: number;
   // Per-role concurrent job limits (null = not eligible for that role)
+  specialistJobLimit?: number | null;
   preparerJobLimit?: number | null;
   reviewerJobLimit?: number | null;
   riJobLimit?: number | null;
@@ -27,6 +28,9 @@ export interface StaffSetting {
 export function getStaffRoles(setting: StaffSetting | null): { role: ResourceRole; limit: number }[] {
   if (!setting) return [];
   const roles: { role: ResourceRole; limit: number }[] = [];
+  if (setting.specialistJobLimit != null && setting.specialistJobLimit > 0) {
+    roles.push({ role: 'Specialist', limit: setting.specialistJobLimit });
+  }
   if (setting.preparerJobLimit != null && setting.preparerJobLimit > 0) {
     roles.push({ role: 'Preparer', limit: setting.preparerJobLimit });
   }
@@ -50,10 +54,21 @@ export interface ResourceJobView {
   auditType: string;
   periodEnd: string; // ISO date
   targetCompletion: string; // ISO date
+  budgetHoursSpecialist: number;
   budgetHoursRI: number;
   budgetHoursReviewer: number;
   budgetHoursPreparer: number;
   engagementId: string | null;
+  schedulingStatus: SchedulingStatus;
+  complianceDeadline: string | null;
+  customDeadline: string | null;
+  jobProfileId: string | null;
+  crmJobId: string | null;
+  actualHoursSpecialist: number;
+  actualHoursRI: number;
+  actualHoursReviewer: number;
+  actualHoursPreparer: number;
+  previousJobId: string | null;
 }
 
 export interface Allocation {
@@ -61,10 +76,11 @@ export interface Allocation {
   engagementId: string;
   userId: string;
   userName: string;
-  role: 'Preparer' | 'Reviewer' | 'RI';
+  role: ResourceRole;
   startDate: string; // ISO date
   endDate: string; // ISO date
   hoursPerDay: number;
+  totalHours: number | null;
   notes: string | null;
 }
 
@@ -89,10 +105,50 @@ export interface StaffCapacity {
 export interface NewAllocationInput {
   engagementId: string;
   userId: string;
-  role: 'Preparer' | 'Reviewer' | 'RI';
+  role: ResourceRole;
   startDate: string;
   endDate: string;
   hoursPerDay?: number;
+  totalHours?: number;
+}
+
+export interface ResourceJobProfile {
+  id: string;
+  firmId: string;
+  name: string;
+  budgetHoursSpecialist: number;
+  budgetHoursRI: number;
+  budgetHoursReviewer: number;
+  budgetHoursPreparer: number;
+  isDefault: boolean;
+}
+
+export interface ResourceClientSettingView {
+  id: string;
+  clientId: string;
+  clientName: string;
+  resourceCategoryId: string | null;
+  resourceCategoryName: string | null;
+  serviceType: string | null;
+  rollForwardTimeframe: string | null;
+}
+
+export interface ScheduleProposal {
+  jobId: string;
+  allocations: ProposedAllocation[];
+  conflicts: string[];
+}
+
+export interface ProposedAllocation {
+  userId: string;
+  userName: string;
+  role: ResourceRole;
+  startDate: string;
+  endDate: string;
+  hoursPerDay: number;
+  totalHours: number;
+  availabilityScore: number; // 0-100
+  familiarityScore: number; // 0-100
 }
 
 export interface DateRange {
@@ -100,19 +156,32 @@ export interface DateRange {
   end: Date;
 }
 
-export type ResourceRole = 'Preparer' | 'Reviewer' | 'RI';
+export type ResourceRole = 'Specialist' | 'Preparer' | 'Reviewer' | 'RI';
+export type SchedulingStatus = 'unscheduled' | 'pre_scheduled' | 'scheduled' | 'completed';
 export type ViewAxis = 'client' | 'staff';
 export type EditMode = 'edit' | 'create';
 export type ViewMode = 'client-bookings' | 'staff-bookings' | 'client-availability' | 'staff-availability';
 
+/** Ordered from top to bottom in grid display */
+export const ROLE_ORDER: ResourceRole[] = ['Specialist', 'RI', 'Reviewer', 'Preparer'];
+
 export const ROLE_COLORS: Record<ResourceRole, { bg: string; text: string; border: string }> = {
+  Specialist: { bg: 'bg-teal-100', text: 'text-teal-800', border: 'border-teal-300' },
   RI: { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-300' },
   Reviewer: { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-300' },
   Preparer: { bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-300' },
 };
 
 export const ROLE_BAR_COLORS: Record<ResourceRole, string> = {
+  Specialist: 'bg-teal-400',
   RI: 'bg-amber-400',
   Reviewer: 'bg-purple-400',
   Preparer: 'bg-blue-400',
+};
+
+export const DEFAULT_CONCURRENT_LIMITS: Record<ResourceRole, number> = {
+  Specialist: 5,
+  RI: 30,
+  Reviewer: 18,
+  Preparer: 3,
 };

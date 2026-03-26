@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
-import { ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
+import { ROLE_ORDER, ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
 import { getWeeksInRange, getDaysInRange, formatShortDate, isSameDay, allocationOverlaps } from '@/lib/resource-planning/date-utils';
 import { AllocationBar } from './AllocationBar';
 
@@ -13,7 +13,7 @@ interface Props {
   isResourceAdmin: boolean;
 }
 
-const ROLES: ResourceRole[] = ['RI', 'Reviewer', 'Preparer'];
+const ROLES: ResourceRole[] = ROLE_ORDER;
 
 export function AllocationGrid({ jobs, isResourceAdmin }: Props) {
   const allocations = useResourcePlanningStore((s) => s.allocations);
@@ -206,6 +206,7 @@ function JobRow({
             <span className="text-[9px] text-slate-400">TC: {formatShortDate(new Date(job.targetCompletion))}</span>
           </div>
           <div className="flex gap-1.5 mt-0.5">
+            <BudgetBadge label="Spec" hours={job.budgetHoursSpecialist} />
             <BudgetBadge label="RI" hours={job.budgetHoursRI} />
             <BudgetBadge label="Rev" hours={job.budgetHoursReviewer} />
             <BudgetBadge label="Prep" hours={job.budgetHoursPreparer} />

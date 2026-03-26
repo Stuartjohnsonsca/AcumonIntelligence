@@ -26,6 +26,11 @@ export async function GET(request: NextRequest) {
           concurrentJobLimit: true,
           isRI: true,
           weeklyCapacityHrs: true,
+          overtimeHrs: true,
+          preparerJobLimit: true,
+          reviewerJobLimit: true,
+          riJobLimit: true,
+          specialistJobLimit: true,
         },
       },
     },
@@ -46,6 +51,11 @@ export async function GET(request: NextRequest) {
           concurrentJobLimit: s.resourceStaffSetting.concurrentJobLimit,
           isRI: s.resourceStaffSetting.isRI,
           weeklyCapacityHrs: s.resourceStaffSetting.weeklyCapacityHrs,
+          overtimeHrs: s.resourceStaffSetting.overtimeHrs,
+          preparerJobLimit: s.resourceStaffSetting.preparerJobLimit,
+          reviewerJobLimit: s.resourceStaffSetting.reviewerJobLimit,
+          riJobLimit: s.resourceStaffSetting.riJobLimit,
+          specialistJobLimit: s.resourceStaffSetting.specialistJobLimit,
         }
       : null,
   }));

@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import type { Allocation, ResourceRole } from '@/lib/resource-planning/types';
 import { ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
+import { countWorkingDays } from '@/lib/resource-planning/date-utils';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 
 interface Props {
@@ -38,7 +39,7 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
 
   if (!style) return null;
 
-  const barColor = ROLE_BAR_COLORS[allocation.role as ResourceRole] || 'bg-slate-400';
+  const barColor = ROLE_BAR_COLORS[allocation.role] || 'bg-slate-400';
   const isSelected = selectedAllocationId === allocation.id;
   const initials = allocation.userName
     .split(' ')
@@ -46,6 +47,10 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
     .join('')
     .toUpperCase()
     .slice(0, 2);
+
+  const displayHours = allocation.totalHours != null
+    ? allocation.totalHours
+    : Math.round(allocation.hoursPerDay * countWorkingDays(new Date(allocation.startDate), new Date(allocation.endDate)) * 10) / 10;
 
   return (
     <div
@@ -59,7 +64,7 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
         }
       }}
       className={`
-        absolute top-0.5 h-[14px] rounded-full cursor-grab active:cursor-grabbing
+        absolute top-0.5 h-[14px] rounded-md cursor-grab active:cursor-grabbing
         flex items-center px-1 overflow-hidden
         ${barColor} text-white
         ${isDragging ? 'opacity-50 z-30' : 'z-10'}
@@ -67,9 +72,9 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
         shadow-sm hover:shadow-md transition-shadow
       `}
       style={{ left: style.left, width: style.width, minWidth: '20px' }}
-      title={`${allocation.userName} (${allocation.role}) - ${allocation.hoursPerDay}h/day`}
+      title={`${allocation.userName} (${allocation.role}) - ${allocation.hoursPerDay}h/day - ${displayHours}h total`}
     >
-      <span className="text-[8px] font-semibold truncate leading-none">{initials}</span>
+      <span className="text-[8px] font-semibold truncate leading-none">{initials} ({displayHours})</span>
     </div>
   );
 }

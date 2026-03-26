@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
     startDate: a.startDate.toISOString(),
     endDate: a.endDate.toISOString(),
     hoursPerDay: a.hoursPerDay,
+    totalHours: a.totalHours,
     notes: a.notes,
   }));
 
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { engagementId, userId, role, startDate, endDate, hoursPerDay, notes } = body;
+  const { engagementId, userId, role, startDate, endDate, hoursPerDay, totalHours, notes } = body;
 
   if (!engagementId || !userId || !role || !startDate || !endDate) {
     return Response.json({ error: 'Missing required fields' }, { status: 400 });
@@ -68,6 +69,7 @@ export async function POST(request: NextRequest) {
       startDate: new Date(startDate),
       endDate: new Date(endDate),
       hoursPerDay: hoursPerDay ?? 7.5,
+      totalHours: totalHours ?? null,
       notes: notes ?? null,
     },
     include: {
@@ -85,6 +87,7 @@ export async function POST(request: NextRequest) {
       startDate: allocation.startDate.toISOString(),
       endDate: allocation.endDate.toISOString(),
       hoursPerDay: allocation.hoursPerDay,
+      totalHours: allocation.totalHours,
       notes: allocation.notes,
     },
   });

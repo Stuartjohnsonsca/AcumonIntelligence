@@ -17,7 +17,17 @@ export async function PUT(
 
   const { userId } = await params;
   const body = await request.json();
-  const { resourceRole, concurrentJobLimit, isRI, weeklyCapacityHrs } = body;
+  const {
+    resourceRole,
+    concurrentJobLimit,
+    isRI,
+    weeklyCapacityHrs,
+    overtimeHrs,
+    preparerJobLimit,
+    reviewerJobLimit,
+    riJobLimit,
+    specialistJobLimit,
+  } = body;
 
   const setting = await prisma.resourceStaffSetting.upsert({
     where: { userId },
@@ -26,6 +36,11 @@ export async function PUT(
       ...(concurrentJobLimit !== undefined && { concurrentJobLimit }),
       ...(isRI !== undefined && { isRI }),
       ...(weeklyCapacityHrs !== undefined && { weeklyCapacityHrs }),
+      ...(overtimeHrs !== undefined && { overtimeHrs }),
+      ...(preparerJobLimit !== undefined && { preparerJobLimit }),
+      ...(reviewerJobLimit !== undefined && { reviewerJobLimit }),
+      ...(riJobLimit !== undefined && { riJobLimit }),
+      ...(specialistJobLimit !== undefined && { specialistJobLimit }),
     },
     create: {
       userId,
@@ -34,6 +49,11 @@ export async function PUT(
       concurrentJobLimit: concurrentJobLimit ?? 3,
       isRI: isRI ?? false,
       weeklyCapacityHrs: weeklyCapacityHrs ?? 37.5,
+      overtimeHrs: overtimeHrs ?? 0,
+      preparerJobLimit: preparerJobLimit ?? null,
+      reviewerJobLimit: reviewerJobLimit ?? null,
+      riJobLimit: riJobLimit ?? null,
+      specialistJobLimit: specialistJobLimit ?? null,
     },
   });
 

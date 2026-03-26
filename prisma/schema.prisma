@@ -51,6 +51,8 @@ model Firm {
   resourceStaffSettings    ResourceStaffSetting[]
   resourceAllocations      ResourceAllocation[]
   resourceJobs             ResourceJob[]
+  resourceJobProfiles      ResourceJobProfile[]
+  resourceClientSettings   ResourceClientSetting[]
 
   @@map("firms")
 }
@@ -192,6 +194,7 @@ model Client {
   clientIntelligence     ClientIntelligence[]
   // Resource planning relations
   resourceJobs           ResourceJob[]
+  resourceClientSetting  ResourceClientSetting?
 
   @@map("clients")
 }
@@ -1976,15 +1979,20 @@ model MethodologyRiskTable {
 // ─── Resource Planning ───────────────────────────────────────────────
 
 model ResourceStaffSetting {
-  id                 String   @id @default(uuid())
-  userId             String   @unique @map("user_id")
-  firmId             String   @map("firm_id")
-  resourceRole       String   @map("resource_role") // Preparer | Reviewer | RI
-  concurrentJobLimit Int      @map("concurrent_job_limit")
-  isRI               Boolean  @default(false) @map("is_ri")
-  weeklyCapacityHrs  Float    @default(37.5) @map("weekly_capacity_hrs")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  id                  String   @id @default(uuid())
+  userId              String   @unique @map("user_id")
+  firmId              String   @map("firm_id")
+  resourceRole        String   @map("resource_role") // Specialist | Preparer | Reviewer | RI
+  concurrentJobLimit  Int      @map("concurrent_job_limit")
+  isRI                Boolean  @default(false) @map("is_ri")
+  weeklyCapacityHrs   Float    @default(37.5) @map("weekly_capacity_hrs")
+  overtimeHrs         Float    @default(0) @map("overtime_hrs")
+  preparerJobLimit    Int?     @map("preparer_job_limit")
+  reviewerJobLimit    Int?     @map("reviewer_job_limit")
+  riJobLimit          Int?     @map("ri_job_limit")
+  specialistJobLimit  Int?     @map("specialist_job_limit")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   firm Firm @relation(fields: [firmId], references: [id])
@@ -1998,10 +2006,11 @@ model ResourceAllocation {
   firmId       String   @map("firm_id")
   engagementId String   @map("engagement_id")
   userId       String   @map("user_id")
-  role         String   // Preparer | Reviewer | RI
+  role         String   // Specialist | Preparer | Reviewer | RI
   startDate    DateTime @map("start_date")
   endDate      DateTime @map("end_date")
   hoursPerDay  Float    @default(7.5) @map("hours_per_day")
+  totalHours   Float?   @map("total_hours")
   notes        String?
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
@@ -2017,22 +2026,75 @@ model ResourceAllocation {
 }
 
 model ResourceJob {
-  id                  String   @id @default(uuid())
-  firmId              String   @map("firm_id")
-  clientId            String   @map("client_id")
-  auditType           String   @map("audit_type")
-  periodEnd           DateTime @map("period_end")
-  targetCompletion    DateTime @map("target_completion")
-  budgetHoursRI       Float    @default(0) @map("budget_hours_ri")
-  budgetHoursReviewer Float    @default(0) @map("budget_hours_reviewer")
-  budgetHoursPreparer Float    @default(0) @map("budget_hours_preparer")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                     String   @id @default(uuid())
+  firmId                 String   @map("firm_id")
+  clientId               String   @map("client_id")
+  auditType              String   @map("audit_type")
+  periodEnd              DateTime @map("period_end")
+  targetCompletion       DateTime @map("target_completion")
+  budgetHoursSpecialist  Float    @default(0) @map("budget_hours_specialist")
+  budgetHoursRI          Float    @default(0) @map("budget_hours_ri")
+  budgetHoursReviewer    Float    @default(0) @map("budget_hours_reviewer")
+  budgetHoursPreparer    Float    @default(0) @map("budget_hours_preparer")
+  schedulingStatus       String   @default("unscheduled") @map("scheduling_status") // unscheduled | pre_scheduled | scheduled | completed
+  complianceDeadline     DateTime? @map("compliance_deadline")
+  customDeadline         DateTime? @map("custom_deadline")
+  jobProfileId           String?  @map("job_profile_id")
+  crmJobId               String?  @unique @map("crm_job_id")
+  actualHoursSpecialist  Float    @default(0) @map("actual_hours_specialist")
+  actualHoursRI          Float    @default(0) @map("actual_hours_ri")
+  actualHoursReviewer    Float    @default(0) @map("actual_hours_reviewer")
+  actualHoursPreparer    Float    @default(0) @map("actual_hours_preparer")
+  previousJobId          String?  @map("previous_job_id")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
 
-  firm   Firm   @relation(fields: [firmId], references: [id])
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  firm        Firm                @relation(fields: [firmId], references: [id])
+  client      Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  jobProfile  ResourceJobProfile? @relation(fields: [jobProfileId], references: [id])
+  previousJob ResourceJob?        @relation("JobRollForward", fields: [previousJobId], references: [id])
+  rolledForwardJobs ResourceJob[] @relation("JobRollForward")
 
   @@index([firmId])
+  @@index([schedulingStatus])
   @@map("resource_jobs")
+}
+
+model ResourceJobProfile {
+  id                     String   @id @default(uuid())
+  firmId                 String   @map("firm_id")
+  name                   String
+  budgetHoursSpecialist  Float    @default(0) @map("budget_hours_specialist")
+  budgetHoursRI          Float    @default(0) @map("budget_hours_ri")
+  budgetHoursReviewer    Float    @default(0) @map("budget_hours_reviewer")
+  budgetHoursPreparer    Float    @default(0) @map("budget_hours_preparer")
+  isDefault              Boolean  @default(false) @map("is_default")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  firm            Firm                    @relation(fields: [firmId], references: [id])
+  clientSettings  ResourceClientSetting[]
+  resourceJobs    ResourceJob[]
+
+  @@index([firmId])
+  @@map("resource_job_profiles")
+}
+
+model ResourceClientSetting {
+  id                    String   @id @default(uuid())
+  firmId                String   @map("firm_id")
+  clientId              String   @unique @map("client_id")
+  resourceCategoryId    String?  @map("resource_category_id")
+  serviceType           String?  @map("service_type")
+  rollForwardTimeframe  String?  @map("roll_forward_timeframe")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  firm              Firm                @relation(fields: [firmId], references: [id])
+  client            Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  resourceCategory  ResourceJobProfile? @relation(fields: [resourceCategoryId], references: [id])
+
+  @@index([firmId])
+  @@map("resource_client_settings")
 }
 

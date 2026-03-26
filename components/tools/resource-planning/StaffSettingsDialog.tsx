@@ -18,11 +18,12 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
 
   const setting = member.resourceSetting;
 
-  const [primaryRole, setPrimaryRole] = useState<'Preparer' | 'Reviewer' | 'RI'>(setting?.resourceRole ?? 'Preparer');
+  const [primaryRole, setPrimaryRole] = useState<'Specialist' | 'Preparer' | 'Reviewer' | 'RI'>(setting?.resourceRole ?? 'Preparer');
   const [capacity, setCapacity] = useState(setting?.weeklyCapacityHrs ?? 37.5);
   const [overtimeHrs, setOvertimeHrs] = useState(setting?.overtimeHrs ?? 0);
 
   // Per-role job limits (null = not eligible)
+  const [specLimit, setSpecLimit] = useState<number | null>(setting?.specialistJobLimit ?? (setting?.resourceRole === 'Specialist' ? setting.concurrentJobLimit : null));
   const [prepLimit, setPrepLimit] = useState<number | null>(setting?.preparerJobLimit ?? (setting?.resourceRole === 'Preparer' ? setting.concurrentJobLimit : null));
   const [revLimit, setRevLimit] = useState<number | null>(setting?.reviewerJobLimit ?? (setting?.resourceRole === 'Reviewer' ? setting.concurrentJobLimit : null));
   const [riLimit, setRiLimit] = useState<number | null>(setting?.riJobLimit ?? (setting?.isRI || setting?.resourceRole === 'RI' ? (setting?.resourceRole === 'RI' ? setting.concurrentJobLimit : 5) : null));
@@ -32,11 +33,13 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
   async function handleSave() {
     setSaving(true);
     try {
+      const defaultLimitForRole = primaryRole === 'Specialist' ? (specLimit ?? 5) : primaryRole === 'Preparer' ? (prepLimit ?? 3) : primaryRole === 'Reviewer' ? (revLimit ?? 18) : (riLimit ?? 30);
       const updates = {
         resourceRole: primaryRole,
         weeklyCapacityHrs: capacity,
-        concurrentJobLimit: primaryRole === 'Preparer' ? (prepLimit ?? 3) : primaryRole === 'Reviewer' ? (revLimit ?? 18) : (riLimit ?? 30),
+        concurrentJobLimit: defaultLimitForRole,
         isRI: riLimit != null && riLimit > 0,
+        specialistJobLimit: specLimit,
         preparerJobLimit: prepLimit,
         reviewerJobLimit: revLimit,
         riJobLimit: riLimit,
@@ -77,6 +80,7 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
               onChange={(e) => setPrimaryRole(e.target.value as any)}
               className="w-full px-2 py-1.5 text-sm border rounded-md"
             >
+              <option value="Specialist">Specialist</option>
               <option value="Preparer">Preparer</option>
               <option value="Reviewer">Reviewer</option>
               <option value="RI">RI</option>
@@ -87,6 +91,13 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-2">Role Eligibility & Job Limits</label>
             <div className="space-y-1.5 bg-slate-50 rounded-md p-2">
+              <RoleLimitRow
+                label="Specialist"
+                color="bg-teal-400"
+                limit={specLimit}
+                defaultLimit={5}
+                onChange={setSpecLimit}
+              />
               <RoleLimitRow
                 label="Preparer"
                 color="bg-blue-400"

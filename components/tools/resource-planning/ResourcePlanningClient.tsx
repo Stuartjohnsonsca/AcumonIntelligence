@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { DndContext, pointerWithin, DragOverlay, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
-import type { StaffMember, ResourceJobView, Allocation, StaffAbsence } from '@/lib/resource-planning/types';
+import type { StaffMember, ResourceJobView, Allocation, StaffAbsence, ResourceRole } from '@/lib/resource-planning/types';
+import { ROLE_COLORS } from '@/lib/resource-planning/types';
 import { ResourceToolbar } from './ResourceToolbar';
 import { StaffPanel } from './StaffPanel';
 import { TimelinePanel } from './TimelinePanel';
@@ -14,6 +15,8 @@ interface Props {
   allocations: Allocation[];
   isResourceAdmin: boolean;
   userId: string;
+  unscheduledCount?: number;
+  completedUnscheduledCount?: number;
 }
 
 // Dummy absences for demo
@@ -83,14 +86,14 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
       if (!member) return;
 
       let engagementId: string;
-      let role: 'Preparer' | 'Reviewer' | 'RI';
+      let role: ResourceRole;
       let dateStr: string;
 
       if (parts[1] === 'staff') {
         return; // Can't assign to staff row directly
       } else {
         engagementId = parts[1];
-        role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
+        role = parts[2] as ResourceRole;
         dateStr = parts[3];
       }
 
@@ -107,6 +110,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
         hoursPerDay: 7.5,
+        totalHours: null,
         notes: null,
       };
 
@@ -132,12 +136,12 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
         if (!existing) return;
 
         let engagementId: string;
-        let role: 'Preparer' | 'Reviewer' | 'RI';
+        let role: ResourceRole;
         let dateStr: string;
 
         if (parts[1] === 'staff') return;
         engagementId = parts[1];
-        role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
+        role = parts[2] as ResourceRole;
         dateStr = parts[3];
 
         const startDate = new Date(dateStr);
@@ -153,6 +157,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
           hoursPerDay: existing.hoursPerDay,
+          totalHours: null,
           notes: null,
         };
 
@@ -171,12 +176,12 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
       } else {
         // Edit mode - move existing allocation
         let engagementId: string;
-        let role: 'Preparer' | 'Reviewer' | 'RI';
+        let role: ResourceRole;
         let dateStr: string;
 
         if (parts[1] === 'staff') return;
         engagementId = parts[1];
-        role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
+        role = parts[2] as ResourceRole;
         dateStr = parts[3];
 
         const startDate = new Date(dateStr);
@@ -225,11 +230,14 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
             {draggedStaff.name}
           </div>
         )}
-        {draggedAlloc && (
-          <div className="px-2 py-1 bg-purple-100 border border-purple-300 rounded-full shadow-lg text-[10px] font-medium text-purple-800">
-            {draggedAlloc.userName} ({draggedAlloc.role})
-          </div>
-        )}
+        {draggedAlloc && (() => {
+          const colors = ROLE_COLORS[draggedAlloc.role];
+          return (
+            <div className={`px-2 py-1 ${colors.bg} border ${colors.border} rounded-full shadow-lg text-[10px] font-medium ${colors.text}`}>
+              {draggedAlloc.userName} ({draggedAlloc.role})
+            </div>
+          );
+        })()}
       </DragOverlay>
     </DndContext>
   );

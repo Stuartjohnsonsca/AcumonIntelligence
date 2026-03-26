@@ -12,7 +12,8 @@ export function computeStaffCapacity(
 ): StaffCapacity[] {
   return staff.map((s) => {
     const weeklyHrs = s.resourceSetting?.weeklyCapacityHrs ?? 37.5;
-    const dailyHrs = weeklyHrs / 5;
+    const overtimeHrs = s.resourceSetting?.overtimeHrs ?? 0;
+    const dailyHrs = (weeklyHrs + overtimeHrs) / 5;
 
     // Count working days in range
     const workingDays = countWorkingDaysInRange(rangeStart, rangeEnd);

@@ -17,7 +17,7 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json();
-  const { engagementId, userId, role, startDate, endDate, hoursPerDay, notes } = body;
+  const { engagementId, userId, role, startDate, endDate, hoursPerDay, totalHours, notes } = body;
 
   const allocation = await prisma.resourceAllocation.update({
     where: { id },
@@ -28,6 +28,7 @@ export async function PUT(
       ...(startDate !== undefined && { startDate: new Date(startDate) }),
       ...(endDate !== undefined && { endDate: new Date(endDate) }),
       ...(hoursPerDay !== undefined && { hoursPerDay }),
+      ...(totalHours !== undefined && { totalHours }),
       ...(notes !== undefined && { notes }),
     },
     include: {
@@ -45,6 +46,7 @@ export async function PUT(
       startDate: allocation.startDate.toISOString(),
       endDate: allocation.endDate.toISOString(),
       hoursPerDay: allocation.hoursPerDay,
+      totalHours: allocation.totalHours,
       notes: allocation.notes,
     },
   });

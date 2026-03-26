@@ -32,6 +32,7 @@ export default async function MyAccountPage() {
         isFirmAdmin={user.isFirmAdmin}
         isPortfolioOwner={user.isPortfolioOwner}
         isMethodologyAdmin={user.isMethodologyAdmin}
+        isResourceAdmin={user.isResourceAdmin}
       />
     </div>
   );

@@ -10,25 +10,12 @@ export async function GET() {
   const firmId = session.user.firmId;
 
   const jobs = await prisma.resourceJob.findMany({
-    where: { firmId },
+    where: { firmId, schedulingStatus: 'unscheduled' },
     include: {
-      client: {
-        select: { clientName: true },
-      },
+      client: { select: { clientName: true } },
     },
     orderBy: { targetCompletion: 'asc' },
   });
-
-  // Find matching engagements for each job
-  const engagements = await prisma.auditEngagement.findMany({
-    where: { firmId },
-    select: { id: true, clientId: true, auditType: true },
-  });
-
-  const engagementMap = new Map<string, string>();
-  for (const e of engagements) {
-    engagementMap.set(`${e.clientId}:${e.auditType}`, e.id);
-  }
 
   const mapped = jobs.map((j) => ({
     id: j.id,
@@ -41,16 +28,11 @@ export async function GET() {
     budgetHoursRI: j.budgetHoursRI,
     budgetHoursReviewer: j.budgetHoursReviewer,
     budgetHoursPreparer: j.budgetHoursPreparer,
-    engagementId: engagementMap.get(`${j.clientId}:${j.auditType}`) ?? null,
     schedulingStatus: j.schedulingStatus,
     complianceDeadline: j.complianceDeadline?.toISOString() ?? null,
     customDeadline: j.customDeadline?.toISOString() ?? null,
     jobProfileId: j.jobProfileId,
     crmJobId: j.crmJobId,
-    actualHoursSpecialist: j.actualHoursSpecialist,
-    actualHoursRI: j.actualHoursRI,
-    actualHoursReviewer: j.actualHoursReviewer,
-    actualHoursPreparer: j.actualHoursPreparer,
     previousJobId: j.previousJobId,
   }));
 

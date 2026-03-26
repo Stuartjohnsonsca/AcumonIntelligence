@@ -7,7 +7,7 @@ import { ClientsTab } from './ClientsTab';
 import { SubscriptionsTab } from './SubscriptionsTab';
 import { AiUsageTab } from './AiUsageTab';
 import { FirmSettingsTab } from './FirmSettingsTab';
-import { Shield, BookOpen, Keyboard } from 'lucide-react';
+import { Shield, BookOpen, Keyboard, Users } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 
@@ -18,9 +18,10 @@ interface Props {
   isFirmAdmin: boolean;
   isPortfolioOwner: boolean;
   isMethodologyAdmin: boolean;
+  isResourceAdmin: boolean;
 }
 
-export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isPortfolioOwner, isMethodologyAdmin }: Props) {
+export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isPortfolioOwner, isMethodologyAdmin, isResourceAdmin }: Props) {
   const canManageUsers = isSuperAdmin || isFirmAdmin;
   const canManageClients = isSuperAdmin || isFirmAdmin || isPortfolioOwner;
 
@@ -48,6 +49,18 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
           </div>
           <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-700">
             <Link href="/methodology-admin">Methodology Admin</Link>
+          </Button>
+        </div>
+      )}
+
+      {(isResourceAdmin || isSuperAdmin) && (
+        <div className="mb-6 p-4 bg-indigo-50 border border-indigo-200 rounded-lg flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Users className="h-5 w-5 text-indigo-600" />
+            <span className="text-sm font-medium text-indigo-800">Resource Management</span>
+          </div>
+          <Button asChild size="sm" className="bg-indigo-600 hover:bg-indigo-700">
+            <Link href="/my-account/resource-management">Manage Resources</Link>
           </Button>
         </div>
       )}
