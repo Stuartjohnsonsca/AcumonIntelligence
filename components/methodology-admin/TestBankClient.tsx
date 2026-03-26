@@ -16,6 +16,8 @@ interface TestType {
   id: string;
   name: string;
   code: string;
+  actionType: string; // client_action | ai_action | human_action
+  codeSection?: string | null;
 }
 
 interface TestBankEntry {
@@ -73,8 +75,12 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
 
   // Test Types state
   const [newTestTypeName, setNewTestTypeName] = useState('');
+  const [newActionType, setNewActionType] = useState('human_action');
+  const [newCodeSection, setNewCodeSection] = useState('');
   const [editingTestType, setEditingTestType] = useState<string | null>(null);
   const [editTestTypeName, setEditTestTypeName] = useState('');
+  const [editActionType, setEditActionType] = useState('human_action');
+  const [editCodeSection, setEditCodeSection] = useState('');
 
   const getTestCount = useCallback((industryId: string, fsLine: string) => {
     const entry = testBanks.find(tb => tb.industryId === industryId && tb.fsLine === fsLine);
@@ -222,28 +228,46 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   async function addTestType() {
     const name = newTestTypeName.trim();
     if (!name) return;
-    const code = name.toLowerCase().replace(/\s+/g, '_');
+    const code = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
     const res = await fetch('/api/methodology-admin/test-types', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, code }),
+      body: JSON.stringify({ name, code, actionType: newActionType, codeSection: newCodeSection.trim() || null }),
     });
     if (res.ok) {
       const { testType } = await res.json();
       setTestTypes(prev => [...prev, testType]);
       setNewTestTypeName('');
+      setNewActionType('human_action');
+      setNewCodeSection('');
     }
   }
 
-  async function updateTestType(id: string, name: string) {
+  function startEditTestType(tt: TestType) {
+    setEditingTestType(tt.id);
+    setEditTestTypeName(tt.name);
+    setEditActionType(tt.actionType || 'human_action');
+    setEditCodeSection(tt.codeSection || '');
+  }
+
+  async function saveEditTestType() {
+    if (!editingTestType || !editTestTypeName.trim()) return;
     const res = await fetch('/api/methodology-admin/test-types', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, name }),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: editingTestType,
+        name: editTestTypeName.trim(),
+        actionType: editActionType,
+        codeSection: editCodeSection.trim() || null,
+      }),
     });
-    if (res.ok) { setTestTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t)); setEditingTestType(null); }
+    if (res.ok) {
+      const { testType } = await res.json();
+      setTestTypes(prev => prev.map(t => t.id === testType.id ? testType : t));
+      setEditingTestType(null);
+    }
   }
 
   async function deleteTestType(id: string) {
-    if (testTypes.length <= 1) return;
     const res = await fetch('/api/methodology-admin/test-types', {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
@@ -269,35 +293,110 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       {topTab === 'test-types' && (
         <div className="border rounded-lg p-4">
           <h3 className="text-sm font-semibold text-slate-800 mb-3">Test Types ({testTypes.length})</h3>
-          <p className="text-xs text-slate-500 mb-4">Define the types of audit tests (e.g. Analytical Review, Test of Details, Judgement)</p>
-          <div className="border rounded-lg divide-y">
-            {testTypes.map(tt => (
-              <div key={tt.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 group">
-                {editingTestType === tt.id ? (
-                  <div className="flex items-center gap-2 flex-1">
-                    <input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') updateTestType(tt.id, editTestTypeName); if (e.key === 'Escape') setEditingTestType(null); }}
-                      className="border rounded px-2 py-1 text-sm flex-1 max-w-xs" autoFocus />
-                    <Button size="sm" onClick={() => updateTestType(tt.id, editTestTypeName)}>Save</Button>
-                    <Button size="sm" variant="outline" onClick={() => setEditingTestType(null)}>Cancel</Button>
-                  </div>
-                ) : (
-                  <>
-                    <span className="text-sm font-medium text-slate-700">{tt.name}</span>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => { setEditingTestType(tt.id); setEditTestTypeName(tt.name); }} className="p-1 hover:bg-slate-200 rounded"><Pencil className="h-3.5 w-3.5 text-slate-500" /></button>
-                      {testTypes.length > 1 && <button onClick={() => deleteTestType(tt.id)} className="p-1 hover:bg-red-100 rounded"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button>}
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
+          <p className="text-xs text-slate-500 mb-4">Define the types of audit actions. Each test in the Test Bank will be assigned one of these types.</p>
+
+          {/* Table */}
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-100 border-b">
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold">Action</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-44">Type</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-48">Code Section</th>
+                  <th className="w-20 px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {testTypes.map(tt => (
+                  <tr key={tt.id} className="border-b border-slate-50 hover:bg-slate-50/50 group">
+                    {editingTestType === tt.id ? (
+                      <>
+                        <td className="px-2 py-1.5">
+                          <input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveEditTestType(); if (e.key === 'Escape') setEditingTestType(null); }}
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm" autoFocus />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <select value={editActionType} onChange={e => setEditActionType(e.target.value)}
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white">
+                            <option value="client_action">Client Action</option>
+                            <option value="ai_action">AI Action</option>
+                            <option value="human_action">Human Action</option>
+                          </select>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input value={editCodeSection} onChange={e => setEditCodeSection(e.target.value)}
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm" placeholder="Code section reference" />
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <div className="flex items-center gap-1 justify-end">
+                            <button onClick={saveEditTestType} className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
+                            <button onClick={() => setEditingTestType(null)} className="text-xs px-2 py-1 border border-slate-300 rounded hover:bg-slate-100">Cancel</button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-3 py-2 text-slate-700 font-medium">{tt.name}</td>
+                        <td className="px-3 py-2">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                            tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' :
+                            tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' :
+                            'bg-blue-100 text-blue-700'
+                          }`}>
+                            {tt.actionType === 'client_action' ? 'Client Action' :
+                             tt.actionType === 'ai_action' ? 'AI Action' : 'Human Action'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-slate-500 text-xs font-mono">{tt.codeSection || '—'}</td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => startEditTestType(tt)} className="p-1 hover:bg-slate-200 rounded" title="Amend">
+                              <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                            </button>
+                            <button onClick={() => deleteTestType(tt.id)} className="p-1 hover:bg-red-100 rounded" title="Delete">
+                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div className="flex items-center gap-2 mt-3">
-            <input value={newTestTypeName} onChange={e => setNewTestTypeName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addTestType()}
-              placeholder="New test type name..." className="border rounded-md px-3 py-1.5 text-sm flex-1 max-w-xs" />
-            <Button onClick={addTestType} size="sm" disabled={!newTestTypeName.trim()}><Plus className="h-4 w-4 mr-1" /> Add</Button>
+
+          {/* Add new row */}
+          <div className="mt-3 border border-dashed border-slate-300 rounded-lg p-3 bg-slate-50/50">
+            <div className="grid grid-cols-12 gap-2 items-end">
+              <div className="col-span-5">
+                <label className="text-[10px] text-slate-500 block mb-0.5">Action</label>
+                <input value={newTestTypeName} onChange={e => setNewTestTypeName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addTestType()}
+                  placeholder="e.g. Analytical Review, Physical Verification..."
+                  className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm" />
+              </div>
+              <div className="col-span-3">
+                <label className="text-[10px] text-slate-500 block mb-0.5">Type</label>
+                <select value={newActionType} onChange={e => setNewActionType(e.target.value)}
+                  className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white">
+                  <option value="client_action">Client Action</option>
+                  <option value="ai_action">AI Action</option>
+                  <option value="human_action">Human Action</option>
+                </select>
+              </div>
+              <div className="col-span-3">
+                <label className="text-[10px] text-slate-500 block mb-0.5">Code Section</label>
+                <input value={newCodeSection} onChange={e => setNewCodeSection(e.target.value)}
+                  placeholder="Optional" className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm" />
+              </div>
+              <div className="col-span-1">
+                <Button onClick={addTestType} size="sm" disabled={!newTestTypeName.trim()} className="w-full">
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

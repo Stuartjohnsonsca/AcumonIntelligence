@@ -1890,11 +1890,13 @@ model MethodologyIndustry {
 }
 
 model MethodologyTestType {
-  id       String  @id @default(uuid())
-  firmId   String  @map("firm_id")
-  name     String
-  code     String
-  isActive Boolean @default(true) @map("is_active")
+  id          String  @id @default(uuid())
+  firmId      String  @map("firm_id")
+  name        String  // Action (free text description)
+  code        String
+  actionType  String  @default("human_action") @map("action_type") // client_action | ai_action | human_action
+  codeSection String? @map("code_section") // Reference to code/logic section
+  isActive    Boolean @default(true) @map("is_active")
 
   firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
 
