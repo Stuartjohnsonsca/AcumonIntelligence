@@ -47,6 +47,10 @@ model Firm {
   methodologyFsLines       MethodologyFsLine[]
   methodologyToolSettings  MethodologyToolSetting[]
   methodologyRiskTables    MethodologyRiskTable[]
+  // Resource planning relations
+  resourceStaffSettings    ResourceStaffSetting[]
+  resourceAllocations      ResourceAllocation[]
+  resourceJobs             ResourceJob[]
 
   @@map("firms")
 }
@@ -63,6 +67,7 @@ model User {
   isFirmAdmin        Boolean   @default(false) @map("is_firm_admin")
   isPortfolioOwner   Boolean   @default(false) @map("is_portfolio_owner")
   isMethodologyAdmin Boolean   @default(false) @map("is_methodology_admin")
+  isResourceAdmin    Boolean   @default(false) @map("is_resource_admin")
   entraObjectId     String?   @unique @map("entra_object_id")
   jobTitle          String?   @map("job_title")
   department        String?
@@ -102,6 +107,9 @@ model User {
   auditDocumentsUploaded     AuditDocument[]            @relation("DocumentUploader")
   methodologyConfigsCreated  MethodologyConfig[]
   firmEthicsPartnerOf        Firm[]                     @relation("FirmEthicsPartner")
+  // Resource planning relations
+  resourceStaffSetting       ResourceStaffSetting?
+  resourceAllocations        ResourceAllocation[]
 
   @@map("users")
 }
@@ -182,6 +190,8 @@ model Client {
   // Methodology relations
   auditEngagements       AuditEngagement[]
   clientIntelligence     ClientIntelligence[]
+  // Resource planning relations
+  resourceJobs           ResourceJob[]
 
   @@map("clients")
 }
@@ -1546,6 +1556,7 @@ model AuditEngagement {
   rmmRows             AuditRMMRow[]
   documents           AuditDocument[]
   tbRows              AuditTBRow[]
+  resourceAllocations ResourceAllocation[]
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
@@ -1960,5 +1971,68 @@ model MethodologyRiskTable {
 
   @@unique([firmId, tableType])
   @@map("methodology_risk_tables")
+}
+
+// ─── Resource Planning ───────────────────────────────────────────────
+
+model ResourceStaffSetting {
+  id                 String   @id @default(uuid())
+  userId             String   @unique @map("user_id")
+  firmId             String   @map("firm_id")
+  resourceRole       String   @map("resource_role") // Preparer | Reviewer | RI
+  concurrentJobLimit Int      @map("concurrent_job_limit")
+  isRI               Boolean  @default(false) @map("is_ri")
+  weeklyCapacityHrs  Float    @default(37.5) @map("weekly_capacity_hrs")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firm Firm @relation(fields: [firmId], references: [id])
+
+  @@index([firmId])
+  @@map("resource_staff_settings")
+}
+
+model ResourceAllocation {
+  id           String   @id @default(uuid())
+  firmId       String   @map("firm_id")
+  engagementId String   @map("engagement_id")
+  userId       String   @map("user_id")
+  role         String   // Preparer | Reviewer | RI
+  startDate    DateTime @map("start_date")
+  endDate      DateTime @map("end_date")
+  hoursPerDay  Float    @default(7.5) @map("hours_per_day")
+  notes        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  firm       Firm            @relation(fields: [firmId], references: [id])
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([firmId])
+  @@index([userId, startDate, endDate])
+  @@index([engagementId])
+  @@map("resource_allocations")
+}
+
+model ResourceJob {
+  id                  String   @id @default(uuid())
+  firmId              String   @map("firm_id")
+  clientId            String   @map("client_id")
+  auditType           String   @map("audit_type")
+  periodEnd           DateTime @map("period_end")
+  targetCompletion    DateTime @map("target_completion")
+  budgetHoursRI       Float    @default(0) @map("budget_hours_ri")
+  budgetHoursReviewer Float    @default(0) @map("budget_hours_reviewer")
+  budgetHoursPreparer Float    @default(0) @map("budget_hours_preparer")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  firm   Firm   @relation(fields: [firmId], references: [id])
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([firmId])
+  @@map("resource_jobs")
 }
 
