@@ -8,6 +8,7 @@ declare module 'next-auth' {
       isFirmAdmin: boolean;
       isPortfolioOwner: boolean;
       isMethodologyAdmin: boolean;
+      isResourceAdmin: boolean;
       firmId: string;
       firmName: string;
       displayId: string;

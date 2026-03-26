@@ -205,6 +205,16 @@ export function Navbar() {
               </div>
             )}
 
+            {/* Resources Link */}
+            {isAuthenticated && (
+              <Link
+                href="/tools/resource-planning"
+                className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+              >
+                Resources
+              </Link>
+            )}
+
             {/* Clients Dropdown */}
             {isAuthenticated && (
               <div
@@ -399,6 +409,10 @@ export function Navbar() {
                 </Link>
               ))}
             </div>
+          )}
+
+          {isAuthenticated && (
+            <Link href="/tools/resource-planning" className="block px-3 py-2 text-sm font-medium text-slate-700 hover:bg-blue-50 rounded-md" onClick={() => setMobileOpen(false)}>Resources</Link>
           )}
 
           {isAuthenticated && (
