@@ -44,63 +44,62 @@ const DEFAULT_FS_LINES = [
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
 type TopTab = 'test-bank' | 'test-types';
-type TestTypesSubTab = 'actions' | 'types';
 
 export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
   const [topTab, setTopTab] = useState<TopTab>('test-bank');
-  const [testTypesSubTab, setTestTypesSubTab] = useState<TestTypesSubTab>('types');
-  const [industries] = useState(initialIndustries);
+  const [industries, setIndustries] = useState(initialIndustries);
   const [testTypes, setTestTypes] = useState(initialTestTypes);
   const [testBanks, setTestBanks] = useState(initialTestBanks);
-  const [selectedIndustry, setSelectedIndustry] = useState<string>(industries[0]?.id || '');
   const [fsLines, setFsLines] = useState<string[]>(() => {
-    const existing = new Set(testBanks.map((tb) => tb.fsLine));
+    const existing = new Set(testBanks.map(tb => tb.fsLine));
     const all = [...DEFAULT_FS_LINES];
-    existing.forEach((l) => { if (!all.includes(l)) all.push(l); });
+    existing.forEach(l => { if (!all.includes(l)) all.push(l); });
     return all;
   });
   const [popupOpen, setPopupOpen] = useState(false);
   const [popupFsLine, setPopupFsLine] = useState('');
+  const [popupIndustryId, setPopupIndustryId] = useState('');
   const [popupTests, setPopupTests] = useState<{ description: string; testTypeCode: string; assertion?: string; framework?: string; significantRisk?: boolean }[]>([]);
   const [newFsLine, setNewFsLine] = useState('');
+  const [newIndustryName, setNewIndustryName] = useState('');
   const [saving, setSaving] = useState(false);
   const [copySourceIndustry, setCopySourceIndustry] = useState('');
   const [copyTargetIndustry, setCopyTargetIndustry] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedIndustry, setSelectedIndustry] = useState<string>(industries[0]?.id || '');
 
   // Test Types state
   const [newTestTypeName, setNewTestTypeName] = useState('');
   const [editingTestType, setEditingTestType] = useState<string | null>(null);
   const [editTestTypeName, setEditTestTypeName] = useState('');
-  // Actions state
-  const [newActionName, setNewActionName] = useState('');
-  const [actions, setActions] = useState<{ id: string; name: string }[]>([]);
-  const [editingAction, setEditingAction] = useState<string | null>(null);
-  const [editActionName, setEditActionName] = useState('');
 
-  const hasTests = useCallback(
-    (industryId: string, fsLine: string) => {
-      return testBanks.some(
-        (tb) => tb.industryId === industryId && tb.fsLine === fsLine && tb.tests && (tb.tests as any[]).length > 0
-      );
-    },
-    [testBanks]
-  );
+  const getTestCount = useCallback((industryId: string, fsLine: string) => {
+    const entry = testBanks.find(tb => tb.industryId === industryId && tb.fsLine === fsLine);
+    return entry?.tests?.length ?? 0;
+  }, [testBanks]);
 
-  const getTestCount = useCallback(
-    (industryId: string, fsLine: string) => {
-      const entry = testBanks.find((tb) => tb.industryId === industryId && tb.fsLine === fsLine);
-      return entry?.tests?.length ?? 0;
-    },
-    [testBanks]
-  );
+  const hasTests = useCallback((industryId: string, fsLine: string) => {
+    return getTestCount(industryId, fsLine) > 0;
+  }, [getTestCount]);
 
-  const openPopup = (fsLine: string) => {
-    const entry = testBanks.find((tb) => tb.industryId === selectedIndustry && tb.fsLine === fsLine);
+  // Get assertions for a given FS line across all industries
+  const getAssertions = useCallback((fsLine: string) => {
+    const assertions = new Set<string>();
+    testBanks.filter(tb => tb.fsLine === fsLine).forEach(tb => {
+      (tb.tests || []).forEach((t: any) => {
+        if (t.assertion) assertions.add(t.assertion);
+      });
+    });
+    return Array.from(assertions);
+  }, [testBanks]);
+
+  const openPopup = (fsLine: string, industryId: string) => {
+    const entry = testBanks.find(tb => tb.industryId === industryId && tb.fsLine === fsLine);
     setPopupFsLine(fsLine);
+    setPopupIndustryId(industryId);
     setPopupTests(entry?.tests as any[] || [{ description: '', testTypeCode: '', assertion: '', framework: '', significantRisk: false }]);
     setPopupOpen(true);
   };
@@ -112,14 +111,14 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          firmId, industryId: selectedIndustry, fsLine: popupFsLine,
-          tests: popupTests.filter((t) => t.description.trim()),
+          firmId, industryId: popupIndustryId, fsLine: popupFsLine,
+          tests: popupTests.filter(t => t.description.trim()),
         }),
       });
       if (res.ok) {
         const data = await res.json();
-        setTestBanks((prev) => {
-          const idx = prev.findIndex((tb) => tb.industryId === selectedIndustry && tb.fsLine === popupFsLine);
+        setTestBanks(prev => {
+          const idx = prev.findIndex(tb => tb.industryId === popupIndustryId && tb.fsLine === popupFsLine);
           if (idx >= 0) { const updated = [...prev]; updated[idx] = data.entry; return updated; }
           return [...prev, data.entry];
         });
@@ -129,15 +128,34 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
 
   const handleAddFsLine = () => {
     if (newFsLine.trim() && !fsLines.includes(newFsLine.trim())) {
-      setFsLines((prev) => [...prev, newFsLine.trim()]);
+      setFsLines(prev => [...prev, newFsLine.trim()]);
       setNewFsLine('');
     }
   };
 
   const handleRemoveFsLine = (line: string) => {
     if (MANDATORY_FS_LINES.includes(line as any)) return;
-    setFsLines((prev) => prev.filter((l) => l !== line));
+    setFsLines(prev => prev.filter(l => l !== line));
   };
+
+  async function handleAddIndustry() {
+    const name = newIndustryName.trim();
+    if (!name) return;
+    const code = name.toLowerCase().replace(/\s+/g, '_');
+    setSaving(true);
+    try {
+      const res = await fetch('/api/methodology-admin/industries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, code }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIndustries(prev => [...prev, data.industry]);
+        setNewIndustryName('');
+      }
+    } finally { setSaving(false); }
+  }
 
   const handleCopyIndustry = async () => {
     if (!copySourceIndustry || !copyTargetIndustry || copySourceIndustry === copyTargetIndustry) return;
@@ -150,8 +168,8 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       });
       if (res.ok) {
         const data = await res.json();
-        setTestBanks((prev) => {
-          const filtered = prev.filter((tb) => tb.industryId !== copyTargetIndustry);
+        setTestBanks(prev => {
+          const filtered = prev.filter(tb => tb.industryId !== copyTargetIndustry);
           return [...filtered, ...data.entries];
         });
       }
@@ -233,284 +251,123 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     if (res.ok) { setTestTypes(prev => prev.filter(t => t.id !== id)); }
   }
 
-  // ─── Top-level tabs ────────────────────────────────────────────
   return (
     <div className="space-y-4">
       {/* Top tabs */}
       <div className="flex border-b border-slate-200">
-        <button
-          onClick={() => setTopTab('test-bank')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-            topTab === 'test-bank'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
+        <button onClick={() => setTopTab('test-bank')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-bank' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Test Bank
         </button>
-        <button
-          onClick={() => setTopTab('test-types')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-            topTab === 'test-types'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
+        <button onClick={() => setTopTab('test-types')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-types' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Test Types
         </button>
       </div>
 
       {/* ─── TEST TYPES TAB ─── */}
       {topTab === 'test-types' && (
-        <div className="space-y-4">
-          {/* Sub-tabs */}
-          <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
-            <button
-              onClick={() => setTestTypesSubTab('types')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                testTypesSubTab === 'types' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Test Types
-            </button>
-            <button
-              onClick={() => setTestTypesSubTab('actions')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                testTypesSubTab === 'actions' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Actions
-            </button>
-          </div>
-
-          {/* Test Types sub-tab */}
-          {testTypesSubTab === 'types' && (
-            <div className="border rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-slate-800 mb-3">
-                Test Types ({testTypes.length})
-              </h3>
-              <p className="text-xs text-slate-500 mb-4">
-                Define the types of audit tests available in the Test Bank (e.g. Analytical Review, Test of Details, Judgement)
-              </p>
-
-              <div className="border rounded-lg divide-y">
-                {testTypes.map(tt => (
-                  <div key={tt.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 group">
-                    {editingTestType === tt.id ? (
-                      <div className="flex items-center gap-2 flex-1">
-                        <input
-                          value={editTestTypeName}
-                          onChange={e => setEditTestTypeName(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') updateTestType(tt.id, editTestTypeName); if (e.key === 'Escape') setEditingTestType(null); }}
-                          className="border rounded px-2 py-1 text-sm flex-1 max-w-xs"
-                          autoFocus
-                        />
-                        <Button size="sm" onClick={() => updateTestType(tt.id, editTestTypeName)}>Save</Button>
-                        <Button size="sm" variant="outline" onClick={() => setEditingTestType(null)}>Cancel</Button>
-                      </div>
-                    ) : (
-                      <>
-                        <div>
-                          <span className="text-sm font-medium text-slate-700">{tt.name}</span>
-                          <span className="text-[10px] text-slate-400 ml-2">({tt.code})</span>
-                        </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => { setEditingTestType(tt.id); setEditTestTypeName(tt.name); }}
-                            className="p-1 hover:bg-slate-200 rounded" title="Edit"
-                          >
-                            <Pencil className="h-3.5 w-3.5 text-slate-500" />
-                          </button>
-                          {testTypes.length > 1 && (
-                            <button
-                              onClick={() => deleteTestType(tt.id)}
-                              className="p-1 hover:bg-red-100 rounded" title="Delete"
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                            </button>
-                          )}
-                        </div>
-                      </>
-                    )}
+        <div className="border rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-slate-800 mb-3">Test Types ({testTypes.length})</h3>
+          <p className="text-xs text-slate-500 mb-4">Define the types of audit tests (e.g. Analytical Review, Test of Details, Judgement)</p>
+          <div className="border rounded-lg divide-y">
+            {testTypes.map(tt => (
+              <div key={tt.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 group">
+                {editingTestType === tt.id ? (
+                  <div className="flex items-center gap-2 flex-1">
+                    <input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') updateTestType(tt.id, editTestTypeName); if (e.key === 'Escape') setEditingTestType(null); }}
+                      className="border rounded px-2 py-1 text-sm flex-1 max-w-xs" autoFocus />
+                    <Button size="sm" onClick={() => updateTestType(tt.id, editTestTypeName)}>Save</Button>
+                    <Button size="sm" variant="outline" onClick={() => setEditingTestType(null)}>Cancel</Button>
                   </div>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2 mt-3">
-                <input
-                  value={newTestTypeName}
-                  onChange={e => setNewTestTypeName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addTestType()}
-                  placeholder="New test type name..."
-                  className="border rounded-md px-3 py-1.5 text-sm flex-1 max-w-xs"
-                />
-                <Button onClick={addTestType} size="sm" disabled={!newTestTypeName.trim()}>
-                  <Plus className="h-4 w-4 mr-1" /> Add
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Actions sub-tab */}
-          {testTypesSubTab === 'actions' && (
-            <div className="border rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-slate-800 mb-3">
-                Actions ({actions.length})
-              </h3>
-              <p className="text-xs text-slate-500 mb-4">
-                Define actions that can be associated with test types (e.g. Inspect, Observe, Inquire, Confirm, Recalculate, Reperform, Analytical Procedures)
-              </p>
-
-              {actions.length === 0 && (
-                <div className="text-center py-8 text-slate-400 text-sm border rounded-lg border-dashed">
-                  No actions defined yet. Add your first action below.
-                </div>
-              )}
-
-              {actions.length > 0 && (
-                <div className="border rounded-lg divide-y">
-                  {actions.map(action => (
-                    <div key={action.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 group">
-                      {editingAction === action.id ? (
-                        <div className="flex items-center gap-2 flex-1">
-                          <input
-                            value={editActionName}
-                            onChange={e => setEditActionName(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') {
-                                setActions(prev => prev.map(a => a.id === action.id ? { ...a, name: editActionName } : a));
-                                setEditingAction(null);
-                              }
-                              if (e.key === 'Escape') setEditingAction(null);
-                            }}
-                            className="border rounded px-2 py-1 text-sm flex-1 max-w-xs"
-                            autoFocus
-                          />
-                          <Button size="sm" onClick={() => { setActions(prev => prev.map(a => a.id === action.id ? { ...a, name: editActionName } : a)); setEditingAction(null); }}>Save</Button>
-                          <Button size="sm" variant="outline" onClick={() => setEditingAction(null)}>Cancel</Button>
-                        </div>
-                      ) : (
-                        <>
-                          <span className="text-sm font-medium text-slate-700">{action.name}</span>
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => { setEditingAction(action.id); setEditActionName(action.name); }}
-                              className="p-1 hover:bg-slate-200 rounded" title="Edit"
-                            >
-                              <Pencil className="h-3.5 w-3.5 text-slate-500" />
-                            </button>
-                            <button
-                              onClick={() => setActions(prev => prev.filter(a => a.id !== action.id))}
-                              className="p-1 hover:bg-red-100 rounded" title="Delete"
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                            </button>
-                          </div>
-                        </>
-                      )}
+                ) : (
+                  <>
+                    <span className="text-sm font-medium text-slate-700">{tt.name}</span>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => { setEditingTestType(tt.id); setEditTestTypeName(tt.name); }} className="p-1 hover:bg-slate-200 rounded"><Pencil className="h-3.5 w-3.5 text-slate-500" /></button>
+                      {testTypes.length > 1 && <button onClick={() => deleteTestType(tt.id)} className="p-1 hover:bg-red-100 rounded"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button>}
                     </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex items-center gap-2 mt-3">
-                <input
-                  value={newActionName}
-                  onChange={e => setNewActionName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && newActionName.trim()) {
-                      setActions(prev => [...prev, { id: `action-${Date.now()}`, name: newActionName.trim() }]);
-                      setNewActionName('');
-                    }
-                  }}
-                  placeholder="New action name..."
-                  className="border rounded-md px-3 py-1.5 text-sm flex-1 max-w-xs"
-                />
-                <Button
-                  onClick={() => {
-                    if (newActionName.trim()) {
-                      setActions(prev => [...prev, { id: `action-${Date.now()}`, name: newActionName.trim() }]);
-                      setNewActionName('');
-                    }
-                  }}
-                  size="sm"
-                  disabled={!newActionName.trim()}
-                >
-                  <Plus className="h-4 w-4 mr-1" /> Add
-                </Button>
+                  </>
+                )}
               </div>
-            </div>
-          )}
+            ))}
+          </div>
+          <div className="flex items-center gap-2 mt-3">
+            <input value={newTestTypeName} onChange={e => setNewTestTypeName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addTestType()}
+              placeholder="New test type name..." className="border rounded-md px-3 py-1.5 text-sm flex-1 max-w-xs" />
+            <Button onClick={addTestType} size="sm" disabled={!newTestTypeName.trim()}><Plus className="h-4 w-4 mr-1" /> Add</Button>
+          </div>
         </div>
       )}
 
       {/* ─── TEST BANK TAB ─── */}
       {topTab === 'test-bank' && (
         <div className="space-y-4">
-          {/* Industry selector and Copy */}
-          <div className="flex items-end gap-6 flex-wrap gap-y-3">
-            <div className="min-w-[250px]">
-              <label className="text-xs font-medium text-slate-600 mb-1.5 block">Industry</label>
-              <select
-                value={selectedIndustry}
-                onChange={(e) => setSelectedIndustry(e.target.value)}
-                className="w-full border border-slate-300 rounded-md px-4 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                size={1}
-                style={{ minHeight: '42px' }}
-              >
-                {industries.map((ind) => (
-                  <option key={ind.id} value={ind.id}>{ind.name}{ind.isDefault ? ' (Default)' : ''}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-end gap-3 ml-auto">
-              <div className="min-w-[200px]">
-                <label className="text-xs font-medium text-slate-600 mb-1.5 block">Copy From</label>
-                <select value={copySourceIndustry} onChange={(e) => setCopySourceIndustry(e.target.value)}
-                  className="w-full border border-slate-300 rounded-md px-4 py-2.5 text-sm bg-white" style={{ minHeight: '42px' }}>
-                  <option value="">Select industry...</option>
-                  {industries.map((ind) => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
-                </select>
+          {/* Toolbar row */}
+          <div className="flex items-end gap-4 flex-wrap">
+            {/* Add FS Line */}
+            <div>
+              <label className="text-xs font-medium text-slate-600 mb-1 block">Add FS Line</label>
+              <div className="flex items-center gap-1">
+                <input type="text" value={newFsLine} onChange={e => setNewFsLine(e.target.value)}
+                  placeholder="FS Statement Line..." className="border rounded-md px-2 py-1.5 text-sm w-48"
+                  onKeyDown={e => e.key === 'Enter' && handleAddFsLine()} />
+                <Button onClick={handleAddFsLine} size="sm" variant="outline" className="h-[34px]"><Plus className="h-3.5 w-3.5" /></Button>
               </div>
-              <div className="min-w-[200px]">
-                <label className="text-xs font-medium text-slate-600 mb-1.5 block">Copy To</label>
-                <select value={copyTargetIndustry} onChange={(e) => setCopyTargetIndustry(e.target.value)}
-                  className="w-full border border-slate-300 rounded-md px-4 py-2.5 text-sm bg-white" style={{ minHeight: '42px' }}>
-                  <option value="">Select industry...</option>
-                  {industries.map((ind) => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
-                </select>
+            </div>
+
+            {/* Add Industry */}
+            <div>
+              <label className="text-xs font-medium text-slate-600 mb-1 block">+ Industry</label>
+              <div className="flex items-center gap-1">
+                <input type="text" value={newIndustryName} onChange={e => setNewIndustryName(e.target.value)}
+                  placeholder="Industry name..." className="border rounded-md px-2 py-1.5 text-sm w-40"
+                  onKeyDown={e => e.key === 'Enter' && handleAddIndustry()} />
+                <Button onClick={handleAddIndustry} size="sm" variant="outline" className="h-[34px]" disabled={saving}><Plus className="h-3.5 w-3.5" /></Button>
               </div>
-              <Button onClick={handleCopyIndustry} size="sm" variant="outline" disabled={saving} className="h-[42px]">
-                <Copy className="h-4 w-4 mr-1" /> Copy
-              </Button>
-            </div>
-          </div>
-
-          {/* Upload / Download + Add FS Line */}
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center space-x-2">
-              <input
-                type="text"
-                value={newFsLine}
-                onChange={(e) => setNewFsLine(e.target.value)}
-                placeholder="Add FS Statement Line..."
-                className="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
-                onKeyDown={(e) => e.key === 'Enter' && handleAddFsLine()}
-              />
-              <Button onClick={handleAddFsLine} size="sm" variant="outline">
-                <Plus className="h-4 w-4 mr-1" /> Add Column
-              </Button>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <Button onClick={downloadTemplate} size="sm" variant="outline">
-                <Download className="h-4 w-4 mr-1" /> Download Template
-              </Button>
-              <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" disabled={uploading}>
-                <Upload className="h-4 w-4 mr-1" /> {uploading ? 'Uploading...' : 'Upload Spreadsheet'}
-              </Button>
-              <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} className="hidden" />
+            {/* Upload/Download (need industry selector for these) */}
+            <div>
+              <label className="text-xs font-medium text-slate-600 mb-1 block">Upload/Download Industry</label>
+              <div className="flex items-center gap-1">
+                <select value={selectedIndustry} onChange={e => setSelectedIndustry(e.target.value)}
+                  className="border rounded-md px-2 py-1.5 text-sm bg-white w-40 h-[34px]">
+                  {industries.map(ind => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
+                </select>
+                <Button onClick={downloadTemplate} size="sm" variant="outline" className="h-[34px]" title="Download Template">
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+                <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" className="h-[34px]" disabled={uploading} title="Upload Spreadsheet">
+                  <Upload className="h-3.5 w-3.5" />
+                </Button>
+                <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} className="hidden" />
+              </div>
+            </div>
+
+            {/* Copy */}
+            <div className="ml-auto flex items-end gap-1">
+              <div>
+                <label className="text-xs font-medium text-slate-600 mb-1 block">Copy</label>
+                <div className="flex items-center gap-1">
+                  <select value={copySourceIndustry} onChange={e => setCopySourceIndustry(e.target.value)}
+                    className="border rounded-md px-2 py-1.5 text-xs bg-white w-28 h-[34px]">
+                    <option value="">From...</option>
+                    {industries.map(ind => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
+                  </select>
+                  <span className="text-slate-400 text-xs">→</span>
+                  <select value={copyTargetIndustry} onChange={e => setCopyTargetIndustry(e.target.value)}
+                    className="border rounded-md px-2 py-1.5 text-xs bg-white w-28 h-[34px]">
+                    <option value="">To...</option>
+                    {industries.map(ind => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
+                  </select>
+                  <Button onClick={handleCopyIndustry} size="sm" variant="outline" className="h-[34px]" disabled={saving}>
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -520,99 +377,120 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
             </div>
           )}
 
-          {/* Grid - FS Lines as rows */}
-          <div className="border rounded-lg overflow-hidden">
-            <table className="w-full border-collapse">
-              <thead>
+          {/* Grid: FS Lines as rows, Industries as columns with check dots */}
+          <div className="border rounded-lg overflow-auto">
+            <table className="w-full border-collapse text-xs">
+              <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-100">
-                  <th className="text-left text-sm font-medium text-slate-700 p-3 w-64">FS Statement Line</th>
-                  <th className="text-center text-sm font-medium text-slate-700 p-3 w-24">Tests</th>
-                  <th className="text-left text-sm font-medium text-slate-700 p-3">Test Descriptions</th>
-                  <th className="text-center text-sm font-medium text-slate-700 p-3 w-20">Actions</th>
+                  <th className="text-left font-semibold text-slate-700 p-2.5 min-w-[200px] border-b border-r border-slate-200">FS Statement Line</th>
+                  <th className="text-left font-semibold text-slate-700 p-2.5 min-w-[180px] border-b border-r border-slate-200">Assertions</th>
+                  {industries.map(ind => (
+                    <th key={ind.id} className="text-center font-semibold text-slate-700 p-2 min-w-[80px] border-b border-r border-slate-200">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-[10px] leading-tight">{ind.name}</span>
+                        {ind.isDefault && <span className="text-[8px] text-blue-500">(Default)</span>}
+                      </div>
+                    </th>
+                  ))}
+                  <th className="text-center font-semibold text-slate-700 p-2 w-16 border-b border-slate-200">Framework</th>
                 </tr>
               </thead>
               <tbody>
-                {fsLines.map((line) => {
-                  const count = getTestCount(selectedIndustry, line);
-                  const entry = testBanks.find((tb) => tb.industryId === selectedIndustry && tb.fsLine === line);
-                  const tests = (entry?.tests as any[]) || [];
+                {fsLines.map((line, rowIdx) => {
+                  const assertions = getAssertions(line);
                   return (
-                    <tr key={line} className="border-t hover:bg-slate-50 transition-colors">
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-slate-700">{line}</span>
+                    <tr key={line} className={`border-b border-slate-100 ${rowIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'} hover:bg-blue-50/30 transition-colors`}>
+                      {/* FS Line name */}
+                      <td className="p-2.5 border-r border-slate-100">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium text-slate-800 text-sm">{line}</span>
                           {!MANDATORY_FS_LINES.includes(line as any) && (
-                            <button onClick={() => handleRemoveFsLine(line)} className="text-red-400 hover:text-red-600" title="Remove">
-                              <X className="h-3.5 w-3.5" />
-                            </button>
+                            <button onClick={() => handleRemoveFsLine(line)} className="text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><X className="h-3 w-3" /></button>
                           )}
                         </div>
                       </td>
-                      <td className="p-3 text-center">
-                        {count > 0 ? (
-                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
-                            {count}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 text-sm">0</span>
-                        )}
-                      </td>
-                      <td className="p-3">
-                        {tests.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {tests.slice(0, 3).map((t: any, i: number) => (
-                              <span key={i} className="text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded truncate max-w-[200px]">
-                                {t.description}
+
+                      {/* Assertions multi-display */}
+                      <td className="p-2 border-r border-slate-100">
+                        {assertions.length > 0 ? (
+                          <div className="flex flex-wrap gap-0.5">
+                            {assertions.map(a => (
+                              <span key={a} className="inline-block px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] leading-tight">
+                                {a.length > 15 ? a.split(' ').map(w => w[0]).join('') : a}
                               </span>
                             ))}
-                            {tests.length > 3 && (
-                              <span className="text-xs text-slate-400">+{tests.length - 3} more</span>
-                            )}
                           </div>
                         ) : (
-                          <span className="text-xs text-slate-400 italic">No tests defined</span>
+                          <span className="text-slate-300 italic">—</span>
                         )}
                       </td>
-                      <td className="p-3 text-center">
-                        <Button
-                          onClick={() => openPopup(line)}
-                          size="sm"
-                          variant="outline"
-                          className="text-xs h-7 px-2"
-                        >
-                          {count > 0 ? 'Edit' : 'Add'}
-                        </Button>
+
+                      {/* Industry dots */}
+                      {industries.map(ind => {
+                        const count = getTestCount(ind.id, line);
+                        const has = count > 0;
+                        return (
+                          <td key={ind.id} className="p-2 text-center border-r border-slate-100">
+                            <button
+                              onClick={() => openPopup(line, ind.id)}
+                              className="inline-flex flex-col items-center gap-0.5 group/dot"
+                              title={has ? `${count} test${count > 1 ? 's' : ''} — click to amend` : 'Click to add tests'}
+                            >
+                              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                                has
+                                  ? 'bg-green-500 border-green-500 text-white'
+                                  : 'bg-white border-slate-300 group-hover/dot:border-green-400'
+                              }`}>
+                                {has && <span className="text-[9px] font-bold">{count}</span>}
+                              </div>
+                              <span className={`text-[8px] ${has ? 'text-green-600 font-medium' : 'text-slate-400'}`}>
+                                {has ? 'Amend' : 'Add'}
+                              </span>
+                            </button>
+                          </td>
+                        );
+                      })}
+
+                      {/* Framework summary */}
+                      <td className="p-2 text-center">
+                        {(() => {
+                          const fws = new Set<string>();
+                          testBanks.filter(tb => tb.fsLine === line).forEach(tb => {
+                            (tb.tests || []).forEach((t: any) => { if (t.framework) fws.add(t.framework); });
+                          });
+                          if (fws.size === 0) return <span className="text-slate-300">—</span>;
+                          return (
+                            <div className="flex flex-wrap gap-0.5 justify-center">
+                              {Array.from(fws).map(fw => (
+                                <span key={fw} className="text-[9px] px-1 py-0.5 bg-blue-100 text-blue-600 rounded">{fw}</span>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </td>
                     </tr>
                   );
                 })}
-                {fsLines.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-400 text-sm">
-                      No FS lines defined. Add one above to get started.
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>
 
           {/* Summary */}
           <div className="text-xs text-slate-500">
-            {fsLines.length} FS lines &middot; {testBanks.filter(tb => tb.industryId === selectedIndustry).reduce((sum, tb) => sum + ((tb.tests as any[])?.length || 0), 0)} total tests for {industries.find(i => i.id === selectedIndustry)?.name || 'selected industry'}
+            {fsLines.length} FS lines &middot; {industries.length} industries &middot; {testBanks.reduce((sum, tb) => sum + ((tb.tests as any[])?.length || 0), 0)} total tests
           </div>
         </div>
       )}
 
-      {/* ─── POPUP for editing tests ─── */}
+      {/* ─── POPUP for editing tests (now called "Framework") ─── */}
       {popupOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-lg shadow-xl w-[1050px] max-h-[80vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-slate-900">
-                Tests: {popupFsLine}
+                Framework: {popupFsLine}
                 <span className="text-sm font-normal text-slate-500 ml-2">
-                  ({industries.find(i => i.id === selectedIndustry)?.name})
+                  ({industries.find(i => i.id === popupIndustryId)?.name})
                 </span>
               </h3>
               <button onClick={() => setPopupOpen(false)} className="text-slate-400 hover:text-slate-600">
@@ -635,75 +513,41 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                 {popupTests.map((test, i) => (
                   <tr key={i}>
                     <td className="p-2 border-b">
-                      <textarea
-                        value={test.description}
-                        onChange={(e) => {
-                          const updated = [...popupTests];
-                          updated[i] = { ...updated[i], description: e.target.value };
-                          setPopupTests(updated);
-                        }}
-                        className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[60px]"
-                        rows={2}
-                      />
+                      <textarea value={test.description}
+                        onChange={e => { const u = [...popupTests]; u[i] = { ...u[i], description: e.target.value }; setPopupTests(u); }}
+                        className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm min-h-[60px]" rows={2} />
                     </td>
                     <td className="p-2 border-b">
-                      <select
-                        value={test.testTypeCode}
-                        onChange={(e) => {
-                          const updated = [...popupTests];
-                          updated[i] = { ...updated[i], testTypeCode: e.target.value };
-                          setPopupTests(updated);
-                        }}
-                        className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"
-                      >
-                        <option value="">Select type...</option>
-                        {testTypes.map((tt) => (
-                          <option key={tt.code} value={tt.code}>{tt.name}</option>
-                        ))}
+                      <select value={test.testTypeCode}
+                        onChange={e => { const u = [...popupTests]; u[i] = { ...u[i], testTypeCode: e.target.value }; setPopupTests(u); }}
+                        className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white">
+                        <option value="">Select...</option>
+                        {testTypes.map(tt => <option key={tt.code} value={tt.code}>{tt.name}</option>)}
                       </select>
                     </td>
                     <td className="p-2 border-b">
-                      <select
-                        value={test.assertion || ''}
-                        onChange={(e) => {
-                          const updated = [...popupTests];
-                          updated[i] = { ...updated[i], assertion: e.target.value };
-                          setPopupTests(updated);
-                        }}
-                        className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"
-                      >
+                      <select value={test.assertion || ''}
+                        onChange={e => { const u = [...popupTests]; u[i] = { ...u[i], assertion: e.target.value }; setPopupTests(u); }}
+                        className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white">
                         <option value="">Select...</option>
                         {ASSERTION_TYPES.map(a => <option key={a} value={a}>{a}</option>)}
                       </select>
                     </td>
                     <td className="p-2 border-b">
-                      <select
-                        value={test.framework || ''}
-                        onChange={(e) => {
-                          const updated = [...popupTests];
-                          updated[i] = { ...updated[i], framework: e.target.value };
-                          setPopupTests(updated);
-                        }}
-                        className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"
-                      >
+                      <select value={test.framework || ''}
+                        onChange={e => { const u = [...popupTests]; u[i] = { ...u[i], framework: e.target.value }; setPopupTests(u); }}
+                        className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white">
                         <option value="">All</option>
                         {frameworkOptions.map(fw => <option key={fw} value={fw}>{fw}</option>)}
                       </select>
                     </td>
                     <td className="p-2 border-b text-center">
-                      <input
-                        type="checkbox"
-                        checked={test.significantRisk || false}
-                        onChange={(e) => {
-                          const updated = [...popupTests];
-                          updated[i] = { ...updated[i], significantRisk: e.target.checked };
-                          setPopupTests(updated);
-                        }}
-                        className="w-4 h-4 rounded border-slate-300 text-red-500 focus:ring-red-400"
-                      />
+                      <input type="checkbox" checked={test.significantRisk || false}
+                        onChange={e => { const u = [...popupTests]; u[i] = { ...u[i], significantRisk: e.target.checked }; setPopupTests(u); }}
+                        className="w-4 h-4 rounded border-slate-300 text-red-500" />
                     </td>
                     <td className="p-2 border-b text-center">
-                      <button onClick={() => setPopupTests((prev) => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
+                      <button onClick={() => setPopupTests(prev => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
                         <X className="h-4 w-4" />
                       </button>
                     </td>
@@ -713,12 +557,8 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
             </table>
 
             <div className="flex items-center justify-between">
-              <Button
-                onClick={() => setPopupTests((prev) => [...prev, { description: '', testTypeCode: '', assertion: '', framework: '', significantRisk: false }])}
-                size="sm" variant="outline"
-              >
-                <Plus className="h-4 w-4 mr-1" /> Add Row
-              </Button>
+              <Button onClick={() => setPopupTests(prev => [...prev, { description: '', testTypeCode: '', assertion: '', framework: '', significantRisk: false }])}
+                size="sm" variant="outline"><Plus className="h-4 w-4 mr-1" /> Add Row</Button>
               <div className="flex space-x-2">
                 <Button onClick={() => setPopupOpen(false)} size="sm" variant="outline">Cancel</Button>
                 <Button onClick={handleSavePopup} size="sm" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
