@@ -12,11 +12,35 @@ export interface StaffMember {
 
 export interface StaffSetting {
   id: string;
-  resourceRole: 'Preparer' | 'Reviewer' | 'RI';
-  concurrentJobLimit: number;
+  resourceRole: 'Preparer' | 'Reviewer' | 'RI'; // Primary/display role
+  concurrentJobLimit: number; // Legacy - limit for primary role
   isRI: boolean;
   weeklyCapacityHrs: number;
   overtimeHrs?: number;
+  // Per-role concurrent job limits (null = not eligible for that role)
+  preparerJobLimit?: number | null;
+  reviewerJobLimit?: number | null;
+  riJobLimit?: number | null;
+}
+
+/** Get all active roles for a staff member */
+export function getStaffRoles(setting: StaffSetting | null): { role: ResourceRole; limit: number }[] {
+  if (!setting) return [];
+  const roles: { role: ResourceRole; limit: number }[] = [];
+  if (setting.preparerJobLimit != null && setting.preparerJobLimit > 0) {
+    roles.push({ role: 'Preparer', limit: setting.preparerJobLimit });
+  }
+  if (setting.reviewerJobLimit != null && setting.reviewerJobLimit > 0) {
+    roles.push({ role: 'Reviewer', limit: setting.reviewerJobLimit });
+  }
+  if (setting.riJobLimit != null && setting.riJobLimit > 0) {
+    roles.push({ role: 'RI', limit: setting.riJobLimit });
+  }
+  // Fallback: if no per-role limits set, use legacy single role
+  if (roles.length === 0) {
+    roles.push({ role: setting.resourceRole, limit: setting.concurrentJobLimit });
+  }
+  return roles;
 }
 
 export interface ResourceJobView {

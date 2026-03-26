@@ -18,34 +18,39 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
 
   const setting = member.resourceSetting;
 
-  const [role, setRole] = useState<'Preparer' | 'Reviewer' | 'RI'>(setting?.resourceRole ?? 'Preparer');
+  const [primaryRole, setPrimaryRole] = useState<'Preparer' | 'Reviewer' | 'RI'>(setting?.resourceRole ?? 'Preparer');
   const [capacity, setCapacity] = useState(setting?.weeklyCapacityHrs ?? 37.5);
-  const [jobLimit, setJobLimit] = useState(setting?.concurrentJobLimit ?? 3);
-  const [isRI, setIsRI] = useState(setting?.isRI ?? false);
   const [overtimeHrs, setOvertimeHrs] = useState(setting?.overtimeHrs ?? 0);
+
+  // Per-role job limits (null = not eligible)
+  const [prepLimit, setPrepLimit] = useState<number | null>(setting?.preparerJobLimit ?? (setting?.resourceRole === 'Preparer' ? setting.concurrentJobLimit : null));
+  const [revLimit, setRevLimit] = useState<number | null>(setting?.reviewerJobLimit ?? (setting?.resourceRole === 'Reviewer' ? setting.concurrentJobLimit : null));
+  const [riLimit, setRiLimit] = useState<number | null>(setting?.riJobLimit ?? (setting?.isRI || setting?.resourceRole === 'RI' ? (setting?.resourceRole === 'RI' ? setting.concurrentJobLimit : 5) : null));
+
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     setSaving(true);
     try {
+      const updates = {
+        resourceRole: primaryRole,
+        weeklyCapacityHrs: capacity,
+        concurrentJobLimit: primaryRole === 'Preparer' ? (prepLimit ?? 3) : primaryRole === 'Reviewer' ? (revLimit ?? 18) : (riLimit ?? 30),
+        isRI: riLimit != null && riLimit > 0,
+        preparerJobLimit: prepLimit,
+        reviewerJobLimit: revLimit,
+        riJobLimit: riLimit,
+        overtimeHrs,
+      };
+
       const res = await fetch(`/api/resource-planning/staff/${userId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          resourceRole: role,
-          weeklyCapacityHrs: capacity,
-          concurrentJobLimit: jobLimit,
-          isRI,
-        }),
+        body: JSON.stringify(updates),
       });
 
       if (res.ok) {
-        updateStaffSetting(userId, {
-          resourceRole: role as any,
-          weeklyCapacityHrs: capacity,
-          concurrentJobLimit: jobLimit,
-          isRI,
-        });
+        updateStaffSetting(userId, updates as any);
         onClose();
       }
     } finally {
@@ -55,7 +60,7 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
-      <div className="bg-white rounded-lg shadow-xl w-[380px] p-5">
+      <div className="bg-white rounded-lg shadow-xl w-[400px] p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-slate-800">{member.name} - Settings</h3>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded">
@@ -64,16 +69,12 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
         </div>
 
         <div className="space-y-3">
+          {/* Primary Role */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Resource Role</label>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Primary Role</label>
             <select
-              value={role}
-              onChange={(e) => {
-                setRole(e.target.value as 'Preparer' | 'Reviewer' | 'RI');
-                if (e.target.value === 'Preparer') setJobLimit(3);
-                else if (e.target.value === 'Reviewer') setJobLimit(18);
-                else setJobLimit(30);
-              }}
+              value={primaryRole}
+              onChange={(e) => setPrimaryRole(e.target.value as any)}
               className="w-full px-2 py-1.5 text-sm border rounded-md"
             >
               <option value="Preparer">Preparer</option>
@@ -82,60 +83,61 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
             </select>
           </div>
 
+          {/* Per-role concurrent job limits */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Weekly Capacity (hours)
-            </label>
-            <input
-              type="number"
-              step="0.5"
-              value={capacity}
-              onChange={(e) => setCapacity(parseFloat(e.target.value) || 37.5)}
-              className="w-full px-2 py-1.5 text-sm border rounded-md"
-            />
+            <label className="block text-xs font-medium text-slate-600 mb-2">Role Eligibility & Job Limits</label>
+            <div className="space-y-1.5 bg-slate-50 rounded-md p-2">
+              <RoleLimitRow
+                label="Preparer"
+                color="bg-blue-400"
+                limit={prepLimit}
+                defaultLimit={3}
+                onChange={setPrepLimit}
+              />
+              <RoleLimitRow
+                label="Reviewer"
+                color="bg-purple-400"
+                limit={revLimit}
+                defaultLimit={18}
+                onChange={setRevLimit}
+              />
+              <RoleLimitRow
+                label="RI"
+                color="bg-amber-400"
+                limit={riLimit}
+                defaultLimit={30}
+                onChange={setRiLimit}
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Concurrent Job Limit
-            </label>
-            <input
-              type="number"
-              value={jobLimit}
-              onChange={(e) => setJobLimit(parseInt(e.target.value) || 3)}
-              className="w-full px-2 py-1.5 text-sm border rounded-md"
-            />
+          {/* Capacity */}
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-slate-600 mb-1">Weekly Hours</label>
+              <input
+                type="number"
+                step="0.5"
+                value={capacity}
+                onChange={(e) => setCapacity(parseFloat(e.target.value) || 37.5)}
+                className="w-full px-2 py-1.5 text-sm border rounded-md"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-slate-600 mb-1">Overtime Hours</label>
+              <input
+                type="number"
+                step="0.5"
+                value={overtimeHrs}
+                onChange={(e) => setOvertimeHrs(parseFloat(e.target.value) || 0)}
+                className="w-full px-2 py-1.5 text-sm border rounded-md"
+              />
+            </div>
           </div>
-
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Overtime Hours (per week)
-            </label>
-            <input
-              type="number"
-              step="0.5"
-              value={overtimeHrs}
-              onChange={(e) => setOvertimeHrs(parseFloat(e.target.value) || 0)}
-              className="w-full px-2 py-1.5 text-sm border rounded-md"
-            />
-          </div>
-
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={isRI}
-              onChange={(e) => setIsRI(e.target.checked)}
-              className="rounded"
-            />
-            <span className="text-xs text-slate-600">Eligible as Responsible Individual (RI)</span>
-          </label>
         </div>
 
         <div className="flex justify-end gap-2 mt-5">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs text-slate-600 border rounded-md hover:bg-slate-50"
-          >
+          <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-600 border rounded-md hover:bg-slate-50">
             Cancel
           </button>
           <button
@@ -147,6 +149,49 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RoleLimitRow({
+  label,
+  color,
+  limit,
+  defaultLimit,
+  onChange,
+}: {
+  label: string;
+  color: string;
+  limit: number | null;
+  defaultLimit: number;
+  onChange: (v: number | null) => void;
+}) {
+  const enabled = limit != null;
+
+  return (
+    <div className="flex items-center gap-2">
+      <label className="flex items-center gap-1.5 cursor-pointer flex-1">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onChange(e.target.checked ? defaultLimit : null)}
+          className="h-3 w-3 rounded"
+        />
+        <span className={`w-2 h-2 rounded-full ${color}`} />
+        <span className="text-xs text-slate-700">{label}</span>
+      </label>
+      {enabled && (
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-slate-400">Max jobs:</span>
+          <input
+            type="number"
+            min={1}
+            value={limit}
+            onChange={(e) => onChange(parseInt(e.target.value) || 1)}
+            className="w-12 px-1 py-0.5 text-xs border rounded text-center"
+          />
+        </div>
+      )}
     </div>
   );
 }

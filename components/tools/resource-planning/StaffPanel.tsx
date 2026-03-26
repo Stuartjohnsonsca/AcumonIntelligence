@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Search, Settings, Filter } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
-import { ROLE_COLORS, type ResourceRole } from '@/lib/resource-planning/types';
+import { ROLE_COLORS, type ResourceRole, getStaffRoles } from '@/lib/resource-planning/types';
 import { computeStaffCapacity } from '@/lib/resource-planning/capacity';
 import { StaffSettingsDialog } from './StaffSettingsDialog';
 import { ViewSelector } from './ViewSelector';
@@ -161,6 +161,7 @@ export function StaffPanel({ isResourceAdmin }: Props) {
           <StaffListItem
             key={member.id}
             member={member}
+            allocations={allocations}
             isAvailable={availabilityMap.get(member.id) ?? false}
             isResourceAdmin={isResourceAdmin}
             onSettingsClick={() => setSettingsUserId(member.id)}
@@ -180,33 +181,74 @@ export function StaffPanel({ isResourceAdmin }: Props) {
 
 function StaffListItem({
   member,
+  allocations,
   isAvailable,
   isResourceAdmin,
   onSettingsClick,
 }: {
   member: { id: string; name: string; jobTitle: string | null; resourceSetting: any };
+  allocations: any[];
   isAvailable: boolean;
   isResourceAdmin: boolean;
   onSettingsClick: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `staff-${member.id}` });
-  const role = member.resourceSetting?.resourceRole as ResourceRole | undefined;
-  const colors = role ? ROLE_COLORS[role] : null;
+  const roles = getStaffRoles(member.resourceSetting);
+
+  // Count current jobs per role (unique engagements)
+  const userAllocs = allocations.filter((a: any) => a.userId === member.id);
+  const jobsByRole = new Map<string, Set<string>>();
+  for (const alloc of userAllocs) {
+    if (!jobsByRole.has(alloc.role)) jobsByRole.set(alloc.role, new Set());
+    jobsByRole.get(alloc.role)!.add(alloc.engagementId);
+  }
+  const jobCountByRole = new Map<string, number>();
+  for (const [role, engs] of jobsByRole) jobCountByRole.set(role, engs.size);
+
+  // Weighted capacity: normalise all roles to Preparer Job Equivalents
+  const baseLimit = roles.find((r) => r.role === 'Preparer')?.limit ?? 3;
+  let weightedLoad = 0;
+  for (const { role, limit } of roles) {
+    const count = jobCountByRole.get(role) ?? 0;
+    const weight = baseLimit / limit; // e.g. Reviewer: 3/18 = 0.167 per job
+    weightedLoad += count * weight;
+  }
+  const weightedCapacity = Math.round(weightedLoad * 10) / 10;
 
   return (
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      className={`flex items-center gap-1.5 px-2 py-1 border-b border-slate-100 cursor-grab hover:bg-white transition-colors group
+      className={`flex items-center gap-1.5 px-2 py-1.5 border-b border-slate-100 cursor-grab hover:bg-white transition-colors group
         ${isDragging ? 'opacity-50' : ''}`}
     >
       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isAvailable ? 'bg-green-500' : 'bg-red-500'}`} />
       <div className="flex-1 min-w-0">
-        <div className="text-[10px] font-medium text-slate-700 truncate">{member.name}</div>
-        {role && colors && (
-          <span className={`px-1 py-0 rounded text-[8px] font-medium ${colors.bg} ${colors.text}`}>{role}</span>
-        )}
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] font-medium text-slate-700 truncate">{member.name}</span>
+          <span className={`text-[8px] font-bold ${weightedCapacity >= 1 ? 'text-red-500' : 'text-green-600'}`} title="Preparer Job Equivalents">
+            {weightedCapacity > 0 ? `${weightedCapacity}u` : ''}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-0.5 mt-0.5">
+          {roles.map(({ role, limit }) => {
+            const colors = ROLE_COLORS[role];
+            const count = jobCountByRole.get(role) ?? 0;
+            const atLimit = count >= limit;
+            return (
+              <span
+                key={role}
+                className={`inline-flex items-center gap-0.5 px-1 py-0 rounded text-[7px] font-medium ${colors.bg} ${colors.text}`}
+              >
+                {role}
+                <span className={`${atLimit ? 'text-red-600 font-bold' : ''}`}>
+                  {count}/{limit}
+                </span>
+              </span>
+            );
+          })}
+        </div>
       </div>
       {isResourceAdmin && (
         <button
