@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
+import { Download, Upload } from 'lucide-react';
 
 interface FsLine {
   id: string;
@@ -51,6 +52,10 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
   const [editName, setEditName] = useState('');
   const [editLineType, setEditLineType] = useState('');
   const [editCategory, setEditCategory] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<string | null>(null);
+  const fsLineFileRef = useRef<HTMLInputElement>(null);
+  const mappingFileRef = useRef<HTMLInputElement>(null);
   const sortedNonMandatory = useMemo(() => {
     return fsLines.filter(f => !f.isMandatory);
   }, [fsLines]);
@@ -177,6 +182,52 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
     setEditingId(null);
   }
 
+  async function handleFsLineUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true); setUploadResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/methodology-admin/fs-lines/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === 'validation') {
+          setUploadResult(`Upload rejected — ${data.count} error(s):\n${data.errors.join('\n')}${data.hasMore ? '\n...and more' : ''}`);
+        } else { setUploadResult(`Upload failed: ${data.error}`); }
+      } else {
+        setUploadResult(`Imported ${data.total} FS lines (${data.created} new, ${data.updated} updated)`);
+        // Reload FS lines
+        const reload = await fetch('/api/methodology-admin/fs-lines');
+        if (reload.ok) { const d = await reload.json(); setFsLines(d.fsLines || []); }
+      }
+    } catch (err: any) { setUploadResult(`Upload failed: ${err?.message || 'Network error'}`); }
+    finally { setUploading(false); if (fsLineFileRef.current) fsLineFileRef.current.value = ''; }
+  }
+
+  async function handleMappingUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true); setUploadResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/methodology-admin/fs-lines/industry-mapping/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === 'validation') {
+          setUploadResult(`Upload rejected — ${data.count} error(s):\n${data.errors.join('\n')}${data.hasMore ? '\n...and more' : ''}`);
+        } else { setUploadResult(`Upload failed: ${data.error}`); }
+      } else {
+        setUploadResult(`Industry mapping updated: ${data.added} added, ${data.removed} removed`);
+        // Reload FS lines with mappings
+        const reload = await fetch('/api/methodology-admin/fs-lines');
+        if (reload.ok) { const d = await reload.json(); setFsLines(d.fsLines || []); }
+      }
+    } catch (err: any) { setUploadResult(`Upload failed: ${err?.message || 'Network error'}`); }
+    finally { setUploading(false); if (mappingFileRef.current) mappingFileRef.current.value = ''; }
+  }
+
   const activeFsLines = fsLines.filter(f => f.isActive);
 
   return (
@@ -193,12 +244,46 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
             Industry Mapping
           </button>
         </div>
-        {view === 'list' && (
-          <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            + Add FS Line
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {view === 'list' && (
+            <>
+              <button onClick={() => window.open('/api/methodology-admin/fs-lines/template', '_blank')}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">
+                <Download className="h-3.5 w-3.5" /> Template
+              </button>
+              <button onClick={() => fsLineFileRef.current?.click()} disabled={uploading}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading...' : 'Upload'}
+              </button>
+              <input ref={fsLineFileRef} type="file" accept=".xlsx,.xls" onChange={handleFsLineUpload} className="hidden" />
+              <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                + Add FS Line
+              </button>
+            </>
+          )}
+          {view === 'matrix' && (
+            <>
+              <button onClick={() => window.open('/api/methodology-admin/fs-lines/industry-mapping/template', '_blank')}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">
+                <Download className="h-3.5 w-3.5" /> Template
+              </button>
+              <button onClick={() => mappingFileRef.current?.click()} disabled={uploading}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading...' : 'Upload'}
+              </button>
+              <input ref={mappingFileRef} type="file" accept=".xlsx,.xls" onChange={handleMappingUpload} className="hidden" />
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Upload result */}
+      {uploadResult && (
+        <div className={`text-sm px-4 py-2 rounded-lg whitespace-pre-wrap ${uploadResult.includes('failed') || uploadResult.includes('rejected') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+          {uploadResult}
+          <button onClick={() => setUploadResult(null)} className="ml-2 text-xs underline">dismiss</button>
+        </div>
+      )}
 
       {/* Add form */}
       {showAdd && view === 'list' && (
