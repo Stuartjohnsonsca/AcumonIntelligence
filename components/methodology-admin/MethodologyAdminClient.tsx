@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack } from 'lucide-react';
 
 const tiles = [
   {
@@ -43,6 +43,14 @@ const tiles = [
     icon: Users,
     color: 'bg-rose-50 border-rose-200 hover:bg-rose-100',
     iconColor: 'text-rose-600',
+  },
+  {
+    title: 'Template Documents',
+    description: 'Create and manage document templates with merge fields populated from system data',
+    href: '/methodology-admin/template-documents',
+    icon: FileStack,
+    color: 'bg-teal-50 border-teal-200 hover:bg-teal-100',
+    iconColor: 'text-teal-600',
   },
 ];
 

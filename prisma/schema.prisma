@@ -53,6 +53,7 @@ model Firm {
   resourceJobs             ResourceJob[]
   resourceJobProfiles      ResourceJobProfile[]
   resourceClientSettings   ResourceClientSetting[]
+  documentTemplates        DocumentTemplate[]
 
   @@map("firms")
 }
@@ -2096,5 +2097,28 @@ model ResourceClientSetting {
 
   @@index([firmId])
   @@map("resource_client_settings")
+}
+
+// ─── Document Templates ──────────────────────────────────────────
+model DocumentTemplate {
+  id          String   @id @default(cuid())
+  firmId      String   @map("firm_id")
+  name        String   // e.g. "Engagement Letter", "Management Letter"
+  description String?
+  category    String   @default("general") // general, engagement, reporting, correspondence
+  auditType   String   @default("ALL") @map("audit_type") // ALL, SME, PIE, SME_CONTROLS, PIE_CONTROLS
+  content     String   @db.Text // Rich text / HTML with merge field placeholders
+  mergeFields Json     @default("[]") @map("merge_fields") // Array of { key, label, source, path }
+  isActive    Boolean  @default(true) @map("is_active")
+  version     Int      @default(1)
+  createdBy   String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id])
+
+  @@index([firmId])
+  @@index([category])
+  @@map("document_templates")
 }
 
