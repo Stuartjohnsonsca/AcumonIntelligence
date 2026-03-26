@@ -107,30 +107,63 @@ export function StaffPanel({ isResourceAdmin }: Props) {
     );
   }
 
-  // Default: staff list
-  const filteredStaff = staff.filter((s) => {
-    if (selectedStaffIds.length > 0) return selectedStaffIds.includes(s.id);
-    return s.name.toLowerCase().includes(filter.toLowerCase());
-  });
+  // Non-admin: "My Schedule" - show self + team members on shared jobs
+  const currentUserId = useResourcePlanningStore((s) => s.currentUserId);
+  const [myScheduleOnly, setMyScheduleOnly] = useState(!isResourceAdmin);
+
+  const filteredStaff = useMemo(() => {
+    let result = staff;
+
+    if (myScheduleOnly && currentUserId) {
+      // Find engagements user is on
+      const myEngagements = new Set(
+        allocations.filter((a) => a.userId === currentUserId).map((a) => a.engagementId),
+      );
+      // Find team members on those engagements
+      const teamIds = new Set<string>();
+      teamIds.add(currentUserId);
+      for (const alloc of allocations) {
+        if (myEngagements.has(alloc.engagementId)) teamIds.add(alloc.userId);
+      }
+      result = staff.filter((s) => teamIds.has(s.id));
+    }
+
+    if (selectedStaffIds.length > 0) {
+      result = result.filter((s) => selectedStaffIds.includes(s.id));
+    } else if (filter) {
+      result = result.filter((s) => s.name.toLowerCase().includes(filter.toLowerCase()));
+    }
+    return result;
+  }, [staff, selectedStaffIds, filter, myScheduleOnly, currentUserId, allocations]);
 
   return (
     <div className="w-1/4 min-w-[180px] max-w-[280px] border-r bg-slate-50 flex flex-col overflow-hidden">
-      <div className="p-2 border-b flex items-center gap-1">
-        <div className="relative flex-1">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Filter staff..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="w-full pl-6 pr-2 py-1 text-[10px] border rounded"
-          />
+      <div className="p-2 border-b">
+        <div className="flex items-center gap-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Filter staff..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="w-full pl-6 pr-2 py-1 text-[10px] border rounded"
+            />
+          </div>
+          <button
+            onClick={() => setShowFilter(!showFilter)}
+            className={`p-1 rounded ${leftPanelFilter.length > 0 ? 'bg-blue-100 text-blue-600' : 'hover:bg-slate-100 text-slate-400'}`}
+          >
+            <Filter className="h-3 w-3" />
+          </button>
         </div>
+        {/* My Schedule toggle for non-admin or anyone */}
         <button
-          onClick={() => setShowFilter(!showFilter)}
-          className={`p-1 rounded ${leftPanelFilter.length > 0 ? 'bg-blue-100 text-blue-600' : 'hover:bg-slate-100 text-slate-400'}`}
+          onClick={() => setMyScheduleOnly(!myScheduleOnly)}
+          className={`mt-1 w-full py-0.5 text-[9px] font-medium rounded transition-colors
+            ${myScheduleOnly ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
         >
-          <Filter className="h-3 w-3" />
+          {myScheduleOnly ? '🔵 My Schedule' : 'Full Schedule'}
         </button>
       </div>
 

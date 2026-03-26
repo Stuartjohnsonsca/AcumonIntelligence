@@ -27,7 +27,7 @@ const DUMMY_ABSENCES: StaffAbsence[] = [
   { id: 'abs-4', userId: '', startDate: '2026-05-25', endDate: '2026-05-25', type: 'bank_holiday', approved: true },
 ];
 
-export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdmin, userId }: Props) {
+export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdmin, userId, unscheduledCount = 0, completedUnscheduledCount = 0 }: Props) {
   const init = useResourcePlanningStore((s) => s.init);
   const isInitialized = useResourcePlanningStore((s) => s.isInitialized);
   const addAllocation = useResourcePlanningStore((s) => s.addAllocation);
@@ -50,7 +50,16 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
             { ...DUMMY_ABSENCES[3], userId: '' },
           ]
         : [];
-      init({ staff, jobs, allocations, absences });
+      init({
+        staff,
+        jobs,
+        allocations,
+        absences,
+        unscheduledJobCount: unscheduledCount,
+        completedJobCount: completedUnscheduledCount,
+        currentUserId: userId,
+        isResourceAdmin,
+      });
     }
   }, [init, isInitialized, staff, jobs, allocations]);
 
@@ -215,15 +224,24 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   const draggedStaff = dragType === 'staff' ? storeStaff.find((s) => s.id === activeDragId) : null;
   const draggedAlloc = dragType === 'allocation' ? storeAllocations.find((a) => a.id === activeDragId) : null;
 
+  const content = (
+    <div className="flex flex-col h-[calc(100vh-64px)]">
+      <ResourceToolbar />
+      <div className="flex flex-1 overflow-hidden">
+        <StaffPanel isResourceAdmin={isResourceAdmin} />
+        <TimelinePanel isResourceAdmin={isResourceAdmin} />
+      </div>
+    </div>
+  );
+
+  // Non-admin users get read-only view without drag & drop
+  if (!isResourceAdmin) {
+    return content;
+  }
+
   return (
     <DndContext collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="flex flex-col h-[calc(100vh-64px)]">
-        <ResourceToolbar />
-        <div className="flex flex-1 overflow-hidden">
-          <StaffPanel isResourceAdmin={isResourceAdmin} />
-          <TimelinePanel isResourceAdmin={isResourceAdmin} />
-        </div>
-      </div>
+      {content}
       <DragOverlay>
         {draggedStaff && (
           <div className="px-2 py-1 bg-blue-100 border border-blue-300 rounded-full shadow-lg text-[10px] font-medium text-blue-800">
