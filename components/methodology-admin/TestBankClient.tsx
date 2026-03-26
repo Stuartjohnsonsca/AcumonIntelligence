@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Copy, Loader2, Save, Download, Upload } from 'lucide-react';
+import { Plus, X, Copy, Loader2, Save, Download, Upload, Pencil, Trash2 } from 'lucide-react';
 import { MANDATORY_FS_LINES, ASSERTION_TYPES } from '@/types/methodology';
 
 interface Industry {
@@ -36,32 +36,22 @@ interface Props {
 }
 
 const DEFAULT_FS_LINES = [
-  'Going Concern',
-  'Management Override',
-  'Notes and Disclosures',
-  'Revenue',
-  'Cost of Sales',
-  'Operating Expenses',
-  'Fixed Assets',
-  'Debtors',
-  'Cash and Bank',
-  'Creditors',
-  'Accruals',
-  'Loans',
-  'Share Capital',
-  'Reserves',
+  'Going Concern', 'Management Override', 'Notes and Disclosures', 'Revenue',
+  'Cost of Sales', 'Operating Expenses', 'Fixed Assets', 'Debtors',
+  'Cash and Bank', 'Creditors', 'Accruals', 'Loans', 'Share Capital', 'Reserves',
 ];
 
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
+type TopTab = 'test-bank' | 'test-types';
+type TestTypesSubTab = 'actions' | 'types';
+
 export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
+  const [topTab, setTopTab] = useState<TopTab>('test-bank');
+  const [testTypesSubTab, setTestTypesSubTab] = useState<TestTypesSubTab>('types');
   const [industries] = useState(initialIndustries);
   const [testTypes, setTestTypes] = useState(initialTestTypes);
-  const [showTestTypes, setShowTestTypes] = useState(false);
-  const [newTestTypeName, setNewTestTypeName] = useState('');
-  const [editingTestType, setEditingTestType] = useState<string | null>(null);
-  const [editTestTypeName, setEditTestTypeName] = useState('');
   const [testBanks, setTestBanks] = useState(initialTestBanks);
   const [selectedIndustry, setSelectedIndustry] = useState<string>(industries[0]?.id || '');
   const [fsLines, setFsLines] = useState<string[]>(() => {
@@ -72,7 +62,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   });
   const [popupOpen, setPopupOpen] = useState(false);
   const [popupFsLine, setPopupFsLine] = useState('');
-  const [popupTests, setPopupTests] = useState<{ description: string; testTypeCode: string }[]>([]);
+  const [popupTests, setPopupTests] = useState<{ description: string; testTypeCode: string; assertion?: string; framework?: string; significantRisk?: boolean }[]>([]);
   const [newFsLine, setNewFsLine] = useState('');
   const [saving, setSaving] = useState(false);
   const [copySourceIndustry, setCopySourceIndustry] = useState('');
@@ -81,11 +71,29 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Test Types state
+  const [newTestTypeName, setNewTestTypeName] = useState('');
+  const [editingTestType, setEditingTestType] = useState<string | null>(null);
+  const [editTestTypeName, setEditTestTypeName] = useState('');
+  // Actions state
+  const [newActionName, setNewActionName] = useState('');
+  const [actions, setActions] = useState<{ id: string; name: string }[]>([]);
+  const [editingAction, setEditingAction] = useState<string | null>(null);
+  const [editActionName, setEditActionName] = useState('');
+
   const hasTests = useCallback(
     (industryId: string, fsLine: string) => {
       return testBanks.some(
         (tb) => tb.industryId === industryId && tb.fsLine === fsLine && tb.tests && (tb.tests as any[]).length > 0
       );
+    },
+    [testBanks]
+  );
+
+  const getTestCount = useCallback(
+    (industryId: string, fsLine: string) => {
+      const entry = testBanks.find((tb) => tb.industryId === industryId && tb.fsLine === fsLine);
+      return entry?.tests?.length ?? 0;
     },
     [testBanks]
   );
@@ -104,9 +112,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          firmId,
-          industryId: selectedIndustry,
-          fsLine: popupFsLine,
+          firmId, industryId: selectedIndustry, fsLine: popupFsLine,
           tests: popupTests.filter((t) => t.description.trim()),
         }),
       });
@@ -114,20 +120,11 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         const data = await res.json();
         setTestBanks((prev) => {
           const idx = prev.findIndex((tb) => tb.industryId === selectedIndustry && tb.fsLine === popupFsLine);
-          if (idx >= 0) {
-            const updated = [...prev];
-            updated[idx] = data.entry;
-            return updated;
-          }
+          if (idx >= 0) { const updated = [...prev]; updated[idx] = data.entry; return updated; }
           return [...prev, data.entry];
         });
       }
-    } catch {
-      // handle error
-    } finally {
-      setSaving(false);
-      setPopupOpen(false);
-    }
+    } finally { setSaving(false); setPopupOpen(false); }
   };
 
   const handleAddFsLine = () => {
@@ -149,12 +146,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       const res = await fetch('/api/methodology-admin/test-bank', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'copy',
-          firmId,
-          sourceIndustryId: copySourceIndustry,
-          targetIndustryId: copyTargetIndustry,
-        }),
+        body: JSON.stringify({ action: 'copy', firmId, sourceIndustryId: copySourceIndustry, targetIndustryId: copyTargetIndustry }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -163,15 +155,10 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           return [...filtered, ...data.entries];
         });
       }
-    } catch {
-      // handle error
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   function downloadTemplate() {
-    // Download XLSX with dropdown data validation from API
     window.open(`/api/methodology-admin/test-bank/template?industryId=${selectedIndustry}`, '_blank');
   }
 
@@ -180,248 +167,46 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     if (!file) return;
     setUploading(true);
     setUploadResult(null);
-
     try {
-      // Read as ArrayBuffer for XLSX, or text for CSV
-      const isXlsx = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
-
-      let rows: string[][] = [];
-
-      if (isXlsx) {
-        // Upload XLSX server-side for reliable multi-line cell parsing
-        try {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('industryId', selectedIndustry);
-          const res = await fetch('/api/methodology-admin/test-bank/upload', {
-            method: 'POST',
-            body: formData,
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            if (data.error === 'validation') {
-              const errorList = data.errors.join('\n');
-              const more = data.hasMore ? `\n...and ${data.count - 20} more errors` : '';
-              setUploadResult(`Upload rejected — ${data.count} validation error${data.count > 1 ? 's' : ''} found. Fix all errors and re-upload.\n\n${errorList}${more}`);
-            } else {
-              setUploadResult(`Upload failed: ${data.error}`);
-            }
-          } else {
-            // Refresh test bank data
-            const tbRes = await fetch(`/api/methodology-admin/test-bank?industryId=${selectedIndustry}`);
-            if (tbRes.ok) {
-              const tbData = await tbRes.json();
-              setTestBanks(prev => {
-                const filtered = prev.filter(tb => tb.industryId !== selectedIndustry);
-                return [...filtered, ...(tbData.entries || [])];
-              });
-              const newFsLineNames = (tbData.entries || []).map((e: any) => e.fsLine);
-              setFsLines(prev => {
-                const set = new Set([...prev, ...newFsLineNames]);
-                return Array.from(set);
-              });
-            }
-            setUploadResult(`Successfully imported ${data.imported} tests across ${data.fsLines} FS lines`);
-          }
-        } catch (err: any) {
-          setUploadResult(`Upload failed: ${err?.message || 'Network error'}`);
-        }
-        return; // Skip the client-side CSV path below
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('industryId', selectedIndustry);
+      const res = await fetch('/api/methodology-admin/test-bank/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === 'validation') {
+          const errorList = data.errors.join('\n');
+          const more = data.hasMore ? `\n...and ${data.count - 20} more errors` : '';
+          setUploadResult(`Upload rejected — ${data.count} validation error${data.count > 1 ? 's' : ''}.\n\n${errorList}${more}`);
+        } else { setUploadResult(`Upload failed: ${data.error}`); }
       } else {
-        // CSV parsing
-        const text = await file.text();
-        rows = text.split('\n')
-          .filter(l => l.trim() && !l.startsWith('LOOKUPS') && !l.startsWith('Type Options') && !l.startsWith('Assertion Options') && !l.startsWith('Significant Risk'))
-          .map(line => (line.match(/(".*?"|[^,]*),?/g) || []).map(s => s.replace(/,$/, '').replace(/^"|"$/g, '').trim()));
-      }
-
-      // Detect column positions from headers (flexible: any order)
-      const headerRow = rows[0]?.map(h => (h || '').toString().trim().toLowerCase()) || [];
-
-      if (rows.length < 2) {
-        setUploadResult('Upload failed: File is empty or has no data rows');
-        return;
-      }
-
-      // Find column indices by header keywords
-      function findCol(keywords: string[]): number {
-        return headerRow.findIndex(h => keywords.some(k => h.includes(k)));
-      }
-      const colFsLine = findCol(['fs line', 'line item', 'fs statement']);
-      const colDesc = findCol(['test desc', 'description']);
-      const colType = Math.max(findCol(['type']), 0);
-      const colAssertion = findCol(['assertion']);
-      const colFramework = findCol(['framework', 'accounting']);
-      const colSigRisk = findCol(['significant', 'sig risk', 'sig.']);
-
-      if (colFsLine < 0 && colDesc < 0) {
-        // Fallback: assume positional A=fsLine, B=desc, C=type, D=assertion
-        // This handles files with no recognizable headers
-      }
-
-      // Use detected indices or fallback to positional
-      const iFS = colFsLine >= 0 ? colFsLine : 0;
-      const iDesc = colDesc >= 0 ? colDesc : 1;
-      const iType = colType >= 0 ? colType : 2;
-      const iAssert = colAssertion >= 0 ? colAssertion : 3;
-      const iFramework = colFramework; // -1 if not present
-      const iSigRisk = colSigRisk >= 0 ? colSigRisk : (iFramework >= 0 ? 5 : 4);
-
-      // Column letter helper
-      const colLetter = (idx: number) => String.fromCharCode(65 + idx);
-
-      // PHASE 1: Validate ALL rows first (all-or-nothing)
-      const dataRows = rows.slice(1);
-      const validationErrors: string[] = [];
-      let lastFsLine = '';
-
-      type ParsedRow = { fsLine: string; description: string; typeCode: string; assertion: string; framework: string; significantRisk: boolean };
-      const parsedRows: ParsedRow[] = [];
-
-      for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx++) {
-        const parts = dataRows[rowIdx];
-        const get = (idx: number) => idx >= 0 && idx < parts.length ? (parts[idx] || '').toString().trim() : '';
-        let fsLine = get(iFS);
-        const description = get(iDesc);
-        const typeName = get(iType);
-        const assertion = get(iAssert);
-        const framework = iFramework >= 0 ? get(iFramework) : '';
-        const sigRisk = get(iSigRisk);
-
-        // Skip completely blank rows
-        if (!fsLine && !description && !typeName && !assertion) continue;
-
-        // Inherit FS Line from row above if empty (merged cell pattern)
-        if (!fsLine && description && lastFsLine) {
-          fsLine = lastFsLine;
-        }
-        if (fsLine) lastFsLine = fsLine;
-
-        const rowNum = rowIdx + 2; // 1-indexed + header
-        const rowErrors: string[] = [];
-
-        if (!fsLine) rowErrors.push(`Col ${colLetter(iFS)}: FS Line Item is empty`);
-        if (!description) rowErrors.push(`Col ${colLetter(iDesc)}: Test Description is empty`);
-
-        // Validate Type
-        const typeLC = (typeName || '').toLowerCase();
-        const matchedType = testTypes.find(t => t.name.toLowerCase() === typeLC || t.code.toLowerCase() === typeLC);
-        if (typeName && !matchedType) {
-          rowErrors.push(`Col ${colLetter(iType)}: Invalid Type "${typeName}" (valid: ${testTypes.map(t => t.name).join(', ')})`);
-        }
-        const typeCode = matchedType?.code || testTypes[0]?.code || '';
-
-        // Validate Assertion (flexible matching)
-        const assertionLC = (assertion || '').toLowerCase().replace(/\s+/g, ' ');
-        const matchedAssertion = ASSERTION_TYPES.find(a => {
-          const aLC = a.toLowerCase();
-          return aLC === assertionLC
-            || aLC.replace('occurrence', 'occurence') === assertionLC
-            || aLC.replace('&', 'and') === assertionLC.replace('&', 'and')
-            || aLC.startsWith(assertionLC) || assertionLC.startsWith(aLC);
-        }) || '';
-        if (assertion && !matchedAssertion) {
-          rowErrors.push(`Col ${colLetter(iAssert)}: Invalid Assertion "${assertion}"`);
-        }
-
-        // Validate Framework
-        const frameworkLC = (framework || '').toLowerCase();
-        const matchedFramework = frameworkOptions.find(f => f.toLowerCase() === frameworkLC) || '';
-        if (framework && !matchedFramework && framework.toLowerCase() !== 'all') {
-          rowErrors.push(`Col ${colLetter(iFramework)}: Invalid Framework "${framework}" (valid: ${frameworkOptions.join(', ')})`);
-        }
-
-        // Validate Significant Risk
-        if (sigRisk && !['Y', 'N', 'YES', 'NO', ''].includes(sigRisk.toUpperCase())) {
-          rowErrors.push(`Col ${colLetter(iSigRisk)}: Invalid Significant Risk "${sigRisk}" (use Y or N)`);
-        }
-
-        if (rowErrors.length > 0) {
-          validationErrors.push(`Row ${rowNum}: ${rowErrors.join('; ')}`);
-        } else if (fsLine && description) {
-          parsedRows.push({
-            fsLine,
-            description,
-            typeCode,
-            assertion: matchedAssertion,
-            framework: matchedFramework,
-            significantRisk: ['Y', 'YES'].includes((sigRisk || '').toUpperCase()),
+        const tbRes = await fetch(`/api/methodology-admin/test-bank?industryId=${selectedIndustry}`);
+        if (tbRes.ok) {
+          const tbData = await tbRes.json();
+          setTestBanks(prev => {
+            const filtered = prev.filter(tb => tb.industryId !== selectedIndustry);
+            return [...filtered, ...(tbData.entries || [])];
           });
+          const newFsLineNames = (tbData.entries || []).map((e: any) => e.fsLine);
+          setFsLines(prev => { const set = new Set([...prev, ...newFsLineNames]); return Array.from(set); });
         }
-      }
-
-      // ALL-OR-NOTHING: If any validation errors, reject entire upload
-      if (validationErrors.length > 0) {
-        const errorList = validationErrors.slice(0, 20).join('\n');
-        const more = validationErrors.length > 20 ? `\n...and ${validationErrors.length - 20} more errors` : '';
-        setUploadResult(`Upload rejected — ${validationErrors.length} validation error${validationErrors.length > 1 ? 's' : ''} found. Fix all errors and re-upload.\n\n${errorList}${more}`);
-        return;
-      }
-
-      if (parsedRows.length === 0) {
-        setUploadResult('Upload failed: No valid data rows found');
-        return;
-      }
-
-      // PHASE 2: Group and import (only reached if zero errors)
-      const grouped: Record<string, ParsedRow[]> = {};
-      for (const row of parsedRows) {
-        if (!grouped[row.fsLine]) grouped[row.fsLine] = [];
-        grouped[row.fsLine].push(row);
-      }
-
-      let imported = 0;
-      let apiErrors = 0;
-
-      for (const [fsLine, tests] of Object.entries(grouped)) {
-        if (!fsLines.includes(fsLine)) setFsLines(prev => [...prev, fsLine]);
-        try {
-          const res = await fetch('/api/methodology-admin/test-bank', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              firmId, industryId: selectedIndustry, fsLine,
-              tests: tests.map(t => ({
-                description: t.description,
-                testTypeCode: t.typeCode,
-                assertion: t.assertion,
-                framework: t.framework,
-                significantRisk: t.significantRisk,
-              })),
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setTestBanks(prev => {
-              const filtered = prev.filter(tb => !(tb.industryId === selectedIndustry && tb.fsLine === fsLine));
-              return [...filtered, data.entry];
-            });
-            imported += tests.length;
-          } else { apiErrors++; }
-        } catch { apiErrors++; }
-      }
-
-      if (apiErrors > 0) {
-        setUploadResult(`Upload partially failed: ${imported} tests imported, ${apiErrors} FS lines had API errors`);
-      } else {
-        setUploadResult(`Successfully imported ${imported} tests across ${Object.keys(grouped).length} FS lines`);
+        setUploadResult(`Successfully imported ${data.imported} tests across ${data.fsLines} FS lines`);
       }
     } catch (err: any) {
-      console.error('Upload error:', err);
-      setUploadResult(`Upload failed: ${err?.message || 'invalid file format'}`);
+      setUploadResult(`Upload failed: ${err?.message || 'Network error'}`);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
 
+  // Test Type CRUD
   async function addTestType() {
     const name = newTestTypeName.trim();
     if (!name) return;
     const code = name.toLowerCase().replace(/\s+/g, '_');
     const res = await fetch('/api/methodology-admin/test-types', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, code }),
     });
     if (res.ok) {
@@ -433,202 +218,369 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
 
   async function updateTestType(id: string, name: string) {
     const res = await fetch('/api/methodology-admin/test-types', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, name }),
     });
-    if (res.ok) {
-      setTestTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t));
-      setEditingTestType(null);
-    }
+    if (res.ok) { setTestTypes(prev => prev.map(t => t.id === id ? { ...t, name } : t)); setEditingTestType(null); }
   }
 
   async function deleteTestType(id: string) {
-    if (testTypes.length <= 1) return; // Must have at least one
+    if (testTypes.length <= 1) return;
     const res = await fetch('/api/methodology-admin/test-types', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
     });
-    if (res.ok) {
-      setTestTypes(prev => prev.filter(t => t.id !== id));
-    }
+    if (res.ok) { setTestTypes(prev => prev.filter(t => t.id !== id)); }
   }
 
+  // ─── Top-level tabs ────────────────────────────────────────────
   return (
-    <div className="space-y-6">
-      {/* Test Types management (collapsible) */}
-      <div className="border border-slate-200 rounded-lg">
-        <button onClick={() => setShowTestTypes(!showTestTypes)}
-          className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-          <span>Test Types ({testTypes.length}) — e.g. Analytical Review, Test of Details, Judgement</span>
-          <span className="text-slate-400">{showTestTypes ? '▲' : '▼'}</span>
+    <div className="space-y-4">
+      {/* Top tabs */}
+      <div className="flex border-b border-slate-200">
+        <button
+          onClick={() => setTopTab('test-bank')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            topTab === 'test-bank'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          Test Bank
         </button>
-        {showTestTypes && (
-          <div className="px-4 pb-4 border-t border-slate-100">
-            <div className="flex flex-wrap gap-2 mt-3">
-              {testTypes.map(tt => (
-                <div key={tt.id} className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
-                  {editingTestType === tt.id ? (
-                    <>
-                      <input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') updateTestType(tt.id, editTestTypeName); if (e.key === 'Escape') setEditingTestType(null); }}
-                        className="border border-blue-300 rounded px-2 py-0.5 text-sm w-36" autoFocus />
-                      <button onClick={() => updateTestType(tt.id, editTestTypeName)} className="text-xs text-blue-600 hover:text-blue-800">✓</button>
-                      <button onClick={() => setEditingTestType(null)} className="text-xs text-slate-400">✕</button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-sm text-slate-700">{tt.name}</span>
-                      <button onClick={() => { setEditingTestType(tt.id); setEditTestTypeName(tt.name); }}
-                        className="text-xs text-blue-400 hover:text-blue-600 ml-1" title="Edit">✏️</button>
-                      {testTypes.length > 1 && (
-                        <button onClick={() => deleteTestType(tt.id)}
-                          className="text-xs text-red-300 hover:text-red-500" title="Delete">×</button>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))}
-              <div className="flex items-center gap-1">
-                <input value={newTestTypeName} onChange={e => setNewTestTypeName(e.target.value)}
+        <button
+          onClick={() => setTopTab('test-types')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            topTab === 'test-types'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          Test Types
+        </button>
+      </div>
+
+      {/* ─── TEST TYPES TAB ─── */}
+      {topTab === 'test-types' && (
+        <div className="space-y-4">
+          {/* Sub-tabs */}
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+            <button
+              onClick={() => setTestTypesSubTab('types')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                testTypesSubTab === 'types' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Test Types
+            </button>
+            <button
+              onClick={() => setTestTypesSubTab('actions')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                testTypesSubTab === 'actions' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Actions
+            </button>
+          </div>
+
+          {/* Test Types sub-tab */}
+          {testTypesSubTab === 'types' && (
+            <div className="border rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-slate-800 mb-3">
+                Test Types ({testTypes.length})
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">
+                Define the types of audit tests available in the Test Bank (e.g. Analytical Review, Test of Details, Judgement)
+              </p>
+
+              <div className="border rounded-lg divide-y">
+                {testTypes.map(tt => (
+                  <div key={tt.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 group">
+                    {editingTestType === tt.id ? (
+                      <div className="flex items-center gap-2 flex-1">
+                        <input
+                          value={editTestTypeName}
+                          onChange={e => setEditTestTypeName(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') updateTestType(tt.id, editTestTypeName); if (e.key === 'Escape') setEditingTestType(null); }}
+                          className="border rounded px-2 py-1 text-sm flex-1 max-w-xs"
+                          autoFocus
+                        />
+                        <Button size="sm" onClick={() => updateTestType(tt.id, editTestTypeName)}>Save</Button>
+                        <Button size="sm" variant="outline" onClick={() => setEditingTestType(null)}>Cancel</Button>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <span className="text-sm font-medium text-slate-700">{tt.name}</span>
+                          <span className="text-[10px] text-slate-400 ml-2">({tt.code})</span>
+                        </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => { setEditingTestType(tt.id); setEditTestTypeName(tt.name); }}
+                            className="p-1 hover:bg-slate-200 rounded" title="Edit"
+                          >
+                            <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                          </button>
+                          {testTypes.length > 1 && (
+                            <button
+                              onClick={() => deleteTestType(tt.id)}
+                              className="p-1 hover:bg-red-100 rounded" title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 mt-3">
+                <input
+                  value={newTestTypeName}
+                  onChange={e => setNewTestTypeName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && addTestType()}
-                  placeholder="Add type..." className="border border-slate-200 rounded px-2 py-1 text-sm w-32" />
-                <button onClick={addTestType} disabled={!newTestTypeName.trim()}
-                  className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 disabled:opacity-40">+ Add</button>
+                  placeholder="New test type name..."
+                  className="border rounded-md px-3 py-1.5 text-sm flex-1 max-w-xs"
+                />
+                <Button onClick={addTestType} size="sm" disabled={!newTestTypeName.trim()}>
+                  <Plus className="h-4 w-4 mr-1" /> Add
+                </Button>
               </div>
             </div>
-            <p className="text-[10px] text-slate-400 mt-2">These types appear as dropdowns in tests and the upload template.</p>
-          </div>
-        )}
-      </div>
+          )}
 
-      {/* Industry selector and Copy */}
-      <div className="flex items-end space-x-4 flex-wrap gap-y-3">
-        <div>
-          <label className="text-xs text-slate-500 mb-1 block">Industry</label>
-          <select
-            value={selectedIndustry}
-            onChange={(e) => setSelectedIndustry(e.target.value)}
-            className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {industries.map((ind) => (
-              <option key={ind.id} value={ind.id}>{ind.name}{ind.isDefault ? ' (Default)' : ''}</option>
-            ))}
-          </select>
-        </div>
+          {/* Actions sub-tab */}
+          {testTypesSubTab === 'actions' && (
+            <div className="border rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-slate-800 mb-3">
+                Actions ({actions.length})
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">
+                Define actions that can be associated with test types (e.g. Inspect, Observe, Inquire, Confirm, Recalculate, Reperform, Analytical Procedures)
+              </p>
 
-        <div className="flex items-end space-x-2 ml-auto">
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Copy From</label>
-            <select value={copySourceIndustry} onChange={(e) => setCopySourceIndustry(e.target.value)} className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-              <option value="">Select...</option>
-              {industries.map((ind) => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Copy To</label>
-            <select value={copyTargetIndustry} onChange={(e) => setCopyTargetIndustry(e.target.value)} className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
-              <option value="">Select...</option>
-              {industries.map((ind) => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
-            </select>
-          </div>
-          <Button onClick={handleCopyIndustry} size="sm" variant="outline" disabled={saving}>
-            <Copy className="h-4 w-4 mr-1" /> Copy
-          </Button>
-        </div>
-      </div>
+              {actions.length === 0 && (
+                <div className="text-center py-8 text-slate-400 text-sm border rounded-lg border-dashed">
+                  No actions defined yet. Add your first action below.
+                </div>
+              )}
 
-      {/* Upload / Download + Add FS Line */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center space-x-2">
-          <input
-            type="text"
-            value={newFsLine}
-            onChange={(e) => setNewFsLine(e.target.value)}
-            placeholder="Add FS Statement Line..."
-            className="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
-            onKeyDown={(e) => e.key === 'Enter' && handleAddFsLine()}
-          />
-          <Button onClick={handleAddFsLine} size="sm" variant="outline">
-            <Plus className="h-4 w-4 mr-1" /> Add Column
-          </Button>
-        </div>
+              {actions.length > 0 && (
+                <div className="border rounded-lg divide-y">
+                  {actions.map(action => (
+                    <div key={action.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 group">
+                      {editingAction === action.id ? (
+                        <div className="flex items-center gap-2 flex-1">
+                          <input
+                            value={editActionName}
+                            onChange={e => setEditActionName(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                setActions(prev => prev.map(a => a.id === action.id ? { ...a, name: editActionName } : a));
+                                setEditingAction(null);
+                              }
+                              if (e.key === 'Escape') setEditingAction(null);
+                            }}
+                            className="border rounded px-2 py-1 text-sm flex-1 max-w-xs"
+                            autoFocus
+                          />
+                          <Button size="sm" onClick={() => { setActions(prev => prev.map(a => a.id === action.id ? { ...a, name: editActionName } : a)); setEditingAction(null); }}>Save</Button>
+                          <Button size="sm" variant="outline" onClick={() => setEditingAction(null)}>Cancel</Button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-sm font-medium text-slate-700">{action.name}</span>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => { setEditingAction(action.id); setEditActionName(action.name); }}
+                              className="p-1 hover:bg-slate-200 rounded" title="Edit"
+                            >
+                              <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                            </button>
+                            <button
+                              onClick={() => setActions(prev => prev.filter(a => a.id !== action.id))}
+                              className="p-1 hover:bg-red-100 rounded" title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
-        <div className="flex items-center space-x-2">
-          <Button onClick={downloadTemplate} size="sm" variant="outline">
-            <Download className="h-4 w-4 mr-1" /> Download Template
-          </Button>
-          <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" disabled={uploading}>
-            <Upload className="h-4 w-4 mr-1" /> {uploading ? 'Uploading...' : 'Upload Spreadsheet'}
-          </Button>
-          <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} className="hidden" />
-        </div>
-      </div>
-
-      {uploadResult && (
-        <div className={`text-sm px-4 py-2 rounded-lg ${uploadResult.includes('failed') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
-          {uploadResult}
+              <div className="flex items-center gap-2 mt-3">
+                <input
+                  value={newActionName}
+                  onChange={e => setNewActionName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && newActionName.trim()) {
+                      setActions(prev => [...prev, { id: `action-${Date.now()}`, name: newActionName.trim() }]);
+                      setNewActionName('');
+                    }
+                  }}
+                  placeholder="New action name..."
+                  className="border rounded-md px-3 py-1.5 text-sm flex-1 max-w-xs"
+                />
+                <Button
+                  onClick={() => {
+                    if (newActionName.trim()) {
+                      setActions(prev => [...prev, { id: `action-${Date.now()}`, name: newActionName.trim() }]);
+                      setNewActionName('');
+                    }
+                  }}
+                  size="sm"
+                  disabled={!newActionName.trim()}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Add
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Grid */}
-      <div className="border rounded-lg overflow-x-auto">
-        <table className="w-full border-collapse min-w-[800px]">
-          <thead>
-            <tr>
-              <th className="border border-slate-300 p-2 bg-slate-100 text-left text-sm font-medium sticky left-0 bg-slate-100 z-10 min-w-[180px]">
-                Industry / FS Line
-              </th>
-              {fsLines.map((line) => (
-                <th key={line} className="border border-slate-300 p-2 bg-slate-100 text-center text-sm font-medium min-w-[120px]">
-                  <div className="flex items-center justify-center space-x-1">
-                    <span className="truncate">{line}</span>
-                    {!MANDATORY_FS_LINES.includes(line as any) && (
-                      <button onClick={() => handleRemoveFsLine(line)} className="text-red-400 hover:text-red-600 flex-shrink-0">
-                        <X className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {industries.filter((i) => i.id === selectedIndustry).map((ind) => (
-              <tr key={ind.id}>
-                <td className="border border-slate-300 p-2 bg-slate-50 text-sm font-medium sticky left-0 z-10">
-                  {ind.name}
-                </td>
-                {fsLines.map((line) => {
-                  const has = hasTests(ind.id, line);
-                  return (
-                    <td
-                      key={line}
-                      className="border border-slate-300 p-2 text-center cursor-pointer hover:bg-blue-50"
-                      onClick={() => openPopup(line)}
-                    >
-                      {has ? (
-                        <span className="text-lg font-bold text-blue-600">X</span>
-                      ) : (
-                        <span className="text-slate-300">&mdash;</span>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* ─── TEST BANK TAB ─── */}
+      {topTab === 'test-bank' && (
+        <div className="space-y-4">
+          {/* Industry selector and Copy */}
+          <div className="flex items-end space-x-4 flex-wrap gap-y-3">
+            <div>
+              <label className="text-xs text-slate-500 mb-1 block">Industry</label>
+              <select
+                value={selectedIndustry}
+                onChange={(e) => setSelectedIndustry(e.target.value)}
+                className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {industries.map((ind) => (
+                  <option key={ind.id} value={ind.id}>{ind.name}{ind.isDefault ? ' (Default)' : ''}</option>
+                ))}
+              </select>
+            </div>
 
-      {/* Popup for editing tests */}
+            <div className="flex items-end space-x-2 ml-auto">
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Copy From</label>
+                <select value={copySourceIndustry} onChange={(e) => setCopySourceIndustry(e.target.value)} className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
+                  <option value="">Select...</option>
+                  {industries.map((ind) => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Copy To</label>
+                <select value={copyTargetIndustry} onChange={(e) => setCopyTargetIndustry(e.target.value)} className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white">
+                  <option value="">Select...</option>
+                  {industries.map((ind) => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
+                </select>
+              </div>
+              <Button onClick={handleCopyIndustry} size="sm" variant="outline" disabled={saving}>
+                <Copy className="h-4 w-4 mr-1" /> Copy
+              </Button>
+            </div>
+          </div>
+
+          {/* Upload / Download + Add FS Line */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center space-x-2">
+              <input
+                type="text"
+                value={newFsLine}
+                onChange={(e) => setNewFsLine(e.target.value)}
+                placeholder="Add FS Statement Line..."
+                className="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
+                onKeyDown={(e) => e.key === 'Enter' && handleAddFsLine()}
+              />
+              <Button onClick={handleAddFsLine} size="sm" variant="outline">
+                <Plus className="h-4 w-4 mr-1" /> Add Column
+              </Button>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Button onClick={downloadTemplate} size="sm" variant="outline">
+                <Download className="h-4 w-4 mr-1" /> Download Template
+              </Button>
+              <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" disabled={uploading}>
+                <Upload className="h-4 w-4 mr-1" /> {uploading ? 'Uploading...' : 'Upload Spreadsheet'}
+              </Button>
+              <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} className="hidden" />
+            </div>
+          </div>
+
+          {uploadResult && (
+            <div className={`text-sm px-4 py-2 rounded-lg whitespace-pre-wrap ${uploadResult.includes('failed') || uploadResult.includes('rejected') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+              {uploadResult}
+            </div>
+          )}
+
+          {/* Grid */}
+          <div className="border rounded-lg overflow-x-auto">
+            <table className="w-full border-collapse min-w-[800px]">
+              <thead>
+                <tr>
+                  <th className="border border-slate-300 p-2 bg-slate-100 text-left text-sm font-medium sticky left-0 bg-slate-100 z-10 min-w-[180px]">
+                    Industry / FS Line
+                  </th>
+                  {fsLines.map((line) => (
+                    <th key={line} className="border border-slate-300 p-2 bg-slate-100 text-center text-sm font-medium min-w-[120px]">
+                      <div className="flex items-center justify-center space-x-1">
+                        <span className="truncate">{line}</span>
+                        {!MANDATORY_FS_LINES.includes(line as any) && (
+                          <button onClick={() => handleRemoveFsLine(line)} className="text-red-400 hover:text-red-600 flex-shrink-0">
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {industries.filter((i) => i.id === selectedIndustry).map((ind) => (
+                  <tr key={ind.id}>
+                    <td className="border border-slate-300 p-2 bg-slate-50 text-sm font-medium sticky left-0 z-10">
+                      {ind.name}
+                    </td>
+                    {fsLines.map((line) => {
+                      const count = getTestCount(ind.id, line);
+                      const has = count > 0;
+                      return (
+                        <td
+                          key={line}
+                          className="border border-slate-300 p-2 text-center cursor-pointer hover:bg-blue-50 transition-colors"
+                          onClick={() => openPopup(line)}
+                        >
+                          {has ? (
+                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
+                              {count}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300">&mdash;</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ─── POPUP for editing tests ─── */}
       {popupOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-lg shadow-xl w-[1050px] max-h-[80vh] overflow-y-auto p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-slate-900">
                 Tests: {popupFsLine}
+                <span className="text-sm font-normal text-slate-500 ml-2">
+                  ({industries.find(i => i.id === selectedIndustry)?.name})
+                </span>
               </h3>
               <button onClick={() => setPopupOpen(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="h-5 w-5" />
@@ -688,9 +640,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                         className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"
                       >
                         <option value="">Select...</option>
-                        {ASSERTION_TYPES.map(a => (
-                          <option key={a} value={a}>{a}</option>
-                        ))}
+                        {ASSERTION_TYPES.map(a => <option key={a} value={a}>{a}</option>)}
                       </select>
                     </td>
                     <td className="p-2 border-b">
@@ -704,9 +654,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                         className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"
                       >
                         <option value="">All</option>
-                        {frameworkOptions.map(fw => (
-                          <option key={fw} value={fw}>{fw}</option>
-                        ))}
+                        {frameworkOptions.map(fw => <option key={fw} value={fw}>{fw}</option>)}
                       </select>
                     </td>
                     <td className="p-2 border-b text-center">
@@ -719,14 +667,10 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                           setPopupTests(updated);
                         }}
                         className="w-4 h-4 rounded border-slate-300 text-red-500 focus:ring-red-400"
-                        title="Mark as Significant Risk test"
                       />
                     </td>
                     <td className="p-2 border-b text-center">
-                      <button
-                        onClick={() => setPopupTests((prev) => prev.filter((_, j) => j !== i))}
-                        className="text-red-400 hover:text-red-600"
-                      >
+                      <button onClick={() => setPopupTests((prev) => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
                         <X className="h-4 w-4" />
                       </button>
                     </td>
@@ -738,15 +682,12 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
             <div className="flex items-center justify-between">
               <Button
                 onClick={() => setPopupTests((prev) => [...prev, { description: '', testTypeCode: '', assertion: '', framework: '', significantRisk: false }])}
-                size="sm"
-                variant="outline"
+                size="sm" variant="outline"
               >
                 <Plus className="h-4 w-4 mr-1" /> Add Row
               </Button>
               <div className="flex space-x-2">
-                <Button onClick={() => setPopupOpen(false)} size="sm" variant="outline">
-                  Cancel
-                </Button>
+                <Button onClick={() => setPopupOpen(false)} size="sm" variant="outline">Cancel</Button>
                 <Button onClick={handleSavePopup} size="sm" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
                   Save
