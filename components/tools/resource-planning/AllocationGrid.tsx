@@ -158,12 +158,12 @@ function StaffRow({
                 return (
                   <div key={week.toISOString()} className="flex flex-[3]">
                     {days.map((day) => (
-                      <DropCell key={day.toISOString()} id={`cell-staff-${member.id}-${day.toISOString().split('T')[0]}`} isToday={isSameDay(day, new Date())} expanded />
+                      <DropCell key={day.toISOString()} id={`cell|staff|${member.id}|${day.toISOString().split('T')[0]}`} isToday={isSameDay(day, new Date())} expanded />
                     ))}
                   </div>
                 );
               }
-              return <DropCell key={week.toISOString()} id={`cell-staff-${member.id}-${week.toISOString().split('T')[0]}`} isToday={false} expanded={false} />;
+              return <DropCell key={week.toISOString()} id={`cell|staff|${member.id}|${week.toISOString().split('T')[0]}`} isToday={false} expanded={false} />;
             })}
             {staffAllocs.map((alloc) => (
               <AllocationBar key={alloc.id} allocation={alloc} startDate={startDate} endDate={endDate} totalDays={totalDays} />
@@ -268,7 +268,7 @@ function RoleLane({
               {days.map((day) => (
                 <DropCell
                   key={day.toISOString()}
-                  id={`cell-${job.engagementId}-${role}-${day.toISOString().split('T')[0]}`}
+                  id={`cell|${job.engagementId}|${role}|${day.toISOString().split('T')[0]}`}
                   isToday={isSameDay(day, new Date())}
                   expanded
                 />
@@ -279,7 +279,7 @@ function RoleLane({
         return (
           <DropCell
             key={week.toISOString()}
-            id={`cell-${job.engagementId}-${role}-${week.toISOString().split('T')[0]}`}
+            id={`cell|${job.engagementId}|${role}|${week.toISOString().split('T')[0]}`}
             isToday={false}
             expanded={false}
           />

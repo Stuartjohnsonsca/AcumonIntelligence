@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { DndContext, closestCenter, DragOverlay, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
+import { DndContext, pointerWithin, DragOverlay, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { StaffMember, ResourceJobView, Allocation, StaffAbsence } from '@/lib/resource-planning/types';
 import { ResourceToolbar } from './ResourceToolbar';
@@ -70,9 +70,10 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     if (!over) return;
 
     const overId = String(over.id);
-    if (!overId.startsWith('cell-')) return;
+    if (!overId.startsWith('cell|')) return;
 
-    const parts = overId.split('-');
+    // Cell IDs use | delimiter: cell|{engId}|{role}|{date} or cell|staff|{userId}|{date}
+    const parts = overId.split('|');
     const activeId = String(active.id);
 
     if (activeId.startsWith('staff-')) {
@@ -81,18 +82,16 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
       const member = storeStaff.find((s) => s.id === staffId);
       if (!member) return;
 
-      // Parse drop target: cell-{engId}-{role}-{date} or cell-staff-{userId}-{date}
       let engagementId: string;
       let role: 'Preparer' | 'Reviewer' | 'RI';
       let dateStr: string;
 
       if (parts[1] === 'staff') {
-        // Staff axis view - need to determine engagement from context
         return; // Can't assign to staff row directly
       } else {
         engagementId = parts[1];
         role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
-        dateStr = parts.slice(3).join('-');
+        dateStr = parts[3];
       }
 
       const startDate = new Date(dateStr);
@@ -139,7 +138,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
         if (parts[1] === 'staff') return;
         engagementId = parts[1];
         role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
-        dateStr = parts.slice(3).join('-');
+        dateStr = parts[3];
 
         const startDate = new Date(dateStr);
         const oldDuration = new Date(existing.endDate).getTime() - new Date(existing.startDate).getTime();
@@ -178,7 +177,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
         if (parts[1] === 'staff') return;
         engagementId = parts[1];
         role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
-        dateStr = parts.slice(3).join('-');
+        dateStr = parts[3];
 
         const startDate = new Date(dateStr);
         const existingAlloc = storeAllocations.find((a) => a.id === allocId);
@@ -212,7 +211,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   const draggedAlloc = dragType === 'allocation' ? storeAllocations.find((a) => a.id === activeDragId) : null;
 
   return (
-    <DndContext collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex flex-col h-[calc(100vh-64px)]">
         <ResourceToolbar />
         <div className="flex flex-1 overflow-hidden">
