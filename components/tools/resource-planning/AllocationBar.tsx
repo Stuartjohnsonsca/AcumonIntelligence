@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import type { Allocation, ResourceRole } from '@/lib/resource-planning/types';
 import { ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
@@ -16,7 +16,6 @@ interface Props {
 export function AllocationBar({ allocation, startDate, endDate, totalDays }: Props) {
   const selectedAllocationId = useResourcePlanningStore((s) => s.selectedAllocationId);
   const setSelectedAllocation = useResourcePlanningStore((s) => s.setSelectedAllocation);
-  const pointerStartPos = useRef<{ x: number; y: number } | null>(null);
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `alloc-${allocation.id}`,
@@ -48,34 +47,17 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
     .toUpperCase()
     .slice(0, 2);
 
-  // Use onMouseUp to detect clicks (not drags). dnd-kit uses onPointerDown for drag.
-  // If the pointer hasn't moved much between down and up, treat it as a click (select).
-  function handlePointerDown(e: React.PointerEvent) {
-    pointerStartPos.current = { x: e.clientX, y: e.clientY };
-  }
-
-  function handlePointerUp(e: React.PointerEvent) {
-    if (!pointerStartPos.current) return;
-    const dx = Math.abs(e.clientX - pointerStartPos.current.x);
-    const dy = Math.abs(e.clientY - pointerStartPos.current.y);
-    // If pointer moved less than 5px, treat as click (select)
-    if (dx < 5 && dy < 5) {
-      setSelectedAllocation(isSelected ? null : allocation.id);
-    }
-    pointerStartPos.current = null;
-  }
-
   return (
     <div
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      onPointerDown={(e) => {
-        handlePointerDown(e);
-        // Let dnd-kit's listeners handle the event too (don't stop propagation)
-        listeners?.onPointerDown?.(e as any);
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!isDragging) {
+          setSelectedAllocation(isSelected ? null : allocation.id);
+        }
       }}
-      onPointerUp={handlePointerUp}
       className={`
         absolute top-0.5 h-[14px] rounded-full cursor-grab active:cursor-grabbing
         flex items-center px-1 overflow-hidden
