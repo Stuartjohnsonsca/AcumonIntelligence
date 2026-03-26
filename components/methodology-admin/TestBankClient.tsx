@@ -314,7 +314,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                 <input type="text" value={newFsLine} onChange={e => setNewFsLine(e.target.value)}
                   placeholder="FS Statement Line..." className="border rounded-md px-2 py-1.5 text-sm w-48"
                   onKeyDown={e => e.key === 'Enter' && handleAddFsLine()} />
-                <Button onClick={handleAddFsLine} size="sm" variant="outline" className="h-[34px]"><Plus className="h-3.5 w-3.5" /></Button>
+                <Button onClick={handleAddFsLine} size="sm" variant="outline" className="h-[34px]"><Plus className="h-3.5 w-3.5 mr-1" /> Add</Button>
               </div>
             </div>
 
@@ -325,7 +325,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                 <input type="text" value={newIndustryName} onChange={e => setNewIndustryName(e.target.value)}
                   placeholder="Industry name..." className="border rounded-md px-2 py-1.5 text-sm w-40"
                   onKeyDown={e => e.key === 'Enter' && handleAddIndustry()} />
-                <Button onClick={handleAddIndustry} size="sm" variant="outline" className="h-[34px]" disabled={saving}><Plus className="h-3.5 w-3.5" /></Button>
+                <Button onClick={handleAddIndustry} size="sm" variant="outline" className="h-[34px]" disabled={saving}><Plus className="h-3.5 w-3.5 mr-1" /> Add</Button>
               </div>
             </div>
 
