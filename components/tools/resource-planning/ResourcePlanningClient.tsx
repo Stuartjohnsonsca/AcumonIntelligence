@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { DndContext, closestCenter, DragOverlay, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
-import { useState } from 'react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
-import type { StaffMember, ResourceJobView, Allocation } from '@/lib/resource-planning/types';
+import type { StaffMember, ResourceJobView, Allocation, StaffAbsence } from '@/lib/resource-planning/types';
 import { ResourceToolbar } from './ResourceToolbar';
 import { StaffPanel } from './StaffPanel';
 import { TimelinePanel } from './TimelinePanel';
@@ -17,21 +16,38 @@ interface Props {
   userId: string;
 }
 
+// Dummy absences for demo
+const DUMMY_ABSENCES: StaffAbsence[] = [
+  { id: 'abs-1', userId: '', startDate: '2026-04-06', endDate: '2026-04-10', type: 'holiday', approved: true },
+  { id: 'abs-2', userId: '', startDate: '2026-04-13', endDate: '2026-04-14', type: 'sick', approved: true },
+  { id: 'abs-3', userId: '', startDate: '2026-05-04', endDate: '2026-05-04', type: 'bank_holiday', approved: true },
+  { id: 'abs-4', userId: '', startDate: '2026-05-25', endDate: '2026-05-25', type: 'bank_holiday', approved: true },
+];
+
 export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdmin, userId }: Props) {
   const init = useResourcePlanningStore((s) => s.init);
   const isInitialized = useResourcePlanningStore((s) => s.isInitialized);
   const addAllocation = useResourcePlanningStore((s) => s.addAllocation);
   const updateAllocation = useResourcePlanningStore((s) => s.updateAllocation);
-  const storeJobs = useResourcePlanningStore((s) => s.jobs);
   const storeStaff = useResourcePlanningStore((s) => s.staff);
   const storeAllocations = useResourcePlanningStore((s) => s.allocations);
+  const editMode = useResourcePlanningStore((s) => s.editMode);
 
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dragType, setDragType] = useState<'staff' | 'allocation' | null>(null);
 
   useEffect(() => {
     if (!isInitialized) {
-      init({ staff, jobs, allocations });
+      // Assign dummy absences to first few staff
+      const absences = staff.length >= 3
+        ? [
+            { ...DUMMY_ABSENCES[0], userId: staff[4]?.id ?? staff[0].id },
+            { ...DUMMY_ABSENCES[1], userId: staff[5]?.id ?? staff[1].id },
+            { ...DUMMY_ABSENCES[2], userId: '' }, // bank holiday applies to all
+            { ...DUMMY_ABSENCES[3], userId: '' },
+          ]
+        : [];
+      init({ staff, jobs, allocations, absences });
     }
   }, [init, isInitialized, staff, jobs, allocations]);
 
@@ -54,26 +70,34 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     if (!over) return;
 
     const overId = String(over.id);
-    // Drop target format: "cell-{engagementId}-{role}-{dateISO}"
     if (!overId.startsWith('cell-')) return;
 
     const parts = overId.split('-');
-    // cell-{engId}-{role}-{date}
-    const engagementId = parts[1];
-    const role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
-    const dateStr = parts.slice(3).join('-');
-
     const activeId = String(active.id);
 
     if (activeId.startsWith('staff-')) {
-      // Create new allocation
+      // Staff drop → always create new allocation
       const staffId = activeId.replace('staff-', '');
       const member = storeStaff.find((s) => s.id === staffId);
       if (!member) return;
 
+      // Parse drop target: cell-{engId}-{role}-{date} or cell-staff-{userId}-{date}
+      let engagementId: string;
+      let role: 'Preparer' | 'Reviewer' | 'RI';
+      let dateStr: string;
+
+      if (parts[1] === 'staff') {
+        // Staff axis view - need to determine engagement from context
+        return; // Can't assign to staff row directly
+      } else {
+        engagementId = parts[1];
+        role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
+        dateStr = parts.slice(3).join('-');
+      }
+
       const startDate = new Date(dateStr);
       const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + 13); // 2-week default
+      endDate.setDate(endDate.getDate() + 13);
 
       const newAlloc: Allocation = {
         id: `temp-${Date.now()}`,
@@ -87,66 +111,91 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
         notes: null,
       };
 
-      // Optimistic add
       addAllocation(newAlloc);
 
-      // API call
       try {
         const res = await fetch('/api/resource-planning/allocations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            engagementId,
-            userId: staffId,
-            role,
-            startDate: startDate.toISOString(),
-            endDate: endDate.toISOString(),
-            hoursPerDay: 7.5,
-          }),
+          body: JSON.stringify({ engagementId, userId: staffId, role, startDate: startDate.toISOString(), endDate: endDate.toISOString(), hoursPerDay: 7.5 }),
         });
         if (res.ok) {
           const data = await res.json();
-          // Replace temp with real
           updateAllocation(newAlloc.id, { id: data.allocation.id });
         }
-      } catch {
-        // Revert on failure handled by re-fetch
-      }
+      } catch {}
     } else if (activeId.startsWith('alloc-')) {
-      // Move existing allocation
       const allocId = activeId.replace('alloc-', '');
-      const startDate = new Date(dateStr);
-      const existingAlloc = storeAllocations.find((a) => a.id === allocId);
-      if (!existingAlloc) return;
 
-      // Calculate duration to preserve
-      const oldStart = new Date(existingAlloc.startDate);
-      const oldEnd = new Date(existingAlloc.endDate);
-      const durationMs = oldEnd.getTime() - oldStart.getTime();
-      const newEnd = new Date(startDate.getTime() + durationMs);
+      if (editMode === 'create') {
+        // In create mode, alloc drag also creates a new allocation (copy)
+        const existing = storeAllocations.find((a) => a.id === allocId);
+        if (!existing) return;
 
-      // Optimistic update
-      updateAllocation(allocId, {
-        engagementId,
-        role,
-        startDate: startDate.toISOString(),
-        endDate: newEnd.toISOString(),
-      });
+        let engagementId: string;
+        let role: 'Preparer' | 'Reviewer' | 'RI';
+        let dateStr: string;
 
-      // API call
-      try {
-        await fetch(`/api/resource-planning/allocations/${allocId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            engagementId,
-            role,
-            startDate: startDate.toISOString(),
-            endDate: newEnd.toISOString(),
-          }),
-        });
-      } catch {
-        // Revert on failure
+        if (parts[1] === 'staff') return;
+        engagementId = parts[1];
+        role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
+        dateStr = parts.slice(3).join('-');
+
+        const startDate = new Date(dateStr);
+        const oldDuration = new Date(existing.endDate).getTime() - new Date(existing.startDate).getTime();
+        const endDate = new Date(startDate.getTime() + oldDuration);
+
+        const newAlloc: Allocation = {
+          id: `temp-${Date.now()}`,
+          engagementId,
+          userId: existing.userId,
+          userName: existing.userName,
+          role,
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          hoursPerDay: existing.hoursPerDay,
+          notes: null,
+        };
+
+        addAllocation(newAlloc);
+        try {
+          const res = await fetch('/api/resource-planning/allocations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ engagementId, userId: existing.userId, role, startDate: startDate.toISOString(), endDate: endDate.toISOString(), hoursPerDay: existing.hoursPerDay }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            updateAllocation(newAlloc.id, { id: data.allocation.id });
+          }
+        } catch {}
+      } else {
+        // Edit mode - move existing allocation
+        let engagementId: string;
+        let role: 'Preparer' | 'Reviewer' | 'RI';
+        let dateStr: string;
+
+        if (parts[1] === 'staff') return;
+        engagementId = parts[1];
+        role = parts[2] as 'Preparer' | 'Reviewer' | 'RI';
+        dateStr = parts.slice(3).join('-');
+
+        const startDate = new Date(dateStr);
+        const existingAlloc = storeAllocations.find((a) => a.id === allocId);
+        if (!existingAlloc) return;
+
+        const durationMs = new Date(existingAlloc.endDate).getTime() - new Date(existingAlloc.startDate).getTime();
+        const newEnd = new Date(startDate.getTime() + durationMs);
+
+        updateAllocation(allocId, { engagementId, role, startDate: startDate.toISOString(), endDate: newEnd.toISOString() });
+
+        try {
+          await fetch(`/api/resource-planning/allocations/${allocId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ engagementId, role, startDate: startDate.toISOString(), endDate: newEnd.toISOString() }),
+          });
+        } catch {}
       }
     }
   }
@@ -154,7 +203,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   if (!isInitialized) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="text-slate-500">Loading resource planning...</div>
+        <div className="text-slate-500 text-sm">Loading resource planning...</div>
       </div>
     );
   }
@@ -173,12 +222,12 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
       </div>
       <DragOverlay>
         {draggedStaff && (
-          <div className="px-3 py-2 bg-blue-100 border border-blue-300 rounded-md shadow-lg text-sm font-medium text-blue-800">
+          <div className="px-2 py-1 bg-blue-100 border border-blue-300 rounded-full shadow-lg text-[10px] font-medium text-blue-800">
             {draggedStaff.name}
           </div>
         )}
         {draggedAlloc && (
-          <div className="px-3 py-1 bg-purple-100 border border-purple-300 rounded-md shadow-lg text-xs font-medium text-purple-800">
+          <div className="px-2 py-1 bg-purple-100 border border-purple-300 rounded-full shadow-lg text-[10px] font-medium text-purple-800">
             {draggedAlloc.userName} ({draggedAlloc.role})
           </div>
         )}

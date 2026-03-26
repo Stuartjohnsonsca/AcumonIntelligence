@@ -22,6 +22,7 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
   const [capacity, setCapacity] = useState(setting?.weeklyCapacityHrs ?? 37.5);
   const [jobLimit, setJobLimit] = useState(setting?.concurrentJobLimit ?? 3);
   const [isRI, setIsRI] = useState(setting?.isRI ?? false);
+  const [overtimeHrs, setOvertimeHrs] = useState(setting?.overtimeHrs ?? 0);
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
@@ -102,6 +103,19 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
               type="number"
               value={jobLimit}
               onChange={(e) => setJobLimit(parseInt(e.target.value) || 3)}
+              className="w-full px-2 py-1.5 text-sm border rounded-md"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Overtime Hours (per week)
+            </label>
+            <input
+              type="number"
+              step="0.5"
+              value={overtimeHrs}
+              onChange={(e) => setOvertimeHrs(parseFloat(e.target.value) || 0)}
               className="w-full px-2 py-1.5 text-sm border rounded-md"
             />
           </div>

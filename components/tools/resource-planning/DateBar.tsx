@@ -1,12 +1,11 @@
 'use client';
 
 import { useCallback, useRef, useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Circle } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import {
   getWeeksInRange,
   getDaysInRange,
-  getWeekStart,
   formatShortDate,
   formatWeekLabel,
   isSameDay,
@@ -16,8 +15,12 @@ export function DateBar() {
   const visibleStart = useResourcePlanningStore((s) => s.visibleStart);
   const visibleEnd = useResourcePlanningStore((s) => s.visibleEnd);
   const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
+  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
+  const isLocked = useResourcePlanningStore((s) => s.isLocked);
   const setFocusedDays = useResourcePlanningStore((s) => s.setFocusedDays);
+  const toggleFocusLock = useResourcePlanningStore((s) => s.toggleFocusLock);
   const shiftDateRange = useResourcePlanningStore((s) => s.shiftDateRange);
+  const goToToday = useResourcePlanningStore((s) => s.goToToday);
 
   const barRef = useRef<HTMLDivElement>(null);
   const [isPanning, setIsPanning] = useState(false);
@@ -27,114 +30,168 @@ export function DateBar() {
   const endDate = useMemo(() => new Date(visibleEnd), [visibleEnd]);
   const weeks = useMemo(() => getWeeksInRange(startDate, endDate), [startDate, endDate]);
 
-  const focusedSet = useMemo(
-    () => new Set(focusedDays.map((d) => new Date(d).toDateString())),
-    [focusedDays],
-  );
-
-  // When hovering over a week, expand it into days
+  const activeDays = isLocked ? lockedFocusDays : focusedDays;
   const [hoveredWeekIdx, setHoveredWeekIdx] = useState<number | null>(null);
+
+  // Find locked week index for highlight
+  const lockedWeekIdx = useMemo(() => {
+    if (!isLocked || lockedFocusDays.length === 0) return null;
+    const lockDate = new Date(lockedFocusDays[0]);
+    return weeks.findIndex((w) => {
+      const weekEnd = new Date(w);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      return lockDate >= w && lockDate <= weekEnd;
+    });
+  }, [isLocked, lockedFocusDays, weeks]);
+
+  const expandedWeekIdx = isLocked ? lockedWeekIdx : hoveredWeekIdx;
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       if (isPanning) return;
       const rect = barRef.current?.getBoundingClientRect();
       if (!rect) return;
-
       const x = e.clientX - rect.left;
       const weekWidth = rect.width / weeks.length;
       const idx = Math.floor(x / weekWidth);
       if (idx >= 0 && idx < weeks.length) {
         setHoveredWeekIdx(idx);
-        // Set focused days for this week
-        const weekStart = weeks[idx];
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekEnd.getDate() + 4); // Mon-Fri
-        const days = getDaysInRange(weekStart, weekEnd).filter(
-          (d) => d.getDay() !== 0 && d.getDay() !== 6,
-        );
-        setFocusedDays(days);
+        if (!isLocked) {
+          const weekStart = weeks[idx];
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 4);
+          const days = getDaysInRange(weekStart, weekEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
+          setFocusedDays(days);
+        }
       }
     },
-    [isPanning, weeks, setFocusedDays],
+    [isPanning, weeks, setFocusedDays, isLocked],
   );
 
   const handleMouseLeave = useCallback(() => {
     setHoveredWeekIdx(null);
-    setFocusedDays([]);
-  }, [setFocusedDays]);
+    if (!isLocked) setFocusedDays([]);
+  }, [setFocusedDays, isLocked]);
 
-  // Panning handlers
-  const handleMouseDown = useCallback(
+  const handleClick = useCallback(
     (e: React.MouseEvent) => {
-      if (e.button !== 0) return;
-      setIsPanning(true);
-      panStartX.current = e.clientX;
-      e.preventDefault();
+      if (isPanning) return;
+      const rect = barRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const x = e.clientX - rect.left;
+      const weekWidth = rect.width / weeks.length;
+      const idx = Math.floor(x / weekWidth);
+
+      if (isLocked && lockedWeekIdx === idx) {
+        // Click same week again → unlock
+        toggleFocusLock();
+      } else if (!isLocked && idx >= 0 && idx < weeks.length) {
+        // Set focused days for clicked week then lock
+        const weekStart = weeks[idx];
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 4);
+        const days = getDaysInRange(weekStart, weekEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
+        // Temporarily unlock to set days, then lock
+        const store = useResourcePlanningStore.getState();
+        store.setFocusedDays(days);
+        // Now lock
+        setTimeout(() => useResourcePlanningStore.getState().toggleFocusLock(), 0);
+      } else if (isLocked) {
+        // Click different week → unlock and re-focus
+        const store = useResourcePlanningStore.getState();
+        store.toggleFocusLock(); // unlock
+        if (idx >= 0 && idx < weeks.length) {
+          const weekStart = weeks[idx];
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 4);
+          const days = getDaysInRange(weekStart, weekEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
+          setTimeout(() => {
+            const s = useResourcePlanningStore.getState();
+            s.setFocusedDays(days);
+            setTimeout(() => useResourcePlanningStore.getState().toggleFocusLock(), 0);
+          }, 0);
+        }
+      }
     },
-    [],
+    [isPanning, weeks, isLocked, lockedWeekIdx, toggleFocusLock],
   );
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    setIsPanning(true);
+    panStartX.current = e.clientX;
+    e.preventDefault();
+  }, []);
 
   const handlePanMove = useCallback(
     (e: React.MouseEvent) => {
       if (!isPanning) return;
       const delta = e.clientX - panStartX.current;
       if (Math.abs(delta) > 40) {
-        const direction = delta > 0 ? -7 : 7;
-        shiftDateRange(direction);
+        shiftDateRange(delta > 0 ? -7 : 7);
         panStartX.current = e.clientX;
       }
     },
     [isPanning, shiftDateRange],
   );
 
-  const handleMouseUp = useCallback(() => {
-    setIsPanning(false);
-  }, []);
+  const handleMouseUp = useCallback(() => setIsPanning(false), []);
 
   return (
     <div className="sticky top-0 z-20 bg-white border-b select-none">
       <div className="flex items-center">
-        {/* Nav buttons */}
-        <button
-          onClick={() => shiftDateRange(-7)}
-          className="p-1 hover:bg-slate-100 rounded flex-shrink-0"
-        >
-          <ChevronLeft className="h-4 w-4 text-slate-500" />
-        </button>
+        {/* Job info spacer + Today button */}
+        <div className="w-[280px] flex-shrink-0 flex items-center justify-between px-2 border-r">
+          <button
+            onClick={goToToday}
+            className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-blue-50 text-blue-600 transition-colors"
+            title="Go to today"
+          >
+            <Circle className="h-2.5 w-2.5 fill-blue-600" />
+            <span className="text-[9px] font-semibold">Today</span>
+          </button>
+          <div className="flex items-center gap-0.5">
+            <button onClick={() => shiftDateRange(-7)} className="p-0.5 hover:bg-slate-100 rounded">
+              <ChevronLeft className="h-3.5 w-3.5 text-slate-500" />
+            </button>
+            <button onClick={() => shiftDateRange(7)} className="p-0.5 hover:bg-slate-100 rounded">
+              <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
+            </button>
+          </div>
+        </div>
 
-        {/* Date columns */}
+        {/* Date columns - aligned with grid */}
         <div
           ref={barRef}
-          className="flex-1 flex cursor-grab active:cursor-grabbing"
+          className="flex-1 flex cursor-grab active:cursor-grabbing min-w-0"
           onMouseMove={isPanning ? handlePanMove : handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
+          onClick={handleClick}
         >
           {weeks.map((week, idx) => {
-            const isHovered = hoveredWeekIdx === idx;
+            const isExpanded = expandedWeekIdx === idx;
+            const isLockedWeek = isLocked && lockedWeekIdx === idx;
 
-            if (isHovered) {
-              // Expand into day columns
+            if (isExpanded) {
               const weekEnd = new Date(week);
               weekEnd.setDate(weekEnd.getDate() + 4);
-              const days = getDaysInRange(week, weekEnd).filter(
-                (d) => d.getDay() !== 0 && d.getDay() !== 6,
-              );
+              const days = getDaysInRange(week, weekEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
 
               return (
-                <div key={week.toISOString()} className="flex flex-[3]">
+                <div
+                  key={week.toISOString()}
+                  className={`flex flex-[3] ${isLockedWeek ? 'bg-blue-50 border-b-2 border-blue-400' : ''}`}
+                >
                   {days.map((day) => (
                     <div
                       key={day.toISOString()}
-                      className={`
-                        flex-1 text-center py-1.5 text-[10px] font-medium border-r border-slate-100
-                        ${isSameDay(day, new Date()) ? 'bg-blue-50 text-blue-700' : 'text-slate-600'}
-                      `}
+                      className={`flex-1 text-center py-1 text-[9px] font-medium border-r border-slate-100
+                        ${isSameDay(day, new Date()) ? 'bg-blue-100 text-blue-700 font-bold' : 'text-slate-600'}`}
                     >
                       <div>{['Mon', 'Tue', 'Wed', 'Thu', 'Fri'][day.getDay() - 1]}</div>
-                      <div className="text-[9px]">{formatShortDate(day)}</div>
+                      <div className="text-[8px]">{formatShortDate(day)}</div>
                     </div>
                   ))}
                 </div>
@@ -144,20 +201,14 @@ export function DateBar() {
             return (
               <div
                 key={week.toISOString()}
-                className="flex-1 text-center py-1.5 text-[10px] font-medium text-slate-500 border-r border-slate-100 truncate"
+                className={`flex-1 text-center py-1 text-[9px] font-medium border-r border-slate-100 truncate
+                  ${isLockedWeek ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-400' : 'text-slate-500'}`}
               >
                 {formatWeekLabel(week)}
               </div>
             );
           })}
         </div>
-
-        <button
-          onClick={() => shiftDateRange(7)}
-          className="p-1 hover:bg-slate-100 rounded flex-shrink-0"
-        >
-          <ChevronRight className="h-4 w-4 text-slate-500" />
-        </button>
       </div>
     </div>
   );

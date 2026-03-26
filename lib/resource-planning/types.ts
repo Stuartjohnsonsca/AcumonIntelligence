@@ -16,6 +16,7 @@ export interface StaffSetting {
   concurrentJobLimit: number;
   isRI: boolean;
   weeklyCapacityHrs: number;
+  overtimeHrs?: number;
 }
 
 export interface ResourceJobView {
@@ -43,6 +44,15 @@ export interface Allocation {
   notes: string | null;
 }
 
+export interface StaffAbsence {
+  id: string;
+  userId: string;
+  startDate: string;
+  endDate: string;
+  type: 'holiday' | 'bank_holiday' | 'sick';
+  approved: boolean;
+}
+
 export interface StaffCapacity {
   userId: string;
   name: string;
@@ -67,6 +77,9 @@ export interface DateRange {
 }
 
 export type ResourceRole = 'Preparer' | 'Reviewer' | 'RI';
+export type ViewAxis = 'client' | 'staff';
+export type EditMode = 'edit' | 'create';
+export type ViewMode = 'client-bookings' | 'staff-bookings' | 'client-availability' | 'staff-availability';
 
 export const ROLE_COLORS: Record<ResourceRole, { bg: string; text: string; border: string }> = {
   RI: { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-300' },
