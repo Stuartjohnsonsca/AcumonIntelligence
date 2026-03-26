@@ -6,6 +6,7 @@ import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 
 export function ResourceToolbar() {
   const staff = useResourcePlanningStore((s) => s.staff);
+  const allocations = useResourcePlanningStore((s) => s.allocations);
   const getStaffCapacity = useResourcePlanningStore((s) => s.getStaffCapacity);
   const selectedStaffIds = useResourcePlanningStore((s) => s.selectedStaffIds);
   const setSelectedStaff = useResourcePlanningStore((s) => s.setSelectedStaff);
@@ -14,7 +15,7 @@ export function ResourceToolbar() {
 
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const capacity = useMemo(() => getStaffCapacity(), [getStaffCapacity, staff]);
+  const capacity = useMemo(() => getStaffCapacity(), [getStaffCapacity, staff, allocations]);
 
   const positive = capacity.filter((c) => c.netHrs > 0).sort((a, b) => b.netHrs - a.netHrs);
   const negative = capacity.filter((c) => c.netHrs < 0).sort((a, b) => a.netHrs - b.netHrs);

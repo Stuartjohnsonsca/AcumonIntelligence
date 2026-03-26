@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Search, Settings } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import { ROLE_COLORS, type ResourceRole } from '@/lib/resource-planning/types';
+import { computeStaffCapacity } from '@/lib/resource-planning/capacity';
 import { StaffSettingsDialog } from './StaffSettingsDialog';
 
 interface Props {
@@ -13,8 +14,19 @@ interface Props {
 
 export function StaffPanel({ isResourceAdmin }: Props) {
   const staff = useResourcePlanningStore((s) => s.staff);
-  const getStaffAvailability = useResourcePlanningStore((s) => s.getStaffAvailability);
+  const allocations = useResourcePlanningStore((s) => s.allocations);
+  const visibleStart = useResourcePlanningStore((s) => s.visibleStart);
+  const visibleEnd = useResourcePlanningStore((s) => s.visibleEnd);
   const selectedStaffIds = useResourcePlanningStore((s) => s.selectedStaffIds);
+
+  const availabilityMap = useMemo(() => {
+    const caps = computeStaffCapacity(staff, allocations, new Date(visibleStart), new Date(visibleEnd));
+    const map = new Map<string, boolean>();
+    for (const c of caps) {
+      map.set(c.userId, c.netHrs > 0);
+    }
+    return map;
+  }, [staff, allocations, visibleStart, visibleEnd]);
   const [filter, setFilter] = useState('');
   const [settingsUserId, setSettingsUserId] = useState<string | null>(null);
 
@@ -47,7 +59,7 @@ export function StaffPanel({ isResourceAdmin }: Props) {
           <StaffListItem
             key={member.id}
             member={member}
-            isAvailable={getStaffAvailability(member.id)}
+            isAvailable={availabilityMap.get(member.id) ?? false}
             isResourceAdmin={isResourceAdmin}
             onSettingsClick={() => setSettingsUserId(member.id)}
           />
