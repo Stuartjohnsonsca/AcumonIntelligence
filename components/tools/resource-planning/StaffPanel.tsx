@@ -1,9 +1,8 @@
 'use client';
 
-import { memo, useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Search } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import { ROLE_COLORS, type ResourceRole, getStaffRoles } from '@/lib/resource-planning/types';
 import { computeStaffCapacity } from '@/lib/resource-planning/capacity';
@@ -14,18 +13,14 @@ interface Props {
 }
 
 export function StaffPanel({ isResourceAdmin }: Props) {
-  const { staff, jobs, allocations, visibleStart, visibleEnd, selectedStaffIds, viewMode, leftPanelFilter, currentUserId } =
-    useResourcePlanningStore(useShallow((s) => ({
-      staff: s.staff,
-      jobs: s.jobs,
-      allocations: s.allocations,
-      visibleStart: s.visibleStart,
-      visibleEnd: s.visibleEnd,
-      selectedStaffIds: s.selectedStaffIds,
-      viewMode: s.viewMode,
-      leftPanelFilter: s.leftPanelFilter,
-      currentUserId: s.currentUserId,
-    })));
+  const staff = useResourcePlanningStore((s) => s.staff);
+  const jobs = useResourcePlanningStore((s) => s.jobs);
+  const allocations = useResourcePlanningStore((s) => s.allocations);
+  const visibleStart = useResourcePlanningStore((s) => s.visibleStart);
+  const visibleEnd = useResourcePlanningStore((s) => s.visibleEnd);
+  const selectedStaffIds = useResourcePlanningStore((s) => s.selectedStaffIds);
+  const viewMode = useResourcePlanningStore((s) => s.viewMode);
+  const leftPanelFilter = useResourcePlanningStore((s) => s.leftPanelFilter);
   const setLeftPanelFilter = useResourcePlanningStore((s) => s.setLeftPanelFilter);
 
   const [filter, setFilter] = useState('');
@@ -75,11 +70,13 @@ export function StaffPanel({ isResourceAdmin }: Props) {
     );
   }
 
-  // Staff list
+  // Staff list — only those with ResourceStaffSetting (set in admin)
+  // No separate filter panel — just search
+  const currentUserId = useResourcePlanningStore((s) => s.currentUserId);
   const [myScheduleOnly, setMyScheduleOnly] = useState(!isResourceAdmin);
 
   const filteredStaff = useMemo(() => {
-    let result = staff;
+    let result = staff; // Already filtered server-side to only those with ResourceStaffSetting
 
     if (myScheduleOnly && currentUserId) {
       const myEngagements = new Set(
@@ -140,26 +137,23 @@ const StaffListItem = memo(function StaffListItem({ member, allocations, isAvail
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `staff-${member.id}` });
   const roles = getStaffRoles(member.resourceSetting);
 
-  const { jobCountByRole, weightedCapacity } = useMemo(() => {
-    const userAllocs = allocations.filter((a: any) => a.userId === member.id);
-    const byRole = new Map<string, Set<string>>();
-    for (const alloc of userAllocs) {
-      if (!byRole.has(alloc.role)) byRole.set(alloc.role, new Set());
-      byRole.get(alloc.role)!.add(alloc.engagementId);
-    }
-    const counts = new Map<string, number>();
-    for (const [role, engs] of byRole) counts.set(role, engs.size);
+  const userAllocs = allocations.filter((a: any) => a.userId === member.id);
+  const jobsByRole = new Map<string, Set<string>>();
+  for (const alloc of userAllocs) {
+    if (!jobsByRole.has(alloc.role)) jobsByRole.set(alloc.role, new Set());
+    jobsByRole.get(alloc.role)!.add(alloc.engagementId);
+  }
+  const jobCountByRole = new Map<string, number>();
+  for (const [role, engs] of jobsByRole) jobCountByRole.set(role, engs.size);
 
-    const baseLimit = roles.find((r) => r.role === 'Preparer')?.limit ?? 3;
-    let load = 0;
-    for (const { role, limit } of roles) {
-      const count = counts.get(role) ?? 0;
-      const weight = baseLimit / limit;
-      load += count * weight;
-    }
-
-    return { jobCountByRole: counts, weightedCapacity: Math.round(load * 10) / 10 };
-  }, [allocations, member.id, roles]);
+  const baseLimit = roles.find((r) => r.role === 'Preparer')?.limit ?? 3;
+  let weightedLoad = 0;
+  for (const { role, limit } of roles) {
+    const count = jobCountByRole.get(role) ?? 0;
+    const weight = baseLimit / limit;
+    weightedLoad += count * weight;
+  }
+  const weightedCapacity = Math.round(weightedLoad * 10) / 10;
 
   return (
     <div ref={setNodeRef} {...listeners} {...attributes}
