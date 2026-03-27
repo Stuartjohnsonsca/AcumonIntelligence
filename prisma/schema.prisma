@@ -31,7 +31,8 @@ model Firm {
   powerAppsClientSecret String?  @map("power_apps_client_secret")
   powerAppsBaseUrl      String?  @map("power_apps_base_url")
   powerAppsTenantId     String?  @map("power_apps_tenant_id")
-  powerAppsClientFilter String?  @map("power_apps_client_filter") // OData filter for client extraction e.g. "contains(name,'Johnsons')"
+  powerAppsClientFilter String?  @map("power_apps_client_filter") // Compiled OData filter for client extraction
+  powerAppsClientFilterDesc String? @map("power_apps_client_filter_desc") // Natural language description of the filter
 
   users               User[]
   ethicsPartner       User?    @relation("FirmEthicsPartner", fields: [ethicsPartnerId], references: [id])

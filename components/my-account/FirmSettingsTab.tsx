@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Save, Upload, Link2, Check, X, Search, ChevronRight, BookOpen, Plug, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { Loader2, Save, Upload, Link2, Check, X, Search, ChevronRight, BookOpen, Plug, Eye, EyeOff, RefreshCw, Sparkles, Pencil } from 'lucide-react';
+import { CrmFilterChat } from './CrmFilterChat';
 
 interface TaxonomyConfig {
   taxonomySourceType: string | null;
@@ -31,6 +32,8 @@ function PowerAppsSettings({ firmId }: { firmId: string }) {
   const [editBaseUrl, setEditBaseUrl] = useState('');
   const [editTenantId, setEditTenantId] = useState('');
   const [editClientFilter, setEditClientFilter] = useState('');
+  const [editClientFilterDesc, setEditClientFilterDesc] = useState('');
+  const [showFilterChat, setShowFilterChat] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -44,6 +47,7 @@ function PowerAppsSettings({ firmId }: { firmId: string }) {
           setEditBaseUrl(data.baseUrl || '');
           setEditTenantId(data.tenantId || '');
           setEditClientFilter(data.clientFilter || '');
+          setEditClientFilterDesc(data.clientFilterDesc || '');
         }
       } catch {}
       setLoading(false);
@@ -139,12 +143,39 @@ function PowerAppsSettings({ firmId }: { firmId: string }) {
       </div>
 
       <div className="mt-4">
-        <label className="block text-xs text-slate-500 mb-1 font-medium">Client Filter</label>
-        <input type="text" value={editClientFilter} onChange={e => setEditClientFilter(e.target.value)}
-          placeholder="e.g. contains(name,'Johnsons') or statecode eq 0"
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        <p className="text-[10px] text-slate-400 mt-1">OData filter applied when importing clients from Dataverse. Leave blank to import all accounts.</p>
+        <label className="block text-xs text-slate-500 mb-1 font-medium">Client Import Filter</label>
+        {editClientFilter ? (
+          <div className="border border-green-200 bg-green-50/50 rounded-lg p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <p className="text-sm text-green-800 font-medium">{editClientFilterDesc || 'Custom filter'}</p>
+                <code className="text-xs text-green-600 font-mono block mt-1 bg-green-100 rounded px-2 py-1 break-all">{editClientFilter}</code>
+              </div>
+              <button onClick={() => setShowFilterChat(true)}
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-white border border-green-300 rounded-lg text-green-700 hover:bg-green-50 flex-shrink-0">
+                <Pencil className="h-3 w-3" /> Edit
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setShowFilterChat(true)}
+            className="w-full px-3 py-3 text-sm border-2 border-dashed border-purple-300 rounded-lg text-purple-600 hover:bg-purple-50 hover:border-purple-400 flex items-center justify-center gap-2 transition-colors">
+            <Sparkles className="h-4 w-4" />
+            Configure filter with AI assistant
+          </button>
+        )}
+        <p className="text-[10px] text-slate-400 mt-1">Describe which clients to import and AI will generate the Dataverse filter. Leave unconfigured to import all active accounts.</p>
       </div>
+
+      <CrmFilterChat
+        isOpen={showFilterChat}
+        onClose={() => setShowFilterChat(false)}
+        initialDescription={editClientFilterDesc || ''}
+        onFilterConfirmed={(filter, desc) => {
+          setEditClientFilter(filter);
+          setEditClientFilterDesc(desc);
+        }}
+      />
 
       <div className="flex items-center gap-3 mt-4">
         <button onClick={handleSave} disabled={saving}

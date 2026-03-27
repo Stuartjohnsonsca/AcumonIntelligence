@@ -11,7 +11,7 @@ export async function GET() {
 
   const firm = await prisma.firm.findUnique({
     where: { id: session.user.firmId },
-    select: { powerAppsClientId: true, powerAppsClientSecret: true, powerAppsBaseUrl: true, powerAppsTenantId: true, powerAppsClientFilter: true },
+    select: { powerAppsClientId: true, powerAppsClientSecret: true, powerAppsBaseUrl: true, powerAppsTenantId: true, powerAppsClientFilter: true, powerAppsClientFilterDesc: true },
   });
 
   if (!firm) return NextResponse.json({ error: 'Firm not found' }, { status: 404 });
@@ -22,6 +22,7 @@ export async function GET() {
     baseUrl: firm.powerAppsBaseUrl,
     tenantId: firm.powerAppsTenantId,
     clientFilter: firm.powerAppsClientFilter,
+    clientFilterDesc: firm.powerAppsClientFilterDesc,
   });
 }
 
@@ -42,6 +43,7 @@ export async function PUT(req: Request) {
   if (body.baseUrl !== undefined) data.powerAppsBaseUrl = body.baseUrl || null;
   if (body.tenantId !== undefined) data.powerAppsTenantId = body.tenantId || null;
   if (body.clientFilter !== undefined) data.powerAppsClientFilter = body.clientFilter || null;
+  if (body.clientFilterDesc !== undefined) data.powerAppsClientFilterDesc = body.clientFilterDesc || null;
 
   await prisma.firm.update({ where: { id: session.user.firmId }, data });
   return NextResponse.json({ success: true });
