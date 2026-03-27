@@ -92,11 +92,22 @@ export function FirmAssumptionsClient({
   initialConfidenceTable,
   initialSpecialistRoles,
 }: Props) {
-  const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(initialInherentRisk || getDefaultInherentRisk());
-  const [controlRisk, setControlRisk] = useState<ControlRiskTable>(initialControlRisk || getDefaultControlRisk());
-  const [assertions, setAssertions] = useState<AssertionsTable>(initialAssertions || getDefaultAssertions());
+  const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
+    const t = initialInherentRisk;
+    return (t && t.matrix && typeof t.matrix === 'object') ? t : getDefaultInherentRisk();
+  });
+  const [controlRisk, setControlRisk] = useState<ControlRiskTable>(() => {
+    const t = initialControlRisk;
+    return (t && t.matrix && typeof t.matrix === 'object') ? t : getDefaultControlRisk();
+  });
+  const [assertions, setAssertions] = useState<AssertionsTable>(() => {
+    const t = initialAssertions;
+    return (t && Array.isArray(t.rows)) ? t : getDefaultAssertions();
+  });
   const [confidenceLevel, setConfidenceLevel] = useState(initialConfidenceLevel);
-  const [specialistRoles, setSpecialistRoles] = useState<string[]>(initialSpecialistRoles ?? ['EQR', 'Valuations', 'Ethics', 'Technical']);
+  const [specialistRoles, setSpecialistRoles] = useState<string[]>(
+    Array.isArray(initialSpecialistRoles) ? initialSpecialistRoles : ['EQR', 'Valuations', 'Ethics', 'Technical']
+  );
   const [newRole, setNewRole] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
