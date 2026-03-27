@@ -293,18 +293,32 @@ function InlineSettings({ user, settings, saving, onSave }: {
 
       <div className="mt-3">
         <label className="text-[10px] text-slate-500 block mb-1.5">Role Eligibility</label>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="border border-slate-200 rounded overflow-hidden">
+          <div className="grid grid-cols-[1fr_60px_70px] bg-slate-100 px-2 py-1 text-[9px] font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200">
+            <div>Role</div>
+            <div className="text-center">Eligible</div>
+            <div className="text-center">Max Jobs</div>
+          </div>
           {[
             { label: 'Preparer', value: prepLimit, set: setPrepLimit },
             { label: 'Reviewer', value: revLimit, set: setRevLimit },
             { label: 'RI', value: riLimit, set: setRiLimit },
             { label: 'Specialist', value: specLimit, set: setSpecLimit },
           ].map(({ label, value, set }) => (
-            <div key={label} className={`flex items-center gap-2 px-2 py-1.5 rounded border cursor-pointer ${value !== null ? 'bg-blue-50 border-blue-300' : 'bg-slate-100/50 border-slate-200'}`}
-              onClick={() => set(value !== null ? null : 99)}>
-              <input type="checkbox" checked={value !== null} readOnly
-                className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 pointer-events-none" />
-              <span className="text-[10px] text-slate-600 select-none">{label}</span>
+            <div key={label} className={`grid grid-cols-[1fr_60px_70px] items-center px-2 py-1.5 border-b border-slate-100 last:border-b-0 ${value !== null ? 'bg-blue-50/40' : 'bg-white'}`}>
+              <span className="text-xs text-slate-700">{label}</span>
+              <div className="flex justify-center">
+                <input type="checkbox" checked={value !== null} onChange={e => set(e.target.checked ? 5 : null)}
+                  className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 cursor-pointer" />
+              </div>
+              <div className="flex justify-center">
+                {value !== null ? (
+                  <input type="number" value={value} onChange={e => set(parseInt(e.target.value) || 0)} min={1} max={99}
+                    className="w-12 border border-slate-200 rounded px-1 py-0.5 text-xs text-center bg-white" />
+                ) : (
+                  <span className="text-slate-300 text-xs">—</span>
+                )}
+              </div>
             </div>
           ))}
         </div>
