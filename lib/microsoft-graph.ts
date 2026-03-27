@@ -149,6 +149,7 @@ export async function fetchAuditDeptUsers(additionalEmails?: string[]): Promise<
   // Default additional users to always include (firm admin, etc.)
   const alwaysIncludeEmails = new Set([
     'stuart@acumon.com',
+    'edmund@acumon.com',
     ...(additionalEmails || []).map(e => e.toLowerCase()),
   ]);
 
