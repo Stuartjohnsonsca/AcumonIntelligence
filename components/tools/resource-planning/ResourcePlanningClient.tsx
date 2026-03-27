@@ -166,8 +166,11 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
         if (res.ok) {
           const data = await res.json();
           updateAllocation(newAlloc.id, { id: data.allocation.id });
+        } else {
+          const err = await res.json().catch(() => ({}));
+          console.error('[POST alloc] error:', res.status, err);
         }
-      } catch {}
+      } catch (e) { console.error('[POST alloc] fetch error:', e); }
 
     } else if (activeId.startsWith('alloc-')) {
       const allocId = activeId.replace('alloc-', '');
