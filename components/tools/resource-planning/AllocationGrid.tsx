@@ -254,7 +254,11 @@ function RoleLane({
   const totalDays = useMemo(() => Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate, endDate]);
 
   return (
-    <div className="relative h-[24px] border-b border-slate-50 flex group" title={role}>
+    <div className="relative h-[24px] border-b border-slate-100 flex group" title={role}>
+      {/* Role label on hover */}
+      <div className="absolute left-0 top-0 bottom-0 flex items-center z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+        <span className="text-[7px] font-bold px-1 bg-white/80 text-slate-500 rounded-r">{role.slice(0, 4)}</span>
+      </div>
       {weeks.map((week, idx) => {
         const isHovered = hoveredWeekIdx === idx;
         if (isHovered) {
@@ -298,10 +302,10 @@ function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; exp
   return (
     <div
       ref={setNodeRef}
-      className={`flex-1 border-r border-slate-50 min-h-[24px]
-        ${isToday ? 'bg-blue-50/30' : ''}
-        ${isOver ? 'bg-blue-200/60 ring-1 ring-inset ring-blue-400' : 'hover:bg-slate-50/50'}
-        ${expanded ? 'border-slate-200' : ''}`}
+      className={`flex-1 min-h-[24px] min-w-[8px] transition-colors
+        ${expanded ? 'border-r border-slate-200' : 'border-r border-slate-100/60'}
+        ${isToday ? 'bg-blue-50/40' : 'bg-slate-50/20'}
+        ${isOver ? 'bg-blue-300/40 outline outline-1 outline-blue-400 z-10' : 'hover:bg-blue-50/30'}`}
     />
   );
 }

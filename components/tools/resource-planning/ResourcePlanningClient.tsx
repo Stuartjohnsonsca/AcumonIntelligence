@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { DndContext, pointerWithin, DragOverlay, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
+import { DndContext, closestCenter, DragOverlay, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { StaffMember, ResourceJobView, Allocation, StaffAbsence, ResourceRole } from '@/lib/resource-planning/types';
 import { ROLE_COLORS } from '@/lib/resource-planning/types';
@@ -244,12 +244,14 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   }
 
   return (
-    <DndContext collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       {content}
       <DragOverlay>
         {draggedStaff && (
-          <div className="px-2 py-1 bg-blue-100 border border-blue-300 rounded-full shadow-lg text-[10px] font-medium text-blue-800">
+          <div className="px-3 py-1.5 bg-blue-600 text-white rounded-lg shadow-xl text-xs font-semibold flex items-center gap-1.5 cursor-grabbing">
+            <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
             {draggedStaff.name}
+            <span className="text-blue-200 text-[9px]">— drop on timeline</span>
           </div>
         )}
         {draggedAlloc && (() => {
