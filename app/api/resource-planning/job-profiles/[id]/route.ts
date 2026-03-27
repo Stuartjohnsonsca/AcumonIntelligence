@@ -17,16 +17,21 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json();
-  const { name, budgetHoursSpecialist, budgetHoursRI, budgetHoursReviewer, budgetHoursPreparer, isDefault } = body;
+  const { name, budgetHoursSpecialist, budgetHoursRI, budgetHoursReviewer, budgetHoursPreparer, budgetHoursSpecialistDetail, isDefault } = body;
+
+  const specialistTotal = budgetHoursSpecialistDetail !== undefined
+    ? Object.values(budgetHoursSpecialistDetail as Record<string, number>).reduce((a, b) => a + (b || 0), 0)
+    : budgetHoursSpecialist;
 
   const profile = await prisma.resourceJobProfile.update({
     where: { id },
     data: {
       ...(name !== undefined && { name }),
-      ...(budgetHoursSpecialist !== undefined && { budgetHoursSpecialist }),
+      ...(specialistTotal !== undefined && { budgetHoursSpecialist: specialistTotal }),
       ...(budgetHoursRI !== undefined && { budgetHoursRI }),
       ...(budgetHoursReviewer !== undefined && { budgetHoursReviewer }),
       ...(budgetHoursPreparer !== undefined && { budgetHoursPreparer }),
+      ...(budgetHoursSpecialistDetail !== undefined && { budgetHoursSpecialistDetail }),
       ...(isDefault !== undefined && { isDefault }),
     },
   });

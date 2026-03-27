@@ -29,20 +29,25 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { name, budgetHoursSpecialist, budgetHoursRI, budgetHoursReviewer, budgetHoursPreparer, isDefault } = body;
+  const { name, budgetHoursSpecialist, budgetHoursRI, budgetHoursReviewer, budgetHoursPreparer, budgetHoursSpecialistDetail, isDefault } = body;
 
   if (!name) {
     return Response.json({ error: 'Name is required' }, { status: 400 });
   }
 
+  const specialistTotal = budgetHoursSpecialistDetail
+    ? Object.values(budgetHoursSpecialistDetail as Record<string, number>).reduce((a, b) => a + (b || 0), 0)
+    : (budgetHoursSpecialist ?? 0);
+
   const profile = await prisma.resourceJobProfile.create({
     data: {
       firmId: session.user.firmId,
       name,
-      budgetHoursSpecialist: budgetHoursSpecialist ?? 0,
+      budgetHoursSpecialist: specialistTotal,
       budgetHoursRI: budgetHoursRI ?? 0,
       budgetHoursReviewer: budgetHoursReviewer ?? 0,
       budgetHoursPreparer: budgetHoursPreparer ?? 0,
+      budgetHoursSpecialistDetail: budgetHoursSpecialistDetail ?? {},
       isDefault: isDefault ?? false,
     },
   });

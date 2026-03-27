@@ -120,6 +120,7 @@ export interface ResourceJobProfile {
   budgetHoursRI: number;
   budgetHoursReviewer: number;
   budgetHoursPreparer: number;
+  budgetHoursSpecialistDetail: Record<string, number>;
   isDefault: boolean;
 }
 
