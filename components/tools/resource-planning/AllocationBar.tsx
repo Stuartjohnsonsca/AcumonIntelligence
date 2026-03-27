@@ -157,6 +157,9 @@ export const AllocationBar = memo(function AllocationBar({ allocation, startDate
     return () => {
       if (listenersRef.current.move) document.removeEventListener('mousemove', listenersRef.current.move);
       if (listenersRef.current.up) document.removeEventListener('mouseup', listenersRef.current.up);
+      // Always reset body cursor/select on unmount in case drag was in progress
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
   }, []);
 
