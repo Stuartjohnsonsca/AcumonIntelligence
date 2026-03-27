@@ -1,12 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Save, X } from 'lucide-react';
-import { ROLE_COLORS, DEFAULT_CONCURRENT_LIMITS, type ResourceRole } from '@/lib/resource-planning/types';
+import { Save, Loader2 } from 'lucide-react';
+import type { ResourceRole } from '@/lib/resource-planning/types';
 
 interface StaffData {
   id: string;
-  displayId: string;
   name: string;
   email: string;
   jobTitle: string | null;
@@ -18,191 +17,165 @@ interface Props {
   staff: StaffData[];
 }
 
-const ROLES: ResourceRole[] = ['Specialist', 'RI', 'Reviewer', 'Preparer'];
+const PRIMARY_ROLES: ResourceRole[] = ['Specialist', 'RI', 'Reviewer', 'Preparer'];
 
-export function ResourceUserManagement({ staff: initialStaff }: Props) {
-  const [staff, setStaff] = useState(initialStaff);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editData, setEditData] = useState<any>(null);
+const ROLE_CIRCLES: { role: 'Preparer' | 'Reviewer' | 'RI'; color: string; limitKey: string }[] = [
+  { role: 'Preparer', color: 'bg-blue-500',   limitKey: 'preparerJobLimit' },
+  { role: 'Reviewer', color: 'bg-purple-500', limitKey: 'reviewerJobLimit' },
+  { role: 'RI',       color: 'bg-amber-500',  limitKey: 'riJobLimit' },
+];
+
+function initRow(rs: any) {
+  return {
+    resourceRole:      rs?.resourceRole      ?? 'Preparer',
+    weeklyCapacityHrs: rs?.weeklyCapacityHrs ?? 37.5,
+    overtimeHrs:       rs?.overtimeHrs       ?? 15,
+    preparerJobLimit:  rs?.preparerJobLimit  ?? null,
+    reviewerJobLimit:  rs?.reviewerJobLimit  ?? null,
+    riJobLimit:        rs?.riJobLimit        ?? null,
+  };
+}
+
+function UserRow({ s }: { s: StaffData }) {
+  const [data, setData] = useState(() => initRow(s.resourceSetting));
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  function startEdit(s: StaffData) {
-    setEditingId(s.id);
-    const rs = s.resourceSetting;
-    setEditData({
-      resourceRole: rs?.resourceRole ?? 'Preparer',
-      weeklyCapacityHrs: rs?.weeklyCapacityHrs ?? 37.5,
-      overtimeHrs: rs?.overtimeHrs ?? 0,
-      specialistJobLimit: rs?.specialistJobLimit ?? null,
-      riJobLimit: rs?.riJobLimit ?? null,
-      reviewerJobLimit: rs?.reviewerJobLimit ?? null,
-      preparerJobLimit: rs?.preparerJobLimit ?? null,
-    });
+  function set(field: string, value: any) {
+    setData(prev => ({ ...prev, [field]: value }));
+    setSaved(false);
   }
 
-  async function handleSave(userId: string) {
+  function toggleRole(limitKey: string) {
+    setData(prev => ({ ...prev, [limitKey]: prev[limitKey] != null ? null : 5 }));
+    setSaved(false);
+  }
+
+  async function handleSave() {
     setSaving(true);
     try {
-      const body = {
-        ...editData,
-        concurrentJobLimit: DEFAULT_CONCURRENT_LIMITS[editData.resourceRole as ResourceRole],
-        isRI: editData.riJobLimit != null && editData.riJobLimit > 0,
-      };
-
-      const res = await fetch(`/api/resource-planning/staff/${userId}`, {
+      const res = await fetch(`/api/resource-planning/staff/${s.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...data,
+          concurrentJobLimit: data.preparerJobLimit ?? data.reviewerJobLimit ?? data.riJobLimit ?? 5,
+          isRI: data.riJobLimit != null && data.riJobLimit > 0,
+        }),
       });
+      if (res.ok) setSaved(true);
+    } finally { setSaving(false); }
+  }
 
-      if (res.ok) {
-        setStaff((prev) =>
-          prev.map((s) => (s.id === userId ? { ...s, resourceSetting: { ...s.resourceSetting, ...editData } } : s)),
+  return (
+    <tr className="border-b border-slate-100 hover:bg-slate-50/50">
+      {/* Name */}
+      <td className="px-3 py-3 align-top">
+        <div className="text-sm font-medium text-slate-800">{s.name}</div>
+        <div className="text-xs text-slate-400">{s.jobTitle || s.email}</div>
+      </td>
+
+      {/* Primary Role */}
+      <td className="px-3 py-3 align-top">
+        <select value={data.resourceRole} onChange={e => set('resourceRole', e.target.value)}
+          className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded bg-white">
+          {PRIMARY_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </td>
+
+      {/* Role circles: Preparer, Reviewer, RI */}
+      {ROLE_CIRCLES.map(({ role, color, limitKey }) => {
+        const enabled = data[limitKey] != null;
+        return (
+          <td key={role} className="px-3 py-3 align-top text-center">
+            <div className="flex flex-col items-center gap-1">
+              <button onClick={() => toggleRole(limitKey)}
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                  enabled ? `${color} text-white shadow-sm` : 'bg-slate-200 text-slate-400'
+                }`}>
+                {role[0]}
+              </button>
+              <input
+                type="number" min={0} max={99}
+                value={enabled ? data[limitKey] : 0}
+                disabled={!enabled}
+                onChange={e => set(limitKey, parseInt(e.target.value) || 0)}
+                className={`w-12 text-xs text-center border rounded py-0.5 px-1 ${
+                  enabled ? 'border-slate-300 bg-white' : 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+                }`}
+              />
+            </div>
+          </td>
         );
-        setEditingId(null);
-      }
-    } finally {
-      setSaving(false);
-    }
+      })}
+
+      {/* Overtime */}
+      <td className="px-3 py-3 align-top text-center">
+        <input type="number" min={0} step={0.5}
+          value={data.overtimeHrs}
+          onChange={e => set('overtimeHrs', parseFloat(e.target.value) || 0)}
+          className="w-14 text-xs text-center border border-slate-200 rounded py-1 px-1 bg-white" />
+      </td>
+
+      {/* Weekly Hrs */}
+      <td className="px-3 py-3 align-top text-center">
+        <input type="number" min={0} step={0.5}
+          value={data.weeklyCapacityHrs}
+          onChange={e => set('weeklyCapacityHrs', parseFloat(e.target.value) || 37.5)}
+          className="w-14 text-xs text-center border border-slate-200 rounded py-1 px-1 bg-white" />
+      </td>
+
+      {/* Save */}
+      <td className="px-3 py-3 align-top text-center">
+        <button onClick={handleSave} disabled={saving}
+          className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded transition-colors ${
+            saved ? 'bg-green-100 text-green-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+          } disabled:opacity-50`}>
+          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+          {saved ? 'Saved' : 'Save'}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+export function ResourceUserManagement({ staff }: Props) {
+  if (staff.length === 0) {
+    return (
+      <div className="text-center py-12 text-slate-400 text-sm">
+        No audit staff found. Assign users to Audit in the Staff Setup tab first.
+      </div>
+    );
   }
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-slate-800 mb-4">Staff Resource Settings</h2>
+      <h2 className="text-lg font-semibold text-slate-800 mb-4">User Settings</h2>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
           <thead>
-            <tr className="border-b bg-slate-50">
-              <th className="text-left px-3 py-2 font-medium text-slate-600">Name</th>
-              <th className="text-left px-3 py-2 font-medium text-slate-600">Primary Role</th>
-              <th className="text-center px-3 py-2 font-medium text-slate-600">Weekly Hrs</th>
-              <th className="text-center px-3 py-2 font-medium text-slate-600">Overtime</th>
-              {ROLES.map((r) => (
-                <th key={r} className="text-center px-2 py-2 font-medium text-slate-600 text-xs">
-                  {r} Limit
-                </th>
-              ))}
-              <th className="text-center px-3 py-2 font-medium text-slate-600">Actions</th>
+            <tr className="bg-slate-100 border-b border-slate-200">
+              <th className="text-left px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">Name</th>
+              <th className="text-left px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">Primary Role</th>
+              <th className="text-center px-3 py-2 text-xs font-semibold text-blue-600 uppercase tracking-wide">Preparer</th>
+              <th className="text-center px-3 py-2 text-xs font-semibold text-purple-600 uppercase tracking-wide">Reviewer</th>
+              <th className="text-center px-3 py-2 text-xs font-semibold text-amber-600 uppercase tracking-wide">RI</th>
+              <th className="text-center px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">Overtime</th>
+              <th className="text-center px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">Weekly Hrs</th>
+              <th className="px-3 py-2"></th>
+            </tr>
+            <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-400">
+              <td colSpan={2}></td>
+              <td className="text-center pb-1">circle = eligible<br/>number = max jobs</td>
+              <td className="text-center pb-1">circle = eligible<br/>number = max jobs</td>
+              <td className="text-center pb-1">circle = eligible<br/>number = max jobs</td>
+              <td className="text-center pb-1">hrs/week</td>
+              <td className="text-center pb-1">hrs/week</td>
+              <td></td>
             </tr>
           </thead>
           <tbody>
-            {staff.map((s) => {
-              const isEditing = editingId === s.id;
-              const rs = s.resourceSetting;
-              return (
-                <tr key={s.id} className="border-b hover:bg-slate-50">
-                  <td className="px-3 py-2">
-                    <div className="font-medium text-slate-800">{s.name}</div>
-                    <div className="text-xs text-slate-500">{s.jobTitle}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    {isEditing ? (
-                      <select
-                        value={editData.resourceRole}
-                        onChange={(e) => setEditData({ ...editData, resourceRole: e.target.value })}
-                        className="w-full px-1 py-0.5 text-xs border rounded"
-                      >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r}>{r}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${ROLE_COLORS[rs?.resourceRole as ResourceRole]?.bg ?? ''} ${ROLE_COLORS[rs?.resourceRole as ResourceRole]?.text ?? ''}`}>
-                        {rs?.resourceRole ?? 'Not set'}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {isEditing ? (
-                      <input
-                        type="number"
-                        step="0.5"
-                        value={editData.weeklyCapacityHrs}
-                        onChange={(e) => setEditData({ ...editData, weeklyCapacityHrs: parseFloat(e.target.value) || 37.5 })}
-                        className="w-16 px-1 py-0.5 text-xs border rounded text-center"
-                      />
-                    ) : (
-                      <span className="text-xs">{rs?.weeklyCapacityHrs ?? 37.5}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {isEditing ? (
-                      <input
-                        type="number"
-                        step="0.5"
-                        value={editData.overtimeHrs}
-                        onChange={(e) => setEditData({ ...editData, overtimeHrs: parseFloat(e.target.value) || 0 })}
-                        className="w-16 px-1 py-0.5 text-xs border rounded text-center"
-                      />
-                    ) : (
-                      <span className="text-xs">{rs?.overtimeHrs ?? 0}</span>
-                    )}
-                  </td>
-                  {ROLES.map((role) => {
-                    const key = `${role.toLowerCase()}JobLimit` as string;
-                    const altKey = role === 'RI' ? 'riJobLimit' : `${role.charAt(0).toLowerCase()}${role.slice(1)}JobLimit`;
-                    const limitKey = role === 'RI' ? 'riJobLimit' : role === 'Specialist' ? 'specialistJobLimit' : `${role.toLowerCase()}JobLimit`;
-                    const value = isEditing ? editData[limitKey] : rs?.[limitKey];
-                    return (
-                      <td key={role} className="px-2 py-2 text-center">
-                        {isEditing ? (
-                          <div className="flex items-center justify-center gap-1">
-                            <input
-                              type="checkbox"
-                              checked={editData[limitKey] != null}
-                              onChange={(e) =>
-                                setEditData({
-                                  ...editData,
-                                  [limitKey]: e.target.checked ? DEFAULT_CONCURRENT_LIMITS[role] : null,
-                                })
-                              }
-                              className="h-3 w-3"
-                            />
-                            {editData[limitKey] != null && (
-                              <input
-                                type="number"
-                                min={1}
-                                value={editData[limitKey]}
-                                onChange={(e) => setEditData({ ...editData, [limitKey]: parseInt(e.target.value) || 1 })}
-                                className="w-10 px-0.5 py-0.5 text-xs border rounded text-center"
-                              />
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-xs">{value != null ? value : '—'}</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                  <td className="px-3 py-2 text-center">
-                    {isEditing ? (
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={() => handleSave(s.id)}
-                          disabled={saving}
-                          className="p-1 rounded bg-green-100 hover:bg-green-200 text-green-700"
-                        >
-                          <Save className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setEditingId(null)}
-                          className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => startEdit(s)}
-                        className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                      >
-                        Edit
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {staff.map(s => <UserRow key={s.id} s={s} />)}
           </tbody>
         </table>
       </div>
