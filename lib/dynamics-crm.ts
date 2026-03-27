@@ -196,30 +196,80 @@ export async function fetchAuditClients(firmId: string): Promise<CRMOrganisation
 }
 
 /**
- * Fetch accounts directly from Dataverse using the firm's client filter.
- * This is the primary import method — uses OData $filter from Firm settings.
+ * Fetch clients from Dataverse via jca_jobs table.
+ * Queries jobs filtered by service group (from firm's clientFilter),
+ * then extracts unique client names and optionally enriches from accounts table.
  */
 export async function fetchFilteredAccounts(firmId: string): Promise<CRMOrganisation[]> {
   const config = await getFirmCrmConfig(firmId);
-  const select = 'name,accountid,address1_line1,address1_city,address1_postalcode,telephone1,emailaddress1,websiteurl,industrycode,sic';
 
-  let path = `accounts?$select=${select}&$top=500`;
+  // Query jca_jobs with the firm's filter (e.g. _jca_servicegroup_value eq 'xxx')
+  const jobSelect = 'jca_customername,jca_clientguid';
+  let jobPath = `jca_jobs?$select=${jobSelect}&$top=5000`;
   if (config.clientFilter) {
-    path += `&$filter=${encodeURIComponent(config.clientFilter)}`;
+    jobPath += `&$filter=${encodeURIComponent(config.clientFilter)}`;
   }
 
-  const data = await crmGet<{ value: Array<Record<string, any>> }>(firmId, path);
+  const jobData = await crmGet<{ value: Array<Record<string, any>> }>(firmId, jobPath);
 
-  return data.value.map(d => ({
-    accountId: d.accountid,
-    name: d.name,
-    address1: d.address1_line1,
-    city: d.address1_city,
-    postcode: d.address1_postalcode,
-    telephone: d.telephone1,
-    email: d.emailaddress1,
-    websiteUrl: d.websiteurl,
-    industry: d['industrycode@OData.Community.Display.V1.FormattedValue'] || null,
-    sicCode: d.sic,
-  }));
+  // Extract unique clients by name (deduplicate)
+  const clientMap = new Map<string, { name: string; guid: string | null }>();
+  for (const job of jobData.value) {
+    const name = (job.jca_customername || '').trim();
+    if (!name) continue;
+    if (!clientMap.has(name.toLowerCase())) {
+      clientMap.set(name.toLowerCase(), {
+        name,
+        guid: job.jca_clientguid || null,
+      });
+    }
+  }
+
+  // Try to enrich from accounts table using jca_clientguid where available
+  const clients: CRMOrganisation[] = [];
+  const guidsToFetch: string[] = [];
+  const nameOnly: { name: string }[] = [];
+
+  for (const client of clientMap.values()) {
+    if (client.guid) {
+      guidsToFetch.push(client.guid);
+    } else {
+      nameOnly.push({ name: client.name });
+    }
+  }
+
+  // Batch fetch accounts by GUID (max 50 concurrent)
+  const batchSize = 50;
+  for (let i = 0; i < guidsToFetch.length; i += batchSize) {
+    const batch = guidsToFetch.slice(i, i + batchSize);
+    const results = await Promise.all(
+      batch.map(guid => fetchAccount(firmId, guid).catch(() => null))
+    );
+    for (const acct of results) {
+      if (acct) clients.push(acct);
+    }
+  }
+
+  // For clients without GUIDs, create minimal records from job data
+  const fetchedNames = new Set(clients.map(c => c.name.toLowerCase()));
+  for (const client of nameOnly) {
+    if (!fetchedNames.has(client.name.toLowerCase())) {
+      clients.push({
+        accountId: `job-${client.name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}`,
+        name: client.name,
+      });
+    }
+  }
+
+  // Also add any GUID-based clients that failed to fetch from accounts
+  for (const client of clientMap.values()) {
+    if (client.guid && !clients.some(c => c.name.toLowerCase() === client.name.toLowerCase())) {
+      clients.push({
+        accountId: client.guid,
+        name: client.name,
+      });
+    }
+  }
+
+  return clients;
 }
