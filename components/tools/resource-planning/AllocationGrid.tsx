@@ -16,6 +16,14 @@ interface Props {
 
 const ROLES: ResourceRole[] = ROLE_ORDER;
 
+const AUDIT_TYPE_LABELS: Record<string, string> = {
+  SME: 'SME Audit',
+  PIE: 'PIE Audit',
+  GROUP: 'Group Audit',
+  SME_CONTROLS: 'SME Controls',
+  PIE_CONTROLS: 'PIE Controls',
+};
+
 export function AllocationGrid({ jobs, isResourceAdmin }: Props) {
   const { allocations, staff, visibleStart, visibleEnd, focusedDays, lockedFocusDays, isLocked, viewMode, leftPanelFilter } =
     useResourcePlanningStore(useShallow((s) => ({
@@ -206,7 +214,7 @@ const JobRow = memo(function JobRow({
         <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 py-1 select-none">
           <div className="text-xs font-semibold text-slate-800 truncate">{job.clientName}</div>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[9px] px-1 py-0 bg-slate-100 rounded text-slate-600">{job.auditType}</span>
+            <span className="text-[9px] px-1 py-0 bg-indigo-50 rounded text-indigo-600 font-medium">{AUDIT_TYPE_LABELS[job.auditType] ?? job.auditType}</span>
             <span className="text-[9px] text-slate-400">PE: {formatShortDate(new Date(job.periodEnd))}</span>
           </div>
           <div className="flex items-center gap-2 mt-0.5">
