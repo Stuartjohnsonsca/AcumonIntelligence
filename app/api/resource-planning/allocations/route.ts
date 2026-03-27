@@ -60,35 +60,40 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
-  const allocation = await prisma.resourceAllocation.create({
-    data: {
-      firmId: session.user.firmId,
-      engagementId,
-      userId,
-      role,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
-      hoursPerDay: hoursPerDay ?? 7.5,
-      totalHours: totalHours ?? null,
-      notes: notes ?? null,
-    },
-    include: {
-      user: { select: { name: true } },
-    },
-  });
+  try {
+    const allocation = await prisma.resourceAllocation.create({
+      data: {
+        firmId: session.user.firmId,
+        engagementId,
+        userId,
+        role,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        hoursPerDay: hoursPerDay ?? 7.5,
+        totalHours: totalHours ?? null,
+        notes: notes ?? null,
+      },
+      include: {
+        user: { select: { name: true } },
+      },
+    });
 
-  return Response.json({
-    allocation: {
-      id: allocation.id,
-      engagementId: allocation.engagementId,
-      userId: allocation.userId,
-      userName: allocation.user.name,
-      role: allocation.role,
-      startDate: allocation.startDate.toISOString(),
-      endDate: allocation.endDate.toISOString(),
-      hoursPerDay: allocation.hoursPerDay,
-      totalHours: allocation.totalHours,
-      notes: allocation.notes,
-    },
-  });
+    return Response.json({
+      allocation: {
+        id: allocation.id,
+        engagementId: allocation.engagementId,
+        userId: allocation.userId,
+        userName: allocation.user.name,
+        role: allocation.role,
+        startDate: allocation.startDate.toISOString(),
+        endDate: allocation.endDate.toISOString(),
+        hoursPerDay: allocation.hoursPerDay,
+        totalHours: allocation.totalHours,
+        notes: allocation.notes,
+      },
+    });
+  } catch (err: any) {
+    console.error('[POST /api/resource-planning/allocations]', err);
+    return Response.json({ error: err?.message ?? 'Database error' }, { status: 500 });
+  }
 }
