@@ -27,6 +27,7 @@ export async function PUT(
     reviewerJobLimit,
     riJobLimit,
     specialistJobLimit,
+    specialistJobLimits,
   } = body;
 
   const setting = await prisma.resourceStaffSetting.upsert({
@@ -41,6 +42,7 @@ export async function PUT(
       ...(reviewerJobLimit !== undefined && { reviewerJobLimit }),
       ...(riJobLimit !== undefined && { riJobLimit }),
       ...(specialistJobLimit !== undefined && { specialistJobLimit }),
+      ...(specialistJobLimits !== undefined && { specialistJobLimits }),
     },
     create: {
       userId,
@@ -54,6 +56,7 @@ export async function PUT(
       reviewerJobLimit: reviewerJobLimit ?? null,
       riJobLimit: riJobLimit ?? null,
       specialistJobLimit: specialistJobLimit ?? null,
+      specialistJobLimits: specialistJobLimits ?? null,
     },
   });
 

@@ -16,9 +16,15 @@ export default async function ResourceManagementPage() {
 
   const firmId = session.user.firmId;
 
-  // Fetch staff with resource settings
+  // Fetch specialist roles from firm assumptions
+  const specialistRolesTable = await prisma.methodologyRiskTable.findUnique({
+    where: { firmId_tableType: { firmId, tableType: 'specialistRoles' } },
+  });
+  const specialistRoles: string[] = (specialistRolesTable?.data as any)?.roles ?? ['EQR', 'Valuations', 'Ethics', 'Technical'];
+
+  // Fetch staff with resource settings (audit staff only)
   const staffRaw = await prisma.user.findMany({
-    where: { firmId, isActive: true },
+    where: { firmId, isActive: true, isAuditStaff: true },
     select: {
       id: true,
       displayId: true,
@@ -69,6 +75,7 @@ export default async function ResourceManagementPage() {
           reviewerJobLimit: s.resourceStaffSetting.reviewerJobLimit,
           riJobLimit: s.resourceStaffSetting.riJobLimit,
           specialistJobLimit: s.resourceStaffSetting.specialistJobLimit,
+          specialistJobLimits: s.resourceStaffSetting.specialistJobLimits as Record<string, number | null> | null,
         }
       : null,
   }));
@@ -93,6 +100,7 @@ export default async function ResourceManagementPage() {
         clients={clients}
         profiles={profiles}
         firmId={firmId}
+        specialistRoles={specialistRoles}
       />
     </div>
   );

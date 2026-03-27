@@ -30,6 +30,8 @@ export default async function FirmAssumptionsPage() {
     tablesMap[t.tableType] = t.data;
   }
 
+  const specialistRoles: string[] = (tablesMap.specialistRoles?.roles as string[]) || ['EQR', 'Valuations', 'Ethics', 'Technical'];
+
   return (
     <div className="container mx-auto px-4 py-10 max-w-6xl">
       <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
@@ -44,6 +46,7 @@ export default async function FirmAssumptionsPage() {
         initialAssertions={tablesMap.assertions || null}
         initialConfidenceLevel={samplingConfig?.confidenceLevel ?? 95}
         initialConfidenceTable={samplingConfig?.confidenceFactorTable as any || null}
+        initialSpecialistRoles={specialistRoles}
       />
     </div>
   );

@@ -2003,6 +2003,7 @@ model ResourceStaffSetting {
   reviewerJobLimit    Int?     @map("reviewer_job_limit")
   riJobLimit          Int?     @map("ri_job_limit")
   specialistJobLimit  Int?     @map("specialist_job_limit")
+  specialistJobLimits Json?    @map("specialist_job_limits")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 

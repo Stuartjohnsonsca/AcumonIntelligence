@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Save, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Save, Loader2, ChevronDown, ChevronUp, Plus, X } from 'lucide-react';
 import type {
   RiskLevel,
   Likelihood,
@@ -20,6 +20,7 @@ interface Props {
   initialAssertions: AssertionsTable | null;
   initialConfidenceLevel: number;
   initialConfidenceTable: any;
+  initialSpecialistRoles: string[];
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -89,11 +90,14 @@ export function FirmAssumptionsClient({
   initialAssertions,
   initialConfidenceLevel,
   initialConfidenceTable,
+  initialSpecialistRoles,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(initialInherentRisk || getDefaultInherentRisk());
   const [controlRisk, setControlRisk] = useState<ControlRiskTable>(initialControlRisk || getDefaultControlRisk());
   const [assertions, setAssertions] = useState<AssertionsTable>(initialAssertions || getDefaultAssertions());
   const [confidenceLevel, setConfidenceLevel] = useState(initialConfidenceLevel);
+  const [specialistRoles, setSpecialistRoles] = useState<string[]>(initialSpecialistRoles);
+  const [newRole, setNewRole] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -101,6 +105,7 @@ export function FirmAssumptionsClient({
     control: true,
     assertions: true,
     confidence: true,
+    specialist: true,
   });
 
   const toggleSection = (key: string) => {
@@ -149,6 +154,7 @@ export function FirmAssumptionsClient({
               inherent: inherentRisk,
               control: controlRisk,
               assertions,
+              specialistRoles: { roles: specialistRoles },
             },
           }),
         }),
@@ -337,6 +343,67 @@ export function FirmAssumptionsClient({
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      {/* Specialist Roles */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('specialist')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Specialist Roles</h2>
+          {expandedSections.specialist ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.specialist && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">Define specialist role types. These appear as columns in User Settings.</p>
+            <div className="space-y-2 mb-3">
+              {specialistRoles.map((role, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-teal-500 flex-shrink-0" />
+                  <span className="text-sm text-slate-700 flex-1">{role}</span>
+                  <button
+                    onClick={() => { setSpecialistRoles(prev => prev.filter((_, i) => i !== idx)); setSaved(false); }}
+                    className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              {specialistRoles.length === 0 && (
+                <p className="text-sm text-slate-400 italic">No specialist roles defined.</p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newRole}
+                onChange={e => setNewRole(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newRole.trim()) {
+                    setSpecialistRoles(prev => [...prev, newRole.trim()]);
+                    setNewRole('');
+                    setSaved(false);
+                  }
+                }}
+                placeholder="Add role (e.g. Tax Specialist)"
+                className="flex-1 max-w-xs px-3 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <button
+                onClick={() => {
+                  if (newRole.trim()) {
+                    setSpecialistRoles(prev => [...prev, newRole.trim()]);
+                    setNewRole('');
+                    setSaved(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-teal-600 text-white rounded hover:bg-teal-700"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add
+              </button>
+            </div>
           </div>
         )}
       </div>
