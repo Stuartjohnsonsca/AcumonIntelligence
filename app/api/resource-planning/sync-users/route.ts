@@ -80,16 +80,16 @@ export async function GET() {
     });
     const dbByEmail = new Map(dbUsers.map(u => [u.email.toLowerCase(), u]));
 
-    // Get existing resource settings
+    // Get existing resource settings with full details
     const resourceSettings = await prisma.resourceStaffSetting.findMany({
       where: { firmId },
-      select: { userId: true },
     });
-    const resourceUserIds = new Set(resourceSettings.map(r => r.userId));
+    const settingsByUserId = new Map(resourceSettings.map(r => [r.userId, r]));
 
-    // Build user list with sync status
+    // Build user list with sync status and settings
     const users = crmUsers.map((cu: any) => {
       const dbUser = dbByEmail.get(cu.email.toLowerCase());
+      const setting = dbUser ? settingsByUserId.get(dbUser.id) : null;
       return {
         crmId: cu.id,
         name: cu.name,
@@ -97,7 +97,16 @@ export async function GET() {
         title: cu.title,
         inDb: !!dbUser,
         dbUserId: dbUser?.id || null,
-        isResourceVisible: dbUser ? resourceUserIds.has(dbUser.id) : false,
+        isResourceVisible: !!setting,
+        resourceSetting: setting ? {
+          resourceRole: setting.resourceRole,
+          weeklyCapacityHrs: setting.weeklyCapacityHrs,
+          overtimeHrs: setting.overtimeHrs,
+          preparerJobLimit: setting.preparerJobLimit,
+          reviewerJobLimit: setting.reviewerJobLimit,
+          riJobLimit: setting.riJobLimit,
+          specialistJobLimit: setting.specialistJobLimit,
+        } : null,
       };
     });
 
@@ -156,31 +165,37 @@ export async function PUT(req: Request) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { userId, visible } = await req.json();
+  const { userId, visible, settings } = await req.json();
   if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 });
 
   const firmId = session.user.firmId;
 
   if (visible) {
-    // Create ResourceStaffSetting if not exists
     const existing = await prisma.resourceStaffSetting.findUnique({ where: { userId } });
-    if (!existing) {
+
+    const data = {
+      resourceRole: settings?.resourceRole || 'Preparer',
+      concurrentJobLimit: settings?.preparerJobLimit || 5,
+      weeklyCapacityHrs: settings?.weeklyCapacityHrs ?? 37.5,
+      overtimeHrs: settings?.overtimeHrs ?? 0,
+      preparerJobLimit: settings?.preparerJobLimit ?? 5,
+      reviewerJobLimit: settings?.reviewerJobLimit ?? null,
+      riJobLimit: settings?.riJobLimit ?? null,
+      specialistJobLimit: settings?.specialistJobLimit ?? null,
+      isRI: settings?.riJobLimit != null && settings.riJobLimit > 0,
+    };
+
+    if (existing) {
+      await prisma.resourceStaffSetting.update({
+        where: { userId },
+        data,
+      });
+    } else {
       await prisma.resourceStaffSetting.create({
-        data: {
-          userId,
-          firmId,
-          resourceRole: 'Preparer',
-          concurrentJobLimit: 5,
-          weeklyCapacityHrs: 37.5,
-          preparerJobLimit: 5,
-          reviewerJobLimit: 0,
-          riJobLimit: 0,
-          specialistJobLimit: 0,
-        },
+        data: { userId, firmId, ...data },
       });
     }
   } else {
-    // Delete ResourceStaffSetting
     await prisma.resourceStaffSetting.deleteMany({ where: { userId } });
   }
 
