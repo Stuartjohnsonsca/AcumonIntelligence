@@ -292,7 +292,7 @@ function InlineSettings({ user, settings, saving, onSave }: {
       </div>
 
       <div className="mt-3">
-        <label className="text-[10px] text-slate-500 block mb-1.5">Role Eligibility & Max Concurrent Jobs</label>
+        <label className="text-[10px] text-slate-500 block mb-1.5">Role Eligibility</label>
         <div className="grid grid-cols-4 gap-2">
           {[
             { label: 'Preparer', value: prepLimit, set: setPrepLimit },
@@ -300,14 +300,11 @@ function InlineSettings({ user, settings, saving, onSave }: {
             { label: 'RI', value: riLimit, set: setRiLimit },
             { label: 'Specialist', value: specLimit, set: setSpecLimit },
           ].map(({ label, value, set }) => (
-            <div key={label} className={`flex items-center gap-2 px-2 py-1.5 rounded border ${value !== null ? 'bg-white border-blue-200' : 'bg-slate-100/50 border-slate-200'}`}>
-              <input type="checkbox" checked={value !== null} onChange={e => set(e.target.checked ? 5 : null)}
-                className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600" />
-              <span className="text-[10px] text-slate-600 flex-1">{label}</span>
-              {value !== null && (
-                <input type="number" value={value} onChange={e => set(parseInt(e.target.value) || 0)} min={0} max={99}
-                  className="w-10 border border-slate-200 rounded px-1 py-0.5 text-[10px] text-center" />
-              )}
+            <div key={label} className={`flex items-center gap-2 px-2 py-1.5 rounded border cursor-pointer ${value !== null ? 'bg-blue-50 border-blue-300' : 'bg-slate-100/50 border-slate-200'}`}
+              onClick={() => set(value !== null ? null : 99)}>
+              <input type="checkbox" checked={value !== null} readOnly
+                className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 pointer-events-none" />
+              <span className="text-[10px] text-slate-600 select-none">{label}</span>
             </div>
           ))}
         </div>
