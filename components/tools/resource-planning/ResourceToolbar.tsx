@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Search, ZoomIn, ZoomOut, CalendarDays, RotateCw } from 'lucide-react';
+import { useMemo, useState, useTransition } from 'react';
+import { Search, ZoomIn, ZoomOut, CalendarDays, RotateCw, RefreshCw } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import { UnscheduledJobsDialog } from './UnscheduledJobsDialog';
 import { RollForwardDialog } from './RollForwardDialog';
@@ -27,9 +28,15 @@ export function ResourceToolbar() {
   const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
   const isLocked = useResourcePlanningStore((s) => s.isLocked);
 
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [searchOpen, setSearchOpen] = useState(false);
   const [showUnscheduled, setShowUnscheduled] = useState(false);
   const [showRollForward, setShowRollForward] = useState(false);
+
+  function handleRefresh() {
+    startTransition(() => { router.refresh(); });
+  }
 
   const capacities = useMemo(() => getFocusedCapacity(), [getFocusedCapacity, allocations, staff, focusedDays, lockedFocusDays, isLocked]);
 
@@ -153,6 +160,16 @@ export function ResourceToolbar() {
               <span className="text-[8px] text-red-500">+{capacities.filter(c => c.netHrs < 0).length - 10} more</span>
             )}
           </div>
+
+          {/* Refresh data from server */}
+          <button
+            onClick={handleRefresh}
+            disabled={isPending}
+            className="flex-shrink-0 p-1 rounded hover:bg-slate-100 text-slate-500 disabled:opacity-50"
+            title="Refresh schedule data"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isPending ? 'animate-spin' : ''}`} />
+          </button>
 
           {/* Search */}
           <div className="relative flex-shrink-0">
