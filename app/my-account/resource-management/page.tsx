@@ -3,6 +3,8 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { ResourceManagementClient } from '@/components/my-account/ResourceManagementClient';
 
+export const revalidate = 60;
+
 export default async function ResourceManagementPage() {
   const session = await auth();
 
@@ -16,45 +18,37 @@ export default async function ResourceManagementPage() {
 
   const firmId = session.user.firmId;
 
-  // Fetch specialist roles from firm assumptions
-  const specialistRolesTable = await prisma.methodologyRiskTable.findUnique({
-    where: { firmId_tableType: { firmId, tableType: 'specialistRoles' } },
-  });
-  const specialistRoles: string[] = (specialistRolesTable?.data as any)?.roles ?? ['EQR', 'Valuations', 'Ethics', 'Technical'];
-
-  // Fetch staff with resource settings (audit staff only)
-  const staffRaw = await prisma.user.findMany({
-    where: { firmId, isActive: true, isAuditStaff: true },
-    select: {
-      id: true,
-      displayId: true,
-      name: true,
-      email: true,
-      jobTitle: true,
-      isActive: true,
-      resourceStaffSetting: true,
-    },
-    orderBy: { name: 'asc' },
-  });
-
-  // Fetch job profiles
-  const profiles = await prisma.resourceJobProfile.findMany({
-    where: { firmId },
-    orderBy: { name: 'asc' },
-  });
-
-  // Fetch clients with resource settings
-  const clientsRaw = await prisma.client.findMany({
-    where: { firmId },
-    select: {
-      id: true,
-      clientName: true,
-      resourceClientSetting: {
-        include: { resourceCategory: { select: { id: true, name: true } } },
+  // Run all queries in parallel
+  const [specialistRolesTable, staffRaw, profiles, clientsRaw] = await Promise.all([
+    prisma.methodologyRiskTable.findUnique({
+      where: { firmId_tableType: { firmId, tableType: 'specialistRoles' } },
+    }),
+    prisma.user.findMany({
+      where: { firmId, isActive: true, isAuditStaff: true },
+      select: {
+        id: true, displayId: true, name: true, email: true,
+        jobTitle: true, isActive: true, resourceStaffSetting: true,
       },
-    },
-    orderBy: { clientName: 'asc' },
-  });
+      orderBy: { name: 'asc' },
+    }),
+    prisma.resourceJobProfile.findMany({
+      where: { firmId },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.client.findMany({
+      where: { firmId },
+      select: {
+        id: true,
+        clientName: true,
+        resourceClientSetting: {
+          include: { resourceCategory: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: { clientName: 'asc' },
+    }),
+  ]);
+
+  const specialistRoles: string[] = (specialistRolesTable?.data as any)?.roles ?? ['EQR', 'Valuations', 'Ethics', 'Technical'];
 
   const staff = staffRaw.map((s) => ({
     id: s.id,

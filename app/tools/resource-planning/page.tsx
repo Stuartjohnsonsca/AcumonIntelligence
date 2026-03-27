@@ -1,5 +1,7 @@
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
+
+export const revalidate = 60; // cache page for 60 seconds
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { ResourcePlanningClient } from '@/components/tools/resource-planning/ResourcePlanningClient';
