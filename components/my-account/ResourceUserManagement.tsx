@@ -15,17 +15,22 @@ interface StaffData {
 
 interface Props {
   staff: StaffData[];
+  specialistRoles: string[];
 }
 
 const PRIMARY_ROLES: ResourceRole[] = ['Specialist', 'RI', 'Reviewer', 'Preparer'];
 
-const ROLE_CIRCLES: { role: 'Preparer' | 'Reviewer' | 'RI'; color: string; limitKey: string }[] = [
+const CORE_CIRCLES: { role: string; color: string; limitKey: string }[] = [
   { role: 'Preparer', color: 'bg-blue-500',   limitKey: 'preparerJobLimit' },
   { role: 'Reviewer', color: 'bg-purple-500', limitKey: 'reviewerJobLimit' },
   { role: 'RI',       color: 'bg-amber-500',  limitKey: 'riJobLimit' },
 ];
 
-function initRow(rs: any) {
+function initRow(rs: any, specialistRoles: string[]) {
+  const specialistJobLimits: Record<string, number | null> = {};
+  for (const role of specialistRoles) {
+    specialistJobLimits[role] = rs?.specialistJobLimits?.[role] ?? null;
+  }
   return {
     resourceRole:      rs?.resourceRole      ?? 'Preparer',
     weeklyCapacityHrs: rs?.weeklyCapacityHrs ?? 37.5,
@@ -33,11 +38,12 @@ function initRow(rs: any) {
     preparerJobLimit:  rs?.preparerJobLimit  ?? null,
     reviewerJobLimit:  rs?.reviewerJobLimit  ?? null,
     riJobLimit:        rs?.riJobLimit        ?? null,
+    specialistJobLimits,
   };
 }
 
-function UserRow({ s }: { s: StaffData }) {
-  const [data, setData] = useState(() => initRow(s.resourceSetting));
+function UserRow({ s, specialistRoles }: { s: StaffData; specialistRoles: string[] }) {
+  const [data, setData] = useState(() => initRow(s.resourceSetting, specialistRoles));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -46,8 +52,27 @@ function UserRow({ s }: { s: StaffData }) {
     setSaved(false);
   }
 
-  function toggleRole(limitKey: string) {
+  function toggleCore(limitKey: string) {
     setData(prev => ({ ...prev, [limitKey]: prev[limitKey] != null ? null : 5 }));
+    setSaved(false);
+  }
+
+  function toggleSpecialist(role: string) {
+    setData(prev => ({
+      ...prev,
+      specialistJobLimits: {
+        ...prev.specialistJobLimits,
+        [role]: prev.specialistJobLimits[role] != null ? null : 5,
+      },
+    }));
+    setSaved(false);
+  }
+
+  function setSpecialistLimit(role: string, val: number) {
+    setData(prev => ({
+      ...prev,
+      specialistJobLimits: { ...prev.specialistJobLimits, [role]: val },
+    }));
     setSaved(false);
   }
 
@@ -83,13 +108,39 @@ function UserRow({ s }: { s: StaffData }) {
         </select>
       </td>
 
-      {/* Role circles: Preparer, Reviewer, RI */}
-      {ROLE_CIRCLES.map(({ role, color, limitKey }) => {
+      {/* Specialist role circles (dynamic) */}
+      {specialistRoles.map(role => {
+        const enabled = data.specialistJobLimits[role] != null;
+        return (
+          <td key={role} className="px-3 py-3 align-top text-center">
+            <div className="flex flex-col items-center gap-1">
+              <button onClick={() => toggleSpecialist(role)}
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
+                  enabled ? 'bg-teal-500 text-white shadow-sm' : 'bg-slate-200 text-slate-400'
+                }`}>
+                {role[0]}
+              </button>
+              <input
+                type="number" min={0} max={99}
+                value={enabled ? (data.specialistJobLimits[role] ?? 0) : 0}
+                disabled={!enabled}
+                onChange={e => setSpecialistLimit(role, parseInt(e.target.value) || 0)}
+                className={`w-12 text-xs text-center border rounded py-0.5 px-1 ${
+                  enabled ? 'border-slate-300 bg-white' : 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+                }`}
+              />
+            </div>
+          </td>
+        );
+      })}
+
+      {/* Core role circles: Preparer, Reviewer, RI */}
+      {CORE_CIRCLES.map(({ role, color, limitKey }) => {
         const enabled = data[limitKey] != null;
         return (
           <td key={role} className="px-3 py-3 align-top text-center">
             <div className="flex flex-col items-center gap-1">
-              <button onClick={() => toggleRole(limitKey)}
+              <button onClick={() => toggleCore(limitKey)}
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
                   enabled ? `${color} text-white shadow-sm` : 'bg-slate-200 text-slate-400'
                 }`}>
@@ -139,7 +190,7 @@ function UserRow({ s }: { s: StaffData }) {
   );
 }
 
-export function ResourceUserManagement({ staff }: Props) {
+export function ResourceUserManagement({ staff, specialistRoles }: Props) {
   if (staff.length === 0) {
     return (
       <div className="text-center py-12 text-slate-400 text-sm">
@@ -157,6 +208,9 @@ export function ResourceUserManagement({ staff }: Props) {
             <tr className="bg-slate-100 border-b border-slate-200">
               <th className="text-left px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">Name</th>
               <th className="text-left px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">Primary Role</th>
+              {specialistRoles.map(role => (
+                <th key={role} className="text-center px-3 py-2 text-xs font-semibold text-teal-600 uppercase tracking-wide">{role}</th>
+              ))}
               <th className="text-center px-3 py-2 text-xs font-semibold text-blue-600 uppercase tracking-wide">Preparer</th>
               <th className="text-center px-3 py-2 text-xs font-semibold text-purple-600 uppercase tracking-wide">Reviewer</th>
               <th className="text-center px-3 py-2 text-xs font-semibold text-amber-600 uppercase tracking-wide">RI</th>
@@ -166,6 +220,9 @@ export function ResourceUserManagement({ staff }: Props) {
             </tr>
             <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-400">
               <td colSpan={2}></td>
+              {specialistRoles.map(role => (
+                <td key={role} className="text-center pb-1">circle = eligible<br/>number = max jobs</td>
+              ))}
               <td className="text-center pb-1">circle = eligible<br/>number = max jobs</td>
               <td className="text-center pb-1">circle = eligible<br/>number = max jobs</td>
               <td className="text-center pb-1">circle = eligible<br/>number = max jobs</td>
@@ -175,7 +232,7 @@ export function ResourceUserManagement({ staff }: Props) {
             </tr>
           </thead>
           <tbody>
-            {staff.map(s => <UserRow key={s.id} s={s} />)}
+            {staff.map(s => <UserRow key={s.id} s={s} specialistRoles={specialistRoles} />)}
           </tbody>
         </table>
       </div>

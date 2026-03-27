@@ -35,9 +35,10 @@ interface Props {
   clients: ClientData[];
   profiles: ResourceJobProfile[];
   firmId: string;
+  specialistRoles: string[];
 }
 
-export function ResourceManagementClient({ staff, clients, profiles: initialProfiles, firmId }: Props) {
+export function ResourceManagementClient({ staff, clients, profiles: initialProfiles, firmId, specialistRoles }: Props) {
   const [profiles, setProfiles] = useState(initialProfiles);
 
   return (
@@ -76,7 +77,7 @@ export function ResourceManagementClient({ staff, clients, profiles: initialProf
         </TabsContent>
 
         <TabsContent value="users">
-          <ResourceUserManagement staff={staff} />
+          <ResourceUserManagement staff={staff} specialistRoles={specialistRoles} />
         </TabsContent>
 
         <TabsContent value="clients">
