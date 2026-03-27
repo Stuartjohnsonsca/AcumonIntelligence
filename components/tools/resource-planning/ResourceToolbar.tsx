@@ -131,7 +131,7 @@ export function ResourceToolbar() {
                 step={1}
                 value={focusWindowWeeks}
                 onChange={(e) => setFocusWindowWeeks(parseInt(e.target.value))}
-                className="w-14 h-1 accent-indigo-500"
+                className="w-24 h-1 accent-indigo-500"
               />
               <span className="text-[8px] text-slate-500 w-6">{focusWindowWeeks * 5}d</span>
             </div>
@@ -145,7 +145,7 @@ export function ResourceToolbar() {
                 step={5}
                 value={zoomLevel * 100}
                 onChange={(e) => setZoomLevel(parseInt(e.target.value) / 100)}
-                className="w-14 h-1 accent-blue-500"
+                className="w-24 h-1 accent-blue-500"
                 title={`Zoom: ${Math.round(zoomLevel * 100)}%`}
               />
               <ZoomIn className="h-3 w-3 text-slate-400" />
