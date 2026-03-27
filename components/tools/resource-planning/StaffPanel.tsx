@@ -114,7 +114,7 @@ export function StaffPanel({ isResourceAdmin }: Props) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overscroll-x-contain">
         {filteredStaff.map((member) => (
           <StaffListItem key={member.id} member={member} allocations={allocations}
             isAvailable={availabilityMap.get(member.id) ?? false} />
@@ -157,6 +157,7 @@ const StaffListItem = memo(function StaffListItem({ member, allocations, isAvail
 
   return (
     <div ref={setNodeRef} {...listeners} {...attributes}
+      style={{ touchAction: 'none' }}
       className={`flex items-center gap-1.5 px-2 py-1.5 border-b border-slate-100 cursor-grab hover:bg-white transition-colors group
         ${isDragging ? 'opacity-50' : ''}`}>
       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isAvailable ? 'bg-green-500' : 'bg-red-500'}`} />
