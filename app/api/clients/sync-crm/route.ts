@@ -101,17 +101,47 @@ export async function POST(req: Request) {
     for (const action of actions) {
       switch (action.action) {
         case 'create': {
-          await prisma.client.create({
-            data: {
-              firmId,
-              clientName: action.crmOrg.name,
-              crmAccountId: action.crmOrg.accountId,
-              sector: action.crmOrg.industry || null,
-              contactName: null,
-              contactEmail: action.crmOrg.email || null,
-            },
-          });
-          results.created++;
+          // Only use real GUIDs as crmAccountId, not job-prefixed placeholders
+          const crmId = action.crmOrg.accountId.startsWith('job-') ? null : action.crmOrg.accountId;
+          try {
+            if (crmId) {
+              // Upsert by crmAccountId to avoid unique constraint violations
+              await prisma.client.upsert({
+                where: { crmAccountId: crmId },
+                create: {
+                  firmId,
+                  clientName: action.crmOrg.name,
+                  crmAccountId: crmId,
+                  sector: action.crmOrg.industry || null,
+                  contactName: null,
+                  contactEmail: action.crmOrg.email || null,
+                },
+                update: {
+                  clientName: action.crmOrg.name,
+                  sector: action.crmOrg.industry || undefined,
+                },
+              });
+            } else {
+              await prisma.client.create({
+                data: {
+                  firmId,
+                  clientName: action.crmOrg.name,
+                  crmAccountId: null,
+                  sector: action.crmOrg.industry || null,
+                  contactName: null,
+                  contactEmail: action.crmOrg.email || null,
+                },
+              });
+            }
+            results.created++;
+          } catch (err: any) {
+            // Skip duplicate name errors gracefully
+            if (err?.code === 'P2002') {
+              results.unchanged++;
+            } else {
+              throw err;
+            }
+          }
           break;
         }
         case 'update': {
