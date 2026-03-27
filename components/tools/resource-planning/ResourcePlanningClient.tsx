@@ -111,6 +111,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     setActiveDragId(null);
     setDragType(null);
 
+    console.log('[DragEnd] over:', over?.id ?? 'NULL', 'active:', String(active.id));
     if (!over) return;
 
     const overId = String(over.id);
@@ -129,6 +130,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
 
     const job = jobs.find(j => j.id === targetId || j.engagementId === targetId);
     const engagementId = job?.engagementId || targetId;
+    console.log('[DragEnd] targetId:', targetId, 'role:', role, 'engagementId:', engagementId, 'jobFound:', !!job);
 
     const startDate = isLane ? dropDateFromEvent(event) : new Date(parts[3]);
 
@@ -153,6 +155,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
         notes: null,
       };
 
+      console.log('[DragEnd] addAllocation:', newAlloc);
       addAllocation(newAlloc);
       try {
         const res = await fetch('/api/resource-planning/allocations', {

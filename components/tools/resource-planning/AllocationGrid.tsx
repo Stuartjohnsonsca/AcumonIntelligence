@@ -70,7 +70,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
   const displayJobs = isAvailability
     ? filteredJobs.filter((j) => {
         const jobAllocs = allocations.filter(
-          (a) => a.engagementId === j.engagementId && allocationOverlaps(a.startDate, a.endDate, startDate, endDate),
+          (a) => a.engagementId === (j.engagementId || j.id) && allocationOverlaps(a.startDate, a.endDate, startDate, endDate),
         );
         return jobAllocs.length === 0;
       })
@@ -151,9 +151,10 @@ const JobRow = memo(function JobRow({
   startDate: Date;
   endDate: Date;
 }) {
+  const jobKey = job.engagementId || job.id;
   const jobAllocations = useMemo(
-    () => allocations.filter((a) => a.engagementId === job.engagementId && allocationOverlaps(a.startDate, a.endDate, startDate, endDate)),
-    [allocations, job.engagementId, startDate, endDate],
+    () => allocations.filter((a) => a.engagementId === jobKey && allocationOverlaps(a.startDate, a.endDate, startDate, endDate)),
+    [allocations, jobKey, startDate, endDate],
   );
 
   return (
