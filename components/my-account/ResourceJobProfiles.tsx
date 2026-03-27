@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Trash2, Save, X } from 'lucide-react';
+import { Plus, Trash2, Save, X, RefreshCw } from 'lucide-react';
 import type { ResourceJobProfile } from '@/lib/resource-planning/types';
 
 interface Props {
@@ -33,6 +33,8 @@ export function ResourceJobProfiles({ profiles, onProfilesChange, firmId }: Prop
   const [isCreating, setIsCreating] = useState(false);
   const [editData, setEditData] = useState<EditState>(emptyProfile);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   function startEdit(p: ResourceJobProfile) {
     setEditingId(p.id);
@@ -99,19 +101,79 @@ export function ResourceJobProfiles({ profiles, onProfilesChange, firmId }: Prop
     setIsCreating(false);
   }
 
+  async function handleSyncFromCRM() {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await fetch('/api/resource-planning/job-profiles/service-types');
+      if (!res.ok) {
+        const d = await res.json();
+        setSyncMsg(`Error: ${d.error || res.statusText}`);
+        return;
+      }
+      const { serviceTypes } = await res.json();
+      const existingNames = new Set(profiles.map(p => p.name.toLowerCase()));
+      const newTypes = (serviceTypes as string[]).filter(t => !existingNames.has(t.toLowerCase()));
+
+      if (newTypes.length === 0) {
+        setSyncMsg('All CRM service types already have profiles.');
+        return;
+      }
+
+      const created: ResourceJobProfile[] = [];
+      for (const name of newTypes) {
+        const r = await fetch('/api/resource-planning/job-profiles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, budgetHoursSpecialist: 0, budgetHoursRI: 10, budgetHoursReviewer: 20, budgetHoursPreparer: 40, isDefault: false }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          created.push(data.profile ?? data);
+        }
+      }
+
+      if (created.length > 0) {
+        onProfilesChange([...profiles, ...created]);
+        setSyncMsg(`Created ${created.length} profile${created.length > 1 ? 's' : ''}: ${created.map(p => p.name).join(', ')}`);
+      } else {
+        setSyncMsg('No new profiles could be created.');
+      }
+    } catch (err: any) {
+      setSyncMsg(`Error: ${err.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-slate-800">Job Resource Profiles</h2>
-        <button
-          onClick={startCreate}
-          disabled={isCreating}
-          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add Profile
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSyncFromCRM}
+            disabled={syncing}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing...' : 'Sync from CRM'}
+          </button>
+          <button
+            onClick={startCreate}
+            disabled={isCreating}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Profile
+          </button>
+        </div>
       </div>
+      {syncMsg && (
+        <div className="mb-3 px-3 py-2 rounded text-xs bg-slate-50 border border-slate-200 text-slate-600">
+          {syncMsg}
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
