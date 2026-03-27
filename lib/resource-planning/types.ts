@@ -52,6 +52,7 @@ export interface ResourceJobView {
   clientId: string;
   clientName: string;
   auditType: string;
+  serviceType: string | null;
   periodEnd: string; // ISO date
   targetCompletion: string; // ISO date
   budgetHoursSpecialist: number;

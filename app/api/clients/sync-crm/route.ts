@@ -212,6 +212,7 @@ export async function POST(req: Request) {
             budgetHoursReviewer: 0,
             budgetHoursPreparer: job.budget || 0,
             crmJobId: job.jobId,
+            serviceType: job.jobType || null,
             schedulingStatus: 'unscheduled',
             customDeadline: job.firstCustomDeadline ? new Date(job.firstCustomDeadline) : null,
             complianceDeadline: job.firstStatutoryDeadline ? new Date(job.firstStatutoryDeadline) : null,

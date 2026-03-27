@@ -93,6 +93,7 @@ export default async function ResourcePlanningPage() {
       clientId: j.clientId,
       clientName: j.client?.clientName ?? 'Unknown',
       auditType: j.auditType,
+      serviceType: j.serviceType ?? null,
       periodEnd: j.periodEnd?.toISOString() ?? new Date().toISOString(),
       targetCompletion: j.targetCompletion?.toISOString() ?? new Date().toISOString(),
       budgetHoursSpecialist: j.budgetHoursSpecialist ?? 0,
