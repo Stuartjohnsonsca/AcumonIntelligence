@@ -20,7 +20,7 @@ interface Props {
   initialAssertions: AssertionsTable | null;
   initialConfidenceLevel: number;
   initialConfidenceTable: any;
-  initialSpecialistRoles: string[];
+  initialSpecialistRoles?: string[];
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -96,7 +96,7 @@ export function FirmAssumptionsClient({
   const [controlRisk, setControlRisk] = useState<ControlRiskTable>(initialControlRisk || getDefaultControlRisk());
   const [assertions, setAssertions] = useState<AssertionsTable>(initialAssertions || getDefaultAssertions());
   const [confidenceLevel, setConfidenceLevel] = useState(initialConfidenceLevel);
-  const [specialistRoles, setSpecialistRoles] = useState<string[]>(initialSpecialistRoles);
+  const [specialistRoles, setSpecialistRoles] = useState<string[]>(initialSpecialistRoles ?? ['EQR', 'Valuations', 'Ethics', 'Technical']);
   const [newRole, setNewRole] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
