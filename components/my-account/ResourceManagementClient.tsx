@@ -85,7 +85,7 @@ export function ResourceManagementClient({ staff, clients, profiles: initialProf
         </TabsContent>
 
         <TabsContent value="profiles">
-          <ResourceJobProfiles profiles={profiles} onProfilesChange={setProfiles} firmId={firmId} />
+          <ResourceJobProfiles profiles={profiles} onProfilesChange={setProfiles} firmId={firmId} specialistRoles={specialistRoles} />
         </TabsContent>
       </Tabs>
     </div>

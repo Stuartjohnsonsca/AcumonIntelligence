@@ -2096,14 +2096,15 @@ model ResourceJob {
 }
 
 model ResourceJobProfile {
-  id                     String   @id @default(uuid())
-  firmId                 String   @map("firm_id")
-  name                   String
-  budgetHoursSpecialist  Float    @default(0) @map("budget_hours_specialist")
-  budgetHoursRI          Float    @default(0) @map("budget_hours_ri")
-  budgetHoursReviewer    Float    @default(0) @map("budget_hours_reviewer")
-  budgetHoursPreparer    Float    @default(0) @map("budget_hours_preparer")
-  isDefault              Boolean  @default(false) @map("is_default")
+  id                           String   @id @default(uuid())
+  firmId                       String   @map("firm_id")
+  name                         String
+  budgetHoursSpecialist        Float    @default(0) @map("budget_hours_specialist")
+  budgetHoursRI                Float    @default(0) @map("budget_hours_ri")
+  budgetHoursReviewer          Float    @default(0) @map("budget_hours_reviewer")
+  budgetHoursPreparer          Float    @default(0) @map("budget_hours_preparer")
+  budgetHoursSpecialistDetail  Json     @default("{}") @map("budget_hours_specialist_detail")
+  isDefault                    Boolean  @default(false) @map("is_default")
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
 
