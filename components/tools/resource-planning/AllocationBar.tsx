@@ -94,14 +94,18 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
       }
     }
 
-    function handleMouseUp() {
+    function cleanup() {
       setResizing(null);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('pointercancel', cleanup);
+      window.removeEventListener('blur', cleanup);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+    }
 
-      // Persist to backend
+    function handleMouseUp() {
+      // Persist to backend before cleanup
       const current = useResourcePlanningStore.getState().allocations.find(a => a.id === allocation.id);
       if (current && (current.startDate !== origStartRef.current || current.endDate !== origEndRef.current)) {
         fetch('/api/resource-planning/allocations', {
@@ -114,10 +118,13 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
           }),
         }).catch(() => {});
       }
+      cleanup();
     }
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('pointercancel', cleanup);
+    window.addEventListener('blur', cleanup);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   }, [allocation, totalDays, updateAllocation]);

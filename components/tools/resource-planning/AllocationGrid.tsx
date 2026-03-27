@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
@@ -15,7 +15,7 @@ interface Props {
 
 const ROLES: ResourceRole[] = ROLE_ORDER;
 
-export function AllocationGrid({ jobs, isResourceAdmin }: Props) {
+export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdmin }: Props) {
   const allocations = useResourcePlanningStore((s) => s.allocations);
   const staff = useResourcePlanningStore((s) => s.staff);
   const visibleStart = useResourcePlanningStore((s) => s.visibleStart);
@@ -113,9 +113,9 @@ export function AllocationGrid({ jobs, isResourceAdmin }: Props) {
       )}
     </div>
   );
-}
+});
 
-function StaffRow({
+const StaffRow = memo(function StaffRow({
   member,
   allocations,
   weeks,
@@ -173,9 +173,9 @@ function StaffRow({
       </div>
     </div>
   );
-}
+});
 
-function JobRow({
+const JobRow = memo(function JobRow({
   job,
   allocations,
   weeks,
@@ -198,7 +198,7 @@ function JobRow({
   return (
     <div className="border-b border-slate-100">
       <div className="flex">
-        <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 py-1 select-none">
+        <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 py-1 select-none cursor-default">
           <div className="text-xs font-semibold text-slate-800 truncate">{job.clientName}</div>
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-[9px] px-1 py-0 bg-slate-100 rounded text-slate-600">{job.auditType}</span>
@@ -232,9 +232,9 @@ function JobRow({
       </div>
     </div>
   );
-}
+});
 
-function RoleLane({
+const RoleLane = memo(function RoleLane({
   role,
   allocations,
   job,
@@ -295,9 +295,9 @@ function RoleLane({
       ))}
     </div>
   );
-}
+});
 
-function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; expanded: boolean }) {
+const DropCell = memo(function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; expanded: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div
@@ -308,7 +308,7 @@ function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; exp
         ${isOver ? 'bg-blue-300/40 outline outline-1 outline-blue-400 z-10' : 'hover:bg-blue-50/30'}`}
     />
   );
-}
+});
 
 function BudgetBadge({ label, hours }: { label: string; hours: number }) {
   if (hours === 0) return null;
