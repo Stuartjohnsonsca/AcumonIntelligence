@@ -83,6 +83,29 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     }
   }
 
+  function dropDateFromEvent(event: DragEndEvent): Date {
+    // Calculate drop date from pointer position within the lane rect
+    const { over, activatorEvent, delta } = event;
+    const { visibleStart, visibleEnd } = useResourcePlanningStore.getState();
+    const startMs = new Date(visibleStart).getTime();
+    const endMs = new Date(visibleEnd).getTime();
+
+    if (over?.rect && activatorEvent) {
+      const laneRect = over.rect;
+      const pointerX = (activatorEvent as PointerEvent).clientX + (delta?.x ?? 0);
+      const relX = Math.max(0, Math.min(laneRect.width, pointerX - laneRect.left));
+      const pct = relX / laneRect.width;
+      const dropMs = startMs + pct * (endMs - startMs);
+      const d = new Date(dropMs);
+      // Snap to Monday
+      const dow = d.getDay();
+      if (dow !== 1) d.setDate(d.getDate() + (dow === 0 ? 1 : 1 - dow));
+      return d;
+    }
+    // Fallback: today
+    return new Date();
+  }
+
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveDragId(null);
@@ -91,35 +114,29 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     if (!over) return;
 
     const overId = String(over.id);
-    if (!overId.startsWith('cell|')) return;
-
-    // Cell IDs use | delimiter: cell|{engId}|{role}|{date} or cell|staff|{userId}|{date}
-    const parts = overId.split('|');
     const activeId = String(active.id);
 
+    // Support both new lane|... format and legacy cell|... format
+    const isLane = overId.startsWith('lane|');
+    const isCell = overId.startsWith('cell|');
+    if (!isLane && !isCell) return;
+
+    const parts = overId.split('|');
+    const targetId = parts[1];
+    const role = parts[2] as ResourceRole;
+
+    if (targetId === 'staff') return;
+
+    const job = jobs.find(j => j.id === targetId || j.engagementId === targetId);
+    const engagementId = job?.engagementId || targetId;
+
+    const startDate = isLane ? dropDateFromEvent(event) : new Date(parts[3]);
+
     if (activeId.startsWith('staff-')) {
-      // Staff drop → always create new allocation
       const staffId = activeId.replace('staff-', '');
       const member = storeStaff.find((s) => s.id === staffId);
       if (!member) return;
 
-      let engagementId: string;
-      let role: ResourceRole;
-      let dateStr: string;
-
-      if (parts[1] === 'staff') {
-        return; // Can't assign to staff row directly
-      } else {
-        // parts[1] might be engagementId or jobId (fallback when no engagement)
-        const targetId = parts[1];
-        // Check if it's a job ID (not an engagement ID) — find the job to get/create engagement
-        const job = jobs.find(j => j.id === targetId || j.engagementId === targetId);
-        engagementId = job?.engagementId || targetId;
-        role = parts[2] as ResourceRole;
-        dateStr = parts[3];
-      }
-
-      const startDate = new Date(dateStr);
       const endDate = new Date(startDate);
       endDate.setDate(endDate.getDate() + 13);
 
@@ -137,7 +154,6 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
       };
 
       addAllocation(newAlloc);
-
       try {
         const res = await fetch('/api/resource-planning/allocations', {
           method: 'POST',
@@ -149,27 +165,15 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
           updateAllocation(newAlloc.id, { id: data.allocation.id });
         }
       } catch {}
+
     } else if (activeId.startsWith('alloc-')) {
       const allocId = activeId.replace('alloc-', '');
+      const existing = storeAllocations.find((a) => a.id === allocId);
+      if (!existing) return;
 
       if (editMode === 'create') {
-        // In create mode, alloc drag also creates a new allocation (copy)
-        const existing = storeAllocations.find((a) => a.id === allocId);
-        if (!existing) return;
-
-        let engagementId: string;
-        let role: ResourceRole;
-        let dateStr: string;
-
-        if (parts[1] === 'staff') return;
-        engagementId = parts[1];
-        role = parts[2] as ResourceRole;
-        dateStr = parts[3];
-
-        const startDate = new Date(dateStr);
         const oldDuration = new Date(existing.endDate).getTime() - new Date(existing.startDate).getTime();
         const endDate = new Date(startDate.getTime() + oldDuration);
-
         const newAlloc: Allocation = {
           id: `temp-${Date.now()}`,
           engagementId,
@@ -182,7 +186,6 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
           totalHours: null,
           notes: null,
         };
-
         addAllocation(newAlloc);
         try {
           const res = await fetch('/api/resource-planning/allocations', {
@@ -196,25 +199,9 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
           }
         } catch {}
       } else {
-        // Edit mode - move existing allocation
-        let engagementId: string;
-        let role: ResourceRole;
-        let dateStr: string;
-
-        if (parts[1] === 'staff') return;
-        engagementId = parts[1];
-        role = parts[2] as ResourceRole;
-        dateStr = parts[3];
-
-        const startDate = new Date(dateStr);
-        const existingAlloc = storeAllocations.find((a) => a.id === allocId);
-        if (!existingAlloc) return;
-
-        const durationMs = new Date(existingAlloc.endDate).getTime() - new Date(existingAlloc.startDate).getTime();
+        const durationMs = new Date(existing.endDate).getTime() - new Date(existing.startDate).getTime();
         const newEnd = new Date(startDate.getTime() + durationMs);
-
         updateAllocation(allocId, { engagementId, role, startDate: startDate.toISOString(), endDate: newEnd.toISOString() });
-
         try {
           await fetch(`/api/resource-planning/allocations/${allocId}`, {
             method: 'PUT',

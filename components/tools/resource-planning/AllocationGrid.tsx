@@ -1,11 +1,11 @@
 'use client';
 
 import { useMemo, memo } from 'react';
-import { useDroppable, useDndContext } from '@dnd-kit/core';
+import { useDroppable } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
 import { ROLE_ORDER, ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
-import { getWeeksInRange, getDaysInRange, formatShortDate, isSameDay, allocationOverlaps } from '@/lib/resource-planning/date-utils';
+import { getWeeksInRange, formatShortDate, allocationOverlaps } from '@/lib/resource-planning/date-utils';
 import { AllocationBar } from './AllocationBar';
 
 interface Props {
@@ -20,9 +20,6 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
   const staff = useResourcePlanningStore((s) => s.staff);
   const visibleStart = useResourcePlanningStore((s) => s.visibleStart);
   const visibleEnd = useResourcePlanningStore((s) => s.visibleEnd);
-  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
-  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
-  const isLocked = useResourcePlanningStore((s) => s.isLocked);
   const viewMode = useResourcePlanningStore((s) => s.viewMode);
   const leftPanelFilter = useResourcePlanningStore((s) => s.leftPanelFilter);
 
@@ -30,22 +27,10 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
   const endDate = useMemo(() => new Date(visibleEnd), [visibleEnd]);
   const weeks = useMemo(() => getWeeksInRange(startDate, endDate), [startDate, endDate]);
 
-  const activeDays = isLocked ? lockedFocusDays : focusedDays;
-  const hoveredWeekIdx = useMemo(() => {
-    if (activeDays.length === 0) return null;
-    const focusDate = new Date(activeDays[0]);
-    return weeks.findIndex((w) => {
-      const weekEnd = new Date(w);
-      weekEnd.setDate(weekEnd.getDate() + 6);
-      return focusDate >= w && focusDate <= weekEnd;
-    });
-  }, [activeDays, weeks]);
-
   const isStaffAxis = viewMode.startsWith('staff');
   const isAvailability = viewMode.endsWith('availability');
 
   if (isStaffAxis) {
-    // Staff as rows
     const filteredStaff = leftPanelFilter.length > 0
       ? staff.filter((s) => leftPanelFilter.includes(s.id))
       : staff;
@@ -53,7 +38,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
     const displayStaff = isAvailability
       ? filteredStaff.filter((s) => {
           const userAllocs = allocations.filter((a) => allocationOverlaps(a.startDate, a.endDate, startDate, endDate) && a.userId === s.id);
-          return userAllocs.length === 0; // Available = no allocations in range
+          return userAllocs.length === 0;
         })
       : filteredStaff;
 
@@ -65,7 +50,6 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
             member={member}
             allocations={allocations}
             weeks={weeks}
-            hoveredWeekIdx={hoveredWeekIdx}
             startDate={startDate}
             endDate={endDate}
           />
@@ -79,7 +63,6 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
     );
   }
 
-  // Client as rows (default)
   const filteredJobs = leftPanelFilter.length > 0
     ? jobs.filter((j) => leftPanelFilter.includes(j.clientId))
     : jobs;
@@ -101,7 +84,6 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
           job={job}
           allocations={allocations}
           weeks={weeks}
-          hoveredWeekIdx={hoveredWeekIdx}
           startDate={startDate}
           endDate={endDate}
         />
@@ -119,14 +101,12 @@ const StaffRow = memo(function StaffRow({
   member,
   allocations,
   weeks,
-  hoveredWeekIdx,
   startDate,
   endDate,
 }: {
   member: StaffMember;
   allocations: Allocation[];
   weeks: Date[];
-  hoveredWeekIdx: number | null;
   startDate: Date;
   endDate: Date;
 }) {
@@ -134,41 +114,24 @@ const StaffRow = memo(function StaffRow({
     () => allocations.filter((a) => a.userId === member.id && allocationOverlaps(a.startDate, a.endDate, startDate, endDate)),
     [allocations, member.id, startDate, endDate],
   );
-
   const totalDays = useMemo(() => Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate, endDate]);
 
   return (
     <div className="border-b border-slate-100">
       <div className="flex">
-        <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 py-1 select-none pointer-events-none">
+        <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 py-1 select-none pointer-events-none cursor-default">
           <div className="text-xs font-semibold text-slate-800 truncate">{member.name}</div>
           <div className="text-[10px] text-slate-400">{member.resourceSetting?.resourceRole ?? 'Unassigned'}</div>
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="relative h-[16px] border-b border-slate-50 flex">
-            {weeks.map((week, idx) => {
-              const isHovered = hoveredWeekIdx === idx;
-              if (isHovered) {
-                const days: Date[] = [];
-                for (let d = 0; d < 5; d++) {
-                  const day = new Date(week);
-                  day.setDate(day.getDate() + d);
-                  if (day.getDay() !== 0 && day.getDay() !== 6) days.push(day);
-                }
-                return (
-                  <div key={week.toISOString()} className="flex flex-[3]">
-                    {days.map((day) => (
-                      <DropCell key={day.toISOString()} id={`cell|staff|${member.id}|${day.toISOString().split('T')[0]}`} isToday={isSameDay(day, new Date())} expanded />
-                    ))}
-                  </div>
-                );
-              }
-              return <DropCell key={week.toISOString()} id={`cell|staff|${member.id}|${week.toISOString().split('T')[0]}`} isToday={false} expanded={false} />;
-            })}
-            {staffAllocs.map((alloc) => (
-              <AllocationBar key={alloc.id} allocation={alloc} startDate={startDate} endDate={endDate} totalDays={totalDays} />
-            ))}
-          </div>
+        <div className="flex-1 min-w-0 relative h-[24px] border-b border-slate-50">
+          {weeks.map((week) => (
+            <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
+              style={{ left: `${((week.getTime() - startDate.getTime()) / (endDate.getTime() - startDate.getTime())) * 100}%`, width: `${(7 / totalDays) * 100}%` }}
+            />
+          ))}
+          {staffAllocs.map((alloc) => (
+            <AllocationBar key={alloc.id} allocation={alloc} startDate={startDate} endDate={endDate} totalDays={totalDays} />
+          ))}
         </div>
       </div>
     </div>
@@ -179,14 +142,12 @@ const JobRow = memo(function JobRow({
   job,
   allocations,
   weeks,
-  hoveredWeekIdx,
   startDate,
   endDate,
 }: {
   job: ResourceJobView;
   allocations: Allocation[];
   weeks: Date[];
-  hoveredWeekIdx: number | null;
   startDate: Date;
   endDate: Date;
 }) {
@@ -222,7 +183,6 @@ const JobRow = memo(function JobRow({
                 allocations={roleAllocs}
                 job={job}
                 weeks={weeks}
-                hoveredWeekIdx={hoveredWeekIdx}
                 startDate={startDate}
                 endDate={endDate}
               />
@@ -239,7 +199,6 @@ const RoleLane = memo(function RoleLane({
   allocations,
   job,
   weeks,
-  hoveredWeekIdx,
   startDate,
   endDate,
 }: {
@@ -247,67 +206,31 @@ const RoleLane = memo(function RoleLane({
   allocations: Allocation[];
   job: ResourceJobView;
   weeks: Date[];
-  hoveredWeekIdx: number | null;
   startDate: Date;
   endDate: Date;
 }) {
   const totalDays = useMemo(() => Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate, endDate]);
+  const { setNodeRef, isOver } = useDroppable({ id: `lane|${job.engagementId || job.id}|${role}` });
 
   return (
-    <div className="relative h-[24px] border-b border-slate-100 flex group" title={role}>
-      {/* Role label on hover */}
+    <div
+      ref={setNodeRef}
+      className={`relative h-[24px] border-b border-slate-100 group ${isOver ? 'bg-blue-100/60' : ''}`}
+      title={role}
+    >
       <div className="absolute left-0 top-0 bottom-0 flex items-center z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
         <span className="text-[7px] font-bold px-1 bg-white/80 text-slate-500 rounded-r">{role.slice(0, 4)}</span>
       </div>
-      {weeks.map((week, idx) => {
-        const isHovered = hoveredWeekIdx === idx;
-        if (isHovered) {
-          const days: Date[] = [];
-          for (let d = 0; d < 5; d++) {
-            const day = new Date(week);
-            day.setDate(day.getDate() + d);
-            if (day.getDay() !== 0 && day.getDay() !== 6) days.push(day);
-          }
-          return (
-            <div key={week.toISOString()} className="flex flex-[3]">
-              {days.map((day) => (
-                <DropCell
-                  key={day.toISOString()}
-                  id={`cell|${job.engagementId || job.id}|${role}|${day.toISOString().split('T')[0]}`}
-                  isToday={isSameDay(day, new Date())}
-                  expanded
-                />
-              ))}
-            </div>
-          );
-        }
-        return (
-          <DropCell
-            key={week.toISOString()}
-            id={`cell|${job.engagementId || job.id}|${role}|${week.toISOString().split('T')[0]}`}
-            isToday={false}
-            expanded={false}
-          />
-        );
-      })}
+      {/* Week grid lines */}
+      {weeks.map((week) => (
+        <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
+          style={{ left: `${((week.getTime() - startDate.getTime()) / (endDate.getTime() - startDate.getTime())) * 100}%` }}
+        />
+      ))}
       {allocations.map((alloc) => (
         <AllocationBar key={alloc.id} allocation={alloc} startDate={startDate} endDate={endDate} totalDays={totalDays} />
       ))}
     </div>
-  );
-});
-
-const DropCell = memo(function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; expanded: boolean }) {
-  const { active } = useDndContext();
-  const { setNodeRef, isOver } = useDroppable({ id, disabled: active === null });
-  return (
-    <div
-      ref={setNodeRef}
-      className={`flex-1 min-h-[24px] min-w-[8px] transition-colors
-        ${expanded ? 'border-r border-slate-200' : 'border-r border-slate-100/60'}
-        ${isToday ? 'bg-blue-50/40' : 'bg-slate-50/20'}
-        ${isOver ? 'bg-blue-300/40 outline outline-1 outline-blue-400 z-10' : 'hover:bg-blue-50/30'}`}
-    />
   );
 });
 
