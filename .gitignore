@@ -17,3 +17,4 @@ expire-pending.mjs
 .claude/worktrees/
 docs/*.docx
 scripts/generate-docs.mjs
+.env.vercel-check
