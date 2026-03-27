@@ -194,10 +194,10 @@ export async function POST(req: Request) {
       else if (jobTypeLower.includes('group')) auditType = 'GROUP';
       else if (jobTypeLower.includes('control')) auditType = jobTypeLower.includes('pie') ? 'PIE_CONTROLS' : 'SME_CONTROLS';
 
-      // Use job year for period end, or current year
-      const year = job.year || new Date().getFullYear();
-      const periodEnd = new Date(`${year}-12-31`);
-      const targetCompletion = job.completionDate ? new Date(job.completionDate) : new Date(`${year + 1}-03-31`);
+      // Use job year for period end, or current year — parseInt to handle string years from CRM
+      const year = parseInt(String(job.year)) || new Date().getFullYear();
+      const periodEnd = new Date(year, 11, 31); // Dec 31
+      const targetCompletion = job.completionDate ? new Date(job.completionDate) : new Date(year + 1, 2, 31); // Mar 31 next year
 
       try {
         await prisma.resourceJob.create({
