@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Search } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
@@ -129,7 +129,7 @@ export function StaffPanel({ isResourceAdmin }: Props) {
   );
 }
 
-function StaffListItem({ member, allocations, isAvailable }: {
+const StaffListItem = memo(function StaffListItem({ member, allocations, isAvailable }: {
   member: { id: string; name: string; jobTitle: string | null; resourceSetting: any };
   allocations: any[];
   isAvailable: boolean;
@@ -184,4 +184,4 @@ function StaffListItem({ member, allocations, isAvailable }: {
       </div>
     </div>
   );
-}
+});

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, memo } from 'react';
-import { useDroppable } from '@dnd-kit/core';
+import { useDroppable, useDndContext } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
 import { ROLE_ORDER, ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
@@ -298,7 +298,8 @@ const RoleLane = memo(function RoleLane({
 });
 
 const DropCell = memo(function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; expanded: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id });
+  const { active } = useDndContext();
+  const { setNodeRef, isOver } = useDroppable({ id, disabled: active === null });
   return (
     <div
       ref={setNodeRef}
