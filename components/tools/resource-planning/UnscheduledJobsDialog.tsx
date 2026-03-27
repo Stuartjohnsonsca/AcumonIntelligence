@@ -354,7 +354,7 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
                 </button>
               </div>
             </div>
-          </>
+          </div>
         ) : (
           /* Schedule Confirmation */
           <div>
