@@ -18,7 +18,7 @@ export default async function ResourceManagementPage() {
 
   // Fetch staff with resource settings
   const staffRaw = await prisma.user.findMany({
-    where: { firmId, isActive: true },
+    where: { firmId, isActive: true, isAuditStaff: true },
     select: {
       id: true,
       displayId: true,
