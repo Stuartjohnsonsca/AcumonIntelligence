@@ -12,9 +12,10 @@ interface Props {
   startDate: Date;
   endDate: Date;
   totalDays: number;
+  isJobLocked?: boolean;
 }
 
-export function AllocationBar({ allocation, startDate, endDate, totalDays }: Props) {
+export function AllocationBar({ allocation, startDate, endDate, totalDays, isJobLocked = false }: Props) {
   const selectedAllocationId = useResourcePlanningStore((s) => s.selectedAllocationId);
   const setSelectedAllocation = useResourcePlanningStore((s) => s.setSelectedAllocation);
   const updateAllocation = useResourcePlanningStore((s) => s.updateAllocation);
@@ -27,7 +28,7 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `alloc-${allocation.id}`,
-    disabled: resizing !== null, // Disable drag while resizing
+    disabled: resizing !== null || isJobLocked, // Disable drag while resizing or when job is locked
   });
 
   const style = useMemo(() => {
@@ -63,6 +64,7 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
   }
 
   const handleResizeStart = useCallback((edge: 'left' | 'right', e: React.MouseEvent) => {
+    if (isJobLocked) return; // No resizing on locked jobs
     e.stopPropagation();
     e.preventDefault();
     setResizing(edge);
@@ -162,8 +164,8 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
         ${isDragging ? 'opacity-50 z-30' : 'z-10'}
         ${resizing ? 'z-30' : ''}
         ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}
+        ${isJobLocked ? 'opacity-70 cursor-not-allowed' : resizing ? 'cursor-col-resize' : 'cursor-grab active:cursor-grabbing'}
         shadow-sm hover:shadow-md transition-shadow
-        ${resizing ? 'cursor-col-resize' : 'cursor-grab active:cursor-grabbing'}
       `}
       style={{ left: style.left, width: style.width, minWidth: '24px' }}
       title={`${allocation.userName} (${allocation.role}) - ${allocation.hoursPerDay}h/day - ${displayHours}h total\nDrag edges to resize, drag centre to move`}

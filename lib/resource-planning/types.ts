@@ -61,6 +61,7 @@ export interface ResourceJobView {
   budgetHoursPreparer: number;
   engagementId: string | null;
   schedulingStatus: SchedulingStatus;
+  isScheduleLocked: boolean;
   complianceDeadline: string | null;
   customDeadline: string | null;
   jobProfileId: string | null;

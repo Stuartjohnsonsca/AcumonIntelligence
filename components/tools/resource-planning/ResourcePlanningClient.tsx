@@ -195,6 +195,9 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     const job = jobs.find(j => j.id === targetId || j.engagementId === targetId);
     const engagementId = job?.engagementId || targetId;
 
+    // Reject drops on locked jobs
+    if (job?.isScheduleLocked) return;
+
     const startDate = isLane ? dropDateFromEvent(event) : new Date(parts[3]);
 
     if (activeId.startsWith('staff-')) {

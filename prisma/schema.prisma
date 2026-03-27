@@ -2072,6 +2072,7 @@ model ResourceJob {
   budgetHoursReviewer    Float    @default(0) @map("budget_hours_reviewer")
   budgetHoursPreparer    Float    @default(0) @map("budget_hours_preparer")
   schedulingStatus       String   @default("unscheduled") @map("scheduling_status") // unscheduled | pre_scheduled | scheduled | completed
+  isScheduleLocked       Boolean  @default(false) @map("is_schedule_locked")
   complianceDeadline     DateTime? @map("compliance_deadline")
   customDeadline         DateTime? @map("custom_deadline")
   jobProfileId           String?  @map("job_profile_id")

@@ -60,6 +60,7 @@ export async function PUT(
       budgetHoursReviewer: job.budgetHoursReviewer,
       budgetHoursPreparer: job.budgetHoursPreparer,
       schedulingStatus: job.schedulingStatus,
+      isScheduleLocked: job.isScheduleLocked,
       complianceDeadline: job.complianceDeadline?.toISOString() ?? null,
       customDeadline: job.customDeadline?.toISOString() ?? null,
       jobProfileId: job.jobProfileId,
@@ -71,4 +72,28 @@ export async function PUT(
       previousJobId: job.previousJobId,
     },
   });
+}
+
+// PATCH /api/resource-planning/jobs/[id] — toggle schedule lock
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await auth();
+  if (!session?.user?.twoFactorVerified) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (!session.user.isResourceAdmin && !session.user.isSuperAdmin) {
+    return Response.json({ error: 'Forbidden: Resource Admin required' }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const { isScheduleLocked } = await request.json();
+
+  const job = await prisma.resourceJob.update({
+    where: { id, firmId: session.user.firmId },
+    data: { isScheduleLocked },
+  });
+
+  return Response.json({ id: job.id, isScheduleLocked: job.isScheduleLocked });
 }

@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, memo } from 'react';
+import { useMemo, memo, useState, useCallback } from 'react';
 import { useDroppable } from '@dnd-kit/core';
+import { Lock, Unlock } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
 import { ROLE_ORDER, ROLE_BAR_COLORS, getStaffRoles } from '@/lib/resource-planning/types';
@@ -86,6 +87,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
           weeks={weeks}
           startDate={startDate}
           endDate={endDate}
+          isResourceAdmin={isResourceAdmin}
         />
       ))}
       {displayJobs.length === 0 && (
@@ -144,24 +146,71 @@ const JobRow = memo(function JobRow({
   weeks,
   startDate,
   endDate,
+  isResourceAdmin,
 }: {
   job: ResourceJobView;
   allocations: Allocation[];
   weeks: Date[];
   startDate: Date;
   endDate: Date;
+  isResourceAdmin: boolean;
 }) {
+  const updateJob = useResourcePlanningStore((s) => s.updateJob);
+  const [toggling, setToggling] = useState(false);
+
   const jobKey = job.engagementId || job.id;
   const jobAllocations = useMemo(
     () => allocations.filter((a) => a.engagementId === jobKey && allocationOverlaps(a.startDate, a.endDate, startDate, endDate)),
     [allocations, jobKey, startDate, endDate],
   );
 
+  const handleToggleLock = useCallback(async () => {
+    if (toggling) return;
+    const newLocked = !job.isScheduleLocked;
+    setToggling(true);
+    // Optimistic update
+    updateJob(job.id, { isScheduleLocked: newLocked });
+    try {
+      const res = await fetch(`/api/resource-planning/jobs/${job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isScheduleLocked: newLocked }),
+      });
+      if (!res.ok) {
+        // Revert on failure
+        updateJob(job.id, { isScheduleLocked: job.isScheduleLocked });
+      }
+    } catch {
+      updateJob(job.id, { isScheduleLocked: job.isScheduleLocked });
+    } finally {
+      setToggling(false);
+    }
+  }, [job.id, job.isScheduleLocked, toggling, updateJob]);
+
   return (
     <div className="border-b border-slate-100">
       <div className="flex">
         <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 py-1 select-none cursor-default">
-          <div className="text-xs font-semibold text-slate-800 truncate">{job.clientName}</div>
+          <div className="flex items-center gap-1">
+            <div className="text-xs font-semibold text-slate-800 truncate flex-1">{job.clientName}</div>
+            {isResourceAdmin && (
+              <button
+                onClick={handleToggleLock}
+                disabled={toggling}
+                title={job.isScheduleLocked ? 'Unlock schedule' : 'Lock schedule'}
+                className={`flex-shrink-0 p-0.5 rounded transition-colors disabled:opacity-40 ${
+                  job.isScheduleLocked
+                    ? 'text-amber-600 hover:text-amber-700 hover:bg-amber-50'
+                    : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                {job.isScheduleLocked
+                  ? <Lock className="h-3 w-3" />
+                  : <Unlock className="h-3 w-3" />
+                }
+              </button>
+            )}
+          </div>
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-[9px] px-1 py-0 bg-slate-100 rounded text-slate-600">{job.auditType}</span>
             <span className="text-[9px] text-slate-400">PE: {formatShortDate(new Date(job.periodEnd))}</span>
@@ -174,7 +223,7 @@ const JobRow = memo(function JobRow({
             <BudgetBadge label="Prep" hours={job.budgetHoursPreparer} />
           </div>
         </div>
-        <div className="flex-1 min-w-0">
+        <div className={`flex-1 min-w-0 ${job.isScheduleLocked ? 'bg-slate-50/60' : ''}`}>
           {ROLES.map((role) => {
             const roleAllocs = jobAllocations.filter((a) => a.role === role);
             return (
@@ -216,6 +265,8 @@ const RoleLane = memo(function RoleLane({
   const staff = useResourcePlanningStore((s) => s.staff);
 
   const isDisabled = useMemo(() => {
+    // Job schedule lock takes priority — no drops at all
+    if (job.isScheduleLocked) return true;
     if (!activeDragUserId) return false;
     const member = staff.find((s) => s.id === activeDragUserId);
     if (!member) return false;
@@ -225,14 +276,16 @@ const RoleLane = memo(function RoleLane({
     // RI is limited to 1 per job
     if (role === 'RI' && allocations.length > 0) return true;
     return false;
-  }, [activeDragUserId, staff, role, allocations]);
+  }, [job.isScheduleLocked, activeDragUserId, staff, role, allocations]);
 
   const { setNodeRef, isOver } = useDroppable({ id: `lane|${job.engagementId || job.id}|${role}`, disabled: isDisabled });
 
   return (
     <div
       ref={setNodeRef}
-      className={`relative h-[24px] border-b border-slate-100 group ${isOver ? 'bg-blue-100/60' : ''} ${isDisabled && activeDragUserId ? 'bg-red-50/40' : ''}`}
+      className={`relative h-[24px] border-b border-slate-100 group
+        ${isOver ? 'bg-blue-100/60' : ''}
+        ${isDisabled && activeDragUserId ? 'bg-red-50/40' : ''}`}
       title={role}
     >
       <div className="absolute left-0 top-0 bottom-0 flex items-center z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
@@ -245,7 +298,14 @@ const RoleLane = memo(function RoleLane({
         />
       ))}
       {allocations.map((alloc) => (
-        <AllocationBar key={alloc.id} allocation={alloc} startDate={startDate} endDate={endDate} totalDays={totalDays} />
+        <AllocationBar
+          key={alloc.id}
+          allocation={alloc}
+          startDate={startDate}
+          endDate={endDate}
+          totalDays={totalDays}
+          isJobLocked={job.isScheduleLocked}
+        />
       ))}
     </div>
   );

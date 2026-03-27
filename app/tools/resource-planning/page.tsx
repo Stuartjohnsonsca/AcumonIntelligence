@@ -87,6 +87,7 @@ export default async function ResourcePlanningPage() {
     budgetHoursPreparer: j.budgetHoursPreparer ?? 0,
     engagementId: engagementMap.get(`${j.clientId}:${j.auditType}`) ?? null,
     schedulingStatus: (j.schedulingStatus ?? 'unscheduled') as SchedulingStatus,
+    isScheduleLocked: j.isScheduleLocked ?? false,
     complianceDeadline: j.complianceDeadline?.toISOString() ?? null,
     customDeadline: j.customDeadline?.toISOString() ?? null,
     jobProfileId: j.jobProfileId ?? null,
