@@ -122,8 +122,8 @@ export function ResourceToolbar() {
 
           {/* Centre: Focus window slider + Zoom slider */}
           <div className="flex items-center gap-2 flex-shrink-0 px-2">
-            <div className="flex items-center gap-1" title={`Focus: ${focusWindowWeeks} week${focusWindowWeeks > 1 ? 's' : ''}`}>
-              <span className="text-[8px] text-slate-400">Focus</span>
+            <div className="flex items-center gap-1" title={`Click date bar to expand ${focusWindowWeeks} week${focusWindowWeeks > 1 ? 's' : ''} of daily detail`}>
+              <span className="text-[8px] text-slate-400">Days</span>
               <input
                 type="range"
                 min={1}
@@ -131,9 +131,9 @@ export function ResourceToolbar() {
                 step={1}
                 value={focusWindowWeeks}
                 onChange={(e) => setFocusWindowWeeks(parseInt(e.target.value))}
-                className="w-12 h-1 accent-indigo-500"
+                className="w-14 h-1 accent-indigo-500"
               />
-              <span className="text-[8px] text-slate-500 w-4">{focusWindowWeeks}w</span>
+              <span className="text-[8px] text-slate-500 w-6">{focusWindowWeeks * 5}d</span>
             </div>
             <div className="w-px h-3 bg-slate-200" />
             <div className="flex items-center gap-1">

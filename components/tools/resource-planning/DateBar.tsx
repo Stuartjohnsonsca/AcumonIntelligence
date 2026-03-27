@@ -22,6 +22,8 @@ export function DateBar() {
   const shiftDateRange = useResourcePlanningStore((s) => s.shiftDateRange);
   const goToToday = useResourcePlanningStore((s) => s.goToToday);
 
+  const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
+
   const barRef = useRef<HTMLDivElement>(null);
   const [isPanning, setIsPanning] = useState(false);
   const panStartX = useRef(0);
@@ -46,6 +48,16 @@ export function DateBar() {
 
   const expandedWeekIdx = isLocked ? lockedWeekIdx : hoveredWeekIdx;
 
+  /** Get weekdays for N weeks starting from a given week */
+  const getDaysForFocusWindow = useCallback((weekIdx: number) => {
+    const weekStart = weeks[weekIdx];
+    if (!weekStart) return [];
+    const windowEnd = new Date(weekStart);
+    windowEnd.setDate(windowEnd.getDate() + (focusWindowWeeks * 7) - 3); // -3 to land on Friday of last week
+    const days = getDaysInRange(weekStart, windowEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
+    return days;
+  }, [weeks, focusWindowWeeks]);
+
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       if (isPanning) return;
@@ -57,15 +69,12 @@ export function DateBar() {
       if (idx >= 0 && idx < weeks.length) {
         setHoveredWeekIdx(idx);
         if (!isLocked) {
-          const weekStart = weeks[idx];
-          const weekEnd = new Date(weekStart);
-          weekEnd.setDate(weekEnd.getDate() + 4);
-          const days = getDaysInRange(weekStart, weekEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
+          const days = getDaysForFocusWindow(idx);
           setFocusedDays(days);
         }
       }
     },
-    [isPanning, weeks, setFocusedDays, isLocked],
+    [isPanning, weeks, setFocusedDays, isLocked, getDaysForFocusWindow],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -86,25 +95,17 @@ export function DateBar() {
         // Click same week again → unlock
         toggleFocusLock();
       } else if (!isLocked && idx >= 0 && idx < weeks.length) {
-        // Set focused days for clicked week then lock
-        const weekStart = weeks[idx];
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekEnd.getDate() + 4);
-        const days = getDaysInRange(weekStart, weekEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
-        // Temporarily unlock to set days, then lock
+        // Set focused days based on focus window slider, then lock
+        const days = getDaysForFocusWindow(idx);
         const store = useResourcePlanningStore.getState();
         store.setFocusedDays(days);
-        // Now lock
         setTimeout(() => useResourcePlanningStore.getState().toggleFocusLock(), 0);
       } else if (isLocked) {
         // Click different week → unlock and re-focus
         const store = useResourcePlanningStore.getState();
         store.toggleFocusLock(); // unlock
         if (idx >= 0 && idx < weeks.length) {
-          const weekStart = weeks[idx];
-          const weekEnd = new Date(weekStart);
-          weekEnd.setDate(weekEnd.getDate() + 4);
-          const days = getDaysInRange(weekStart, weekEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
+          const days = getDaysForFocusWindow(idx);
           setTimeout(() => {
             const s = useResourcePlanningStore.getState();
             s.setFocusedDays(days);
@@ -175,14 +176,15 @@ export function DateBar() {
             const isLockedWeek = isLocked && lockedWeekIdx === idx;
 
             if (isExpanded) {
-              const weekEnd = new Date(week);
-              weekEnd.setDate(weekEnd.getDate() + 4);
-              const days = getDaysInRange(week, weekEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
+              const days = getDaysForFocusWindow(idx);
+              // How many weeks does this expansion cover?
+              const expandFlex = Math.max(focusWindowWeeks * 2, 3);
 
               return (
                 <div
                   key={week.toISOString()}
-                  className={`flex flex-[3] ${isLockedWeek ? 'bg-blue-50 border-b-2 border-blue-400' : ''}`}
+                  className={`flex ${isLockedWeek ? 'bg-blue-50 border-b-2 border-blue-400' : ''}`}
+                  style={{ flex: expandFlex }}
                 >
                   {days.map((day) => (
                     <div
