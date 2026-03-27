@@ -195,16 +195,26 @@ export async function fetchAuditClients(firmId: string): Promise<CRMOrganisation
   return accounts.filter((a): a is CRMOrganisation => a !== null);
 }
 
+export interface CRMJobRaw {
+  jobId: string;
+  clientName: string;
+  clientGuid: string | null;
+  jobName: string;
+  jobType: string;
+  startDate: string | null;
+  completionDate: string | null;
+  budget: number | null;
+  year: number | null;
+}
+
 /**
- * Fetch clients from Dataverse via jca_jobs table.
- * Queries jobs filtered by service group (from firm's clientFilter),
- * then extracts unique client names and optionally enriches from accounts table.
+ * Fetch clients and their jobs from Dataverse via jca_jobs table.
+ * Returns both unique clients and the raw job data for ResourceJob creation.
  */
-export async function fetchFilteredAccounts(firmId: string): Promise<CRMOrganisation[]> {
+export async function fetchFilteredAccountsWithJobs(firmId: string): Promise<{ clients: CRMOrganisation[]; jobs: CRMJobRaw[] }> {
   const config = await getFirmCrmConfig(firmId);
 
-  // Query jca_jobs with the firm's filter (e.g. _jca_servicegroup_value eq 'xxx')
-  const jobSelect = 'jca_customername,jca_clientguid';
+  const jobSelect = 'jca_jobid,jca_customername,jca_clientguid,jca_name,jca_jobtyperef,jca_startdate,jca_completiondate,jca_budget,jca_year';
   let jobPath = `jca_jobs?$select=${jobSelect}&$top=5000`;
   if (config.clientFilter) {
     jobPath += `&$filter=${encodeURIComponent(config.clientFilter)}`;
@@ -212,16 +222,38 @@ export async function fetchFilteredAccounts(firmId: string): Promise<CRMOrganisa
 
   const jobData = await crmGet<{ value: Array<Record<string, any>> }>(firmId, jobPath);
 
-  // Extract unique clients by name (deduplicate)
+  // Collect raw jobs
+  const rawJobs: CRMJobRaw[] = jobData.value.map(j => ({
+    jobId: j.jca_jobid,
+    clientName: (j.jca_customername || '').trim(),
+    clientGuid: j.jca_clientguid || null,
+    jobName: j.jca_name || '',
+    jobType: j.jca_jobtyperef || '',
+    startDate: j.jca_startdate || null,
+    completionDate: j.jca_completiondate || null,
+    budget: j.jca_budget || null,
+    year: j.jca_year || null,
+  })).filter(j => j.clientName);
+
+  // Extract unique clients
+  const clients = await extractUniqueClients(firmId, rawJobs);
+
+  return { clients, jobs: rawJobs };
+}
+
+/**
+ * Fetch clients from Dataverse via jca_jobs table (without job details).
+ */
+export async function fetchFilteredAccounts(firmId: string): Promise<CRMOrganisation[]> {
+  const { clients } = await fetchFilteredAccountsWithJobs(firmId);
+  return clients;
+}
+
+async function extractUniqueClients(firmId: string, jobs: CRMJobRaw[]): Promise<CRMOrganisation[]> {
   const clientMap = new Map<string, { name: string; guid: string | null }>();
-  for (const job of jobData.value) {
-    const name = (job.jca_customername || '').trim();
-    if (!name) continue;
-    if (!clientMap.has(name.toLowerCase())) {
-      clientMap.set(name.toLowerCase(), {
-        name,
-        guid: job.jca_clientguid || null,
-      });
+  for (const job of jobs) {
+    if (!clientMap.has(job.clientName.toLowerCase())) {
+      clientMap.set(job.clientName.toLowerCase(), { name: job.clientName, guid: job.clientGuid });
     }
   }
 

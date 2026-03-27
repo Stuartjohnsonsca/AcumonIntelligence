@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { fetchFilteredAccounts, type CRMOrganisation } from '@/lib/dynamics-crm';
+import { fetchFilteredAccountsWithJobs, type CRMOrganisation, type CRMJobRaw } from '@/lib/dynamics-crm';
 
 interface SyncAction {
   action: 'create' | 'update' | 'unchanged';
@@ -10,9 +10,12 @@ interface SyncAction {
   changes?: Record<string, { from: string | null; to: string | null }>;
 }
 
+let cachedJobs: CRMJobRaw[] = [];
+
 async function computeSyncActions(firmId: string): Promise<SyncAction[]> {
-  // Fetch accounts from Dynamics using the firm's client filter
-  const crmOrgs = await fetchFilteredAccounts(firmId);
+  // Fetch accounts and jobs from Dynamics using the firm's client filter
+  const { clients: crmOrgs, jobs } = await fetchFilteredAccountsWithJobs(firmId);
+  cachedJobs = jobs;
 
   // Get existing clients in this firm
   const dbClients = await prisma.client.findMany({
@@ -162,7 +165,64 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, results });
+    // Now create ResourceJob records for each CRM job
+    // Map client names to their DB IDs
+    const allClients = await prisma.client.findMany({
+      where: { firmId },
+      select: { id: true, clientName: true },
+    });
+    const clientByName = new Map(allClients.map(c => [c.clientName.toLowerCase(), c.id]));
+
+    // Get existing ResourceJobs to avoid duplicates
+    const existingJobs = await prisma.resourceJob.findMany({
+      where: { firmId },
+      select: { crmJobId: true },
+    });
+    const existingCrmJobIds = new Set(existingJobs.filter(j => j.crmJobId).map(j => j.crmJobId!));
+
+    let jobsCreated = 0;
+    for (const job of cachedJobs) {
+      if (!job.jobId || existingCrmJobIds.has(job.jobId)) continue;
+
+      const clientId = clientByName.get(job.clientName.toLowerCase());
+      if (!clientId) continue;
+
+      // Determine audit type from job type name
+      const jobTypeLower = (job.jobType || '').toLowerCase();
+      let auditType = 'SME'; // default
+      if (jobTypeLower.includes('pie')) auditType = 'PIE';
+      else if (jobTypeLower.includes('group')) auditType = 'GROUP';
+      else if (jobTypeLower.includes('control')) auditType = jobTypeLower.includes('pie') ? 'PIE_CONTROLS' : 'SME_CONTROLS';
+
+      // Use job year for period end, or current year
+      const year = job.year || new Date().getFullYear();
+      const periodEnd = new Date(`${year}-12-31`);
+      const targetCompletion = job.completionDate ? new Date(job.completionDate) : new Date(`${year + 1}-03-31`);
+
+      try {
+        await prisma.resourceJob.create({
+          data: {
+            firmId,
+            clientId,
+            auditType,
+            periodEnd,
+            targetCompletion,
+            budgetHoursSpecialist: 0,
+            budgetHoursRI: 0,
+            budgetHoursReviewer: 0,
+            budgetHoursPreparer: job.budget || 0,
+            crmJobId: job.jobId,
+            schedulingStatus: 'unscheduled',
+          },
+        });
+        jobsCreated++;
+      } catch (err: any) {
+        // Skip duplicates
+        if (err?.code !== 'P2002') console.error('Job create error:', err.message);
+      }
+    }
+
+    return NextResponse.json({ success: true, results: { ...results, jobsCreated } });
   } catch (err: any) {
     console.error('CRM sync error:', err);
     return NextResponse.json({ error: err.message || 'Sync failed' }, { status: 500 });
