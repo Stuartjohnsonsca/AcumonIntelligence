@@ -101,7 +101,11 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
       if (parts[1] === 'staff') {
         return; // Can't assign to staff row directly
       } else {
-        engagementId = parts[1];
+        // parts[1] might be engagementId or jobId (fallback when no engagement)
+        const targetId = parts[1];
+        // Check if it's a job ID (not an engagement ID) — find the job to get/create engagement
+        const job = jobs.find(j => j.id === targetId || j.engagementId === targetId);
+        engagementId = job?.engagementId || targetId;
         role = parts[2] as ResourceRole;
         dateStr = parts[3];
       }

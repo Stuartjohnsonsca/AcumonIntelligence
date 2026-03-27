@@ -254,7 +254,7 @@ function RoleLane({
   const totalDays = useMemo(() => Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate, endDate]);
 
   return (
-    <div className="relative h-[16px] border-b border-slate-50 flex group" title={role}>
+    <div className="relative h-[24px] border-b border-slate-50 flex group" title={role}>
       {weeks.map((week, idx) => {
         const isHovered = hoveredWeekIdx === idx;
         if (isHovered) {
@@ -269,7 +269,7 @@ function RoleLane({
               {days.map((day) => (
                 <DropCell
                   key={day.toISOString()}
-                  id={`cell|${job.engagementId}|${role}|${day.toISOString().split('T')[0]}`}
+                  id={`cell|${job.engagementId || job.id}|${role}|${day.toISOString().split('T')[0]}`}
                   isToday={isSameDay(day, new Date())}
                   expanded
                 />
@@ -280,7 +280,7 @@ function RoleLane({
         return (
           <DropCell
             key={week.toISOString()}
-            id={`cell|${job.engagementId}|${role}|${week.toISOString().split('T')[0]}`}
+            id={`cell|${job.engagementId || job.id}|${role}|${week.toISOString().split('T')[0]}`}
             isToday={false}
             expanded={false}
           />
@@ -298,9 +298,9 @@ function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; exp
   return (
     <div
       ref={setNodeRef}
-      className={`flex-1 border-r border-slate-50
+      className={`flex-1 border-r border-slate-50 min-h-[24px]
         ${isToday ? 'bg-blue-50/30' : ''}
-        ${isOver ? 'bg-blue-100/50' : ''}
+        ${isOver ? 'bg-blue-200/60 ring-1 ring-inset ring-blue-400' : 'hover:bg-slate-50/50'}
         ${expanded ? 'border-slate-200' : ''}`}
     />
   );
