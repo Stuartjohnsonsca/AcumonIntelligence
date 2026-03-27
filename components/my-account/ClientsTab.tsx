@@ -59,7 +59,7 @@ const ACCOUNTING_SYSTEMS = ['', 'Xero'] as const;
 
 type SortKey = 'clientName' | 'software' | 'contactName' | 'contactEmail' | 'isActive';
 type SortDir = 'asc' | 'desc';
-type ViewMode = 'list' | 'add-manual' | 'add-csv' | 'assign';
+type ViewMode = 'list' | 'add-manual' | 'add-csv' | 'assign' | 'import-crm';
 
 const EMPTY_FORM = { clientName: '', software: '', contactName: '', contactEmail: '', portfolioManagerId: '' };
 
@@ -104,6 +104,14 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
   // Assign users
   const [assignClientId, setAssignClientId] = useState<string | null>(null);
   const [assignLoading, setAssignLoading] = useState(false);
+
+  // CRM Import
+  const [crmLoading, setCrmLoading] = useState(false);
+  const [crmPreview, setCrmPreview] = useState<{ summary: { create: number; update: number; unchanged: number }; actions: any[] } | null>(null);
+  const [crmError, setCrmError] = useState<string | null>(null);
+  const [crmExcluded, setCrmExcluded] = useState<Set<string>>(new Set());
+  const [crmImporting, setCrmImporting] = useState(false);
+  const [crmResult, setCrmResult] = useState<{ created: number; updated: number } | null>(null);
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -297,6 +305,39 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
   }
 
   // ── Header cell ─────────────────────────────────────────────────────────────
+  // ── CRM Import ────────────────────────────────────────────────────────────
+  async function handleCrmPreview() {
+    setCrmLoading(true); setCrmError(null); setCrmPreview(null); setCrmResult(null); setCrmExcluded(new Set());
+    try {
+      const res = await fetch('/api/clients/sync-crm');
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
+      const data = await res.json();
+      setCrmPreview(data);
+    } catch (err: any) { setCrmError(err.message || 'Failed to preview CRM import'); }
+    finally { setCrmLoading(false); }
+  }
+
+  async function handleCrmExecute() {
+    setCrmImporting(true); setCrmError(null);
+    try {
+      const res = await fetch('/api/clients/sync-crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ excludeAccountIds: Array.from(crmExcluded) }),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
+      const data = await res.json();
+      setCrmResult(data.results);
+      setCrmPreview(null);
+      await loadClients();
+    } catch (err: any) { setCrmError(err.message || 'Import failed'); }
+    finally { setCrmImporting(false); }
+  }
+
+  function toggleCrmExclude(accountId: string) {
+    setCrmExcluded(prev => { const next = new Set(prev); if (next.has(accountId)) next.delete(accountId); else next.add(accountId); return next; });
+  }
+
   function SortableHeader({ k, label }: { k: SortKey; label: string }) {
     return (
       <th className="px-3 py-2 text-left">
@@ -346,6 +387,10 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
             </Button>
             <Button size="sm" variant="outline" onClick={() => { setCsvRows([]); setCsvError(''); setViewMode('add-csv'); }}>
               <Upload className="h-4 w-4 mr-1" />Upload CSV
+            </Button>
+            <Button size="sm" variant="outline" className="border-purple-300 text-purple-700 hover:bg-purple-50"
+              onClick={() => { setViewMode('import-crm'); handleCrmPreview(); }}>
+              <Link2 className="h-4 w-4 mr-1" />Import from CRM
             </Button>
             <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => { setAddForm(EMPTY_FORM); setViewMode('add-manual'); }}>
               <Plus className="h-4 w-4 mr-1" />Add Client
@@ -471,6 +516,96 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                   </Button>
                   <Button variant="outline" onClick={() => { setCsvRows([]); if (fileRef.current) fileRef.current.value = ''; }}>Clear</Button>
                 </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Import from CRM ── */}
+      {viewMode === 'import-crm' && (
+        <Card className="border-purple-200 bg-purple-50/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Link2 className="h-5 w-5 text-purple-600" />
+              Import Clients from CRM
+            </CardTitle>
+            <CardDescription>Fetching accounts from Dynamics 365 using your firm&apos;s client filter</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {crmLoading && (
+              <div className="text-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-purple-500 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">Connecting to Dynamics 365...</p>
+              </div>
+            )}
+
+            {crmError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-start gap-2 mb-4">
+                <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                <div>
+                  <strong>Error:</strong> {crmError}
+                  <button onClick={() => setCrmError(null)} className="ml-2 text-xs underline">dismiss</button>
+                </div>
+              </div>
+            )}
+
+            {crmResult && (
+              <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 mb-4">
+                <Check className="h-4 w-4 inline mr-1" />
+                Import complete: {crmResult.created} created, {crmResult.updated} updated
+              </div>
+            )}
+
+            {crmPreview && !crmLoading && (
+              <>
+                <div className="flex gap-4 text-xs mb-3">
+                  <span className="flex items-center gap-1 text-green-700"><span className="w-2 h-2 rounded-full bg-green-500" /> {crmPreview.summary.create} new</span>
+                  <span className="flex items-center gap-1 text-amber-700"><span className="w-2 h-2 rounded-full bg-amber-500" /> {crmPreview.summary.update} to update</span>
+                  <span className="flex items-center gap-1 text-slate-500"><span className="w-2 h-2 rounded-full bg-slate-300" /> {crmPreview.summary.unchanged} unchanged</span>
+                </div>
+
+                <div className="space-y-1 max-h-80 overflow-y-auto mb-4">
+                  {crmPreview.actions.filter((a: any) => a.action === 'create').map((a: any, i: number) => {
+                    const excluded = crmExcluded.has(a.accountId);
+                    return (
+                      <div key={`c-${i}`} className={`flex items-center gap-3 px-3 py-2 border rounded text-sm ${excluded ? 'bg-slate-50 border-slate-200 opacity-50' : 'bg-green-50 border-green-100'}`}>
+                        <input type="checkbox" checked={!excluded} onChange={() => toggleCrmExclude(a.accountId)} className="w-4 h-4 rounded" />
+                        <span className={`font-medium ${excluded ? 'text-slate-500 line-through' : 'text-green-800'}`}>{a.name}</span>
+                        {a.city && <span className="text-xs text-green-600">• {a.city}</span>}
+                        {a.industry && <span className="text-xs text-green-500">• {a.industry}</span>}
+                        <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${excluded ? 'bg-slate-100 text-slate-500' : 'bg-green-100 text-green-700'}`}>{excluded ? 'Skipped' : 'New'}</span>
+                      </div>
+                    );
+                  })}
+                  {crmPreview.actions.filter((a: any) => a.action === 'update').map((a: any, i: number) => (
+                    <div key={`u-${i}`} className="flex items-center gap-3 px-3 py-2 bg-amber-50 border border-amber-100 rounded text-sm">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                      <span className="font-medium text-amber-800">{a.name}</span>
+                      <span className="ml-auto text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Update</span>
+                    </div>
+                  ))}
+                  {crmPreview.actions.filter((a: any) => a.action === 'unchanged').map((a: any, i: number) => (
+                    <div key={`n-${i}`} className="flex items-center gap-3 px-3 py-1.5 text-sm text-slate-400">
+                      <span className="w-2 h-2 rounded-full bg-slate-300 flex-shrink-0" />
+                      <span>{a.name}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-2 pt-3 border-t border-purple-100">
+                  <Button onClick={handleCrmExecute} disabled={crmImporting} className="bg-purple-600 hover:bg-purple-700">
+                    {crmImporting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Check className="h-4 w-4 mr-1" />}
+                    Import {crmPreview.summary.create - crmExcluded.size > 0 ? crmPreview.summary.create - crmExcluded.size : 0} Clients
+                  </Button>
+                  <Button variant="outline" onClick={() => { setViewMode('list'); setCrmPreview(null); }}>Cancel</Button>
+                </div>
+              </>
+            )}
+
+            {!crmPreview && !crmLoading && !crmError && !crmResult && (
+              <div className="text-center py-6 text-sm text-slate-400">
+                No CRM data available. Check your Firm Settings → PowerApps connection.
               </div>
             )}
           </CardContent>

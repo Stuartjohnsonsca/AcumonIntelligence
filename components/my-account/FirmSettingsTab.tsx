@@ -30,6 +30,7 @@ function PowerAppsSettings({ firmId }: { firmId: string }) {
   const [editSecret, setEditSecret] = useState('');
   const [editBaseUrl, setEditBaseUrl] = useState('');
   const [editTenantId, setEditTenantId] = useState('');
+  const [editClientFilter, setEditClientFilter] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -42,6 +43,7 @@ function PowerAppsSettings({ firmId }: { firmId: string }) {
           setEditSecret(data.clientSecret || '');
           setEditBaseUrl(data.baseUrl || '');
           setEditTenantId(data.tenantId || '');
+          setEditClientFilter(data.clientFilter || '');
         }
       } catch {}
       setLoading(false);
@@ -60,6 +62,7 @@ function PowerAppsSettings({ firmId }: { firmId: string }) {
           clientSecret: editSecret,
           baseUrl: editBaseUrl,
           tenantId: editTenantId,
+          clientFilter: editClientFilter,
         }),
       });
       if (res.ok) {
@@ -133,6 +136,14 @@ function PowerAppsSettings({ firmId }: { firmId: string }) {
             placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
             className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-purple-500" />
         </div>
+      </div>
+
+      <div className="mt-4">
+        <label className="block text-xs text-slate-500 mb-1 font-medium">Client Filter</label>
+        <input type="text" value={editClientFilter} onChange={e => setEditClientFilter(e.target.value)}
+          placeholder="e.g. contains(name,'Johnsons') or statecode eq 0"
+          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-purple-500" />
+        <p className="text-[10px] text-slate-400 mt-1">OData filter applied when importing clients from Dataverse. Leave blank to import all accounts.</p>
       </div>
 
       <div className="flex items-center gap-3 mt-4">

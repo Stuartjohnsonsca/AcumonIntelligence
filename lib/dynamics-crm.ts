@@ -45,12 +45,13 @@ interface FirmCrmConfig {
   clientSecret: string;
   baseUrl: string;
   tenantId: string;
+  clientFilter: string | null;
 }
 
 async function getFirmCrmConfig(firmId: string): Promise<FirmCrmConfig> {
   const firm = await prisma.firm.findUnique({
     where: { id: firmId },
-    select: { powerAppsClientId: true, powerAppsClientSecret: true, powerAppsBaseUrl: true, powerAppsTenantId: true },
+    select: { powerAppsClientId: true, powerAppsClientSecret: true, powerAppsBaseUrl: true, powerAppsTenantId: true, powerAppsClientFilter: true },
   });
 
   if (!firm?.powerAppsClientId || !firm?.powerAppsClientSecret || !firm?.powerAppsBaseUrl || !firm?.powerAppsTenantId) {
@@ -62,6 +63,7 @@ async function getFirmCrmConfig(firmId: string): Promise<FirmCrmConfig> {
     clientSecret: firm.powerAppsClientSecret,
     baseUrl: firm.powerAppsBaseUrl,
     tenantId: firm.powerAppsTenantId,
+    clientFilter: firm.powerAppsClientFilter || null,
   };
 }
 
@@ -191,4 +193,33 @@ export async function fetchAuditClients(firmId: string): Promise<CRMOrganisation
   if (uniqueGuids.length === 0) return [];
   const accounts = await Promise.all(uniqueGuids.map(guid => fetchAccount(firmId, guid)));
   return accounts.filter((a): a is CRMOrganisation => a !== null);
+}
+
+/**
+ * Fetch accounts directly from Dataverse using the firm's client filter.
+ * This is the primary import method — uses OData $filter from Firm settings.
+ */
+export async function fetchFilteredAccounts(firmId: string): Promise<CRMOrganisation[]> {
+  const config = await getFirmCrmConfig(firmId);
+  const select = 'name,accountid,address1_line1,address1_city,address1_postalcode,telephone1,emailaddress1,websiteurl,industrycode,sic';
+
+  let path = `accounts?$select=${select}&$top=500`;
+  if (config.clientFilter) {
+    path += `&$filter=${encodeURIComponent(config.clientFilter)}`;
+  }
+
+  const data = await crmGet<{ value: Array<Record<string, any>> }>(firmId, path);
+
+  return data.value.map(d => ({
+    accountId: d.accountid,
+    name: d.name,
+    address1: d.address1_line1,
+    city: d.address1_city,
+    postcode: d.address1_postalcode,
+    telephone: d.telephone1,
+    email: d.emailaddress1,
+    websiteUrl: d.websiteurl,
+    industry: d['industrycode@OData.Community.Display.V1.FormattedValue'] || null,
+    sicCode: d.sic,
+  }));
 }

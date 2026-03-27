@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { fetchAuditClients, type CRMOrganisation } from '@/lib/dynamics-crm';
+import { fetchFilteredAccounts, type CRMOrganisation } from '@/lib/dynamics-crm';
 
 interface SyncAction {
   action: 'create' | 'update' | 'unchanged';
@@ -11,16 +11,15 @@ interface SyncAction {
 }
 
 async function computeSyncActions(firmId: string): Promise<SyncAction[]> {
-  // Fetch audit clients from Dynamics CRM
-  const crmOrgs = await fetchAuditClients();
+  // Fetch accounts from Dynamics using the firm's client filter
+  const crmOrgs = await fetchFilteredAccounts(firmId);
 
   // Get existing clients in this firm
   const dbClients = await prisma.client.findMany({
     where: { firmId },
-    select: { id: true, clientName: true, crmAccountId: true },
+    select: { id: true, clientName: true, crmAccountId: true, sector: true },
   });
 
-  // Index by CRM account ID and name
   const byCrmId = new Map(dbClients.filter(c => c.crmAccountId).map(c => [c.crmAccountId!, c]));
   const byName = new Map(dbClients.map(c => [c.clientName.toLowerCase(), c]));
 
@@ -32,6 +31,7 @@ async function computeSyncActions(firmId: string): Promise<SyncAction[]> {
     if (dbClient) {
       const changes: Record<string, { from: string | null; to: string | null }> = {};
       if (!dbClient.crmAccountId) changes.crmAccountId = { from: null, to: org.accountId };
+      if (org.industry && org.industry !== dbClient.sector) changes.sector = { from: dbClient.sector, to: org.industry };
 
       if (Object.keys(changes).length > 0) {
         actions.push({ action: 'update', crmOrg: org, dbClientId: dbClient.id, changes });
@@ -67,6 +67,7 @@ export async function GET() {
         name: a.crmOrg.name,
         accountId: a.crmOrg.accountId,
         industry: a.crmOrg.industry,
+        city: a.crmOrg.city,
         changes: a.changes,
       })),
     });
@@ -77,13 +78,23 @@ export async function GET() {
 }
 
 // POST — Execute sync
-export async function POST() {
+export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!session.user.isFirmAdmin && !session.user.isSuperAdmin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+  // Parse exclusions
+  let excludeIds: Set<string> = new Set();
   try {
-    const actions = await computeSyncActions(session.user.firmId);
+    const body = await req.json();
+    if (body.excludeAccountIds && Array.isArray(body.excludeAccountIds)) {
+      excludeIds = new Set(body.excludeAccountIds);
+    }
+  } catch { /* no body */ }
+
+  try {
+    const allActions = await computeSyncActions(session.user.firmId);
+    const actions = allActions.filter(a => !excludeIds.has(a.crmOrg.accountId));
     const firmId = session.user.firmId;
     const results = { created: 0, updated: 0, unchanged: 0 };
 
@@ -96,20 +107,20 @@ export async function POST() {
               clientName: action.crmOrg.name,
               crmAccountId: action.crmOrg.accountId,
               sector: action.crmOrg.industry || null,
+              contactName: null,
+              contactEmail: action.crmOrg.email || null,
             },
           });
           results.created++;
           break;
         }
         case 'update': {
-          if (action.dbClientId) {
+          if (action.dbClientId && action.changes) {
             const updateData: Record<string, any> = {};
-            if (action.changes?.crmAccountId) updateData.crmAccountId = action.changes.crmAccountId.to;
+            if (action.changes.crmAccountId) updateData.crmAccountId = action.changes.crmAccountId.to;
+            if (action.changes.sector) updateData.sector = action.changes.sector.to;
             if (Object.keys(updateData).length > 0) {
-              await prisma.client.update({
-                where: { id: action.dbClientId },
-                data: updateData,
-              });
+              await prisma.client.update({ where: { id: action.dbClientId }, data: updateData });
             }
           }
           results.updated++;
