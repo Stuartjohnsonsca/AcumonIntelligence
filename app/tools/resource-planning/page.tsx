@@ -17,7 +17,7 @@ export default async function ResourcePlanningPage() {
   let staff: any[] = [];
   try {
     const staffRaw = await prisma.user.findMany({
-      where: { firmId, isActive: true, isAuditStaff: true },
+      where: { firmId, isActive: true, resourceStaffSetting: { isNot: null } },
       select: {
         id: true,
         displayId: true,
@@ -54,9 +54,13 @@ export default async function ResourcePlanningPage() {
     }));
   } catch (e) {
     console.error('Staff fetch error, trying minimal query:', e);
-    // Fallback: fetch without resourceStaffSetting relation
+    // Fallback: fetch users with resource settings via separate query
+    const visibleUserIds = (await prisma.resourceStaffSetting.findMany({
+      where: { user: { firmId } },
+      select: { userId: true },
+    })).map((s: any) => s.userId);
     const staffRaw = await prisma.user.findMany({
-      where: { firmId, isActive: true, isAuditStaff: true },
+      where: { firmId, isActive: true, id: { in: visibleUserIds } },
       select: { id: true, displayId: true, name: true, email: true, jobTitle: true, isActive: true },
       orderBy: { name: 'asc' },
     });
