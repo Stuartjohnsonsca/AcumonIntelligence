@@ -15,7 +15,9 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
   const updateJob = useResourcePlanningStore((s) => s.updateJob);
   const setUnscheduledCount = useResourcePlanningStore((s) => s.setUnscheduledCount);
 
-  const unscheduled = jobs.filter((j) => j.schedulingStatus === 'unscheduled');
+  // Filter to audit/assurance jobs only (not all 400+)
+  const AUDIT_TYPES = ['SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS', 'GROUP'];
+  const unscheduled = jobs.filter((j) => j.schedulingStatus === 'unscheduled' && AUDIT_TYPES.includes(j.auditType));
   const [currentIdx, setCurrentIdx] = useState(0);
   const [selectedProfileId, setSelectedProfileId] = useState<string>('');
   const [hours, setHours] = useState({ specialist: 0, ri: 0, reviewer: 0, preparer: 0 });
@@ -23,6 +25,8 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [proposal, setProposal] = useState<ScheduleProposal | null>(null);
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<'single' | 'list'>('list');
 
   const job = unscheduled[currentIdx];
 
@@ -172,36 +176,96 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
     }
   }
 
+  function toggleJobSelection(jobId: string) {
+    setSelectedJobIds(prev => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId); else next.add(jobId);
+      return next;
+    });
+  }
+
+  function selectAll() { setSelectedJobIds(new Set(unscheduled.map(j => j.id))); }
+  function deselectAll() { setSelectedJobIds(new Set()); }
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30">
-      <div className="bg-white rounded-lg shadow-xl w-[520px] p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-slate-800">
-            Unscheduled Jobs ({currentIdx + 1} of {unscheduled.length})
-          </h3>
+      <div className="bg-white rounded-lg shadow-xl w-[620px] max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-slate-800">
+              Unscheduled Jobs ({unscheduled.length})
+            </h3>
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+              <button onClick={() => setViewMode('list')}
+                className={`px-2 py-1 text-[10px] ${viewMode === 'list' ? 'bg-blue-50 text-blue-700' : 'text-slate-500'}`}>List</button>
+              <button onClick={() => setViewMode('single')}
+                className={`px-2 py-1 text-[10px] ${viewMode === 'single' ? 'bg-blue-50 text-blue-700' : 'text-slate-500'}`}>Detail</button>
+            </div>
+          </div>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded"><X className="h-4 w-4" /></button>
         </div>
 
-        {!showConfirm ? (
-          <>
-            {/* Navigation */}
-            <div className="flex items-center justify-between mb-4">
+        {viewMode === 'list' && !showConfirm ? (
+          <div className="flex-1 overflow-y-auto p-4">
+            {/* Batch actions */}
+            <div className="flex items-center gap-2 mb-3 text-xs">
+              <button onClick={selectAll} className="text-blue-600 hover:text-blue-800">Select All</button>
+              <button onClick={deselectAll} className="text-slate-500 hover:text-slate-700">Deselect All</button>
+              <span className="text-slate-400 ml-auto">{selectedJobIds.size} selected</span>
+            </div>
+
+            {/* Job list with checkboxes */}
+            <div className="space-y-1 max-h-[45vh] overflow-y-auto">
+              {unscheduled.map((j, idx) => (
+                <div key={j.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                  selectedJobIds.has(j.id) ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100 hover:border-slate-200'
+                }`} onClick={() => toggleJobSelection(j.id)}>
+                  <input type="checkbox" checked={selectedJobIds.has(j.id)}
+                    onChange={() => toggleJobSelection(j.id)}
+                    className="w-4 h-4 rounded border-slate-300 text-blue-600" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-800 truncate">{j.clientName}</div>
+                    <div className="text-[10px] text-slate-400">{j.auditType} • PE: {new Date(j.periodEnd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-xs text-amber-700">{new Date(j.targetCompletion).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</div>
+                    {j.budgetHoursPreparer > 0 && <div className="text-[9px] text-slate-400">{j.budgetHoursPreparer}h</div>}
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); setCurrentIdx(idx); setViewMode('single'); }}
+                    className="text-[10px] text-indigo-500 hover:text-indigo-700 px-2 py-1 rounded hover:bg-indigo-50">
+                    Detail
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Batch schedule button */}
+            <div className="flex justify-between mt-4 pt-3 border-t">
+              <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-600 border rounded-md hover:bg-slate-50">Close</button>
               <button
-                onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))}
-                disabled={currentIdx === 0}
-                className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
-              >
+                onClick={handleScheduleAll}
+                disabled={saving || selectedJobIds.size === 0}
+                className="flex items-center gap-1 px-4 py-1.5 text-xs text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
+                <Zap className="h-3.5 w-3.5" />
+                {saving ? 'Scheduling...' : `Schedule ${selectedJobIds.size} Selected`}
+              </button>
+            </div>
+          </div>
+        ) : !showConfirm ? (
+          <div className="p-4">
+            {/* Single job detail view */}
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))} disabled={currentIdx === 0}
+                className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
                 <ChevronLeft className="h-5 w-5" />
               </button>
               <div className="text-center">
                 <div className="text-base font-semibold text-slate-800">{job?.clientName}</div>
-                <div className="text-xs text-slate-500">{job?.auditType}</div>
+                <div className="text-xs text-slate-500">{job?.auditType} • {currentIdx + 1} of {unscheduled.length}</div>
               </div>
-              <button
-                onClick={() => setCurrentIdx(Math.min(unscheduled.length - 1, currentIdx + 1))}
+              <button onClick={() => setCurrentIdx(Math.min(unscheduled.length - 1, currentIdx + 1))}
                 disabled={currentIdx >= unscheduled.length - 1}
-                className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
-              >
+                className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
                 <ChevronRight className="h-5 w-5" />
               </button>
             </div>
@@ -272,13 +336,9 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
 
             {/* Actions */}
             <div className="flex justify-between">
-              <button
-                onClick={handleScheduleAll}
-                disabled={saving}
-                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 rounded-md hover:bg-indigo-100 disabled:opacity-50"
-              >
-                <Zap className="h-3.5 w-3.5" />
-                Schedule All
+              <button onClick={() => setViewMode('list')}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-600 border rounded-md hover:bg-slate-50">
+                ← Back to List
               </button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-1.5 text-xs text-slate-600 border rounded-md hover:bg-slate-50">
