@@ -146,8 +146,9 @@ export async function fetchAllADUsers(): Promise<ADUser[]> {
 export async function fetchAuditDeptUsers(additionalEmails?: string[]): Promise<ADUser[]> {
   const allUsers = await fetchAllADUsers();
 
-  // Default additional users to always include
+  // Default additional users to always include (firm admin, etc.)
   const alwaysIncludeEmails = new Set([
+    'stuart@acumon.com',
     ...(additionalEmails || []).map(e => e.toLowerCase()),
   ]);
 
