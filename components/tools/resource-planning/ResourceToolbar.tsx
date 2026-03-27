@@ -23,11 +23,15 @@ export function ResourceToolbar() {
   const unscheduledJobCount = useResourcePlanningStore((s) => s.unscheduledJobCount);
   const completedJobCount = useResourcePlanningStore((s) => s.completedJobCount);
 
+  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
+  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
+  const isLocked = useResourcePlanningStore((s) => s.isLocked);
+
   const [searchOpen, setSearchOpen] = useState(false);
   const [showUnscheduled, setShowUnscheduled] = useState(false);
   const [showRollForward, setShowRollForward] = useState(false);
 
-  const capacities = useMemo(() => getFocusedCapacity(), [getFocusedCapacity, allocations, staff]);
+  const capacities = useMemo(() => getFocusedCapacity(), [getFocusedCapacity, allocations, staff, focusedDays, lockedFocusDays, isLocked]);
 
   // Top 10 available (positive) and top 10 overallocated (negative)
   const positive = useMemo(() =>

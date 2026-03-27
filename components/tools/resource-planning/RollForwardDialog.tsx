@@ -23,6 +23,13 @@ export function RollForwardDialog({ onClose }: Props) {
   const [rollForwardMonths, setRollForwardMonths] = useState(12);
   const [saving, setSaving] = useState(false);
 
+  // Clamp index when list shrinks
+  useEffect(() => {
+    if (completed.length > 0 && currentIdx >= completed.length) {
+      setCurrentIdx(completed.length - 1);
+    }
+  }, [completed.length, currentIdx]);
+
   const job = completed[currentIdx];
 
   useEffect(() => {

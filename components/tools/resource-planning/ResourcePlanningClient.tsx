@@ -41,25 +41,29 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
 
   useEffect(() => {
     if (!isInitialized) {
-      // Assign dummy absences to first few staff
-      const absences = staff.length >= 3
-        ? [
-            { ...DUMMY_ABSENCES[0], userId: staff[4]?.id ?? staff[0].id },
-            { ...DUMMY_ABSENCES[1], userId: staff[5]?.id ?? staff[1].id },
-            { ...DUMMY_ABSENCES[2], userId: '' }, // bank holiday applies to all
-            { ...DUMMY_ABSENCES[3], userId: '' },
-          ]
-        : [];
-      init({
-        staff,
-        jobs,
-        allocations,
-        absences,
-        unscheduledJobCount: unscheduledCount,
-        completedJobCount: completedUnscheduledCount,
-        currentUserId: userId,
-        isResourceAdmin,
-      });
+      try {
+        // Assign dummy absences to first few staff
+        const absences = staff.length >= 3
+          ? [
+              { ...DUMMY_ABSENCES[0], userId: staff[4]?.id ?? staff[0]?.id ?? '' },
+              { ...DUMMY_ABSENCES[1], userId: staff[5]?.id ?? staff[1]?.id ?? '' },
+              { ...DUMMY_ABSENCES[2], userId: '' }, // bank holiday applies to all
+              { ...DUMMY_ABSENCES[3], userId: '' },
+            ]
+          : [];
+        init({
+          staff,
+          jobs,
+          allocations,
+          absences,
+          unscheduledJobCount: unscheduledCount,
+          completedJobCount: completedUnscheduledCount,
+          currentUserId: userId,
+          isResourceAdmin,
+        });
+      } catch (e) {
+        console.error('Resource planning init failed:', e);
+      }
     }
   }, [init, isInitialized, staff, jobs, allocations]);
 

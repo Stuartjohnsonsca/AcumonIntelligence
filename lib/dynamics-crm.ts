@@ -205,6 +205,8 @@ export interface CRMJobRaw {
   completionDate: string | null;
   budget: number | null;
   year: number | null;
+  firstCustomDeadline: string | null;
+  firstStatutoryDeadline: string | null;
 }
 
 /**
@@ -214,7 +216,7 @@ export interface CRMJobRaw {
 export async function fetchFilteredAccountsWithJobs(firmId: string): Promise<{ clients: CRMOrganisation[]; jobs: CRMJobRaw[] }> {
   const config = await getFirmCrmConfig(firmId);
 
-  const jobSelect = 'jca_jobid,jca_customername,jca_clientguid,jca_name,jca_jobtyperef,jca_startdate,jca_completiondate,jca_budget,jca_year';
+  const jobSelect = 'jca_jobid,jca_customername,jca_clientguid,jca_name,jca_jobtyperef,jca_startdate,jca_completiondate,jca_budget,jca_year,jca_firstcustomdeadline,jca_firststatutorydeadline';
   let jobPath = `jca_jobs?$select=${jobSelect}&$top=5000`;
   if (config.clientFilter) {
     jobPath += `&$filter=${encodeURIComponent(config.clientFilter)}`;
@@ -233,6 +235,8 @@ export async function fetchFilteredAccountsWithJobs(firmId: string): Promise<{ c
     completionDate: j.jca_completiondate || null,
     budget: j.jca_budget || null,
     year: j.jca_year || null,
+    firstCustomDeadline: j.jca_firstcustomdeadline || null,
+    firstStatutoryDeadline: j.jca_firststatutorydeadline || null,
   })).filter(j => j.clientName);
 
   // Extract unique clients

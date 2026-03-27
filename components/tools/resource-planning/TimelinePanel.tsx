@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import { DateBar } from './DateBar';
 import { AllocationGrid } from './AllocationGrid';
@@ -10,16 +11,19 @@ interface Props {
 }
 
 export function TimelinePanel({ isResourceAdmin }: Props) {
-  const jobs = useResourcePlanningStore((s) => s.jobs);
-  const allocations = useResourcePlanningStore((s) => s.allocations);
-  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
-  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
-  const isLocked = useResourcePlanningStore((s) => s.isLocked);
+  const { jobs, allocations, focusedDays, lockedFocusDays, isLocked, zoomLevel } =
+    useResourcePlanningStore(useShallow((s) => ({
+      jobs: s.jobs,
+      allocations: s.allocations,
+      focusedDays: s.focusedDays,
+      lockedFocusDays: s.lockedFocusDays,
+      isLocked: s.isLocked,
+      zoomLevel: s.zoomLevel,
+    })));
   const getSortedJobs = useResourcePlanningStore((s) => s.getSortedJobs);
-  const zoomLevel = useResourcePlanningStore((s) => s.zoomLevel);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const sortedJobs = useMemo(() => getSortedJobs(), [jobs, allocations, focusedDays, lockedFocusDays, isLocked, getSortedJobs]);
+  const sortedJobs = useMemo(() => getSortedJobs(), [jobs, allocations, focusedDays, lockedFocusDays, isLocked]);
 
   // Zoom scales the entire timeline (DateBar + grid) together so dates stay aligned
   const zoomStyle = zoomLevel !== 1

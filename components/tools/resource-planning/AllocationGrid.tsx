@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
+import { useShallow } from 'zustand/react/shallow';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
 import { ROLE_ORDER, ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
@@ -16,15 +17,18 @@ interface Props {
 const ROLES: ResourceRole[] = ROLE_ORDER;
 
 export function AllocationGrid({ jobs, isResourceAdmin }: Props) {
-  const allocations = useResourcePlanningStore((s) => s.allocations);
-  const staff = useResourcePlanningStore((s) => s.staff);
-  const visibleStart = useResourcePlanningStore((s) => s.visibleStart);
-  const visibleEnd = useResourcePlanningStore((s) => s.visibleEnd);
-  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
-  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
-  const isLocked = useResourcePlanningStore((s) => s.isLocked);
-  const viewMode = useResourcePlanningStore((s) => s.viewMode);
-  const leftPanelFilter = useResourcePlanningStore((s) => s.leftPanelFilter);
+  const { allocations, staff, visibleStart, visibleEnd, focusedDays, lockedFocusDays, isLocked, viewMode, leftPanelFilter } =
+    useResourcePlanningStore(useShallow((s) => ({
+      allocations: s.allocations,
+      staff: s.staff,
+      visibleStart: s.visibleStart,
+      visibleEnd: s.visibleEnd,
+      focusedDays: s.focusedDays,
+      lockedFocusDays: s.lockedFocusDays,
+      isLocked: s.isLocked,
+      viewMode: s.viewMode,
+      leftPanelFilter: s.leftPanelFilter,
+    })));
 
   const startDate = useMemo(() => new Date(visibleStart), [visibleStart]);
   const endDate = useMemo(() => new Date(visibleEnd), [visibleEnd]);
@@ -44,19 +48,34 @@ export function AllocationGrid({ jobs, isResourceAdmin }: Props) {
   const isStaffAxis = viewMode.startsWith('staff');
   const isAvailability = viewMode.endsWith('availability');
 
-  if (isStaffAxis) {
-    // Staff as rows
-    const filteredStaff = leftPanelFilter.length > 0
+  // Memoize filtered lists to avoid recalculating on every render
+  const displayStaff = useMemo(() => {
+    if (!isStaffAxis) return [];
+    const filtered = leftPanelFilter.length > 0
       ? staff.filter((s) => leftPanelFilter.includes(s.id))
       : staff;
+    if (!isAvailability) return filtered;
+    return filtered.filter((s) => {
+      const userAllocs = allocations.filter((a) => allocationOverlaps(a.startDate, a.endDate, startDate, endDate) && a.userId === s.id);
+      return userAllocs.length === 0;
+    });
+  }, [isStaffAxis, staff, leftPanelFilter, isAvailability, allocations, startDate, endDate]);
 
-    const displayStaff = isAvailability
-      ? filteredStaff.filter((s) => {
-          const userAllocs = allocations.filter((a) => allocationOverlaps(a.startDate, a.endDate, startDate, endDate) && a.userId === s.id);
-          return userAllocs.length === 0; // Available = no allocations in range
-        })
-      : filteredStaff;
+  const displayJobs = useMemo(() => {
+    if (isStaffAxis) return [];
+    const filtered = leftPanelFilter.length > 0
+      ? jobs.filter((j) => leftPanelFilter.includes(j.clientId))
+      : jobs;
+    if (!isAvailability) return filtered;
+    return filtered.filter((j) => {
+      const jobAllocs = allocations.filter(
+        (a) => a.engagementId === j.engagementId && allocationOverlaps(a.startDate, a.endDate, startDate, endDate),
+      );
+      return jobAllocs.length === 0;
+    });
+  }, [isStaffAxis, jobs, leftPanelFilter, isAvailability, allocations, startDate, endDate]);
 
+  if (isStaffAxis) {
     return (
       <div className="min-w-0">
         {displayStaff.map((member) => (
@@ -78,20 +97,6 @@ export function AllocationGrid({ jobs, isResourceAdmin }: Props) {
       </div>
     );
   }
-
-  // Client as rows (default)
-  const filteredJobs = leftPanelFilter.length > 0
-    ? jobs.filter((j) => leftPanelFilter.includes(j.clientId))
-    : jobs;
-
-  const displayJobs = isAvailability
-    ? filteredJobs.filter((j) => {
-        const jobAllocs = allocations.filter(
-          (a) => a.engagementId === j.engagementId && allocationOverlaps(a.startDate, a.endDate, startDate, endDate),
-        );
-        return jobAllocs.length === 0;
-      })
-    : filteredJobs;
 
   return (
     <div className="min-w-0">
@@ -115,7 +120,7 @@ export function AllocationGrid({ jobs, isResourceAdmin }: Props) {
   );
 }
 
-function StaffRow({
+const StaffRow = memo(function StaffRow({
   member,
   allocations,
   weeks,
@@ -135,7 +140,7 @@ function StaffRow({
     [allocations, member.id, startDate, endDate],
   );
 
-  const totalDays = useMemo(() => Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate, endDate]);
+  const totalDays = useMemo(() => Math.max(Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), 1), [startDate, endDate]);
 
   return (
     <div className="border-b border-slate-100">
@@ -173,9 +178,9 @@ function StaffRow({
       </div>
     </div>
   );
-}
+});
 
-function JobRow({
+const JobRow = memo(function JobRow({
   job,
   allocations,
   weeks,
@@ -203,13 +208,23 @@ function JobRow({
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-[9px] px-1 py-0 bg-slate-100 rounded text-slate-600">{job.auditType}</span>
             <span className="text-[9px] text-slate-400">PE: {formatShortDate(new Date(job.periodEnd))}</span>
-            <span className="text-[9px] text-slate-400">TC: {formatShortDate(new Date(job.targetCompletion))}</span>
           </div>
-          <div className="flex gap-1.5 mt-0.5">
-            <BudgetBadge label="Spec" hours={job.budgetHoursSpecialist} />
-            <BudgetBadge label="RI" hours={job.budgetHoursRI} />
-            <BudgetBadge label="Rev" hours={job.budgetHoursReviewer} />
-            <BudgetBadge label="Prep" hours={job.budgetHoursPreparer} />
+          <div className="flex items-center gap-2 mt-0.5">
+            {job.customDeadline && (
+              <span className="text-[9px] text-blue-500" title="Preferred completion">Pref: {formatShortDate(new Date(job.customDeadline))}</span>
+            )}
+            {job.complianceDeadline && (
+              <span className="text-[9px] text-red-500" title="Statutory completion">Stat: {formatShortDate(new Date(job.complianceDeadline))}</span>
+            )}
+            {!job.customDeadline && !job.complianceDeadline && (
+              <span className="text-[9px] text-slate-400">TC: {formatShortDate(new Date(job.targetCompletion))}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 mt-0.5">
+            <BudgetCircle role="Specialist" hours={job.budgetHoursSpecialist} />
+            <BudgetCircle role="RI" hours={job.budgetHoursRI} />
+            <BudgetCircle role="Reviewer" hours={job.budgetHoursReviewer} />
+            <BudgetCircle role="Preparer" hours={job.budgetHoursPreparer} />
           </div>
         </div>
         <div className="flex-1 min-w-0">
@@ -232,9 +247,9 @@ function JobRow({
       </div>
     </div>
   );
-}
+});
 
-function RoleLane({
+const RoleLane = memo(function RoleLane({
   role,
   allocations,
   job,
@@ -251,7 +266,7 @@ function RoleLane({
   startDate: Date;
   endDate: Date;
 }) {
-  const totalDays = useMemo(() => Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate, endDate]);
+  const totalDays = useMemo(() => Math.max(Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), 1), [startDate, endDate]);
 
   return (
     <div className="relative h-[24px] border-b border-slate-100 flex group" title={role}>
@@ -295,9 +310,9 @@ function RoleLane({
       ))}
     </div>
   );
-}
+});
 
-function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; expanded: boolean }) {
+const DropCell = memo(function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; expanded: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div
@@ -308,13 +323,17 @@ function DropCell({ id, isToday, expanded }: { id: string; isToday: boolean; exp
         ${isOver ? 'bg-blue-300/40 outline outline-1 outline-blue-400 z-10' : 'hover:bg-blue-50/30'}`}
     />
   );
-}
+});
 
-function BudgetBadge({ label, hours }: { label: string; hours: number }) {
+function BudgetCircle({ role, hours }: { role: ResourceRole; hours: number }) {
   if (hours === 0) return null;
+  const color = ROLE_BAR_COLORS[role] || 'bg-slate-400';
   return (
-    <span className="text-[8px] text-slate-400">
-      <span className="font-medium">{label}</span>:{hours}h
+    <span
+      className={`inline-flex items-center justify-center w-4 h-4 rounded-full ${color} text-white text-[7px] font-bold`}
+      title={`${role}: ${hours}h`}
+    >
+      {hours}
     </span>
   );
 }

@@ -28,6 +28,13 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<'single' | 'list'>('list');
 
+  // Clamp index when list shrinks
+  useEffect(() => {
+    if (unscheduled.length > 0 && currentIdx >= unscheduled.length) {
+      setCurrentIdx(unscheduled.length - 1);
+    }
+  }, [unscheduled.length, currentIdx]);
+
   const job = unscheduled[currentIdx];
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useRef, useCallback } from 'react';
+import { memo, useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import type { Allocation, ResourceRole } from '@/lib/resource-planning/types';
 import { ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
@@ -14,12 +14,16 @@ interface Props {
   totalDays: number;
 }
 
-export function AllocationBar({ allocation, startDate, endDate, totalDays }: Props) {
+export const AllocationBar = memo(function AllocationBar({ allocation, startDate, endDate, totalDays }: Props) {
   const selectedAllocationId = useResourcePlanningStore((s) => s.selectedAllocationId);
   const setSelectedAllocation = useResourcePlanningStore((s) => s.setSelectedAllocation);
   const updateAllocation = useResourcePlanningStore((s) => s.updateAllocation);
 
   const [resizing, setResizing] = useState<'left' | 'right' | null>(null);
+  // Local override dates used only during drag — avoids store thrash
+  const [localStart, setLocalStart] = useState<string | null>(null);
+  const [localEnd, setLocalEnd] = useState<string | null>(null);
+
   const barRef = useRef<HTMLDivElement>(null);
   const startXRef = useRef(0);
   const origStartRef = useRef('');
@@ -27,15 +31,19 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `alloc-${allocation.id}`,
-    disabled: resizing !== null, // Disable drag while resizing
+    disabled: resizing !== null,
   });
 
+  // Use local overrides during drag, fall back to allocation props
+  const effectiveStart = localStart ?? allocation.startDate;
+  const effectiveEnd = localEnd ?? allocation.endDate;
+
   const style = useMemo(() => {
-    const allocStart = new Date(allocation.startDate);
-    const allocEnd = new Date(allocation.endDate);
+    const allocStart = new Date(effectiveStart);
+    const allocEnd = new Date(effectiveEnd);
     const visibleStart = Math.max(allocStart.getTime(), startDate.getTime());
     const visibleEnd = Math.min(allocEnd.getTime(), endDate.getTime());
-    if (visibleStart > visibleEnd) return null;
+    if (visibleStart > visibleEnd || totalDays <= 0) return null;
 
     const startOffset = (visibleStart - startDate.getTime()) / (1000 * 60 * 60 * 24);
     const duration = (visibleEnd - visibleStart) / (1000 * 60 * 60 * 24);
@@ -43,13 +51,13 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
       left: `${(startOffset / totalDays) * 100}%`,
       width: `${Math.max((duration / totalDays) * 100, 1)}%`,
     };
-  }, [allocation.startDate, allocation.endDate, startDate, endDate, totalDays]);
+  }, [effectiveStart, effectiveEnd, startDate, endDate, totalDays]);
 
   // Snap a date to the nearest weekday (Mon-Fri)
   function snapToWeekday(date: Date): Date {
     const d = new Date(date);
-    if (d.getDay() === 0) d.setDate(d.getDate() + 1); // Sun → Mon
-    if (d.getDay() === 6) d.setDate(d.getDate() + 2); // Sat → Mon
+    if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+    if (d.getDay() === 6) d.setDate(d.getDate() + 2);
     return d;
   }
 
@@ -58,6 +66,7 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
     const container = barRef.current?.parentElement;
     if (!container) return 0;
     const containerWidth = container.clientWidth;
+    if (containerWidth === 0) return 0;
     const daysPerPx = totalDays / containerWidth;
     return Math.round(px * daysPerPx);
   }
@@ -79,17 +88,15 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
         const newStart = new Date(origStartRef.current);
         newStart.setDate(newStart.getDate() + deltaDays);
         const snapped = snapToWeekday(newStart);
-        // Don't let start go past end
-        if (snapped < new Date(allocation.endDate)) {
-          updateAllocation(allocation.id, { startDate: snapped.toISOString() });
+        if (snapped < new Date(origEndRef.current)) {
+          setLocalStart(snapped.toISOString());
         }
       } else {
         const newEnd = new Date(origEndRef.current);
         newEnd.setDate(newEnd.getDate() + deltaDays);
         const snapped = snapToWeekday(newEnd);
-        // Don't let end go before start
-        if (snapped > new Date(allocation.startDate)) {
-          updateAllocation(allocation.id, { endDate: snapped.toISOString() });
+        if (snapped > new Date(origStartRef.current)) {
+          setLocalEnd(snapped.toISOString());
         }
       }
     }
@@ -98,35 +105,66 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
       setResizing(null);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      listenersRef.current = { move: null, up: null };
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
 
-      // Persist to backend
-      const current = useResourcePlanningStore.getState().allocations.find(a => a.id === allocation.id);
-      if (current && (current.startDate !== origStartRef.current || current.endDate !== origEndRef.current)) {
+      // Read from latest local state via refs
+      const latestStart = localStartRef.current ?? origStartRef.current;
+      const latestEnd = localEndRef.current ?? origEndRef.current;
+
+      // Update store once
+      const updates: Partial<Allocation> = {};
+      if (latestStart !== origStartRef.current) updates.startDate = latestStart;
+      if (latestEnd !== origEndRef.current) updates.endDate = latestEnd;
+
+      if (Object.keys(updates).length > 0) {
+        updateAllocation(allocation.id, updates);
+
+        // Persist to backend
         fetch('/api/resource-planning/allocations', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             id: allocation.id,
-            startDate: current.startDate,
-            endDate: current.endDate,
+            startDate: latestStart,
+            endDate: latestEnd,
           }),
         }).catch(() => {});
       }
+
+      // Clear local overrides
+      setLocalStart(null);
+      setLocalEnd(null);
     }
 
+    listenersRef.current = { move: handleMouseMove, up: handleMouseUp };
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   }, [allocation, totalDays, updateAllocation]);
 
+  // Track local state in refs so mouseUp can read latest values
+  const localStartRef = useRef<string | null>(null);
+  const localEndRef = useRef<string | null>(null);
+  useEffect(() => { localStartRef.current = localStart; }, [localStart]);
+  useEffect(() => { localEndRef.current = localEnd; }, [localEnd]);
+
+  // Clean up any lingering listeners on unmount
+  const listenersRef = useRef<{ move: ((ev: MouseEvent) => void) | null; up: (() => void) | null }>({ move: null, up: null });
+  useEffect(() => {
+    return () => {
+      if (listenersRef.current.move) document.removeEventListener('mousemove', listenersRef.current.move);
+      if (listenersRef.current.up) document.removeEventListener('mouseup', listenersRef.current.up);
+    };
+  }, []);
+
   if (!style) return null;
 
   const barColor = ROLE_BAR_COLORS[allocation.role] || 'bg-slate-400';
   const isSelected = selectedAllocationId === allocation.id;
-  const initials = allocation.userName
+  const initials = (allocation.userName || '?')
     .split(' ')
     .map((n) => n[0])
     .join('')
@@ -135,7 +173,7 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
 
   const displayHours = allocation.totalHours != null
     ? allocation.totalHours
-    : Math.round(allocation.hoursPerDay * countWorkingDays(new Date(allocation.startDate), new Date(allocation.endDate)) * 10) / 10;
+    : Math.round(allocation.hoursPerDay * countWorkingDays(new Date(effectiveStart), new Date(effectiveEnd)) * 10) / 10;
 
   return (
     <div
@@ -159,7 +197,7 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
         ${resizing ? 'cursor-col-resize' : 'cursor-grab active:cursor-grabbing'}
       `}
       style={{ left: style.left, width: style.width, minWidth: '24px' }}
-      title={`${allocation.userName} (${allocation.role}) - ${allocation.hoursPerDay}h/day - ${displayHours}h total\nDrag edges to resize, drag centre to move`}
+      title={`${allocation.userName || 'Unknown'} (${allocation.role}) - ${allocation.hoursPerDay}h/day - ${displayHours}h total\nDrag edges to resize, drag centre to move`}
     >
       {/* Left resize handle */}
       <div
@@ -185,4 +223,4 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays }: Pro
       </div>
     </div>
   );
-}
+});
