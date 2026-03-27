@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { ResourceUserManagement } from './ResourceUserManagement';
 import { ResourceClientSettings } from './ResourceClientSettings';
+import { ResourceStaffSetup } from './ResourceStaffSetup';
 import { ResourceJobProfiles } from './ResourceJobProfiles';
 import type { ResourceJobProfile } from '@/lib/resource-planning/types';
 
@@ -50,11 +51,15 @@ export function ResourceManagementClient({ staff, clients, profiles: initialProf
         </Button>
       </div>
 
-      <Tabs defaultValue="users" className="w-full">
+      <Tabs defaultValue="staff-setup" className="w-full">
         <TabsList className="mb-6">
+          <TabsTrigger value="staff-setup" className="flex items-center gap-1.5">
+            <Users className="h-4 w-4" />
+            Staff Setup
+          </TabsTrigger>
           <TabsTrigger value="users" className="flex items-center gap-1.5">
             <Users className="h-4 w-4" />
-            User Management
+            User Settings
           </TabsTrigger>
           <TabsTrigger value="clients" className="flex items-center gap-1.5">
             <Building2 className="h-4 w-4" />
@@ -65,6 +70,10 @@ export function ResourceManagementClient({ staff, clients, profiles: initialProf
             Job Resource Profiles
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="staff-setup">
+          <ResourceStaffSetup />
+        </TabsContent>
 
         <TabsContent value="users">
           <ResourceUserManagement staff={staff} />
