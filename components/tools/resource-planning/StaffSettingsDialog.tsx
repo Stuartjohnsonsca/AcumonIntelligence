@@ -87,38 +87,24 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
             </select>
           </div>
 
-          {/* Per-role concurrent job limits */}
+          {/* Role eligibility */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-2">Role Eligibility & Job Limits</label>
-            <div className="space-y-1.5 bg-slate-50 rounded-md p-2">
-              <RoleLimitRow
-                label="Specialist"
-                color="bg-teal-400"
-                limit={specLimit}
-                defaultLimit={5}
-                onChange={setSpecLimit}
-              />
-              <RoleLimitRow
-                label="Preparer"
-                color="bg-blue-400"
-                limit={prepLimit}
-                defaultLimit={3}
-                onChange={setPrepLimit}
-              />
-              <RoleLimitRow
-                label="Reviewer"
-                color="bg-purple-400"
-                limit={revLimit}
-                defaultLimit={18}
-                onChange={setRevLimit}
-              />
-              <RoleLimitRow
-                label="RI"
-                color="bg-amber-400"
-                limit={riLimit}
-                defaultLimit={30}
-                onChange={setRiLimit}
-              />
+            <label className="block text-xs font-medium text-slate-600 mb-2">Role Eligibility</label>
+            <div className="grid grid-cols-4 gap-2">
+              {([
+                { label: 'Specialist', color: 'bg-teal-400', value: specLimit, set: setSpecLimit },
+                { label: 'Preparer',   color: 'bg-blue-400',   value: prepLimit, set: setPrepLimit },
+                { label: 'Reviewer',   color: 'bg-purple-400', value: revLimit,  set: setRevLimit },
+                { label: 'RI',         color: 'bg-amber-400',  value: riLimit,   set: setRiLimit },
+              ] as const).map(({ label, color, value, set }) => (
+                <div key={label}
+                  className={`flex items-center gap-1.5 px-2 py-1.5 rounded border cursor-pointer ${value !== null ? 'bg-blue-50 border-blue-300' : 'bg-slate-50 border-slate-200'}`}
+                  onClick={() => set(value !== null ? null : 99)}>
+                  <input type="checkbox" checked={value !== null} readOnly className="h-3 w-3 rounded pointer-events-none" />
+                  <span className={`w-2 h-2 rounded-full ${color}`} />
+                  <span className="text-xs text-slate-700 select-none">{label}</span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -160,49 +146,6 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function RoleLimitRow({
-  label,
-  color,
-  limit,
-  defaultLimit,
-  onChange,
-}: {
-  label: string;
-  color: string;
-  limit: number | null;
-  defaultLimit: number;
-  onChange: (v: number | null) => void;
-}) {
-  const enabled = limit != null;
-
-  return (
-    <div className="flex items-center gap-2">
-      <label className="flex items-center gap-1.5 cursor-pointer flex-1">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => onChange(e.target.checked ? defaultLimit : null)}
-          className="h-3 w-3 rounded"
-        />
-        <span className={`w-2 h-2 rounded-full ${color}`} />
-        <span className="text-xs text-slate-700">{label}</span>
-      </label>
-      {enabled && (
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-slate-400">Max jobs:</span>
-          <input
-            type="number"
-            min={1}
-            value={limit}
-            onChange={(e) => onChange(parseInt(e.target.value) || 1)}
-            className="w-12 px-1 py-0.5 text-xs border rounded text-center"
-          />
-        </div>
-      )}
     </div>
   );
 }

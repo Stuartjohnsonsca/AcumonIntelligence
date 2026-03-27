@@ -380,6 +380,7 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
                     {u.isFirmAdmin && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">Firm Admin</span>}
                     {u.isPortfolioOwner && !u.isFirmAdmin && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Portfolio Owner</span>}
                     {!u.isActive && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Inactive</span>}
+                    {u.isAuditStaff && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Audit</span>}
                   </div>
                   <div className="text-sm text-slate-500">
                     {u.email} · {u.displayId}
@@ -389,16 +390,10 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
                   {u.expiryDate && <div className="text-xs text-slate-400">Expires: {formatDate(u.expiryDate)}</div>}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => toggleAuditStaff(u)}
-                  title={u.isAuditStaff ? 'Remove from Audit staff' : 'Add to Audit staff'}
-                  className={`text-xs px-2 py-1 rounded-full border font-medium transition-colors ${
-                    u.isAuditStaff
-                      ? 'bg-green-100 text-green-700 border-green-300 hover:bg-green-200'
-                      : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200'
-                  }`}
-                >
+              <div className="flex items-center gap-1">
+                <button onClick={() => toggleAuditStaff(u)}
+                  className={`text-xs px-2 py-1 rounded border transition-colors ${u.isAuditStaff ? 'bg-green-100 border-green-300 text-green-700 hover:bg-green-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                  title={u.isAuditStaff ? 'Remove Audit flag' : 'Flag as Audit staff'}>
                   Audit
                 </button>
                 {u.id !== currentUserId && (
