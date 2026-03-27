@@ -1,10 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Search, ZoomIn, ZoomOut, CalendarDays, Circle, RotateCw } from 'lucide-react';
+import { Search, ZoomIn, ZoomOut, CalendarDays, Circle, RotateCw, Users } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import { UnscheduledJobsDialog } from './UnscheduledJobsDialog';
 import { RollForwardDialog } from './RollForwardDialog';
+import { ResourceStaffManager } from './ResourceStaffManager';
 
 export function ResourceToolbar() {
   const staff = useResourcePlanningStore((s) => s.staff);
@@ -29,6 +30,7 @@ export function ResourceToolbar() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [showUnscheduled, setShowUnscheduled] = useState(false);
   const [showRollForward, setShowRollForward] = useState(false);
+  const [showStaffManager, setShowStaffManager] = useState(false);
 
   const capacity = useMemo(
     () => getFocusedCapacity(),
@@ -99,6 +101,17 @@ export function ResourceToolbar() {
               <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 text-white text-[8px] font-bold rounded-full flex items-center justify-center">
                 {completedJobCount}
               </span>
+            </button>
+          )}
+
+          {/* Manage Staff button */}
+          {isResourceAdmin && (
+            <button
+              onClick={() => setShowStaffManager(true)}
+              className="flex-shrink-0 p-1 rounded hover:bg-indigo-50"
+              title="Manage resource staff"
+            >
+              <Users className="h-3.5 w-3.5 text-indigo-500" />
             </button>
           )}
 
@@ -212,6 +225,7 @@ export function ResourceToolbar() {
       {/* Dialogs */}
       {showUnscheduled && <UnscheduledJobsDialog onClose={() => setShowUnscheduled(false)} />}
       {showRollForward && <RollForwardDialog onClose={() => setShowRollForward(false)} />}
+      <ResourceStaffManager isOpen={showStaffManager} onClose={() => setShowStaffManager(false)} />
     </>
   );
 }
