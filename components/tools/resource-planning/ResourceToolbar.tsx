@@ -108,10 +108,11 @@ export function ResourceToolbar() {
           {isResourceAdmin && (
             <button
               onClick={() => setShowStaffManager(true)}
-              className="flex-shrink-0 p-1 rounded hover:bg-indigo-50"
+              className="flex-shrink-0 px-2 py-1 rounded hover:bg-indigo-50 z-10 relative cursor-pointer inline-flex items-center gap-1 text-[10px] text-indigo-600 font-medium border border-indigo-200 bg-indigo-50/50"
               title="Manage resource staff"
             >
-              <Users className="h-3.5 w-3.5 text-indigo-500" />
+              <Users className="h-3.5 w-3.5" />
+              Staff
             </button>
           )}
 
