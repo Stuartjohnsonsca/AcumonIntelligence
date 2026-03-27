@@ -71,46 +71,35 @@ export async function GET() {
 
   try {
     const firmId = session.user.firmId;
-    const crmUsers = await fetchDataverseUsers(firmId);
 
-    // Get existing DB users — only those flagged as Audit staff
+    // List is driven purely by DB users flagged as Audit — mirrors Staff Setup exactly
     const dbUsers = await prisma.user.findMany({
       where: { firmId, isAuditStaff: true },
-      select: { id: true, email: true, name: true },
+      select: {
+        id: true, name: true, email: true, jobTitle: true,
+        resourceStaffSetting: true,
+      },
+      orderBy: { name: 'asc' },
     });
-    const dbByEmail = new Map(dbUsers.map(u => [u.email.toLowerCase(), u]));
 
-    // Get existing resource settings with full details
-    const resourceSettings = await prisma.resourceStaffSetting.findMany({
-      where: { firmId },
-    });
-    const settingsByUserId = new Map(resourceSettings.map(r => [r.userId, r]));
-
-    // Build user list — only CRM users matched to an Audit-flagged DB user
-    const users = crmUsers
-      .filter((cu: any) => dbByEmail.has(cu.email.toLowerCase()))
-      .map((cu: any) => {
-        const dbUser = dbByEmail.get(cu.email.toLowerCase())!;
-        const setting = settingsByUserId.get(dbUser.id);
-        return {
-          crmId: cu.id,
-          name: cu.name,
-          email: cu.email,
-          title: cu.title,
-          inDb: true,
-          dbUserId: dbUser.id,
-          isResourceVisible: !!setting,
-          resourceSetting: setting ? {
-            resourceRole: setting.resourceRole,
-            weeklyCapacityHrs: setting.weeklyCapacityHrs,
-            overtimeHrs: setting.overtimeHrs,
-            preparerJobLimit: setting.preparerJobLimit,
-            reviewerJobLimit: setting.reviewerJobLimit,
-            riJobLimit: setting.riJobLimit,
-            specialistJobLimit: setting.specialistJobLimit,
-          } : null,
-        };
-      });
+    const users = dbUsers.map(u => ({
+      crmId: null,
+      name: u.name,
+      email: u.email,
+      title: u.jobTitle ?? null,
+      inDb: true,
+      dbUserId: u.id,
+      isResourceVisible: !!u.resourceStaffSetting,
+      resourceSetting: u.resourceStaffSetting ? {
+        resourceRole: u.resourceStaffSetting.resourceRole,
+        weeklyCapacityHrs: u.resourceStaffSetting.weeklyCapacityHrs,
+        overtimeHrs: u.resourceStaffSetting.overtimeHrs,
+        preparerJobLimit: u.resourceStaffSetting.preparerJobLimit,
+        reviewerJobLimit: u.resourceStaffSetting.reviewerJobLimit,
+        riJobLimit: u.resourceStaffSetting.riJobLimit,
+        specialistJobLimit: u.resourceStaffSetting.specialistJobLimit,
+      } : null,
+    }));
 
     return NextResponse.json({ users, total: users.length });
   } catch (err: any) {
