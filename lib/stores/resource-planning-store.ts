@@ -45,12 +45,17 @@ interface ResourcePlanningState {
   unscheduledJobCount: number;
   completedJobCount: number;
 
+  setActiveDragUserId: (id: string | null) => void;
+
   // Dynamic role lanes: extra roles added per job beyond defaults
   dynamicRoleLanes: Record<string, ResourceRole[]>;
 
   // Current user context
   currentUserId: string | null;
   isResourceAdmin: boolean;
+
+  // Active drag context (set during drag for lane validation)
+  activeDragUserId: string | null;
 }
 
 interface ResourcePlanningActions {
@@ -136,6 +141,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     dynamicRoleLanes: {},
     currentUserId: null,
     isResourceAdmin: false,
+    activeDragUserId: null,
 
     init: (data) => {
       set({
@@ -199,6 +205,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     setViewMode: (mode) => set({ viewMode: mode }),
     setEditMode: (mode) => set({ editMode: mode }),
     setSelectedAllocation: (id) => set({ selectedAllocationId: id }),
+    setActiveDragUserId: (id) => set({ activeDragUserId: id }),
     setLeftPanelFilter: (ids) => set({ leftPanelFilter: ids }),
 
     addAllocation: (alloc) => {

@@ -4,7 +4,7 @@ import { useMemo, memo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
-import { ROLE_ORDER, ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
+import { ROLE_ORDER, ROLE_BAR_COLORS, getStaffRoles } from '@/lib/resource-planning/types';
 import { getWeeksInRange, formatShortDate, allocationOverlaps } from '@/lib/resource-planning/date-utils';
 import { AllocationBar } from './AllocationBar';
 
@@ -211,12 +211,28 @@ const RoleLane = memo(function RoleLane({
   endDate: Date;
 }) {
   const totalDays = useMemo(() => Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate, endDate]);
-  const { setNodeRef, isOver } = useDroppable({ id: `lane|${job.engagementId || job.id}|${role}` });
+
+  const activeDragUserId = useResourcePlanningStore((s) => s.activeDragUserId);
+  const staff = useResourcePlanningStore((s) => s.staff);
+
+  const isDisabled = useMemo(() => {
+    if (!activeDragUserId) return false;
+    const member = staff.find((s) => s.id === activeDragUserId);
+    if (!member) return false;
+    // Check if staff member is eligible for this role
+    const eligibleRoles = getStaffRoles(member.resourceSetting).map((r) => r.role);
+    if (!eligibleRoles.includes(role)) return true;
+    // RI is limited to 1 per job
+    if (role === 'RI' && allocations.length > 0) return true;
+    return false;
+  }, [activeDragUserId, staff, role, allocations]);
+
+  const { setNodeRef, isOver } = useDroppable({ id: `lane|${job.engagementId || job.id}|${role}`, disabled: isDisabled });
 
   return (
     <div
       ref={setNodeRef}
-      className={`relative h-[24px] border-b border-slate-100 group ${isOver ? 'bg-blue-100/60' : ''}`}
+      className={`relative h-[24px] border-b border-slate-100 group ${isOver ? 'bg-blue-100/60' : ''} ${isDisabled && activeDragUserId ? 'bg-red-50/40' : ''}`}
       title={role}
     >
       <div className="absolute left-0 top-0 bottom-0 flex items-center z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">

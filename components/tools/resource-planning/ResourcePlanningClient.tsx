@@ -35,6 +35,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   const storeStaff = useResourcePlanningStore((s) => s.staff);
   const storeAllocations = useResourcePlanningStore((s) => s.allocations);
   const editMode = useResourcePlanningStore((s) => s.editMode);
+  const setActiveDragUserId = useResourcePlanningStore((s) => s.setActiveDragUserId);
 
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dragType, setDragType] = useState<'staff' | 'allocation' | null>(null);
@@ -75,11 +76,16 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   function handleDragStart(event: DragStartEvent) {
     const id = String(event.active.id);
     if (id.startsWith('staff-')) {
-      setActiveDragId(id.replace('staff-', ''));
+      const staffId = id.replace('staff-', '');
+      setActiveDragId(staffId);
       setDragType('staff');
+      setActiveDragUserId(staffId);
     } else if (id.startsWith('alloc-')) {
-      setActiveDragId(id.replace('alloc-', ''));
+      const allocId = id.replace('alloc-', '');
+      setActiveDragId(allocId);
       setDragType('allocation');
+      const alloc = storeAllocations.find((a) => a.id === allocId);
+      setActiveDragUserId(alloc?.userId ?? null);
     }
   }
 
@@ -110,6 +116,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     const { active, over } = event;
     setActiveDragId(null);
     setDragType(null);
+    setActiveDragUserId(null);
 
     console.log('[DragEnd] over:', over?.id ?? 'NULL', 'active:', String(active.id));
     if (!over) return;
