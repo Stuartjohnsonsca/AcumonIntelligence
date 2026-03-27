@@ -2157,3 +2157,15 @@ model DocumentTemplate {
   @@map("document_templates")
 }
 
+// One lock record per firm — tracks who holds the resource planning edit session
+model ResourcePlanningLock {
+  id           String   @id @default(uuid())
+  firmId       String   @unique @map("firm_id")
+  userId       String   @map("user_id")
+  userName     String   @map("user_name")
+  lockedAt     DateTime @default(now()) @map("locked_at")
+  lastActivity DateTime @default(now()) @map("last_activity")
+
+  @@map("resource_planning_locks")
+}
+

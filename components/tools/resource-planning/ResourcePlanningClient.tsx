@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { DndContext, pointerWithin, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { StaffMember, ResourceJobView, Allocation, StaffAbsence, ResourceRole } from '@/lib/resource-planning/types';
@@ -18,6 +18,8 @@ interface Props {
   unscheduledCount?: number;
   completedUnscheduledCount?: number;
 }
+
+type LockStatus = 'checking' | 'granted' | 'denied';
 
 // Dummy absences for demo
 const DUMMY_ABSENCES: StaffAbsence[] = [
@@ -40,6 +42,10 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dragType, setDragType] = useState<'staff' | 'allocation' | null>(null);
 
+  // Lock state
+  const [lockStatus, setLockStatus] = useState<LockStatus>(isResourceAdmin ? 'checking' : 'denied');
+  const [lockHolderName, setLockHolderName] = useState<string | null>(null);
+
   // Require 8px movement before drag starts — prevents accidental drags on click
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -48,12 +54,11 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   useEffect(() => {
     if (!isInitialized) {
       try {
-        // Assign dummy absences to first few staff
         const absences = staff.length >= 3
           ? [
               { ...DUMMY_ABSENCES[0], userId: staff[4]?.id ?? staff[0]?.id ?? '' },
               { ...DUMMY_ABSENCES[1], userId: staff[5]?.id ?? staff[1]?.id ?? '' },
-              { ...DUMMY_ABSENCES[2], userId: '' }, // bank holiday applies to all
+              { ...DUMMY_ABSENCES[2], userId: '' },
               { ...DUMMY_ABSENCES[3], userId: '' },
             ]
           : [];
@@ -73,6 +78,63 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     }
   }, [init, isInitialized, staff, jobs, allocations]);
 
+  // Acquire lock on mount (admins only)
+  useEffect(() => {
+    if (!isResourceAdmin) return;
+    fetch('/api/resource-planning/lock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.acquired) {
+          setLockStatus('granted');
+        } else {
+          setLockStatus('denied');
+          setLockHolderName(data.lockedBy ?? 'Another admin');
+        }
+      })
+      .catch(() => setLockStatus('denied'));
+  }, [isResourceAdmin]);
+
+  // Heartbeat every 5 minutes to keep lock alive
+  useEffect(() => {
+    if (lockStatus !== 'granted') return;
+    const id = setInterval(() => {
+      fetch('/api/resource-planning/lock', { method: 'PATCH' }).catch(() => {});
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [lockStatus]);
+
+  // Release lock on unmount or page close
+  useEffect(() => {
+    if (lockStatus !== 'granted') return;
+    const release = () => {
+      fetch('/api/resource-planning/lock', { method: 'DELETE', keepalive: true }).catch(() => {});
+    };
+    window.addEventListener('beforeunload', release);
+    return () => {
+      window.removeEventListener('beforeunload', release);
+      release();
+    };
+  }, [lockStatus]);
+
+  const handleTakeControl = useCallback(async () => {
+    const res = await fetch('/api/resource-planning/lock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: true }),
+    });
+    const data = await res.json();
+    if (data.acquired) {
+      setLockStatus('granted');
+      setLockHolderName(null);
+    }
+  }, []);
+
+  const handleReleaseLock = useCallback(async () => {
+    await fetch('/api/resource-planning/lock', { method: 'DELETE' });
+    setLockStatus('denied');
+    setLockHolderName(null);
+  }, []);
+
   function handleDragStart(event: DragStartEvent) {
     const id = String(event.active.id);
     if (id.startsWith('staff-')) {
@@ -90,7 +152,6 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
   }
 
   function dropDateFromEvent(event: DragEndEvent): Date {
-    // Calculate drop date from pointer position within the lane rect
     const { over, activatorEvent, delta } = event;
     const { visibleStart, visibleEnd } = useResourcePlanningStore.getState();
     const startMs = new Date(visibleStart).getTime();
@@ -103,12 +164,10 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
       const pct = relX / laneRect.width;
       const dropMs = startMs + pct * (endMs - startMs);
       const d = new Date(dropMs);
-      // Snap to Monday
       const dow = d.getDay();
       if (dow !== 1) d.setDate(d.getDate() + (dow === 0 ? 1 : 1 - dow));
       return d;
     }
-    // Fallback: today
     return new Date();
   }
 
@@ -118,13 +177,11 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     setDragType(null);
     setActiveDragUserId(null);
 
-    console.log('[DragEnd] over:', over?.id ?? 'NULL', 'active:', String(active.id));
     if (!over) return;
 
     const overId = String(over.id);
     const activeId = String(active.id);
 
-    // Support both new lane|... format and legacy cell|... format
     const isLane = overId.startsWith('lane|');
     const isCell = overId.startsWith('cell|');
     if (!isLane && !isCell) return;
@@ -137,7 +194,6 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
 
     const job = jobs.find(j => j.id === targetId || j.engagementId === targetId);
     const engagementId = job?.engagementId || targetId;
-    console.log('[DragEnd] targetId:', targetId, 'role:', role, 'engagementId:', engagementId, 'jobFound:', !!job);
 
     const startDate = isLane ? dropDateFromEvent(event) : new Date(parts[3]);
 
@@ -162,7 +218,6 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
         notes: null,
       };
 
-      console.log('[DragEnd] addAllocation:', newAlloc);
       addAllocation(newAlloc);
       try {
         const res = await fetch('/api/resource-planning/allocations', {
@@ -234,12 +289,48 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     );
   }
 
+  const canEdit = isResourceAdmin && lockStatus === 'granted';
+
+  const lockBanner = isResourceAdmin && (
+    <div className={`flex items-center gap-2 px-3 py-1 text-[11px] border-b ${
+      lockStatus === 'granted' ? 'bg-green-50 border-green-200 text-green-800' :
+      lockStatus === 'checking' ? 'bg-slate-50 border-slate-200 text-slate-500' :
+      'bg-amber-50 border-amber-200 text-amber-800'
+    }`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${
+        lockStatus === 'granted' ? 'bg-green-500' :
+        lockStatus === 'checking' ? 'bg-slate-400 animate-pulse' :
+        'bg-amber-500'
+      }`} />
+      {lockStatus === 'granted' && (
+        <>
+          <span>You have edit control</span>
+          <button onClick={handleReleaseLock} className="ml-auto text-[10px] px-2 py-0.5 rounded bg-green-100 hover:bg-green-200 text-green-700 transition-colors">
+            Release
+          </button>
+        </>
+      )}
+      {lockStatus === 'checking' && <span>Checking edit access…</span>}
+      {lockStatus === 'denied' && (
+        <>
+          <span>{lockHolderName ? `Read-only — ${lockHolderName} is editing` : 'Read-only view'}</span>
+          {lockHolderName && (
+            <button onClick={handleTakeControl} className="ml-auto text-[10px] px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-700 transition-colors">
+              Take Control
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+
   const draggedStaff = dragType === 'staff' ? storeStaff.find((s) => s.id === activeDragId) : null;
   const draggedAlloc = dragType === 'allocation' ? storeAllocations.find((a) => a.id === activeDragId) : null;
 
   const content = (
     <div className="flex flex-col h-[calc(100vh-64px)]">
       <ResourceToolbar />
+      {lockBanner}
       <div className="flex flex-1 overflow-hidden">
         <StaffPanel isResourceAdmin={isResourceAdmin} />
         <TimelinePanel isResourceAdmin={isResourceAdmin} />
@@ -247,8 +338,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
     </div>
   );
 
-  // Non-admin users get read-only view without drag & drop
-  if (!isResourceAdmin) {
+  if (!canEdit) {
     return content;
   }
 
