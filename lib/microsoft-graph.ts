@@ -15,7 +15,23 @@ export interface ADUser {
   employeeId: string | null;
   officeLocation: string | null;
   accountEnabled: boolean;
+  assignedLicenses?: { skuId: string }[];
 }
+
+// Service/system account patterns to exclude from user sync
+const SERVICE_ACCOUNT_PATTERNS = [
+  /^warmup\d+$/i,
+  /^phone\s*user/i,
+  /^meeting\s*room/i,
+  /^app\s*bot$/i,
+  /^test\s*user$/i,
+  /^manageruser$/i,
+  /^admin$/i,
+  /^tasks$/i,
+  /^review$/i,
+  /^hr$/i,
+  /^yellowspring$/i,
+];
 
 interface TokenResponse {
   access_token: string;
@@ -88,7 +104,7 @@ export async function fetchAllADUsers(): Promise<ADUser[]> {
   const selectFields = [
     'id', 'displayName', 'mail', 'userPrincipalName', 'jobTitle',
     'department', 'mobilePhone', 'businessPhones', 'employeeId',
-    'officeLocation', 'accountEnabled',
+    'officeLocation', 'accountEnabled', 'assignedLicenses',
   ].join(',');
 
   let url: string | null = `https://graph.microsoft.com/v1.0/users?$select=${selectFields}&$top=999`;
@@ -110,8 +126,16 @@ export async function fetchAllADUsers(): Promise<ADUser[]> {
     url = data['@odata.nextLink'] || null;
   }
 
-  // Filter out disabled accounts
-  return allUsers.filter(u => u.accountEnabled !== false);
+  // Filter: must be enabled + have mail + have at least 1 license + not a service account
+  return allUsers.filter(u => {
+    if (!u.accountEnabled) return false;
+    if (!u.mail) return false;
+    const licenseCount = u.assignedLicenses?.length || 0;
+    if (licenseCount === 0) return false;
+    // Exclude service/system accounts by name pattern
+    if (SERVICE_ACCOUNT_PATTERNS.some(p => p.test(u.displayName))) return false;
+    return true;
+  });
 }
 
 /**
