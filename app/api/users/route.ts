@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     select: {
       id: true, displayId: true, name: true, email: true,
       isFirmAdmin: true, isPortfolioOwner: true, isActive: true, expiryDate: true,
-      jobTitle: true, department: true, lastSyncedAt: true,
+      jobTitle: true, department: true, lastSyncedAt: true, isAuditStaff: true,
     },
     orderBy: { name: 'asc' },
   });

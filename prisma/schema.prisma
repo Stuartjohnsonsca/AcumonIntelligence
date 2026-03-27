@@ -79,6 +79,7 @@ model User {
   isPortfolioOwner   Boolean   @default(false) @map("is_portfolio_owner")
   isMethodologyAdmin Boolean   @default(false) @map("is_methodology_admin")
   isResourceAdmin    Boolean   @default(false) @map("is_resource_admin")
+  isAuditStaff       Boolean   @default(false) @map("is_audit_staff")
   entraObjectId     String?   @unique @map("entra_object_id")
   jobTitle          String?   @map("job_title")
   department        String?
