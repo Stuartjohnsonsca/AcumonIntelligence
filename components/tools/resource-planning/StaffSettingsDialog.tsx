@@ -90,19 +90,37 @@ export function StaffSettingsDialog({ userId, onClose }: Props) {
           {/* Role eligibility */}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-2">Role Eligibility</label>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="border border-slate-200 rounded overflow-hidden">
+              <div className="grid grid-cols-[1fr_60px_80px] bg-slate-100 px-3 py-1 text-[10px] font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200">
+                <div>Role</div>
+                <div className="text-center">Eligible</div>
+                <div className="text-center">Max Jobs</div>
+              </div>
               {([
-                { label: 'Specialist', color: 'bg-teal-400', value: specLimit, set: setSpecLimit },
-                { label: 'Preparer',   color: 'bg-blue-400',   value: prepLimit, set: setPrepLimit },
-                { label: 'Reviewer',   color: 'bg-purple-400', value: revLimit,  set: setRevLimit },
-                { label: 'RI',         color: 'bg-amber-400',  value: riLimit,   set: setRiLimit },
-              ] as const).map(({ label, color, value, set }) => (
-                <div key={label}
-                  className={`flex items-center gap-1.5 px-2 py-1.5 rounded border cursor-pointer ${value !== null ? 'bg-blue-50 border-blue-300' : 'bg-slate-50 border-slate-200'}`}
-                  onClick={() => set(value !== null ? null : 99)}>
-                  <input type="checkbox" checked={value !== null} readOnly className="h-3 w-3 rounded pointer-events-none" />
-                  <span className={`w-2 h-2 rounded-full ${color}`} />
-                  <span className="text-xs text-slate-700 select-none">{label}</span>
+                { label: 'Specialist', color: 'bg-teal-400',   value: specLimit, set: setSpecLimit, def: 5 },
+                { label: 'Preparer',   color: 'bg-blue-400',   value: prepLimit, set: setPrepLimit, def: 5 },
+                { label: 'Reviewer',   color: 'bg-purple-400', value: revLimit,  set: setRevLimit,  def: 18 },
+                { label: 'RI',         color: 'bg-amber-400',  value: riLimit,   set: setRiLimit,   def: 30 },
+              ] as const).map(({ label, color, value, set, def }) => (
+                <div key={label} className={`grid grid-cols-[1fr_60px_80px] items-center px-3 py-2 border-b border-slate-100 last:border-b-0 ${value !== null ? 'bg-blue-50/40' : 'bg-white'}`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${color}`} />
+                    <span className="text-xs text-slate-700">{label}</span>
+                  </div>
+                  <div className="flex justify-center">
+                    <input type="checkbox" checked={value !== null}
+                      onChange={e => set(e.target.checked ? def : null)}
+                      className="h-3.5 w-3.5 rounded cursor-pointer" />
+                  </div>
+                  <div className="flex justify-center">
+                    {value !== null ? (
+                      <input type="number" value={value} min={1} max={99}
+                        onChange={e => set(parseInt(e.target.value) || 1)}
+                        className="w-14 px-1 py-0.5 text-xs border rounded text-center" />
+                    ) : (
+                      <span className="text-slate-300 text-xs">—</span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
