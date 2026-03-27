@@ -109,6 +109,7 @@ model User {
   assuranceChats             AssuranceChat[]
   assuranceEngagements       AssuranceEngagement[]
   riskChats                  RiskChat[]
+  riskFeedback               RiskFeedback[]
   iaFeedbackRoles            IAFeedbackUser[]
   assuranceFeedback          AssuranceFeedback[]
   // Methodology relations
@@ -1157,6 +1158,27 @@ model RiskChatMessage {
 
   @@index([chatId])
   @@map("risk_chat_messages")
+}
+
+// ─── Risk Feedback (detailed tester feedback, IAFeedbackUser-gated) ─────────
+
+model RiskFeedback {
+  id         String   @id @default(uuid())
+  targetType String   @map("target_type") // "chat_message" | "action_plan"
+  targetId   String   @map("target_id")
+  chatId     String?  @map("chat_id")
+  userId     String   @map("user_id")
+  firmId     String   @map("firm_id")
+  rating     String   // "helpful" | "unhelpful" | "needs_improvement"
+  comment    String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([targetType, targetId])
+  @@index([chatId])
+  @@index([firmId])
+  @@map("risk_feedback")
 }
 
 // ─── Firm Chart of Accounts ─────────────────────────────────────────────────
