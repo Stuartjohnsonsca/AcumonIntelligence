@@ -86,6 +86,7 @@ model User {
   lastSyncedAt      DateTime? @map("last_synced_at")
   expiryDate        DateTime? @map("expiry_date")
   isActive          Boolean   @default(true) @map("is_active")
+  isAuditStaff      Boolean   @default(false) @map("is_audit_staff")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 

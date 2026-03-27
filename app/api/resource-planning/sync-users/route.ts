@@ -73,9 +73,9 @@ export async function GET() {
     const firmId = session.user.firmId;
     const crmUsers = await fetchDataverseUsers(firmId);
 
-    // Get existing DB users
+    // Get existing DB users — only those flagged as Audit staff
     const dbUsers = await prisma.user.findMany({
-      where: { firmId },
+      where: { firmId, isAuditStaff: true },
       select: { id: true, email: true, name: true },
     });
     const dbByEmail = new Map(dbUsers.map(u => [u.email.toLowerCase(), u]));
@@ -86,29 +86,31 @@ export async function GET() {
     });
     const settingsByUserId = new Map(resourceSettings.map(r => [r.userId, r]));
 
-    // Build user list with sync status and settings
-    const users = crmUsers.map((cu: any) => {
-      const dbUser = dbByEmail.get(cu.email.toLowerCase());
-      const setting = dbUser ? settingsByUserId.get(dbUser.id) : null;
-      return {
-        crmId: cu.id,
-        name: cu.name,
-        email: cu.email,
-        title: cu.title,
-        inDb: !!dbUser,
-        dbUserId: dbUser?.id || null,
-        isResourceVisible: !!setting,
-        resourceSetting: setting ? {
-          resourceRole: setting.resourceRole,
-          weeklyCapacityHrs: setting.weeklyCapacityHrs,
-          overtimeHrs: setting.overtimeHrs,
-          preparerJobLimit: setting.preparerJobLimit,
-          reviewerJobLimit: setting.reviewerJobLimit,
-          riJobLimit: setting.riJobLimit,
-          specialistJobLimit: setting.specialistJobLimit,
-        } : null,
-      };
-    });
+    // Build user list — only CRM users matched to an Audit-flagged DB user
+    const users = crmUsers
+      .filter((cu: any) => dbByEmail.has(cu.email.toLowerCase()))
+      .map((cu: any) => {
+        const dbUser = dbByEmail.get(cu.email.toLowerCase())!;
+        const setting = settingsByUserId.get(dbUser.id);
+        return {
+          crmId: cu.id,
+          name: cu.name,
+          email: cu.email,
+          title: cu.title,
+          inDb: true,
+          dbUserId: dbUser.id,
+          isResourceVisible: !!setting,
+          resourceSetting: setting ? {
+            resourceRole: setting.resourceRole,
+            weeklyCapacityHrs: setting.weeklyCapacityHrs,
+            overtimeHrs: setting.overtimeHrs,
+            preparerJobLimit: setting.preparerJobLimit,
+            reviewerJobLimit: setting.reviewerJobLimit,
+            riJobLimit: setting.riJobLimit,
+            specialistJobLimit: setting.specialistJobLimit,
+          } : null,
+        };
+      });
 
     return NextResponse.json({ users, total: users.length });
   } catch (err: any) {

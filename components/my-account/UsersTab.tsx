@@ -20,6 +20,7 @@ interface User {
   jobTitle?: string | null;
   department?: string | null;
   lastSyncedAt?: string | null;
+  isAuditStaff: boolean;
 }
 
 interface SyncAction {
@@ -89,6 +90,17 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
     if (!confirm('Are you sure you want to delete this user?')) return;
     await fetch(`/api/users/${userId}`, { method: 'DELETE' });
     await loadUsers();
+  }
+
+  async function toggleAuditStaff(user: User) {
+    const res = await fetch(`/api/users/${user.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isAuditStaff: !user.isAuditStaff }),
+    });
+    if (res.ok) {
+      setUsers(prev => prev.map(u => u.id === user.id ? { ...u, isAuditStaff: !u.isAuditStaff } : u));
+    }
   }
 
   // AD Sync functions
@@ -368,6 +380,7 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
                     {u.isFirmAdmin && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">Firm Admin</span>}
                     {u.isPortfolioOwner && !u.isFirmAdmin && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Portfolio Owner</span>}
                     {!u.isActive && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Inactive</span>}
+                    {u.isAuditStaff && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Audit</span>}
                   </div>
                   <div className="text-sm text-slate-500">
                     {u.email} · {u.displayId}
@@ -377,11 +390,18 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
                   {u.expiryDate && <div className="text-xs text-slate-400">Expires: {formatDate(u.expiryDate)}</div>}
                 </div>
               </div>
-              {u.id !== currentUserId && (
-                <Button variant="ghost" size="icon" onClick={() => handleDelete(u.id)} className="text-red-400 hover:text-red-600 hover:bg-red-50">
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              )}
+              <div className="flex items-center gap-1">
+                <button onClick={() => toggleAuditStaff(u)}
+                  className={`text-xs px-2 py-1 rounded border transition-colors ${u.isAuditStaff ? 'bg-green-100 border-green-300 text-green-700 hover:bg-green-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                  title={u.isAuditStaff ? 'Remove Audit flag' : 'Flag as Audit staff'}>
+                  Audit
+                </button>
+                {u.id !== currentUserId && (
+                  <Button variant="ghost" size="icon" onClick={() => handleDelete(u.id)} className="text-red-400 hover:text-red-600 hover:bg-red-50">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
             </div>
           ))}
           {users.length === 0 && (
