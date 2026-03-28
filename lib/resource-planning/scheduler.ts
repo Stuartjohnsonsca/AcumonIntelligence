@@ -870,11 +870,22 @@ function runGreedyPass(
 // ─── Local Search ─────────────────────────────────────────────────────────────
 
 /**
- * Targeted pairwise swap search. Only tries swaps involving staff members who
- * are already causing violations — reduces candidate pairs from O(n²) to
- * O(violations × n), making it fast enough for large portfolios.
+ * Violation-driven swap search.
  *
- * Hard budget of MAX_DETECT_CALLS to prevent timeout regardless of data shape.
+ * Three-gate system to minimise expensive detectViolations() calls:
+ *
+ * Gate 1 — Hot-job filter: only consider pairs where at least one job contains
+ *   a staff member already named in a violation. Skips all non-violating pairs.
+ *
+ * Gate 2 — Congestion filter: release p1/p2 from the shared cap map then check
+ *   whether at least one person would move to a LESS LOADED time window
+ *   (measured by dailyAvailable in their current vs proposed window). Swapping
+ *   two equally-busy windows never helps. This is O(days_in_window) — cheap.
+ *
+ * Gate 3 — Budget: hard cap of MAX_DETECT_CALLS per iteration so that in the
+ *   worst case (many violations, many staff) the function still returns quickly.
+ *
+ * Only swaps that pass all three gates reach the expensive detectViolations().
  */
 function runLocalSearch(
   jobResults: JobResult[],
@@ -885,7 +896,7 @@ function runLocalSearch(
   today: Date,
   maxIterations: number = 3,
 ): JobResult[] {
-  const MAX_DETECT_CALLS = 400; // hard budget per iteration to guarantee < 2s
+  const MAX_DETECT_CALLS = 200; // hard ceiling per iteration
 
   const inScopeSet = new Set(jobResults.map((jr) => jr.jobId));
   const jobMap = new Map(jobs.map((j) => [j.id, j]));
@@ -908,24 +919,30 @@ function runLocalSearch(
     iterations++;
 
     const cap = buildCurrentCapMap();
-
     const currentViolations = detectViolations(
       jobResults.flatMap((jr) => jr.placements), jobsInScope, staff, constraintOrder, today, existingAllocations,
     );
     let currentScore = computeQualityScore(currentViolations, []);
 
-    // Identify jobs that contain a violating staff member — only swap these
+    // Gate 1: build set of jobs that contain a violating staff member
     const violatingUserIds = new Set(currentViolations.map((v) => v.userId).filter(Boolean) as string[]);
-    const isHotJob = (jr: JobResult) => jr.placements.some((p) => violatingUserIds.has(p.userId));
+    if (violatingUserIds.size === 0) break; // nothing to fix
+
+    const hotJobIndices = new Set<number>();
+    for (let k = 0; k < jobResults.length; k++) {
+      if (jobResults[k].placements.some((p) => violatingUserIds.has(p.userId))) {
+        hotJobIndices.add(k);
+      }
+    }
 
     let detectCalls = 0;
 
-    for (let i = 0; i < jobResults.length && detectCalls < MAX_DETECT_CALLS; i++) {
+    for (const i of hotJobIndices) {
+      if (detectCalls >= MAX_DETECT_CALLS) break;
       const jr1 = jobResults[i];
-      // Only iterate pairs where at least one side has a violating staff member
-      if (!isHotJob(jr1)) continue;
 
-      for (let j = i + 1; j < jobResults.length && detectCalls < MAX_DETECT_CALLS; j++) {
+      for (let j = 0; j < jobResults.length && detectCalls < MAX_DETECT_CALLS; j++) {
+        if (j === i) continue;
         const jr2 = jobResults[j];
 
         for (const role of ROLE_ASSIGNMENT_ORDER) {
@@ -946,27 +963,55 @@ function runLocalSearch(
           if (!isEligible(s2, role, otherRoles1)) continue;
           if (!isEligible(s1, role, otherRoles2)) continue;
 
+          const safeCap_s1 = s1.resourceSetting.weeklyCapacityHrs > 0 ? s1.resourceSetting.weeklyCapacityHrs : 37.5;
+          const safeCap_s2 = s2.resourceSetting.weeklyCapacityHrs > 0 ? s2.resourceSetting.weeklyCapacityHrs : 37.5;
           const deadline1 = getJobDeadline(job1);
           const deadline2 = getJobDeadline(job2);
           const budget1 = getBudgetForRole(job1, role);
           const budget2 = getBudgetForRole(job2, role);
-          const safeCap1 = s2.resourceSetting.weeklyCapacityHrs > 0 ? s2.resourceSetting.weeklyCapacityHrs : 37.5;
-          const safeCap2 = s1.resourceSetting.weeklyCapacityHrs > 0 ? s1.resourceSetting.weeklyCapacityHrs : 37.5;
-          const win1 = computeWindow(budget1, safeCap1, deadline1);
-          const win2 = computeWindow(budget2, safeCap2, deadline2);
 
+          // Compute proposed new windows (s2 takes job1, s1 takes job2)
+          const win1 = computeWindow(budget1, safeCap_s2, deadline1);
+          const win2 = computeWindow(budget2, safeCap_s1, deadline2);
+          const days1 = workingDaysInRange(parseDate(win1.startDate), parseDate(win1.endDate));
+          const days2 = workingDaysInRange(parseDate(win2.startDate), parseDate(win2.endDate));
+
+          // Release current placements so cap reflects "other jobs only"
           releaseCapacity(cap, p1);
           releaseCapacity(cap, p2);
 
-          const days1 = workingDaysInRange(parseDate(win1.startDate), parseDate(win1.endDate));
-          const days2 = workingDaysInRange(parseDate(win2.startDate), parseDate(win2.endDate));
-          const avail1 = dailyAvailable(s2.id, safeCap1 / 5, days1, cap);
-          const avail2 = dailyAvailable(s1.id, safeCap2 / 5, days2, cap);
+          // Gate 2: congestion filter
+          // Check each person's load in their CURRENT window vs proposed window.
+          // (Current window is p1/p2's dates; p1&p2 are released so cap shows other-job load only.)
+          const origDays1 = workingDaysInRange(parseDate(p1.startDate), parseDate(p1.endDate));
+          const origDays2 = workingDaysInRange(parseDate(p2.startDate), parseDate(p2.endDate));
+          const curAvail_s1 = dailyAvailable(s1.id, safeCap_s1 / 5, origDays1, cap); // s1 in old window
+          const curAvail_s2 = dailyAvailable(s2.id, safeCap_s2 / 5, origDays2, cap); // s2 in old window
+          const newAvail_s1 = dailyAvailable(s1.id, safeCap_s1 / 5, days2, cap);     // s1 in new window
+          const newAvail_s2 = dailyAvailable(s2.id, safeCap_s2 / 5, days1, cap);     // s2 in new window
 
-          if (avail1 < win1.hoursPerDay * 0.5 || avail2 < win2.hoursPerDay * 0.5) {
+          // At least one person must move to a less congested window
+          const s1GainsRoom = newAvail_s1 > curAvail_s1;
+          const s2GainsRoom = newAvail_s2 > curAvail_s2;
+
+          if (!s1GainsRoom && !s2GainsRoom) {
+            consumeCapacity(cap, p1);
+            consumeCapacity(cap, p2);
+            continue; // Gate 2 rejected — neither person benefits
+          }
+
+          // Check minimum feasibility (new windows must have sufficient capacity)
+          if (newAvail_s2 < win1.hoursPerDay * 0.5 || newAvail_s1 < win2.hoursPerDay * 0.5) {
             consumeCapacity(cap, p1);
             consumeCapacity(cap, p2);
             continue;
+          }
+
+          // Gate 3: budget check before the expensive detectViolations call
+          if (detectCalls >= MAX_DETECT_CALLS) {
+            consumeCapacity(cap, p1);
+            consumeCapacity(cap, p2);
+            break;
           }
 
           const newP1: PlacedAllocation = {
@@ -984,13 +1029,13 @@ function runLocalSearch(
 
           const trialJr1 = { jobId: jr1.jobId, placements: jr1.placements.map((p) => p === p1 ? newP1 : p) };
           const trialJr2 = { jobId: jr2.jobId, placements: jr2.placements.map((p) => p === p2 ? newP2 : p) };
-          const trialAllPlacements = jobResults.flatMap((jr, idx) =>
+          const trialPlacements = jobResults.flatMap((jr, idx) =>
             idx === i ? trialJr1.placements : idx === j ? trialJr2.placements : jr.placements
           );
 
           detectCalls++;
           const trialScore = computeQualityScore(
-            detectViolations(trialAllPlacements, jobsInScope, staff, constraintOrder, today, existingAllocations),
+            detectViolations(trialPlacements, jobsInScope, staff, constraintOrder, today, existingAllocations),
             [],
           );
 
