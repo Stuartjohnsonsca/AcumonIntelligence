@@ -15,8 +15,8 @@ export default async function ResourcePlanningPage() {
 
   const firmId = session.user.firmId;
   const now = new Date();
-  const rangeStart = new Date(now); rangeStart.setDate(rangeStart.getDate() - 14);
-  const rangeEnd = new Date(now); rangeEnd.setDate(rangeEnd.getDate() + 365); // full year ahead so far-future allocations are fetched
+  // No date filter on allocations — fetch all for the firm so the full schedule
+  // is always visible regardless of how far ahead jobs are planned.
 
   // Run all queries in parallel
   const [staffRaw, jobsRaw, engagements, allocsRaw, unscheduledCount, completedUnscheduledCount, jobProfilesRaw, clientSettingsRaw] = await Promise.all([
@@ -38,7 +38,7 @@ export default async function ResourcePlanningPage() {
       select: { id: true, clientId: true, auditType: true },
     }),
     prisma.resourceAllocation.findMany({
-      where: { firmId, startDate: { lte: rangeEnd }, endDate: { gte: rangeStart } },
+      where: { firmId },
       include: { user: { select: { name: true } } },
       orderBy: { startDate: 'asc' },
     }),
