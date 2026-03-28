@@ -130,6 +130,8 @@ export async function POST(request: NextRequest) {
   const today = new Date().toISOString().split('T')[0];
   const prompt = buildOptimizerPrompt(jobsInScope, staff, allocations, constraintOrder, scope, today);
 
+  console.log(`[optimize] Calling AI. Jobs in scope: ${jobsInScope.length}, Staff: ${staff.length}, Prompt chars: ${prompt.length}`);
+
   let rawResult;
   try {
     rawResult = await runOptimizer(prompt);
@@ -137,6 +139,9 @@ export async function POST(request: NextRequest) {
     console.error('[optimize] AI call failed:', err);
     return Response.json({ error: `AI optimiser error: ${err?.message ?? 'Unknown error'}` }, { status: 502 });
   }
+
+  console.log(`[optimize] AI responded. Model: ${rawResult.model}, tokens: ${rawResult.promptTokens}+${rawResult.completionTokens}, raw length: ${rawResult.json.length}`);
+  console.log('[optimize] Raw response (first 1000):\n', rawResult.json.slice(0, 1000));
 
   const result = parseOptimizerResponse(
     rawResult.json,

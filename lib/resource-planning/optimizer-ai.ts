@@ -282,8 +282,9 @@ export async function runOptimizer(prompt: string): Promise<OptimizerRawResult> 
       const resp = await client.chat.completions.create({
         model,
         messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
         temperature: 0.1,
-        max_tokens: 8192,
+        max_tokens: 16384,
       });
 
       const content = extractJson(resp.choices[0]?.message?.content ?? '{}');
@@ -324,11 +325,16 @@ export function parseOptimizerResponse(
   let parsed: any = {};
   try {
     parsed = JSON.parse(raw);
-  } catch {
-    console.error('[optimizer] Failed to parse AI response JSON:', raw.slice(0, 500));
+  } catch (parseErr) {
+    const snippet = raw.slice(0, 800);
+    console.error('[optimizer] Failed to parse AI response JSON. Raw (first 800 chars):\n', snippet);
     return {
       schedule: [],
-      violations: [{ constraintId: 'parse-error', priority: 0, description: 'AI returned invalid JSON — please retry.' }],
+      violations: [{
+        constraintId: 'parse-error',
+        priority: 0,
+        description: `AI returned invalid JSON — please retry. Raw snippet: ${snippet.slice(0, 200)}`,
+      }],
       unschedulable: [],
       reasoning: 'Failed to parse optimizer response.',
       changes: [],
