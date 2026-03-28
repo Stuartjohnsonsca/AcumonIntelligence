@@ -262,6 +262,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [steps, setSteps] = useState<StepState[]>([]);
   const [result, setResult] = useState<OptimizationResult | null>(null);
+  const [committedScope, setCommittedScope] = useState<'all' | 'unscheduled'>('unscheduled');
   const [error, setError] = useState<string | null>(null);
   const [showViolations, setShowViolations] = useState(false);
   const [acknowledgedViolations, setAcknowledgedViolations] = useState<Set<string>>(new Set());
@@ -292,6 +293,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
     setPhase('running');
     setError(null);
     setResult(null);
+    setCommittedScope(scope); // remember which scope was used so commit can guard deletes
 
     let bestResult: OptimizationResult | null = null;
     let bestScore = Infinity; // lower violations = better; tie-break on more creates
@@ -365,7 +367,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
       const res = await fetch('/api/resource-planning/optimize/commit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ changes: result.changes }),
+        body: JSON.stringify({ changes: result.changes, scope: committedScope }),
       });
       const data = await res.json();
       if (!res.ok) {

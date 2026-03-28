@@ -23,7 +23,7 @@ async function handleCommit(request: NextRequest) {
 
   const firmId = session.user.firmId;
 
-  let body: { changes?: AllocationChange[] } = {};
+  let body: { changes?: AllocationChange[]; scope?: 'all' | 'unscheduled' } = {};
   try { body = await request.json(); } catch { /* default */ }
 
   const changes = body.changes ?? [];
@@ -31,7 +31,11 @@ async function handleCommit(request: NextRequest) {
     return Response.json({ committed: 0 });
   }
 
-  const toDelete = changes.filter((c) => c.action === 'delete' && c.existingId).map((c) => c.existingId!);
+  // scope determines whether we replace existing allocations for these jobs.
+  // 'unscheduled' → jobs had no prior schedule; never delete existing allocations.
+  // 'all'         → full reschedule; replace previous allocations for the same jobs.
+  const scope = body.scope ?? 'unscheduled';
+
   const toCreate = changes.filter((c) => c.action === 'create');
 
   // Collect job IDs that gain new allocations (for status update)
@@ -89,10 +93,18 @@ async function handleCommit(request: NextRequest) {
     return { firmId, engagementId, userId: c.userId, role: c.role, startDate: start, endDate: end, hoursPerDay: c.hoursPerDay, totalHours, notes: 'Scheduled by Resource Optimiser' };
   });
 
-  // Single transaction: 1 deleteMany + 1 createMany + 1 updateMany — no per-row round-trips
+  // For 'all' scope: replace existing allocations for these jobs (full reschedule).
+  // For 'unscheduled' scope: jobs had no prior schedule — never delete existing allocations.
+  const engagementIdsToReplace = scope === 'all'
+    ? [...new Set(rowsToCreate.map((r) => r.engagementId))]
+    : [];
+
+  // Single transaction: at most 3 DB operations — no per-row round-trips
   await prisma.$transaction([
-    ...(toDelete.length > 0
-      ? [prisma.resourceAllocation.deleteMany({ where: { id: { in: toDelete }, firmId } })]
+    ...(engagementIdsToReplace.length > 0
+      ? [prisma.resourceAllocation.deleteMany({
+          where: { engagementId: { in: engagementIdsToReplace }, firmId },
+        })]
       : []),
     ...(rowsToCreate.length > 0
       ? [prisma.resourceAllocation.createMany({ data: rowsToCreate })]
