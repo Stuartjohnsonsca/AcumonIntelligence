@@ -251,8 +251,8 @@ export async function processDocument(
 
 import { type DocumentReviewResult, type ReviewFinding } from '@/lib/assurance-review-ai';
 
-const PRIMARY_MODEL = 'Qwen/Qwen3.5-397B-A17B';
-const FALLBACK_MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
+const PRIMARY_MODEL = 'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo';
+const FALLBACK_MODEL = 'Qwen/Qwen2.5-72B-Instruct-Turbo';
 
 /**
  * Review a document that may have multiple chunks.

@@ -27,8 +27,8 @@ function getClient(): OpenAI {
   return _client;
 }
 
-const PRIMARY_MODEL = 'Qwen/Qwen3.5-397B-A17B';
-const FALLBACK_MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
+const PRIMARY_MODEL = 'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo';
+const FALLBACK_MODEL = 'Qwen/Qwen2.5-72B-Instruct-Turbo';
 
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 2000;
@@ -242,6 +242,28 @@ Respond with a single JSON object ONLY (no markdown, no explanation outside the 
 }`;
 }
 
+// ─── JSON extraction ─────────────────────────────────────────────────────────
+// Handles:
+//  • Markdown fences  ```json ... ``` or ``` ... ```
+//  • Thinking model output  <think>...</think> prefix
+//  • Leading/trailing whitespace and prose before/after the JSON object
+
+function extractJson(raw: string): string {
+  // Strip <think>...</think> blocks (Qwen, DeepSeek reasoning models)
+  let s = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // Strip markdown code fences
+  const fenceMatch = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch) return fenceMatch[1].trim();
+
+  // If there's no fence, find the first { and last } to extract the JSON object
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) return s.slice(start, end + 1);
+
+  return s;
+}
+
 // ─── AI Call ─────────────────────────────────────────────────────────────────
 
 export interface OptimizerRawResult {
@@ -260,12 +282,11 @@ export async function runOptimizer(prompt: string): Promise<OptimizerRawResult> 
       const resp = await client.chat.completions.create({
         model,
         messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
         temperature: 0.1,
         max_tokens: 8192,
       });
 
-      const content = resp.choices[0]?.message?.content ?? '{}';
+      const content = extractJson(resp.choices[0]?.message?.content ?? '{}');
       return {
         json: content,
         model,

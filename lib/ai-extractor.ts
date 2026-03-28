@@ -31,9 +31,9 @@ interface ModelProfile {
 const MODEL_REGISTRY: ModelProfile[] = [
   { id: 'google/gemma-3n-E4B-it',                                speed: 5, accuracy: 2, depth: 1, cost: 5, vision: true },
   { id: 'Qwen/Qwen3-VL-8B-Instruct',                            speed: 4, accuracy: 3, depth: 2, cost: 4, vision: true },
-  { id: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',     speed: 3, accuracy: 4, depth: 3, cost: 3, vision: true },
+  { id: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo',     speed: 3, accuracy: 4, depth: 3, cost: 3, vision: true },
   { id: 'moonshotai/Kimi-K2.5',                                  speed: 2, accuracy: 4, depth: 4, cost: 2, vision: true },
-  { id: 'Qwen/Qwen3.5-397B-A17B',                                speed: 1, accuracy: 5, depth: 5, cost: 1, vision: true },
+  { id: 'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo',                                speed: 1, accuracy: 5, depth: 5, cost: 1, vision: true },
 ];
 
 // Per-operation default priorities (1=highest, 4=lowest)
@@ -91,7 +91,7 @@ function isModelUnavailableError(err: unknown): boolean {
 }
 
 // Legacy export for backward compatibility
-export const AI_MODEL = process.env.AI_MODEL || 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
+export const AI_MODEL = process.env.AI_MODEL || 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo';
 
 function isTransientError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -244,9 +244,9 @@ export interface AiTokenUsage {
 }
 
 const AI_PRICING: Record<string, { inputPerToken: number; outputPerToken: number }> = {
-  'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8': { inputPerToken: 0.27 / 1_000_000, outputPerToken: 0.85 / 1_000_000 },
+  'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo': { inputPerToken: 0.27 / 1_000_000, outputPerToken: 0.85 / 1_000_000 },
   'Qwen/Qwen3-VL-8B-Instruct': { inputPerToken: 0.18 / 1_000_000, outputPerToken: 0.68 / 1_000_000 },
-  'Qwen/Qwen3.5-397B-A17B': { inputPerToken: 0.60 / 1_000_000, outputPerToken: 3.60 / 1_000_000 },
+  'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo': { inputPerToken: 0.60 / 1_000_000, outputPerToken: 3.60 / 1_000_000 },
   'moonshotai/Kimi-K2.5': { inputPerToken: 0.50 / 1_000_000, outputPerToken: 2.80 / 1_000_000 },
   'google/gemma-3n-E4B-it': { inputPerToken: 0.02 / 1_000_000, outputPerToken: 0.04 / 1_000_000 },
 };
@@ -660,11 +660,11 @@ async function extractFromScannedPdf(pdfBuffer: Buffer, fileName: string): Promi
       { type: 'text', text: visionPrompt },
     ];
 
-    // Llama-4-Maverick is the only Together AI model proven to handle PDF input
+    // Llama-3.2-90B-Vision-Instruct-Turbo handles vision/PDF input
     // Put it first, then fall back to other vision models
     const PDF_VISION_MODELS = [
-      'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-      ...selectModels(EXTRACTION_PRIORITIES, true).filter(m => m !== 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8'),
+      'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo',
+      ...selectModels(EXTRACTION_PRIORITIES, true).filter(m => m !== 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo'),
     ];
     let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
 
