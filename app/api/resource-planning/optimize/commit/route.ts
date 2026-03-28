@@ -73,15 +73,28 @@ export async function POST(request: NextRequest) {
     // Create new allocations using the correct engagementId for the grid
     for (const c of toCreate) {
       const engagementId = jobEngagementIdMap.get(c.jobId) ?? c.jobId;
+      const start = new Date(c.startDate);
+      const end = new Date(c.endDate);
+      // Count working days Mon–Fri to compute totalHours
+      let workingDays = 0;
+      const cursor = new Date(start);
+      while (cursor <= end) {
+        const dow = cursor.getDay();
+        if (dow !== 0 && dow !== 6) workingDays++;
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      const totalHours = Math.round(c.hoursPerDay * workingDays * 100) / 100;
       await tx.resourceAllocation.create({
         data: {
           firmId,
           engagementId,
           userId: c.userId,
           role: c.role,
-          startDate: new Date(c.startDate),
-          endDate: new Date(c.endDate),
+          startDate: start,
+          endDate: end,
           hoursPerDay: c.hoursPerDay,
+          totalHours,
+          notes: 'Scheduled by Resource Optimiser',
         },
       });
       committed++;
