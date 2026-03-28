@@ -318,10 +318,11 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
               )
             );
 
+            // skipSummary=true for all passes — AI summary only on final best
             const res = await fetch('/api/resource-planning/optimize', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ scope, techniques: stepDefs[i].options }),
+              body: JSON.stringify({ scope, techniques: stepDefs[i].options, skipSummary: true }),
             });
 
             if (!res.ok) {
@@ -340,6 +341,20 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
             }
           }
 
+          // One final call with the best options to get the AI summary
+          if (bestData) {
+            try {
+              const summaryRes = await fetch('/api/resource-planning/optimize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scope, techniques: stepDefs[i].options, skipSummary: false }),
+              });
+              if (summaryRes.ok) {
+                const summaryData = await summaryRes.json();
+                bestData = { ...bestData, reasoning: summaryData.reasoning ?? bestData.reasoning };
+              }
+            } catch { /* non-fatal — proceed without summary */ }
+          }
           stepResult = bestData;
         } else {
           // ── Single API call ───────────────────────────────────────────────

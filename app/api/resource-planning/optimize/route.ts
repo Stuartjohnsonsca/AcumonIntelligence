@@ -16,10 +16,11 @@ export async function POST(request: NextRequest) {
   }
 
   const firmId = session.user.firmId;
-  let body: { scope?: OptimizationScope; techniques?: Partial<SchedulerOptions> } = {};
+  let body: { scope?: OptimizationScope; techniques?: Partial<SchedulerOptions>; skipSummary?: boolean } = {};
   try { body = await request.json(); } catch { /* default */ }
 
   const scope: OptimizationScope = body.scope === 'unscheduled' ? 'unscheduled' : 'all';
+  const skipSummary: boolean = body.skipSummary === true;
 
   // Merge provided techniques with safe defaults
   const options: SchedulerOptions = {
@@ -155,25 +156,30 @@ export async function POST(request: NextRequest) {
 
   console.log(`[optimize] Scheduler complete. Scheduled: ${schedulerResult.schedule.length}, Unschedulable: ${schedulerResult.unschedulable.length}, Violations: ${schedulerResult.violations.length}, Score: ${schedulerResult.qualityScore}, Passes: ${schedulerResult.passesRun}`);
 
-  // ── AI summary (small call — max 300 tokens) ─────────────────────────────
+  // ── AI summary (skipped for multi-pass intermediate calls) ───────────────
   const violationsByPriority: Record<number, number> = {};
   for (const v of schedulerResult.violations) {
     violationsByPriority[v.priority] = (violationsByPriority[v.priority] ?? 0) + 1;
   }
 
   let reasoning = '';
-  try {
-    reasoning = await summarizeSchedule({
-      jobsScheduled: schedulerResult.schedule.length,
-      jobsUnschedulable: schedulerResult.unschedulable.length,
-      violationCount: schedulerResult.violations.length,
-      violationsByPriority,
-      passesRun: schedulerResult.passesRun,
-      qualityScore: schedulerResult.qualityScore,
-    });
-  } catch (err) {
-    console.warn('[optimize] AI summary failed (non-fatal):', err);
-    reasoning = `${schedulerResult.schedule.length} jobs scheduled with ${schedulerResult.violations.length} constraint violation${schedulerResult.violations.length !== 1 ? 's' : ''}.`;
+  if (skipSummary) {
+    // Multi-pass intermediate call — skip AI to avoid timeout; summary added on final pass
+    reasoning = '';
+  } else {
+    try {
+      reasoning = await summarizeSchedule({
+        jobsScheduled: schedulerResult.schedule.length,
+        jobsUnschedulable: schedulerResult.unschedulable.length,
+        violationCount: schedulerResult.violations.length,
+        violationsByPriority,
+        passesRun: schedulerResult.passesRun,
+        qualityScore: schedulerResult.qualityScore,
+      });
+    } catch (err) {
+      console.warn('[optimize] AI summary failed (non-fatal):', err);
+      reasoning = `${schedulerResult.schedule.length} jobs scheduled with ${schedulerResult.violations.length} constraint violation${schedulerResult.violations.length !== 1 ? 's' : ''}.`;
+    }
   }
 
   return Response.json({
