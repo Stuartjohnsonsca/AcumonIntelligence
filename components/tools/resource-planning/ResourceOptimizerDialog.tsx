@@ -162,9 +162,12 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
   const [isPending, startTransition] = useTransition();
 
   // Technique checkboxes — initialise from defaults
-  const [techniques, setTechniques] = useState<SchedulerOptions>(() =>
-    Object.fromEntries(TECHNIQUES.map((t) => [t.key, t.defaultChecked])) as SchedulerOptions
-  );
+  const [techniques, setTechniques] = useState<SchedulerOptions>({
+    constrainedFirst: TECHNIQUES.find((t) => t.key === 'constrainedFirst')?.defaultChecked ?? true,
+    lookAhead: TECHNIQUES.find((t) => t.key === 'lookAhead')?.defaultChecked ?? false,
+    localSearch: TECHNIQUES.find((t) => t.key === 'localSearch')?.defaultChecked ?? false,
+    multiPass: TECHNIQUES.find((t) => t.key === 'multiPass')?.defaultChecked ?? false,
+  });
 
   function toggleTechnique(key: keyof SchedulerOptions) {
     setTechniques((prev) => ({ ...prev, [key]: !prev[key] }));
