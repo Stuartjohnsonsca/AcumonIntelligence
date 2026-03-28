@@ -1084,17 +1084,28 @@ export function runScheduler(
   let orderedJobs = [...jobs];
 
   if (options.constrainedFirst) {
-    // Sort by tightest slack first: slack = working days to deadline - min days needed
+    // MRV heuristic: schedule jobs with fewest eligible staff options first.
+    // Jobs that only one or two people can fill (e.g. scarce RIs) must be placed
+    // before those scarce staff get consumed by easier-to-fill jobs.
+    // Tiebreak by earliest deadline so equally-constrained jobs stay in deadline order.
+    const eligibleCount = (job: ResourceJobView): number => {
+      const rolePairs: [ResourceRole, number][] = [
+        ['RI', job.budgetHoursRI],
+        ['Specialist', job.budgetHoursSpecialist],
+        ['Reviewer', job.budgetHoursReviewer],
+        ['Preparer', job.budgetHoursPreparer],
+      ];
+      let total = 0;
+      for (const [role, hours] of rolePairs) {
+        if (hours <= 0) continue;
+        total += staff.filter((s) => s.isActive && s.resourceSetting && isEligible(s, role, [])).length;
+      }
+      return total;
+    };
     orderedJobs.sort((a, b) => {
-      const deadlineA = getJobDeadline(a);
-      const deadlineB = getJobDeadline(b);
-      const daysToA = workingDaysBetween(todayDate, deadlineA);
-      const daysToB = workingDaysBetween(todayDate, deadlineB);
-      const minDaysA = minimumDaysToScheduleJob(a, staff);
-      const minDaysB = minimumDaysToScheduleJob(b, staff);
-      const slackA = daysToA - minDaysA;
-      const slackB = daysToB - minDaysB;
-      return slackA - slackB; // Tightest slack first
+      const diff = eligibleCount(a) - eligibleCount(b); // fewest options first
+      if (diff !== 0) return diff;
+      return getJobDeadline(a).getTime() - getJobDeadline(b).getTime();
     });
   } else {
     // Default: sort by earliest deadline
