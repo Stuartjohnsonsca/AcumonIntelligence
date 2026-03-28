@@ -39,16 +39,25 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
 
   useEffect(() => {
     if (job) {
+      // Determine which profile to use: explicit jobProfileId > serviceType match > none
+      let profileId = job.jobProfileId ?? '';
+      if (!profileId && job.serviceType) {
+        const match = jobProfiles.find(
+          (p) => p.name.toLowerCase() === job.serviceType!.toLowerCase()
+        );
+        if (match) profileId = match.id;
+      }
+      const profile = jobProfiles.find((p) => p.id === profileId);
+      setSelectedProfileId(profileId);
       setHours({
-        specialist: job.budgetHoursSpecialist,
-        ri: job.budgetHoursRI,
-        reviewer: job.budgetHoursReviewer,
-        preparer: job.budgetHoursPreparer,
+        specialist: profile?.budgetHoursSpecialist ?? job.budgetHoursSpecialist,
+        ri: profile?.budgetHoursRI ?? job.budgetHoursRI,
+        reviewer: profile?.budgetHoursReviewer ?? job.budgetHoursReviewer,
+        preparer: profile?.budgetHoursPreparer ?? job.budgetHoursPreparer,
       });
       setStartDate(new Date().toISOString().split('T')[0]);
-      setSelectedProfileId(job.jobProfileId ?? '');
     }
-  }, [currentIdx, job?.id]);
+  }, [currentIdx, job?.id, jobProfiles]);
 
   if (unscheduled.length === 0) {
     return (

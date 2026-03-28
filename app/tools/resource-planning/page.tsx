@@ -19,7 +19,7 @@ export default async function ResourcePlanningPage() {
   const rangeEnd = new Date(now); rangeEnd.setDate(rangeEnd.getDate() + 84);
 
   // Run all queries in parallel
-  const [staffRaw, jobsRaw, engagements, allocsRaw, unscheduledCount, completedUnscheduledCount] = await Promise.all([
+  const [staffRaw, jobsRaw, engagements, allocsRaw, unscheduledCount, completedUnscheduledCount, jobProfilesRaw, clientSettingsRaw] = await Promise.all([
     prisma.user.findMany({
       where: { firmId, isActive: true, resourceStaffSetting: { isNot: null } },
       select: {
@@ -44,12 +44,32 @@ export default async function ResourcePlanningPage() {
     }),
     prisma.resourceJob.count({ where: { firmId, schedulingStatus: 'unscheduled' } }).catch(() => 0),
     prisma.resourceJob.count({ where: { firmId, schedulingStatus: 'completed' } }).catch(() => 0),
+    prisma.resourceJobProfile.findMany({ where: { firmId }, orderBy: { name: 'asc' } }),
+    prisma.resourceClientSetting.findMany({ where: { firmId }, select: { clientId: true, serviceType: true } }).catch(() => []),
   ]);
 
   const engagementMap = new Map<string, string>();
   for (const e of engagements) {
     engagementMap.set(`${e.clientId}:${e.auditType}`, e.id);
   }
+
+  // Map clientId → serviceType for auto-profile matching
+  const clientServiceTypeMap = new Map<string, string>();
+  for (const cs of (clientSettingsRaw as any[])) {
+    if (cs.serviceType) clientServiceTypeMap.set(cs.clientId, cs.serviceType);
+  }
+
+  const jobProfiles = (jobProfilesRaw as any[]).map((p) => ({
+    id: p.id,
+    firmId: p.firmId,
+    name: p.name,
+    budgetHoursSpecialist: p.budgetHoursSpecialist ?? 0,
+    budgetHoursRI: p.budgetHoursRI ?? 0,
+    budgetHoursReviewer: p.budgetHoursReviewer ?? 0,
+    budgetHoursPreparer: p.budgetHoursPreparer ?? 0,
+    budgetHoursSpecialistDetail: (p.budgetHoursSpecialistDetail as Record<string, number>) ?? {},
+    isDefault: p.isDefault ?? false,
+  }));
 
   const staff = staffRaw.map((s: any) => ({
     id: s.id,
@@ -85,6 +105,7 @@ export default async function ResourcePlanningPage() {
     budgetHoursRI: j.budgetHoursRI ?? 0,
     budgetHoursReviewer: j.budgetHoursReviewer ?? 0,
     budgetHoursPreparer: j.budgetHoursPreparer ?? 0,
+    serviceType: clientServiceTypeMap.get(j.clientId) ?? null,
     engagementId: engagementMap.get(`${j.clientId}:${j.auditType}`) ?? null,
     schedulingStatus: (j.schedulingStatus ?? 'unscheduled') as SchedulingStatus,
     isScheduleLocked: j.isScheduleLocked ?? false,
@@ -118,6 +139,7 @@ export default async function ResourcePlanningPage() {
         staff={staff}
         jobs={jobs}
         allocations={allocations}
+        jobProfiles={jobProfiles}
         isResourceAdmin={session.user.isResourceAdmin || session.user.isSuperAdmin}
         userId={session.user.id}
         unscheduledCount={unscheduledCount}

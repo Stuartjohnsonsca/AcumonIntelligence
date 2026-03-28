@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { DndContext, pointerWithin, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
-import type { StaffMember, ResourceJobView, Allocation, StaffAbsence, ResourceRole } from '@/lib/resource-planning/types';
+import type { StaffMember, ResourceJobView, Allocation, StaffAbsence, ResourceRole, ResourceJobProfile } from '@/lib/resource-planning/types';
 import { ROLE_COLORS } from '@/lib/resource-planning/types';
 import { ResourceToolbar } from './ResourceToolbar';
 import { StaffPanel } from './StaffPanel';
@@ -13,6 +13,7 @@ interface Props {
   staff: StaffMember[];
   jobs: ResourceJobView[];
   allocations: Allocation[];
+  jobProfiles?: ResourceJobProfile[];
   isResourceAdmin: boolean;
   userId: string;
   unscheduledCount?: number;
@@ -29,7 +30,7 @@ const DUMMY_ABSENCES: StaffAbsence[] = [
   { id: 'abs-4', userId: '', startDate: '2026-05-25', endDate: '2026-05-25', type: 'bank_holiday', approved: true },
 ];
 
-export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdmin, userId, unscheduledCount = 0, completedUnscheduledCount = 0 }: Props) {
+export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles = [], isResourceAdmin, userId, unscheduledCount = 0, completedUnscheduledCount = 0 }: Props) {
   const init = useResourcePlanningStore((s) => s.init);
   const isInitialized = useResourcePlanningStore((s) => s.isInitialized);
   const addAllocation = useResourcePlanningStore((s) => s.addAllocation);
@@ -67,6 +68,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, isResourceAdm
           jobs,
           allocations,
           absences,
+          jobProfiles,
           unscheduledJobCount: unscheduledCount,
           completedJobCount: completedUnscheduledCount,
           currentUserId: userId,
