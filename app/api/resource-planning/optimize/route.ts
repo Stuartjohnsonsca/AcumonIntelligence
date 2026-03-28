@@ -173,15 +173,21 @@ export async function POST(request: NextRequest) {
 
   console.log(`[optimize] Running deterministic scheduler. Jobs in scope: ${jobsInScope.length}, Staff: ${staff.length}, Options: ${JSON.stringify(options)}`);
 
-  const schedulerResult = runScheduler(
-    jobsInScope,
-    staff,
-    allocations,
-    constraintOrder,
-    scope,
-    options,
-    today,
-  );
+  let schedulerResult: ReturnType<typeof runScheduler>;
+  try {
+    schedulerResult = runScheduler(
+      jobsInScope,
+      staff,
+      allocations,
+      constraintOrder,
+      scope,
+      options,
+      today,
+    );
+  } catch (err: any) {
+    console.error('[optimize] Scheduler crashed:', err);
+    return Response.json({ error: `Scheduler error: ${err?.message ?? 'unknown'}` }, { status: 500 });
+  }
 
   console.log(`[optimize] Scheduler complete. Scheduled: ${schedulerResult.schedule.length}, Unschedulable: ${schedulerResult.unschedulable.length}, Violations: ${schedulerResult.violations.length}, Score: ${schedulerResult.qualityScore}, Passes: ${schedulerResult.passesRun}`);
 

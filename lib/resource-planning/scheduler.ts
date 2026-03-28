@@ -331,7 +331,8 @@ function computeWindow(
   weeklyCapacityHrs: number,
   targetDate: Date,
 ): PlacementWindow {
-  const targetHoursPerDay = Math.min(7.5, weeklyCapacityHrs / 5);
+  const safeCap = weeklyCapacityHrs > 0 ? weeklyCapacityHrs : 37.5; // fallback: standard full-time
+  const targetHoursPerDay = Math.min(7.5, safeCap / 5);
   let daysNeeded = Math.round(budgetHours / targetHoursPerDay);
   if (daysNeeded < 1) daysNeeded = 1;
 
@@ -428,8 +429,9 @@ function scoreCandidate(
   const count = getJobCount(ctx.jobCountMap, candidate.id, role);
   let score = limit > 0 ? count / limit : 1;
 
-  if (ctx.options.constrainedFirst && ctx.capacityMap && ctx.currentJobDeadline && ctx.currentBudgetHours && ctx.currentBudgetHours > 0) {
-    // Compute the window this candidate would occupy for this job
+  if (ctx.options.constrainedFirst && ctx.capacityMap && ctx.currentJobDeadline && ctx.currentBudgetHours && ctx.currentBudgetHours > 0 && rs.weeklyCapacityHrs > 0) {
+    // Compute the window this candidate would occupy for this job.
+    // Guard: weeklyCapacityHrs must be > 0 to avoid divide-by-zero in computeWindow.
     const win = computeWindow(ctx.currentBudgetHours, rs.weeklyCapacityHrs, ctx.currentJobDeadline);
     const days = workingDaysInRange(parseDate(win.startDate), parseDate(win.endDate));
     if (days.length > 0) {
