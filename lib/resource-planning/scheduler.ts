@@ -1135,10 +1135,10 @@ export function runScheduler(
 
   // ── Build final result ──────────────────────────────────────────────────────
   const staffNameMap = new Map(staff.map((s) => [s.id, s.name]));
-  const allPlacements = bestJobResults.flatMap((jr) => jr.placements);
+  const finalPlacements = bestJobResults.flatMap((jr) => jr.placements);
 
   const violations = detectViolations(
-    allPlacements,
+    finalPlacements,
     jobs.filter((j) => inScopeSet.has(j.id)),
     staff,
     order,
