@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Users, Building2, FileText, ArrowLeft, Wand2 } from 'lucide-react';
+import { Users, Building2, FileText, ArrowLeft, Wand2, Database } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { ResourceUserManagement } from './ResourceUserManagement';
 import { ResourceClientSettings } from './ResourceClientSettings';
 import { ResourceStaffSetup } from './ResourceStaffSetup';
 import { ResourceJobProfiles } from './ResourceJobProfiles';
+import { ResourceSeedData } from './ResourceSeedData';
 import type { ResourceJobProfile } from '@/lib/resource-planning/types';
 
 interface StaffData {
@@ -93,6 +94,10 @@ export function ResourceManagementClient({ staff, clients, profiles: initialProf
             <FileText className="h-4 w-4" />
             Job Resource Profiles
           </TabsTrigger>
+          <TabsTrigger value="seed-data" className="flex items-center gap-1.5">
+            <Database className="h-4 w-4" />
+            Seed Data
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="staff-setup">
@@ -127,6 +132,10 @@ export function ResourceManagementClient({ staff, clients, profiles: initialProf
 
         <TabsContent value="profiles">
           <ResourceJobProfiles profiles={profiles} onProfilesChange={setProfiles} firmId={firmId} specialistRoles={specialistRoles} />
+        </TabsContent>
+
+        <TabsContent value="seed-data">
+          <ResourceSeedData />
         </TabsContent>
       </Tabs>
     </div>
