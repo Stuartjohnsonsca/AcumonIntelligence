@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   Sparkles, X, Loader2, CheckCircle2, AlertTriangle, XCircle,
-  ChevronDown, ChevronUp, Zap, ListTodo, Circle,
+  ChevronDown, ChevronUp, Zap, ListTodo, Circle, ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useRouter } from 'next/navigation';
@@ -263,6 +263,8 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
   const [steps, setSteps] = useState<StepState[]>([]);
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showViolations, setShowViolations] = useState(false);
+  const [acknowledgedViolations, setAcknowledgedViolations] = useState<Set<string>>(new Set());
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -291,7 +293,8 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
     setError(null);
     setResult(null);
 
-    let lastResult: OptimizationResult | null = null;
+    let bestResult: OptimizationResult | null = null;
+    let bestScore = Infinity; // lower violations = better; tie-break on more creates
     let previousViolations: number | null = null;
 
     for (let i = 0; i < stepDefs.length; i++) {
@@ -333,7 +336,13 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
         );
 
         previousViolations = violations;
-        lastResult = stepResult;
+        // Track best result: fewest violations wins; tie-break by most creates
+        const creates = stepResult?.changes?.filter((c) => c.action === 'create').length ?? 0;
+        const stepScore = violations * 10000 - creates; // lower is better
+        if (stepResult && stepScore < bestScore) {
+          bestScore = stepScore;
+          bestResult = stepResult;
+        }
       } catch {
         setSteps((prev) =>
           prev.map((s, idx) => idx === i ? { ...s, status: 'error' } : s)
@@ -344,7 +353,8 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
       }
     }
 
-    setResult(lastResult);
+    setResult(bestResult);
+    setAcknowledgedViolations(new Set());
     setPhase('results');
   }
 
@@ -378,7 +388,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
@@ -518,6 +528,20 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
                 )}
               </div>
 
+              {/* View violations button */}
+              {result.violations.length > 0 && (
+                <button
+                  onClick={() => setShowViolations(true)}
+                  className="flex items-center gap-1.5 text-xs text-amber-700 hover:text-amber-900 underline underline-offset-2"
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  Review {result.violations.length} violation{result.violations.length !== 1 ? 's' : ''}
+                  {acknowledgedViolations.size > 0 && (
+                    <span className="ml-1 text-green-600">({acknowledgedViolations.size} acknowledged)</span>
+                  )}
+                </button>
+              )}
+
               {/* AI Reasoning */}
               {result.reasoning && (
                 <div className="text-[11px] text-slate-500 bg-violet-50 border border-violet-100 rounded px-3 py-2 leading-relaxed">
@@ -527,8 +551,15 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
 
               {/* Job diff cards */}
               {jobIds.length === 0 ? (
-                <div className="text-sm text-slate-500 text-center py-6">
-                  No changes proposed — the schedule is already optimal.
+                <div className="space-y-2 py-4 text-center">
+                  <p className="text-sm text-slate-500">No allocation changes proposed.</p>
+                  {result.schedule.length > 0 && (
+                    <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                      The optimiser ran but found no hours to schedule. Check that jobs have budget
+                      hours set — either directly on each job in the Unscheduled Jobs panel, or via
+                      a Job Profile matched to the client&apos;s Service Type.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -575,6 +606,70 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
         </div>
 
         {/* Footer */}
+        {/* ── Violations popup ── */}
+        {showViolations && result && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30 rounded-xl">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col mx-4">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                  <h3 className="text-sm font-semibold text-slate-800">
+                    Constraint Violations ({result.violations.length})
+                  </h3>
+                </div>
+                <button onClick={() => setShowViolations(false)} className="p-1 rounded hover:bg-slate-100">
+                  <X className="h-4 w-4 text-slate-400" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+                {result.violations.map((v, i) => {
+                  const key = `${v.constraintId}-${v.jobId ?? ''}-${v.userId ?? ''}-${i}`;
+                  const acked = acknowledgedViolations.has(key);
+                  return (
+                    <div
+                      key={key}
+                      onClick={() => setAcknowledgedViolations((prev) => {
+                        const next = new Set(prev);
+                        if (acked) next.delete(key); else next.add(key);
+                        return next;
+                      })}
+                      className={`flex items-start gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                        acked
+                          ? 'bg-green-50 border-green-200 opacity-60'
+                          : 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+                      }`}
+                    >
+                      <div className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center ${
+                        acked ? 'bg-green-500 border-green-500' : 'border-amber-400 bg-white'
+                      }`}>
+                        {acked && <CheckCircle2 className="h-3 w-3 text-white" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                            P{v.priority}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">{v.constraintId}</span>
+                          {acked && <span className="text-[10px] text-green-600 font-medium">✓ Acknowledged</span>}
+                        </div>
+                        <p className="text-xs text-slate-700 mt-0.5">{v.description}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="px-4 py-3 border-t border-slate-200 flex items-center justify-between">
+                <span className="text-[11px] text-slate-400">
+                  {acknowledgedViolations.size} of {result.violations.length} acknowledged
+                </span>
+                <Button size="sm" variant="outline" className="text-xs" onClick={() => setShowViolations(false)}>
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {phase === 'results' && (
           <div className="flex items-center justify-between px-5 py-3.5 border-t border-slate-200 bg-slate-50">
             <Button variant="ghost" size="sm" onClick={onClose} className="text-xs">

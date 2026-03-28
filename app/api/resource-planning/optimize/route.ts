@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   };
 
   // ── Fetch data ───────────────────────────────────────────────────────────
-  const [staffRaw, jobsRaw, allocsRaw, settingsRaw] = await Promise.all([
+  const [staffRaw, jobsRaw, allocsRaw, settingsRaw, profilesRaw, clientSettingsRaw] = await Promise.all([
     prisma.user.findMany({
       where: { firmId, isActive: true },
       include: { resourceStaffSetting: true },
@@ -48,6 +48,8 @@ export async function POST(request: NextRequest) {
       include: { user: { select: { name: true } } },
     }),
     prisma.resourceOptimizerSettings.findUnique({ where: { firmId } }),
+    prisma.resourceJobProfile.findMany({ where: { firmId } }),
+    prisma.resourceClientSetting.findMany({ where: { firmId }, select: { clientId: true, serviceType: true } }),
   ]);
 
   // Map staff
@@ -74,19 +76,45 @@ export async function POST(request: NextRequest) {
       : null,
   }));
 
+  // Build lookup maps for profile fallback
+  const profileById = new Map(profilesRaw.map((p) => [p.id, p]));
+  const profileByName = new Map(profilesRaw.map((p) => [p.name.toLowerCase(), p]));
+  const serviceTypeByClient = new Map(clientSettingsRaw.map((cs) => [cs.clientId, cs.serviceType]));
+
+  // Resolve budget hours: job record → job profile → client service type profile → 0
+  function resolveBudgetHours(j: typeof jobsRaw[0]) {
+    const hasHours = j.budgetHoursRI > 0 || j.budgetHoursReviewer > 0 ||
+                     j.budgetHoursPreparer > 0 || j.budgetHoursSpecialist > 0;
+    if (hasHours) return {
+      budgetHoursSpecialist: j.budgetHoursSpecialist,
+      budgetHoursRI: j.budgetHoursRI,
+      budgetHoursReviewer: j.budgetHoursReviewer,
+      budgetHoursPreparer: j.budgetHoursPreparer,
+    };
+    // Fall back to job profile (by profileId, then by client service type name)
+    let profile = j.jobProfileId ? (profileById.get(j.jobProfileId) ?? null) : null;
+    if (!profile) {
+      const st = serviceTypeByClient.get(j.clientId);
+      profile = st ? (profileByName.get(st.toLowerCase()) ?? null) : null;
+    }
+    return {
+      budgetHoursSpecialist: profile?.budgetHoursSpecialist ?? 0,
+      budgetHoursRI: profile?.budgetHoursRI ?? 0,
+      budgetHoursReviewer: profile?.budgetHoursReviewer ?? 0,
+      budgetHoursPreparer: profile?.budgetHoursPreparer ?? 0,
+    };
+  }
+
   // Map jobs
   const jobs: ResourceJobView[] = jobsRaw.map((j) => ({
     id: j.id,
     clientId: j.clientId,
     clientName: j.client.clientName,
     auditType: j.auditType,
-    serviceType: null,
+    serviceType: serviceTypeByClient.get(j.clientId) ?? null,
     periodEnd: j.periodEnd.toISOString(),
     targetCompletion: j.targetCompletion.toISOString(),
-    budgetHoursSpecialist: j.budgetHoursSpecialist,
-    budgetHoursRI: j.budgetHoursRI,
-    budgetHoursReviewer: j.budgetHoursReviewer,
-    budgetHoursPreparer: j.budgetHoursPreparer,
+    ...resolveBudgetHours(j),
     engagementId: j.id,
     schedulingStatus: j.schedulingStatus as any,
     isScheduleLocked: j.isScheduleLocked,
