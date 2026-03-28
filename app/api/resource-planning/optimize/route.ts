@@ -7,6 +7,15 @@ import { DEFAULT_CONSTRAINT_ORDER } from '@/lib/resource-planning/optimizer-cons
 import type { StaffMember, ResourceJobView, Allocation, OptimizationScope } from '@/lib/resource-planning/types';
 
 export async function POST(request: NextRequest) {
+  try {
+    return await handleOptimize(request);
+  } catch (err: any) {
+    console.error('[optimize] Unhandled error:', err);
+    return Response.json({ error: `Optimiser error: ${err?.message ?? 'unknown error'}` }, { status: 500 });
+  }
+}
+
+async function handleOptimize(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
