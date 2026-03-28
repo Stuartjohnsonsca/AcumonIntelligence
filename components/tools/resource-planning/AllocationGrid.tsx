@@ -224,6 +224,20 @@ const JobRow = memo(function JobRow({
               </button>
             )}
           </div>
+          {/* Timesheet actuals */}
+          {(() => {
+            const totalBudget = (job.budgetHoursRI ?? 0) + (job.budgetHoursReviewer ?? 0) +
+                                (job.budgetHoursPreparer ?? 0) + (job.budgetHoursSpecialist ?? 0);
+            const actual = job.timesheetHours ?? 0;
+            if (totalBudget <= 0 && actual <= 0) return null;
+            const pct = totalBudget > 0 ? Math.round((actual / totalBudget) * 100) : null;
+            const over = pct !== null && pct > 100;
+            return (
+              <div className={`text-[10px] font-mono mt-0.5 ${over ? 'text-red-600' : 'text-slate-500'}`}>
+                {actual}h / {totalBudget}h{pct !== null ? ` (${pct}%)` : ''}
+              </div>
+            );
+          })()}
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-[9px] px-1 py-0 bg-slate-100 rounded text-slate-600">{job.auditType}</span>
             <span className="text-[9px] text-slate-400">PE: {formatShortDate(new Date(job.periodEnd))}</span>

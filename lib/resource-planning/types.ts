@@ -71,6 +71,7 @@ export interface ResourceJobView {
   actualHoursReviewer: number;
   actualHoursPreparer: number;
   previousJobId: string | null;
+  timesheetHours: number;
 }
 
 export interface Allocation {

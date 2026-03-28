@@ -103,6 +103,11 @@ async function getToken(firmId: string): Promise<{ token: string; baseUrl: strin
   return { token: data.access_token, baseUrl: config.baseUrl };
 }
 
+/** Public wrapper so individual API routes can make raw CRM calls. */
+export async function crmGetRaw<T>(firmId: string, path: string): Promise<T> {
+  return crmGet<T>(firmId, path);
+}
+
 async function crmGet<T>(firmId: string, path: string): Promise<T> {
   const { token, baseUrl } = await getToken(firmId);
   const url = `${baseUrl}/api/data/v9.2/${path}`;
@@ -207,6 +212,7 @@ export interface CRMJobRaw {
   year: number | null;
   firstCustomDeadline: string | null;
   firstStatutoryDeadline: string | null;
+  totalUnits: number | null;
 }
 
 /**
@@ -216,7 +222,7 @@ export interface CRMJobRaw {
 export async function fetchFilteredAccountsWithJobs(firmId: string): Promise<{ clients: CRMOrganisation[]; jobs: CRMJobRaw[] }> {
   const config = await getFirmCrmConfig(firmId);
 
-  const jobSelect = 'jca_jobid,jca_customername,jca_clientguid,jca_name,jca_jobtyperef,jca_startdate,jca_completiondate,jca_budget,jca_year,jca_firstcustomdeadline,jca_firststatutorydeadline';
+  const jobSelect = 'jca_jobid,jca_customername,jca_clientguid,jca_name,jca_jobtyperef,jca_startdate,jca_completiondate,jca_budget,jca_year,jca_firstcustomdeadline,jca_firststatutorydeadline,jca_totalunits';
   let jobPath = `jca_jobs?$select=${jobSelect}&$top=5000`;
   if (config.clientFilter) {
     jobPath += `&$filter=${encodeURIComponent(config.clientFilter)}`;
@@ -237,6 +243,7 @@ export async function fetchFilteredAccountsWithJobs(firmId: string): Promise<{ c
     year: j.jca_year || null,
     firstCustomDeadline: j.jca_firstcustomdeadline || null,
     firstStatutoryDeadline: j.jca_firststatutorydeadline || null,
+    totalUnits: typeof j.jca_totalunits === 'number' ? j.jca_totalunits : null,
   })).filter(j => j.clientName);
 
   // Extract unique clients

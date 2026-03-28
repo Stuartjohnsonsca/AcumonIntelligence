@@ -127,6 +127,7 @@ export async function POST(request: NextRequest) {
     actualHoursReviewer: j.actualHoursReviewer,
     actualHoursPreparer: j.actualHoursPreparer,
     previousJobId: j.previousJobId,
+    timesheetHours: (j as any).timesheetHours ?? 0,
   }));
 
   // Filter out locked jobs — they are context but won't be re-scheduled

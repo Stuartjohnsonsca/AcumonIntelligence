@@ -216,6 +216,7 @@ export async function POST(req: Request) {
             schedulingStatus: 'unscheduled',
             customDeadline: job.firstCustomDeadline ? new Date(job.firstCustomDeadline) : null,
             complianceDeadline: job.firstStatutoryDeadline ? new Date(job.firstStatutoryDeadline) : null,
+            timesheetHours: (job.totalUnits || 0) * 10,
           },
         });
         jobsCreated++;
@@ -225,7 +226,21 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, results: { ...results, jobsCreated } });
+    // Update timesheet hours on existing jobs
+    let jobsUpdated = 0;
+    for (const job of cachedJobs) {
+      if (!job.jobId || !existingCrmJobIds.has(job.jobId)) continue;
+      if (job.totalUnits === null) continue;
+      try {
+        await prisma.resourceJob.updateMany({
+          where: { firmId, crmJobId: job.jobId },
+          data: { timesheetHours: job.totalUnits * 10 },
+        });
+        jobsUpdated++;
+      } catch { /* ignore */ }
+    }
+
+    return NextResponse.json({ success: true, results: { ...results, jobsCreated, jobsUpdated } });
   } catch (err: any) {
     console.error('CRM sync error:', err);
     return NextResponse.json({ error: err.message || 'Sync failed' }, { status: 500 });

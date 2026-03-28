@@ -118,6 +118,7 @@ export default async function ResourcePlanningPage() {
     actualHoursReviewer: j.actualHoursReviewer ?? 0,
     actualHoursPreparer: j.actualHoursPreparer ?? 0,
     previousJobId: j.previousJobId ?? null,
+    timesheetHours: j.timesheetHours ?? 0,
   }));
 
   const allocations = allocsRaw.map((a: any) => ({

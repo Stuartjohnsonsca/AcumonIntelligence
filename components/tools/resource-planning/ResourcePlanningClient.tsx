@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { DndContext, pointerWithin, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { StaffMember, ResourceJobView, Allocation, StaffAbsence, ResourceRole, ResourceJobProfile } from '@/lib/resource-planning/types';
@@ -79,6 +80,20 @@ export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles =
       }
     }
   }, [init, isInitialized, staff, jobs, allocations]);
+
+  const router = useRouter();
+  const [, startTransition] = useTransition();
+
+  // Trigger daily timesheet sync from CRM (fires once on mount, no-ops if synced today)
+  useEffect(() => {
+    fetch('/api/resource-planning/timesheet-sync', { method: 'POST' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.synced) startTransition(() => { router.refresh(); });
+      })
+      .catch(() => { /* non-critical */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Acquire lock on mount (admins only)
   useEffect(() => {

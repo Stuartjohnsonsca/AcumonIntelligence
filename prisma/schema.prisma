@@ -33,6 +33,7 @@ model Firm {
   powerAppsTenantId     String?  @map("power_apps_tenant_id")
   powerAppsClientFilter String?  @map("power_apps_client_filter") // Compiled OData filter for client extraction
   powerAppsClientFilterDesc String? @map("power_apps_client_filter_desc") // Natural language description of the filter
+  timesheetLastSyncedAt DateTime? @map("timesheet_last_synced_at") // Last time jca_totalunits was synced from CRM
 
   users               User[]
   ethicsPartner       User?    @relation("FirmEthicsPartner", fields: [ethicsPartnerId], references: [id])
@@ -2071,6 +2072,7 @@ model ResourceJob {
   budgetHoursRI          Float    @default(0) @map("budget_hours_ri")
   budgetHoursReviewer    Float    @default(0) @map("budget_hours_reviewer")
   budgetHoursPreparer    Float    @default(0) @map("budget_hours_preparer")
+  timesheetHours         Float    @default(0) @map("timesheet_hours")
   schedulingStatus       String   @default("unscheduled") @map("scheduling_status") // unscheduled | pre_scheduled | scheduled | completed
   isScheduleLocked       Boolean  @default(false) @map("is_schedule_locked")
   complianceDeadline     DateTime? @map("compliance_deadline")
