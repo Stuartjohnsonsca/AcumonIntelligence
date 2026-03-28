@@ -33,6 +33,7 @@ const DUMMY_ABSENCES: StaffAbsence[] = [
 
 export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles = [], isResourceAdmin, userId, unscheduledCount = 0, completedUnscheduledCount = 0 }: Props) {
   const init = useResourcePlanningStore((s) => s.init);
+  const isInitialized = useResourcePlanningStore((s) => s.isInitialized);
   const addAllocation = useResourcePlanningStore((s) => s.addAllocation);
   const updateAllocation = useResourcePlanningStore((s) => s.updateAllocation);
   const storeStaff = useResourcePlanningStore((s) => s.staff);
