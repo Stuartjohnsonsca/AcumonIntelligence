@@ -373,8 +373,8 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
         setPhase('results');
         return;
       }
+      onClose(); // Close dialog immediately before refresh to avoid race
       startTransition(() => { router.refresh(); });
-      onClose();
     } catch {
       setError('Network error during commit — please try again.');
       setPhase('results');

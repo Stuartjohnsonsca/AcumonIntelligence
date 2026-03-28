@@ -33,7 +33,6 @@ const DUMMY_ABSENCES: StaffAbsence[] = [
 
 export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles = [], isResourceAdmin, userId, unscheduledCount = 0, completedUnscheduledCount = 0 }: Props) {
   const init = useResourcePlanningStore((s) => s.init);
-  const isInitialized = useResourcePlanningStore((s) => s.isInitialized);
   const addAllocation = useResourcePlanningStore((s) => s.addAllocation);
   const updateAllocation = useResourcePlanningStore((s) => s.updateAllocation);
   const storeStaff = useResourcePlanningStore((s) => s.staff);
@@ -53,33 +52,34 @@ export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles =
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
+  // Re-init the store whenever the server delivers fresh props (e.g. after router.refresh()).
+  // The isInitialized guard is intentionally removed so commits + refreshes update the grid.
   useEffect(() => {
-    if (!isInitialized) {
-      try {
-        const absences = staff.length >= 3
-          ? [
-              { ...DUMMY_ABSENCES[0], userId: staff[4]?.id ?? staff[0]?.id ?? '' },
-              { ...DUMMY_ABSENCES[1], userId: staff[5]?.id ?? staff[1]?.id ?? '' },
-              { ...DUMMY_ABSENCES[2], userId: '' },
-              { ...DUMMY_ABSENCES[3], userId: '' },
-            ]
-          : [];
-        init({
-          staff,
-          jobs,
-          allocations,
-          absences,
-          jobProfiles,
-          unscheduledJobCount: unscheduledCount,
-          completedJobCount: completedUnscheduledCount,
-          currentUserId: userId,
-          isResourceAdmin,
-        });
-      } catch (e) {
-        console.error('Resource planning init failed:', e);
-      }
+    try {
+      const absences = staff.length >= 3
+        ? [
+            { ...DUMMY_ABSENCES[0], userId: staff[4]?.id ?? staff[0]?.id ?? '' },
+            { ...DUMMY_ABSENCES[1], userId: staff[5]?.id ?? staff[1]?.id ?? '' },
+            { ...DUMMY_ABSENCES[2], userId: '' },
+            { ...DUMMY_ABSENCES[3], userId: '' },
+          ]
+        : [];
+      init({
+        staff,
+        jobs,
+        allocations,
+        absences,
+        jobProfiles,
+        unscheduledJobCount: unscheduledCount,
+        completedJobCount: completedUnscheduledCount,
+        currentUserId: userId,
+        isResourceAdmin,
+      });
+    } catch (e) {
+      console.error('Resource planning init failed:', e);
     }
-  }, [init, isInitialized, staff, jobs, allocations]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staff, jobs, allocations]);
 
   const router = useRouter();
   const [, startTransition] = useTransition();
