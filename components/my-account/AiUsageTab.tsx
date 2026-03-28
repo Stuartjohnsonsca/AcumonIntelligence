@@ -151,13 +151,19 @@ export function AiUsageTab() {
       if (p === 'custom' && from) url += `&from=${from}`;
       if (p === 'custom' && to) url += `&to=${to}`;
       const res = await fetch(url);
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error('[AI Usage] API error:', res.status, await res.text().catch(() => ''));
+        setLoading(false);
+        return;
+      }
       const data = await res.json();
       setFirmSummary(data.firmSummary);
       setClients(data.clients || []);
       setByAction(data.byAction || []);
       setByModel(data.byModel || []);
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      console.error('[AI Usage] fetch error:', e);
+    }
     setLoading(false);
   }, []);
 

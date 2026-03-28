@@ -237,6 +237,7 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
                   selectedJobIds.has(j.id) ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100 hover:border-slate-200'
                 }`} onClick={() => toggleJobSelection(j.id)}>
                   <input type="checkbox" checked={selectedJobIds.has(j.id)}
+                    onClick={(e) => e.stopPropagation()}
                     onChange={() => toggleJobSelection(j.id)}
                     className="w-4 h-4 rounded border-slate-300 text-blue-600" />
                   <div className="flex-1 min-w-0">
