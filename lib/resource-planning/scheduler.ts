@@ -403,14 +403,20 @@ interface ScoringContext {
   remainingJobs: ResourceJobView[];
   staff: StaffMember[];
   jobCountMap: JobCountMap;
+  // constrainedFirst: window-congestion scoring
+  capacityMap?: CapacityMap;
+  currentJobDeadline?: Date;
+  currentBudgetHours?: number;
 }
 
 /**
  * Score a candidate staff member for a role assignment. Lower is better.
  *
- * Base score: jobCount / jobLimit  (prefer staff with more remaining capacity)
- * Look-ahead: penalise staff who are the only option for many upcoming jobs
- * Multi-pass jitter: add small random noise to break ties differently
+ * Base score:          jobCount / jobLimit  (prefer staff with more remaining capacity)
+ * constrainedFirst:    window-congestion penalty — avoid staff already heavily booked
+ *                      in the current job's scheduling window (reduces concurrent violations)
+ * Look-ahead:          penalise staff who are the only option for many upcoming jobs
+ * Multi-pass jitter:   add small random noise to break ties differently
  */
 function scoreCandidate(
   candidate: StaffMember,
@@ -421,6 +427,24 @@ function scoreCandidate(
   const limit = jobLimitForRole(rs, role);
   const count = getJobCount(ctx.jobCountMap, candidate.id, role);
   let score = limit > 0 ? count / limit : 1;
+
+  if (ctx.options.constrainedFirst && ctx.capacityMap && ctx.currentJobDeadline && ctx.currentBudgetHours && ctx.currentBudgetHours > 0) {
+    // Compute the window this candidate would occupy for this job
+    const win = computeWindow(ctx.currentBudgetHours, rs.weeklyCapacityHrs, ctx.currentJobDeadline);
+    const days = workingDaysInRange(parseDate(win.startDate), parseDate(win.endDate));
+    if (days.length > 0) {
+      const dailyMax = rs.weeklyCapacityHrs / 5;
+      const staffCap = ctx.capacityMap.get(candidate.id);
+      let busyDays = 0;
+      if (staffCap) {
+        for (const d of days) {
+          if ((staffCap.get(d) ?? 0) > dailyMax * 0.4) busyDays++;
+        }
+      }
+      // Congestion fraction: 0 = fully free in window, 1 = fully booked
+      score += (busyDays / days.length) * 0.6;
+    }
+  }
 
   if (ctx.options.lookAhead) {
     // Count future jobs that need this role and how many eligible staff they have
@@ -776,7 +800,10 @@ function runGreedyPass(
 
       // Score and sort candidates
       const remainingJobs = orderedJobs.slice(jobIdx + 1);
-      const ctx: ScoringContext = { options, jitterScale, remainingJobs, staff: activeStaff, jobCountMap };
+      const ctx: ScoringContext = {
+        options, jitterScale, remainingJobs, staff: activeStaff, jobCountMap,
+        capacityMap, currentJobDeadline: deadline, currentBudgetHours: budgetHours,
+      };
       const scored = candidates
         .map((s) => ({ staff: s, score: scoreCandidate(s, role, ctx) }))
         .sort((a, b) => a.score - b.score);
@@ -1083,34 +1110,9 @@ export function runScheduler(
   // ── Order jobs ──────────────────────────────────────────────────────────────
   let orderedJobs = [...jobs];
 
-  if (options.constrainedFirst) {
-    // MRV heuristic: schedule jobs with fewest eligible staff options first.
-    // Jobs that only one or two people can fill (e.g. scarce RIs) must be placed
-    // before those scarce staff get consumed by easier-to-fill jobs.
-    // Tiebreak by earliest deadline so equally-constrained jobs stay in deadline order.
-    const eligibleCount = (job: ResourceJobView): number => {
-      const rolePairs: [ResourceRole, number][] = [
-        ['RI', job.budgetHoursRI],
-        ['Specialist', job.budgetHoursSpecialist],
-        ['Reviewer', job.budgetHoursReviewer],
-        ['Preparer', job.budgetHoursPreparer],
-      ];
-      let total = 0;
-      for (const [role, hours] of rolePairs) {
-        if (hours <= 0) continue;
-        total += staff.filter((s) => s.isActive && s.resourceSetting && isEligible(s, role, [])).length;
-      }
-      return total;
-    };
-    orderedJobs.sort((a, b) => {
-      const diff = eligibleCount(a) - eligibleCount(b); // fewest options first
-      if (diff !== 0) return diff;
-      return getJobDeadline(a).getTime() - getJobDeadline(b).getTime();
-    });
-  } else {
-    // Default: sort by earliest deadline
-    orderedJobs.sort((a, b) => getJobDeadline(a).getTime() - getJobDeadline(b).getTime());
-  }
+  // Always sort by earliest deadline — temporal order is already optimal for this problem.
+  // constrainedFirst improves staff *selection* (via window-congestion scoring), not job ordering.
+  orderedJobs.sort((a, b) => getJobDeadline(a).getTime() - getJobDeadline(b).getTime());
 
   const MULTI_PASS_COUNT = 15;
   const passCount = options.multiPass ? MULTI_PASS_COUNT : 1;
