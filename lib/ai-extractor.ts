@@ -33,7 +33,7 @@ const MODEL_REGISTRY: ModelProfile[] = [
   { id: 'Qwen/Qwen3-VL-8B-Instruct',                            speed: 4, accuracy: 3, depth: 2, cost: 4, vision: true },
   { id: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo',     speed: 3, accuracy: 4, depth: 3, cost: 3, vision: true },
   { id: 'moonshotai/Kimi-K2.5',                                  speed: 2, accuracy: 4, depth: 4, cost: 2, vision: true },
-  { id: 'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo',                                speed: 1, accuracy: 5, depth: 5, cost: 1, vision: true },
+  { id: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',                                speed: 1, accuracy: 5, depth: 5, cost: 1, vision: true },
 ];
 
 // Per-operation default priorities (1=highest, 4=lowest)
@@ -246,7 +246,7 @@ export interface AiTokenUsage {
 const AI_PRICING: Record<string, { inputPerToken: number; outputPerToken: number }> = {
   'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo': { inputPerToken: 0.27 / 1_000_000, outputPerToken: 0.85 / 1_000_000 },
   'Qwen/Qwen3-VL-8B-Instruct': { inputPerToken: 0.18 / 1_000_000, outputPerToken: 0.68 / 1_000_000 },
-  'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo': { inputPerToken: 0.60 / 1_000_000, outputPerToken: 3.60 / 1_000_000 },
+  'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo': { inputPerToken: 0.60 / 1_000_000, outputPerToken: 3.60 / 1_000_000 },
   'moonshotai/Kimi-K2.5': { inputPerToken: 0.50 / 1_000_000, outputPerToken: 2.80 / 1_000_000 },
   'google/gemma-3n-E4B-it': { inputPerToken: 0.02 / 1_000_000, outputPerToken: 0.04 / 1_000_000 },
 };

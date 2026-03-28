@@ -16,8 +16,8 @@ function getClient(): OpenAI {
   return _client;
 }
 
-const PRIMARY_MODEL = 'meta-llama/Meta-Llama-3.3-70B-Instruct-Turbo';
-const FALLBACK_MODEL = 'Qwen/Qwen2.5-72B-Instruct-Turbo';
+const PRIMARY_MODEL = 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo';
+const FALLBACK_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo';
 
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 2000;
