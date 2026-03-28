@@ -4,6 +4,15 @@ import { prisma } from '@/lib/db';
 import type { AllocationChange } from '@/lib/resource-planning/types';
 
 export async function POST(request: NextRequest) {
+  try {
+    return await handleCommit(request);
+  } catch (err: any) {
+    console.error('[optimize/commit] Unhandled error:', err);
+    return Response.json({ error: `Commit error: ${err?.message ?? 'unknown'}` }, { status: 500 });
+  }
+}
+
+async function handleCommit(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -60,58 +69,41 @@ export async function POST(request: NextRequest) {
     jobEngagementIdMap.set(j.id, auditEngagementId ?? j.id);
   }
 
-  let committed = 0;
-
-  await prisma.$transaction(async (tx) => {
-    // Delete removed allocations
-    if (toDelete.length > 0) {
-      await tx.resourceAllocation.deleteMany({
-        where: { id: { in: toDelete }, firmId },
-      });
+  // Pre-compute all allocation rows before the transaction (working-day count is CPU work)
+  function countWorkingDays(start: Date, end: Date): number {
+    let count = 0;
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const dow = cursor.getDay();
+      if (dow !== 0 && dow !== 6) count++;
+      cursor.setDate(cursor.getDate() + 1);
     }
+    return count;
+  }
 
-    // Create new allocations using the correct engagementId for the grid
-    for (const c of toCreate) {
-      const engagementId = jobEngagementIdMap.get(c.jobId) ?? c.jobId;
-      const start = new Date(c.startDate);
-      const end = new Date(c.endDate);
-      // Count working days Mon–Fri to compute totalHours
-      let workingDays = 0;
-      const cursor = new Date(start);
-      while (cursor <= end) {
-        const dow = cursor.getDay();
-        if (dow !== 0 && dow !== 6) workingDays++;
-        cursor.setDate(cursor.getDate() + 1);
-      }
-      const totalHours = Math.round(c.hoursPerDay * workingDays * 100) / 100;
-      await tx.resourceAllocation.create({
-        data: {
-          firmId,
-          engagementId,
-          userId: c.userId,
-          role: c.role,
-          startDate: start,
-          endDate: end,
-          hoursPerDay: c.hoursPerDay,
-          totalHours,
-          notes: 'Scheduled by Resource Optimiser',
-        },
-      });
-      committed++;
-    }
-
-    // Update job status to 'scheduled' for jobs that gained allocations
-    if (scheduledJobIds.length > 0) {
-      await tx.resourceJob.updateMany({
-        where: {
-          id: { in: scheduledJobIds },
-          firmId,
-          schedulingStatus: { in: ['unscheduled', 'pre_scheduled'] },
-        },
-        data: { schedulingStatus: 'scheduled' },
-      });
-    }
+  const rowsToCreate = toCreate.map((c) => {
+    const engagementId = jobEngagementIdMap.get(c.jobId) ?? c.jobId;
+    const start = new Date(c.startDate);
+    const end = new Date(c.endDate);
+    const totalHours = Math.round(c.hoursPerDay * countWorkingDays(start, end) * 100) / 100;
+    return { firmId, engagementId, userId: c.userId, role: c.role, startDate: start, endDate: end, hoursPerDay: c.hoursPerDay, totalHours, notes: 'Scheduled by Resource Optimiser' };
   });
 
-  return Response.json({ committed });
+  // Single transaction: 1 deleteMany + 1 createMany + 1 updateMany — no per-row round-trips
+  await prisma.$transaction([
+    ...(toDelete.length > 0
+      ? [prisma.resourceAllocation.deleteMany({ where: { id: { in: toDelete }, firmId } })]
+      : []),
+    ...(rowsToCreate.length > 0
+      ? [prisma.resourceAllocation.createMany({ data: rowsToCreate })]
+      : []),
+    ...(scheduledJobIds.length > 0
+      ? [prisma.resourceJob.updateMany({
+          where: { id: { in: scheduledJobIds }, firmId, schedulingStatus: { in: ['unscheduled', 'pre_scheduled'] } },
+          data: { schedulingStatus: 'scheduled' },
+        })]
+      : []),
+  ]);
+
+  return Response.json({ committed: rowsToCreate.length });
 }
