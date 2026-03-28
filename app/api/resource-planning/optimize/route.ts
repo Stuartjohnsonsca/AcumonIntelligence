@@ -91,8 +91,13 @@ async function handleOptimize(request: NextRequest) {
   const serviceTypeByClient = new Map(clientSettingsRaw.map((cs) => [cs.clientId, cs.serviceType]));
 
   // Resolve budget hours per role: job record value if > 0, otherwise profile fallback.
-  // This handles CRM-synced jobs that only have budgetHoursPreparer set — without per-role
-  // fallback those jobs would never get RI / Reviewer / Specialist assignments.
+  // CRM-synced jobs only have budgetHoursPreparer set — the per-role fallback ensures
+  // RI / Reviewer / Specialist are sourced from the job profile.
+  //
+  // timesheetHours (from PowerApps) represents work already completed. It is treated as
+  // progress, not a separate budget. The scheduler therefore only needs to plan the
+  // REMAINING preparer hours = profilePreparerBudget - hoursAlreadyWorked (min 0).
+  // RI / Reviewer / Specialist are profile-driven and not reduced by timesheet hours.
   function resolveBudgetHours(j: typeof jobsRaw[0]) {
     // Find the best available profile for this job
     let profile = j.jobProfileId ? (profileById.get(j.jobProfileId) ?? null) : null;
@@ -100,12 +105,19 @@ async function handleOptimize(request: NextRequest) {
       const st = serviceTypeByClient.get(j.clientId);
       profile = st ? (profileByName.get(st.toLowerCase()) ?? null) : null;
     }
+
     // Per-role: use the job's own value if explicitly set (> 0), else use profile value
+    const rawPreparer = j.budgetHoursPreparer > 0 ? j.budgetHoursPreparer : (profile?.budgetHoursPreparer ?? 0);
+
+    // Deduct timesheet hours already worked so the scheduler plans only remaining work
+    const timesheetWorked = (j as any).timesheetHours ?? 0;
+    const remainingPreparer = Math.max(0, rawPreparer - timesheetWorked);
+
     return {
       budgetHoursSpecialist: j.budgetHoursSpecialist > 0 ? j.budgetHoursSpecialist : (profile?.budgetHoursSpecialist ?? 0),
       budgetHoursRI:         j.budgetHoursRI         > 0 ? j.budgetHoursRI         : (profile?.budgetHoursRI         ?? 0),
       budgetHoursReviewer:   j.budgetHoursReviewer   > 0 ? j.budgetHoursReviewer   : (profile?.budgetHoursReviewer   ?? 0),
-      budgetHoursPreparer:   j.budgetHoursPreparer   > 0 ? j.budgetHoursPreparer   : (profile?.budgetHoursPreparer   ?? 0),
+      budgetHoursPreparer:   remainingPreparer,
     };
   }
 
