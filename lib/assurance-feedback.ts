@@ -16,8 +16,8 @@ function getClient(): OpenAI {
   return _client;
 }
 
-const PRIMARY_MODEL = 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo';
-const FALLBACK_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo';
+const PRIMARY_MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
+const FALLBACK_MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
