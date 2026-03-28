@@ -110,11 +110,10 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
       // Persist to backend before cleanup
       const current = useResourcePlanningStore.getState().allocations.find(a => a.id === allocation.id);
       if (current && (current.startDate !== origStartRef.current || current.endDate !== origEndRef.current)) {
-        fetch('/api/resource-planning/allocations', {
+        fetch(`/api/resource-planning/allocations/${allocation.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            id: allocation.id,
             startDate: current.startDate,
             endDate: current.endDate,
           }),

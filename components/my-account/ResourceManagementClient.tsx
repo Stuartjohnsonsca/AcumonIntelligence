@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Users, Building2, FileText, ArrowLeft } from 'lucide-react';
+import { Users, Building2, FileText, ArrowLeft, Wand2 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { ResourceUserManagement } from './ResourceUserManagement';
@@ -40,6 +40,29 @@ interface Props {
 
 export function ResourceManagementClient({ staff, clients, profiles: initialProfiles, firmId, specialistRoles }: Props) {
   const [profiles, setProfiles] = useState(initialProfiles);
+  const [applyingDefaults, setApplyingDefaults] = useState(false);
+  const [defaultsResult, setDefaultsResult] = useState<string | null>(null);
+
+  async function handleApplyDefaults() {
+    setApplyingDefaults(true);
+    setDefaultsResult(null);
+    try {
+      const res = await fetch('/api/resource-planning/setup', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setDefaultsResult(data.updated === 0
+          ? data.message
+          : `Updated ${data.updated} staff member${data.updated !== 1 ? 's' : ''}: ${data.names?.join(', ')}`
+        );
+      } else {
+        setDefaultsResult(`Error: ${data.error}`);
+      }
+    } catch {
+      setDefaultsResult('Failed to apply defaults');
+    } finally {
+      setApplyingDefaults(false);
+    }
+  }
 
   return (
     <div>
@@ -73,6 +96,24 @@ export function ResourceManagementClient({ staff, clients, profiles: initialProf
         </TabsList>
 
         <TabsContent value="staff-setup">
+          <div className="mb-4 flex items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleApplyDefaults}
+              disabled={applyingDefaults}
+              className="flex items-center gap-1.5 text-xs"
+            >
+              <Wand2 className="h-3.5 w-3.5" />
+              {applyingDefaults ? 'Applying…' : 'Apply Default Role Limits'}
+            </Button>
+            <span className="text-xs text-slate-500">
+              Enables all roles (Preparer, Reviewer, RI) for staff who have no role limits set yet.
+            </span>
+            {defaultsResult && (
+              <span className="text-xs text-green-700 font-medium">{defaultsResult}</span>
+            )}
+          </div>
           <ResourceStaffSetup />
         </TabsContent>
 

@@ -23,6 +23,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
   const visibleEnd = useResourcePlanningStore((s) => s.visibleEnd);
   const viewMode = useResourcePlanningStore((s) => s.viewMode);
   const leftPanelFilter = useResourcePlanningStore((s) => s.leftPanelFilter);
+  const currentUserId = useResourcePlanningStore((s) => s.currentUserId);
 
   const startDate = useMemo(() => new Date(visibleStart), [visibleStart]);
   const endDate = useMemo(() => new Date(visibleEnd), [visibleEnd]);
@@ -64,9 +65,21 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
     );
   }
 
-  const filteredJobs = leftPanelFilter.length > 0
-    ? jobs.filter((j) => leftPanelFilter.includes(j.clientId))
-    : jobs;
+  // Non-admins only see jobs they're allocated to
+  const myEngagementIds = useMemo(() => {
+    if (isResourceAdmin || !currentUserId) return null;
+    return new Set(allocations.filter((a) => a.userId === currentUserId).map((a) => a.engagementId));
+  }, [isResourceAdmin, currentUserId, allocations]);
+
+  const filteredJobs = useMemo(() => {
+    let result = leftPanelFilter.length > 0
+      ? jobs.filter((j) => leftPanelFilter.includes(j.clientId))
+      : jobs;
+    if (myEngagementIds) {
+      result = result.filter((j) => myEngagementIds.has(j.engagementId || j.id));
+    }
+    return result;
+  }, [jobs, leftPanelFilter, myEngagementIds]);
 
   const displayJobs = isAvailability
     ? filteredJobs.filter((j) => {

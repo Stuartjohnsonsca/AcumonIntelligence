@@ -1591,8 +1591,6 @@ model AuditEngagement {
   rmmRows             AuditRMMRow[]
   documents           AuditDocument[]
   tbRows              AuditTBRow[]
-  resourceAllocations ResourceAllocation[]
-
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -2050,9 +2048,10 @@ model ResourceAllocation {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  firm       Firm            @relation(fields: [firmId], references: [id])
-  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
-  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firm Firm @relation(fields: [firmId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // engagementId is a logical reference — either an AuditEngagement.id or a ResourceJob.id
+  // No FK constraint so jobs without a matching AuditEngagement can still be scheduled
 
   @@index([firmId])
   @@index([userId, startDate, endDate])
