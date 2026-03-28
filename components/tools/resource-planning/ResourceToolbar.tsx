@@ -1,11 +1,12 @@
 'use client';
 
 import { useMemo, useState, useTransition } from 'react';
-import { Search, ZoomIn, ZoomOut, CalendarDays, RotateCw, RefreshCw } from 'lucide-react';
+import { Search, ZoomIn, ZoomOut, CalendarDays, RotateCw, RefreshCw, Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import { UnscheduledJobsDialog } from './UnscheduledJobsDialog';
 import { RollForwardDialog } from './RollForwardDialog';
+import { ResourceOptimizerDialog } from './ResourceOptimizerDialog';
 
 export function ResourceToolbar() {
   const staff = useResourcePlanningStore((s) => s.staff);
@@ -33,6 +34,7 @@ export function ResourceToolbar() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [showUnscheduled, setShowUnscheduled] = useState(false);
   const [showRollForward, setShowRollForward] = useState(false);
+  const [showOptimizer, setShowOptimizer] = useState(false);
 
   function handleRefresh() {
     startTransition(() => { router.refresh(); });
@@ -171,6 +173,18 @@ export function ResourceToolbar() {
             <RefreshCw className={`h-3.5 w-3.5 ${isPending ? 'animate-spin' : ''}`} />
           </button>
 
+          {/* AI Optimiser — admin only */}
+          {isResourceAdmin && (
+            <button
+              onClick={() => setShowOptimizer(true)}
+              className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded bg-violet-50 hover:bg-violet-100 text-violet-700 text-[11px] font-medium transition-colors border border-violet-200"
+              title="AI Resource Optimiser"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Optimise
+            </button>
+          )}
+
           {/* Search */}
           <div className="relative flex-shrink-0">
             <button onClick={() => setSearchOpen(!searchOpen)} className="p-1 rounded hover:bg-slate-100 text-slate-500">
@@ -202,6 +216,7 @@ export function ResourceToolbar() {
 
       {showUnscheduled && <UnscheduledJobsDialog onClose={() => setShowUnscheduled(false)} />}
       {showRollForward && <RollForwardDialog onClose={() => setShowRollForward(false)} />}
+      {showOptimizer && <ResourceOptimizerDialog onClose={() => setShowOptimizer(false)} />}
     </>
   );
 }

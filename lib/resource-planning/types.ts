@@ -188,3 +188,44 @@ export const DEFAULT_CONCURRENT_LIMITS: Record<ResourceRole, number> = {
   Reviewer: 18,
   Preparer: 3,
 };
+
+// ─── Optimizer Types ─────────────────────────────────────────────────────────
+
+export type OptimizationScope = 'all' | 'unscheduled';
+
+export interface AllocationChange {
+  action: 'create' | 'delete';
+  existingId?: string;
+  jobId: string;
+  clientName: string;
+  auditType: string;
+  userId: string;
+  userName: string;
+  role: ResourceRole;
+  startDate: string;
+  endDate: string;
+  hoursPerDay: number;
+}
+
+export interface OptimizationViolation {
+  constraintId: string;
+  priority: number;
+  jobId?: string;
+  userId?: string;
+  description: string;
+}
+
+export interface OptimizedJobSchedule {
+  jobId: string;
+  allocations: ProposedAllocation[];
+}
+
+export interface OptimizationResult {
+  schedule: OptimizedJobSchedule[];
+  violations: OptimizationViolation[];
+  unschedulable: string[];
+  reasoning: string;
+  changes: AllocationChange[];
+  promptTokens?: number;
+  completionTokens?: number;
+}
