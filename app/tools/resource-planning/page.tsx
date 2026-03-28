@@ -16,7 +16,7 @@ export default async function ResourcePlanningPage() {
   const firmId = session.user.firmId;
   const now = new Date();
   const rangeStart = new Date(now); rangeStart.setDate(rangeStart.getDate() - 14);
-  const rangeEnd = new Date(now); rangeEnd.setDate(rangeEnd.getDate() + 84);
+  const rangeEnd = new Date(now); rangeEnd.setDate(rangeEnd.getDate() + 365); // full year ahead so far-future allocations are fetched
 
   // Run all queries in parallel
   const [staffRaw, jobsRaw, engagements, allocsRaw, unscheduledCount, completedUnscheduledCount, jobProfilesRaw, clientSettingsRaw] = await Promise.all([

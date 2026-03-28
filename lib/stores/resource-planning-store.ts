@@ -144,6 +144,23 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     activeDragUserId: null,
 
     init: (data) => {
+      // Auto-expand the visible end date so newly committed allocations
+      // (which may be months away at job deadlines) are immediately visible.
+      const { visibleEnd } = get();
+      let newVisibleEnd = visibleEnd;
+      if (data.allocations.length > 0) {
+        const maxAllocEnd = data.allocations.reduce((max, a) => {
+          const t = new Date(a.endDate).getTime();
+          return t > max ? t : max;
+        }, 0);
+        if (maxAllocEnd > new Date(visibleEnd).getTime()) {
+          // Round up to end of that week (Sunday)
+          const d = new Date(maxAllocEnd);
+          d.setDate(d.getDate() + (7 - d.getDay()) % 7);
+          newVisibleEnd = d.toISOString();
+        }
+      }
+
       set({
         staff: data.staff,
         jobs: data.jobs,
@@ -155,6 +172,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
         currentUserId: data.currentUserId ?? null,
         isResourceAdmin: data.isResourceAdmin ?? false,
         isInitialized: true,
+        visibleEnd: newVisibleEnd,
       });
     },
 
