@@ -309,6 +309,54 @@ export async function runOptimizer(prompt: string): Promise<OptimizerRawResult> 
   }
 }
 
+// ─── Schedule Summariser ─────────────────────────────────────────────────────
+//
+// Makes a small AI call (max 300 tokens) to write a 2-sentence plain English
+// summary of what the deterministic scheduler produced. This is the only AI
+// call retained after replacing the LLM-as-scheduler approach.
+
+export interface ScheduleSummaryStats {
+  jobsScheduled: number;
+  jobsUnschedulable: number;
+  violationCount: number;
+  violationsByPriority: Record<number, number>; // priority → count
+  passesRun: number;
+  qualityScore: number;
+}
+
+export async function summarizeSchedule(stats: ScheduleSummaryStats): Promise<string> {
+  const client = getClient();
+
+  const prompt = `You are an assistant helping an audit firm review their resource schedule.
+The deterministic scheduler just ran and produced these results:
+- Jobs scheduled: ${stats.jobsScheduled}
+- Jobs that could not be scheduled: ${stats.jobsUnschedulable}
+- Total constraint violations: ${stats.violationCount}
+- Violation breakdown by priority level: ${JSON.stringify(stats.violationsByPriority)}
+- Algorithm passes run: ${stats.passesRun}
+- Quality score (lower = better): ${stats.qualityScore}
+
+Write exactly 2 concise sentences in plain English summarising what was scheduled, how many violations there were, and any notable compromises. Do not use bullet points. Do not mention the quality score directly. Keep it under 60 words total.`;
+
+  try {
+    const result = await retryWithBackoff(async () => {
+      const resp = await client.chat.completions.create({
+        model: PRIMARY_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        max_tokens: 300,
+      });
+      return resp.choices[0]?.message?.content?.trim() ?? '';
+    }, 'summarizeSchedule');
+    return result;
+  } catch (err) {
+    // Non-fatal: return a fallback summary if AI call fails
+    const violStr = stats.violationCount === 0 ? 'no violations' : `${stats.violationCount} constraint violation${stats.violationCount !== 1 ? 's' : ''}`;
+    const unschStr = stats.jobsUnschedulable > 0 ? ` ${stats.jobsUnschedulable} job${stats.jobsUnschedulable !== 1 ? 's' : ''} could not be scheduled.` : '';
+    return `${stats.jobsScheduled} job${stats.jobsScheduled !== 1 ? 's' : ''} scheduled with ${violStr}.${unschStr}`;
+  }
+}
+
 // ─── Response Parser ──────────────────────────────────────────────────────────
 
 export function parseOptimizerResponse(

@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
 import type { OptimizationResult, AllocationChange, OptimizationViolation } from '@/lib/resource-planning/types';
 import { ROLE_COLORS } from '@/lib/resource-planning/types';
+import type { SchedulerOptions } from '@/lib/resource-planning/scheduler';
 
 interface Props {
   onClose: () => void;
@@ -104,12 +105,70 @@ function JobDiffCard({ jobId, changes, violations }: {
   );
 }
 
+// ─── Technique checkbox definition ───────────────────────────────────────────
+
+interface TechniqueDef {
+  key: keyof SchedulerOptions;
+  label: string;
+  description: string;
+  defaultChecked: boolean;
+}
+
+const TECHNIQUES: TechniqueDef[] = [
+  {
+    key: 'constrainedFirst',
+    label: 'Smart job ordering',
+    description: 'Schedule hardest-to-fill jobs first. Reduces conflicts. (~0ms extra)',
+    defaultChecked: true,
+  },
+  {
+    key: 'lookAhead',
+    label: 'Staff look-ahead',
+    description: "Prefer staff who aren't needed urgently by other jobs. (+quality)",
+    defaultChecked: false,
+  },
+  {
+    key: 'localSearch',
+    label: 'Improvement pass',
+    description: 'Swap allocations between jobs to reduce violations. (+5–10s)',
+    defaultChecked: false,
+  },
+  {
+    key: 'multiPass',
+    label: 'Multi-pass ×15',
+    description: 'Run 15 variations, keep the best result. (+15–30s)',
+    defaultChecked: false,
+  },
+];
+
+/** Build a human-readable sub-message based on selected techniques. */
+function buildRunningSubMessage(techniques: SchedulerOptions): string {
+  const parts: string[] = [];
+  if (techniques.multiPass) parts.push('Running 15 passes…');
+  else if (techniques.localSearch) parts.push('Running improvement pass…');
+  else if (techniques.lookAhead) parts.push('Applying look-ahead scoring…');
+  else if (techniques.constrainedFirst) parts.push('Using smart job ordering…');
+  if (parts.length === 0) return 'Running baseline algorithm…';
+  return parts[0];
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export function ResourceOptimizerDialog({ onClose }: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Technique checkboxes — initialise from defaults
+  const [techniques, setTechniques] = useState<SchedulerOptions>(() =>
+    Object.fromEntries(TECHNIQUES.map((t) => [t.key, t.defaultChecked])) as SchedulerOptions
+  );
+
+  function toggleTechnique(key: keyof SchedulerOptions) {
+    setTechniques((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
 
   async function runOptimize(scope: 'all' | 'unscheduled') {
     setPhase('running');
@@ -119,7 +178,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
       const res = await fetch('/api/resource-planning/optimize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope }),
+        body: JSON.stringify({ scope, techniques }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -184,13 +243,45 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
 
-          {/* Idle — scope selector */}
+          {/* Idle — technique selector + scope buttons */}
           {phase === 'idle' && (
             <div className="space-y-4">
               <p className="text-sm text-slate-600">
-                The AI will analyse your portfolio, apply the constraint priorities, and propose an
-                optimised schedule. You can review all changes before committing.
+                The optimiser will analyse your portfolio, apply the constraint priorities, and propose an optimised schedule.
+                You can review all changes before committing.
               </p>
+
+              {/* Optimisation techniques */}
+              <div className="border border-slate-200 rounded-lg px-4 py-3 space-y-2.5 bg-slate-50">
+                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                  Optimisation techniques
+                </p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                  {TECHNIQUES.map((t) => (
+                    <label
+                      key={t.key}
+                      className="flex items-start gap-2 cursor-pointer group"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={techniques[t.key]}
+                        onChange={() => toggleTechnique(t.key)}
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500 cursor-pointer flex-shrink-0"
+                      />
+                      <span className="space-y-0.5">
+                        <span className="block text-xs font-medium text-slate-700 group-hover:text-slate-900 leading-tight">
+                          {t.label}
+                        </span>
+                        <span className="block text-[11px] text-slate-400 leading-snug">
+                          {t.description}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Scope selector */}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => runOptimize('all')}
@@ -229,8 +320,8 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
           {phase === 'running' && (
             <div className="flex flex-col items-center justify-center py-12 gap-4">
               <Loader2 className="h-10 w-10 text-violet-500 animate-spin" />
-              <p className="text-sm font-medium text-slate-700">Asking AI to optimise your schedule…</p>
-              <p className="text-xs text-slate-400">This typically takes 10–30 seconds</p>
+              <p className="text-sm font-medium text-slate-700">Optimising schedule…</p>
+              <p className="text-xs text-slate-400">{buildRunningSubMessage(techniques)}</p>
             </div>
           )}
 
@@ -261,10 +352,10 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
                 )}
               </div>
 
-              {/* AI Reasoning */}
+              {/* Summary */}
               {result.reasoning && (
                 <div className="text-[11px] text-slate-500 bg-violet-50 border border-violet-100 rounded px-3 py-2 leading-relaxed">
-                  <strong className="text-violet-700">AI summary:</strong> {result.reasoning}
+                  <strong className="text-violet-700">Summary:</strong> {result.reasoning}
                 </div>
               )}
 

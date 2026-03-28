@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { buildOptimizerPrompt, runOptimizer, parseOptimizerResponse } from '@/lib/resource-planning/optimizer-ai';
+import { summarizeSchedule } from '@/lib/resource-planning/optimizer-ai';
+import { runScheduler, type SchedulerOptions } from '@/lib/resource-planning/scheduler';
 import { DEFAULT_CONSTRAINT_ORDER } from '@/lib/resource-planning/optimizer-constraints';
 import type { StaffMember, ResourceJobView, Allocation, OptimizationScope } from '@/lib/resource-planning/types';
 
@@ -15,9 +16,18 @@ export async function POST(request: NextRequest) {
   }
 
   const firmId = session.user.firmId;
-  let body: { scope?: OptimizationScope } = {};
+  let body: { scope?: OptimizationScope; techniques?: Partial<SchedulerOptions> } = {};
   try { body = await request.json(); } catch { /* default */ }
+
   const scope: OptimizationScope = body.scope === 'unscheduled' ? 'unscheduled' : 'all';
+
+  // Merge provided techniques with safe defaults
+  const options: SchedulerOptions = {
+    constrainedFirst: body.techniques?.constrainedFirst ?? true,
+    lookAhead: body.techniques?.lookAhead ?? false,
+    localSearch: body.techniques?.localSearch ?? false,
+    multiPass: body.techniques?.multiPass ?? false,
+  };
 
   // ── Fetch data ───────────────────────────────────────────────────────────
   const [staffRaw, jobsRaw, allocsRaw, settingsRaw] = await Promise.all([
@@ -90,7 +100,7 @@ export async function POST(request: NextRequest) {
     previousJobId: j.previousJobId,
   }));
 
-  // Filter out locked jobs for 'all' scope — they are passed as context but won't be re-scheduled
+  // Filter out locked jobs — they are context but won't be re-scheduled
   const jobsInScope = scope === 'all'
     ? jobs.filter((j) => !j.isScheduleLocked)
     : jobs.filter((j) => !j.isScheduleLocked && j.schedulingStatus === 'unscheduled');
@@ -102,6 +112,8 @@ export async function POST(request: NextRequest) {
       unschedulable: [],
       reasoning: 'No jobs in scope to optimise.',
       changes: [],
+      qualityScore: 0,
+      passesRun: 0,
     });
   }
 
@@ -126,34 +138,46 @@ export async function POST(request: NextRequest) {
       ? (storedOrder as string[])
       : DEFAULT_CONSTRAINT_ORDER;
 
-  // ── Build prompt & call AI ───────────────────────────────────────────────
+  // ── Run deterministic scheduler ──────────────────────────────────────────
   const today = new Date().toISOString().split('T')[0];
-  const prompt = buildOptimizerPrompt(jobsInScope, staff, allocations, constraintOrder, scope, today);
 
-  console.log(`[optimize] Calling AI. Jobs in scope: ${jobsInScope.length}, Staff: ${staff.length}, Prompt chars: ${prompt.length}`);
+  console.log(`[optimize] Running deterministic scheduler. Jobs in scope: ${jobsInScope.length}, Staff: ${staff.length}, Options: ${JSON.stringify(options)}`);
 
-  let rawResult;
-  try {
-    rawResult = await runOptimizer(prompt);
-  } catch (err: any) {
-    console.error('[optimize] AI call failed:', err);
-    return Response.json({ error: `AI optimiser error: ${err?.message ?? 'Unknown error'}` }, { status: 502 });
-  }
-
-  console.log(`[optimize] AI responded. Model: ${rawResult.model}, tokens: ${rawResult.promptTokens}+${rawResult.completionTokens}, raw length: ${rawResult.json.length}`);
-  console.log('[optimize] Raw response (first 1000):\n', rawResult.json.slice(0, 1000));
-
-  const result = parseOptimizerResponse(
-    rawResult.json,
+  const schedulerResult = runScheduler(
     jobsInScope,
     staff,
     allocations,
     constraintOrder,
+    scope,
+    options,
+    today,
   );
 
+  console.log(`[optimize] Scheduler complete. Scheduled: ${schedulerResult.schedule.length}, Unschedulable: ${schedulerResult.unschedulable.length}, Violations: ${schedulerResult.violations.length}, Score: ${schedulerResult.qualityScore}, Passes: ${schedulerResult.passesRun}`);
+
+  // ── AI summary (small call — max 300 tokens) ─────────────────────────────
+  const violationsByPriority: Record<number, number> = {};
+  for (const v of schedulerResult.violations) {
+    violationsByPriority[v.priority] = (violationsByPriority[v.priority] ?? 0) + 1;
+  }
+
+  let reasoning = '';
+  try {
+    reasoning = await summarizeSchedule({
+      jobsScheduled: schedulerResult.schedule.length,
+      jobsUnschedulable: schedulerResult.unschedulable.length,
+      violationCount: schedulerResult.violations.length,
+      violationsByPriority,
+      passesRun: schedulerResult.passesRun,
+      qualityScore: schedulerResult.qualityScore,
+    });
+  } catch (err) {
+    console.warn('[optimize] AI summary failed (non-fatal):', err);
+    reasoning = `${schedulerResult.schedule.length} jobs scheduled with ${schedulerResult.violations.length} constraint violation${schedulerResult.violations.length !== 1 ? 's' : ''}.`;
+  }
+
   return Response.json({
-    ...result,
-    promptTokens: rawResult.promptTokens,
-    completionTokens: rawResult.completionTokens,
+    ...schedulerResult,
+    reasoning,
   });
 }
