@@ -303,76 +303,21 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
       try {
         let stepResult: OptimizationResult | null = null;
 
-        if (stepDefs[i].isMultiPass) {
-          // ── Multi-pass: 15 client-side calls, keep best ──────────────────
-          let bestData: OptimizationResult | null = null;
-          let bestScore = Infinity;
+        // ── Single API call (server runs all passes internally) ──────────────
+        const res = await fetch('/api/resource-planning/optimize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope, techniques: stepDefs[i].options }),
+        });
 
-          for (let p = 1; p <= MULTI_PASS_COUNT; p++) {
-            // Update sub-progress
-            setSteps((prev) =>
-              prev.map((s, idx) =>
-                idx === i
-                  ? { ...s, passTotal: MULTI_PASS_COUNT, passCurrent: p, passBestViolations: bestData ? bestData.violations?.length ?? 0 : undefined }
-                  : s
-              )
-            );
-
-            // skipSummary=true for all passes — AI summary only on final best
-            const res = await fetch('/api/resource-planning/optimize', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ scope, techniques: stepDefs[i].options, skipSummary: true }),
-            });
-
-            if (!res.ok) {
-              const errData = await res.json().catch(() => ({}));
-              setSteps((prev) => prev.map((s, idx) => idx === i ? { ...s, status: 'error' } : s));
-              setError((errData as any).error ?? 'Optimisation failed — please try again.');
-              setPhase('idle');
-              return;
-            }
-
-            const data: OptimizationResult & { qualityScore?: number } = await res.json();
-            const score = (data as any).qualityScore ?? (data.violations?.length ?? 0) * 100 + (data.unschedulable?.length ?? 0) * 1000;
-            if (bestData === null || score < bestScore) {
-              bestScore = score;
-              bestData = data;
-            }
-          }
-
-          // One final call with the best options to get the AI summary
-          if (bestData) {
-            try {
-              const summaryRes = await fetch('/api/resource-planning/optimize', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ scope, techniques: stepDefs[i].options, skipSummary: false }),
-              });
-              if (summaryRes.ok) {
-                const summaryData = await summaryRes.json();
-                bestData = { ...bestData, reasoning: summaryData.reasoning ?? bestData.reasoning };
-              }
-            } catch { /* non-fatal — proceed without summary */ }
-          }
-          stepResult = bestData;
-        } else {
-          // ── Single API call ───────────────────────────────────────────────
-          const res = await fetch('/api/resource-planning/optimize', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scope, techniques: stepDefs[i].options }),
-          });
-
-          const data = await res.json();
-          if (!res.ok) {
-            setSteps((prev) => prev.map((s, idx) => idx === i ? { ...s, status: 'error' } : s));
-            setError(data.error ?? 'Optimisation failed — please try again.');
-            setPhase('idle');
-            return;
-          }
-          stepResult = data;
+        const data = await res.json();
+        if (!res.ok) {
+          setSteps((prev) => prev.map((s, idx) => idx === i ? { ...s, status: 'error' } : s));
+          setError(data.error ?? 'Optimisation failed — please try again.');
+          setPhase('idle');
+          return;
         }
+        stepResult = data;
 
         const violations = stepResult?.violations?.length ?? 0;
         const jobsScheduled = stepResult?.schedule?.length ?? 0;

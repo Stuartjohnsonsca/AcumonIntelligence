@@ -1101,37 +1101,44 @@ export function runScheduler(
     orderedJobs.sort((a, b) => getJobDeadline(a).getTime() - getJobDeadline(b).getTime());
   }
 
-  // Always run exactly 1 pass server-side.
-  // Multi-pass repetition is handled client-side (15 separate API calls)
-  // to avoid serverless function timeouts. When multiPass=true, jitter is
-  // applied so each call produces a slightly different result.
-  const jitterScale = options.multiPass ? 1.0 : 0.0;
+  const MULTI_PASS_COUNT = 15;
+  const passCount = options.multiPass ? MULTI_PASS_COUNT : 1;
 
-  const { jobResults, unschedulable } = runGreedyPass(
-    orderedJobs,
-    staff,
-    existingAllocations,
-    order,
-    scope,
-    options,
-    todayDate,
-    jitterScale,
-  );
+  // Run pass 0 with no jitter as baseline, then subsequent passes with increasing jitter
+  let bestJobResults: typeof orderedJobs extends never[] ? never : ReturnType<typeof runGreedyPass>['jobResults'] = [];
+  let bestUnschedulable: string[] = [];
+  let bestScore = Infinity;
 
-  // Apply local search if requested
-  const finalJobResults = options.localSearch
-    ? runLocalSearch(jobResults, jobs, staff, existingAllocations, order, todayDate)
-    : jobResults;
+  for (let pass = 0; pass < passCount; pass++) {
+    const jitterScale = pass === 0 ? 0.0 : 0.5 + (pass / passCount) * 0.5;
 
-  const allPlacements = finalJobResults.flatMap((jr) => jr.placements);
-  const score = computeQualityScore(
-    detectViolations(allPlacements, jobs.filter((j) => inScopeSet.has(j.id)), staff, order, todayDate, existingAllocations),
-    unschedulable,
-  );
+    const { jobResults, unschedulable } = runGreedyPass(
+      orderedJobs,
+      staff,
+      existingAllocations,
+      order,
+      scope,
+      options,
+      todayDate,
+      jitterScale,
+    );
 
-  let bestJobResults = finalJobResults;
-  let bestUnschedulable = unschedulable;
-  let bestScore = score;
+    const passResults = options.localSearch
+      ? runLocalSearch(jobResults, jobs, staff, existingAllocations, order, todayDate)
+      : jobResults;
+
+    const passPlacementsAll = passResults.flatMap((jr) => jr.placements);
+    const passScore = computeQualityScore(
+      detectViolations(passPlacementsAll, jobs.filter((j) => inScopeSet.has(j.id)), staff, order, todayDate, existingAllocations),
+      unschedulable,
+    );
+
+    if (passScore < bestScore) {
+      bestScore = passScore;
+      bestJobResults = passResults;
+      bestUnschedulable = unschedulable;
+    }
+  }
 
   // ── Build final result ──────────────────────────────────────────────────────
   const staffNameMap = new Map(staff.map((s) => [s.id, s.name]));
@@ -1170,6 +1177,6 @@ export function runScheduler(
     reasoning: '', // Filled in by caller after AI summary call
     changes,
     qualityScore: bestScore,
-    passesRun: 1,
+    passesRun: passCount,
   };
 }
