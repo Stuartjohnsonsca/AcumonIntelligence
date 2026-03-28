@@ -90,27 +90,22 @@ async function handleOptimize(request: NextRequest) {
   const profileByName = new Map(profilesRaw.map((p) => [p.name.toLowerCase(), p]));
   const serviceTypeByClient = new Map(clientSettingsRaw.map((cs) => [cs.clientId, cs.serviceType]));
 
-  // Resolve budget hours: job record → job profile → client service type profile → 0
+  // Resolve budget hours per role: job record value if > 0, otherwise profile fallback.
+  // This handles CRM-synced jobs that only have budgetHoursPreparer set — without per-role
+  // fallback those jobs would never get RI / Reviewer / Specialist assignments.
   function resolveBudgetHours(j: typeof jobsRaw[0]) {
-    const hasHours = j.budgetHoursRI > 0 || j.budgetHoursReviewer > 0 ||
-                     j.budgetHoursPreparer > 0 || j.budgetHoursSpecialist > 0;
-    if (hasHours) return {
-      budgetHoursSpecialist: j.budgetHoursSpecialist,
-      budgetHoursRI: j.budgetHoursRI,
-      budgetHoursReviewer: j.budgetHoursReviewer,
-      budgetHoursPreparer: j.budgetHoursPreparer,
-    };
-    // Fall back to job profile (by profileId, then by client service type name)
+    // Find the best available profile for this job
     let profile = j.jobProfileId ? (profileById.get(j.jobProfileId) ?? null) : null;
     if (!profile) {
       const st = serviceTypeByClient.get(j.clientId);
       profile = st ? (profileByName.get(st.toLowerCase()) ?? null) : null;
     }
+    // Per-role: use the job's own value if explicitly set (> 0), else use profile value
     return {
-      budgetHoursSpecialist: profile?.budgetHoursSpecialist ?? 0,
-      budgetHoursRI: profile?.budgetHoursRI ?? 0,
-      budgetHoursReviewer: profile?.budgetHoursReviewer ?? 0,
-      budgetHoursPreparer: profile?.budgetHoursPreparer ?? 0,
+      budgetHoursSpecialist: j.budgetHoursSpecialist > 0 ? j.budgetHoursSpecialist : (profile?.budgetHoursSpecialist ?? 0),
+      budgetHoursRI:         j.budgetHoursRI         > 0 ? j.budgetHoursRI         : (profile?.budgetHoursRI         ?? 0),
+      budgetHoursReviewer:   j.budgetHoursReviewer   > 0 ? j.budgetHoursReviewer   : (profile?.budgetHoursReviewer   ?? 0),
+      budgetHoursPreparer:   j.budgetHoursPreparer   > 0 ? j.budgetHoursPreparer   : (profile?.budgetHoursPreparer   ?? 0),
     };
   }
 
