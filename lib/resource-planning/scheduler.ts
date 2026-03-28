@@ -1101,47 +1101,37 @@ export function runScheduler(
     orderedJobs.sort((a, b) => getJobDeadline(a).getTime() - getJobDeadline(b).getTime());
   }
 
-  const PASSES = options.multiPass ? 15 : 1;
-  let bestJobResults: JobResult[] = [];
-  let bestUnschedulable: string[] = [];
-  let bestScore = Infinity;
+  // Always run exactly 1 pass server-side.
+  // Multi-pass repetition is handled client-side (15 separate API calls)
+  // to avoid serverless function timeouts. When multiPass=true, jitter is
+  // applied so each call produces a slightly different result.
+  const jitterScale = options.multiPass ? 1.0 : 0.0;
 
-  for (let pass = 0; pass < PASSES; pass++) {
-    const jitterScale = options.multiPass ? 1.0 : 0.0;
+  const { jobResults, unschedulable } = runGreedyPass(
+    orderedJobs,
+    staff,
+    existingAllocations,
+    order,
+    scope,
+    options,
+    todayDate,
+    jitterScale,
+  );
 
-    const { jobResults, unschedulable } = runGreedyPass(
-      orderedJobs,
-      staff,
-      existingAllocations,
-      order,
-      scope,
-      options,
-      todayDate,
-      jitterScale,
-    );
+  // Apply local search if requested
+  const finalJobResults = options.localSearch
+    ? runLocalSearch(jobResults, jobs, staff, existingAllocations, order, todayDate)
+    : jobResults;
 
-    // Apply local search if requested
-    const finalJobResults = options.localSearch
-      ? runLocalSearch(jobResults, jobs, staff, existingAllocations, order, todayDate)
-      : jobResults;
+  const allPlacements = finalJobResults.flatMap((jr) => jr.placements);
+  const score = computeQualityScore(
+    detectViolations(allPlacements, jobs.filter((j) => inScopeSet.has(j.id)), staff, order, todayDate, existingAllocations),
+    unschedulable,
+  );
 
-    const allPlacements = finalJobResults.flatMap((jr) => jr.placements);
-    const violations = detectViolations(
-      allPlacements,
-      jobs.filter((j) => inScopeSet.has(j.id)),
-      staff,
-      order,
-      todayDate,
-      existingAllocations,
-    );
-    const score = computeQualityScore(violations, unschedulable);
-
-    if (score < bestScore) {
-      bestScore = score;
-      bestJobResults = finalJobResults;
-      bestUnschedulable = unschedulable;
-    }
-  }
+  let bestJobResults = finalJobResults;
+  let bestUnschedulable = unschedulable;
+  let bestScore = score;
 
   // ── Build final result ──────────────────────────────────────────────────────
   const staffNameMap = new Map(staff.map((s) => [s.id, s.name]));
@@ -1180,6 +1170,6 @@ export function runScheduler(
     reasoning: '', // Filled in by caller after AI summary call
     changes,
     qualityScore: bestScore,
-    passesRun: PASSES,
+    passesRun: 1,
   };
 }

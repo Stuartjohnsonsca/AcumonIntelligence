@@ -18,12 +18,9 @@ interface Props {
 
 type Phase = 'idle' | 'running' | 'results' | 'committing';
 
-// ─── Step tracking ────────────────────────────────────────────────────────────
+const MULTI_PASS_COUNT = 15;
 
-interface StepDef {
-  label: string;
-  options: SchedulerOptions;
-}
+// ─── Step tracking ────────────────────────────────────────────────────────────
 
 interface StepState extends StepDef {
   status: 'pending' | 'running' | 'done' | 'error';
@@ -31,6 +28,10 @@ interface StepState extends StepDef {
   violations?: number;
   unschedulable?: number;
   deltaViolations?: number; // vs previous step, negative = improvement
+  // multi-pass sub-progress
+  passTotal?: number;
+  passCurrent?: number;
+  passBestViolations?: number;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -168,7 +169,11 @@ function StepRow({ step, index }: { step: StepState; index: number }) {
         </div>
       )}
       {step.status === 'running' && (
-        <span className="text-[11px] text-violet-500 italic">Running…</span>
+        <span className="text-[11px] text-violet-500 italic">
+          {step.passTotal
+            ? `Pass ${step.passCurrent ?? 0}/${step.passTotal} — best: ${step.passBestViolations ?? '…'} violations`
+            : 'Running…'}
+        </span>
       )}
     </div>
   );
@@ -212,6 +217,12 @@ const TECHNIQUES: TechniqueDef[] = [
 
 // ─── Build sequential steps from selected techniques ─────────────────────────
 
+interface StepDef {
+  label: string;
+  options: SchedulerOptions;
+  isMultiPass?: boolean; // triggers 15 client-side calls instead of 1
+}
+
 function buildSteps(techniques: SchedulerOptions): StepDef[] {
   const base: SchedulerOptions = {
     constrainedFirst: false,
@@ -227,14 +238,18 @@ function buildSteps(techniques: SchedulerOptions): StepDef[] {
     constrainedFirst: '+ Smart job ordering',
     lookAhead: '+ Staff look-ahead',
     localSearch: '+ Improvement pass',
-    multiPass: '+ Multi-pass ×15',
+    multiPass: `+ Multi-pass ×${MULTI_PASS_COUNT}`,
   };
 
   let cumulative = { ...base };
   for (const tech of techOrder) {
     if (techniques[tech]) {
       cumulative = { ...cumulative, [tech]: true };
-      steps.push({ label: techLabels[tech], options: { ...cumulative } });
+      steps.push({
+        label: techLabels[tech],
+        options: { ...cumulative },
+        isMultiPass: tech === 'multiPass',
+      });
     }
   }
 
@@ -286,26 +301,67 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
       );
 
       try {
-        const res = await fetch('/api/resource-planning/optimize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scope, techniques: stepDefs[i].options }),
-        });
+        let stepResult: OptimizationResult | null = null;
 
-        const data = await res.json();
+        if (stepDefs[i].isMultiPass) {
+          // ── Multi-pass: 15 client-side calls, keep best ──────────────────
+          let bestData: OptimizationResult | null = null;
+          let bestScore = Infinity;
 
-        if (!res.ok) {
-          setSteps((prev) =>
-            prev.map((s, idx) => idx === i ? { ...s, status: 'error' } : s)
-          );
-          setError(data.error ?? 'Optimisation failed — please try again.');
-          setPhase('idle');
-          return;
+          for (let p = 1; p <= MULTI_PASS_COUNT; p++) {
+            // Update sub-progress
+            setSteps((prev) =>
+              prev.map((s, idx) =>
+                idx === i
+                  ? { ...s, passTotal: MULTI_PASS_COUNT, passCurrent: p, passBestViolations: bestData ? bestData.violations?.length ?? 0 : undefined }
+                  : s
+              )
+            );
+
+            const res = await fetch('/api/resource-planning/optimize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ scope, techniques: stepDefs[i].options }),
+            });
+
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({}));
+              setSteps((prev) => prev.map((s, idx) => idx === i ? { ...s, status: 'error' } : s));
+              setError((errData as any).error ?? 'Optimisation failed — please try again.');
+              setPhase('idle');
+              return;
+            }
+
+            const data: OptimizationResult & { qualityScore?: number } = await res.json();
+            const score = (data as any).qualityScore ?? (data.violations?.length ?? 0) * 100 + (data.unschedulable?.length ?? 0) * 1000;
+            if (bestData === null || score < bestScore) {
+              bestScore = score;
+              bestData = data;
+            }
+          }
+
+          stepResult = bestData;
+        } else {
+          // ── Single API call ───────────────────────────────────────────────
+          const res = await fetch('/api/resource-planning/optimize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scope, techniques: stepDefs[i].options }),
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            setSteps((prev) => prev.map((s, idx) => idx === i ? { ...s, status: 'error' } : s));
+            setError(data.error ?? 'Optimisation failed — please try again.');
+            setPhase('idle');
+            return;
+          }
+          stepResult = data;
         }
 
-        const violations = data.violations?.length ?? 0;
-        const jobsScheduled = data.schedule?.length ?? 0;
-        const unschedulable = data.unschedulable?.length ?? 0;
+        const violations = stepResult?.violations?.length ?? 0;
+        const jobsScheduled = stepResult?.schedule?.length ?? 0;
+        const unschedulable = stepResult?.unschedulable?.length ?? 0;
         const delta = previousViolations !== null ? violations - previousViolations : undefined;
 
         setSteps((prev) =>
@@ -317,7 +373,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
         );
 
         previousViolations = violations;
-        lastResult = data;
+        lastResult = stepResult;
       } catch {
         setSteps((prev) =>
           prev.map((s, idx) => idx === i ? { ...s, status: 'error' } : s)
