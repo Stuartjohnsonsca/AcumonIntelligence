@@ -61,6 +61,7 @@ model Firm {
   resourceJobs             ResourceJob[]
   resourceJobProfiles      ResourceJobProfile[]
   resourceClientSettings   ResourceClientSetting[]
+  resourceOptimizerSettings ResourceOptimizerSettings?
   documentTemplates        DocumentTemplate[]
 
   @@map("firms")
@@ -2167,5 +2168,18 @@ model ResourcePlanningLock {
   lastActivity DateTime @default(now()) @map("last_activity")
 
   @@map("resource_planning_locks")
+}
+
+// Optimizer constraint priority settings — one record per firm
+model ResourceOptimizerSettings {
+  id              String   @id @default(uuid())
+  firmId          String   @unique @map("firm_id")
+  constraintOrder Json     @default("[]") @map("constraint_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id])
+
+  @@map("resource_optimizer_settings")
 }
 
