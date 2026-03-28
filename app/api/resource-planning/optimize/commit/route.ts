@@ -28,6 +28,38 @@ export async function POST(request: NextRequest) {
   // Collect job IDs that gain new allocations (for status update)
   const scheduledJobIds = [...new Set(toCreate.map((c) => c.jobId))];
 
+  // ── Build engagementId map ────────────────────────────────────────────────
+  // The resource planning grid matches allocations to jobs using:
+  //   job.engagementId (AuditEngagement.id, keyed by clientId:auditType) || job.id
+  // We must store the same engagementId so new allocations are visible in the grid.
+  const jobsForCommit = scheduledJobIds.length > 0
+    ? await prisma.resourceJob.findMany({
+        where: { id: { in: scheduledJobIds }, firmId },
+        select: { id: true, clientId: true, auditType: true },
+      })
+    : [];
+
+  const clientIds = [...new Set(jobsForCommit.map((j) => j.clientId))];
+  const engagementsForCommit = clientIds.length > 0
+    ? await prisma.auditEngagement.findMany({
+        where: { clientId: { in: clientIds }, firmId },
+        select: { id: true, clientId: true, auditType: true },
+      })
+    : [];
+
+  // Map: "clientId:auditType" → AuditEngagement.id
+  const engagementMap = new Map<string, string>();
+  for (const e of engagementsForCommit) {
+    engagementMap.set(`${e.clientId}:${e.auditType}`, e.id);
+  }
+
+  // Map: ResourceJob.id → correct engagementId (AuditEngagement.id or ResourceJob.id)
+  const jobEngagementIdMap = new Map<string, string>();
+  for (const j of jobsForCommit) {
+    const auditEngagementId = engagementMap.get(`${j.clientId}:${j.auditType}`);
+    jobEngagementIdMap.set(j.id, auditEngagementId ?? j.id);
+  }
+
   let committed = 0;
 
   await prisma.$transaction(async (tx) => {
@@ -38,12 +70,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Create new allocations
+    // Create new allocations using the correct engagementId for the grid
     for (const c of toCreate) {
+      const engagementId = jobEngagementIdMap.get(c.jobId) ?? c.jobId;
       await tx.resourceAllocation.create({
         data: {
           firmId,
-          engagementId: c.jobId,
+          engagementId,
           userId: c.userId,
           role: c.role,
           startDate: new Date(c.startDate),
@@ -55,7 +88,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Update job status to 'scheduled' for jobs that gained allocations
-    // Only update jobs currently at unscheduled or pre_scheduled
     if (scheduledJobIds.length > 0) {
       await tx.resourceJob.updateMany({
         where: {
