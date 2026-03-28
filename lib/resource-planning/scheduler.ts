@@ -1123,11 +1123,8 @@ export function runScheduler(
       jitterScale,
     );
 
-    const passResults = options.localSearch
-      ? runLocalSearch(jobResults, jobs, staff, existingAllocations, order, todayDate)
-      : jobResults;
-
-    const passPlacementsAll = passResults.flatMap((jr) => jr.placements);
+    // Score on raw greedy result only — local search applied once after the loop
+    const passPlacementsAll = jobResults.flatMap((jr) => jr.placements);
     const passScore = computeQualityScore(
       detectViolations(passPlacementsAll, jobs.filter((j) => inScopeSet.has(j.id)), staff, order, todayDate, existingAllocations),
       unschedulable,
@@ -1135,14 +1132,19 @@ export function runScheduler(
 
     if (passScore < bestScore) {
       bestScore = passScore;
-      bestJobResults = passResults;
+      bestJobResults = jobResults;
       bestUnschedulable = unschedulable;
     }
   }
 
+  // Apply local search once on the best greedy winner (not inside the loop)
+  const postLoopResults = options.localSearch
+    ? runLocalSearch(bestJobResults, jobs, staff, existingAllocations, order, todayDate)
+    : bestJobResults;
+
   // ── Build final result ──────────────────────────────────────────────────────
   const staffNameMap = new Map(staff.map((s) => [s.id, s.name]));
-  const finalPlacements = bestJobResults.flatMap((jr) => jr.placements);
+  const finalPlacements = postLoopResults.flatMap((jr) => jr.placements);
 
   const violations = detectViolations(
     finalPlacements,
@@ -1153,7 +1155,7 @@ export function runScheduler(
     existingAllocations,
   );
 
-  const schedule = bestJobResults.map((jr) => ({
+  const schedule = postLoopResults.map((jr) => ({
     jobId: jr.jobId,
     allocations: jr.placements.map((p): ProposedAllocation => ({
       userId: p.userId,
@@ -1168,7 +1170,7 @@ export function runScheduler(
     })),
   }));
 
-  const changes = computeChanges(bestJobResults, jobs, staff, existingAllocations);
+  const changes = computeChanges(postLoopResults, jobs, staff, existingAllocations);
 
   return {
     schedule,
