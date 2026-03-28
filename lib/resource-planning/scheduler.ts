@@ -870,8 +870,11 @@ function runGreedyPass(
 // ─── Local Search ─────────────────────────────────────────────────────────────
 
 /**
- * Try all pairwise swaps between jobs for each role. Keep a swap if it reduces
- * the total violation score. Repeat until no improvement or max iterations.
+ * Targeted pairwise swap search. Only tries swaps involving staff members who
+ * are already causing violations — reduces candidate pairs from O(n²) to
+ * O(violations × n), making it fast enough for large portfolios.
+ *
+ * Hard budget of MAX_DETECT_CALLS to prevent timeout regardless of data shape.
  */
 function runLocalSearch(
   jobResults: JobResult[],
@@ -882,20 +885,17 @@ function runLocalSearch(
   today: Date,
   maxIterations: number = 3,
 ): JobResult[] {
+  const MAX_DETECT_CALLS = 400; // hard budget per iteration to guarantee < 2s
+
   const inScopeSet = new Set(jobResults.map((jr) => jr.jobId));
   const jobMap = new Map(jobs.map((j) => [j.id, j]));
-  // Pre-build O(1) lookups so inner loops don't scan arrays repeatedly
   const staffById = new Map(staff.map((s) => [s.id, s]));
   const jobsInScope = jobs.filter((j) => inScopeSet.has(j.id));
 
-  // Build capacity map once from existing allocations + current placements.
-  // Updated incrementally as swaps are accepted — never rebuilt inside the loop.
   function buildCurrentCapMap(): CapacityMap {
     const cap = buildCapacityMap(existingAllocations, inScopeSet);
     for (const jr of jobResults) {
-      for (const p of jr.placements) {
-        consumeCapacity(cap, p);
-      }
+      for (const p of jr.placements) { consumeCapacity(cap, p); }
     }
     return cap;
   }
@@ -907,7 +907,6 @@ function runLocalSearch(
     improved = false;
     iterations++;
 
-    // Build cap map ONCE per outer iteration (not per pair)
     const cap = buildCurrentCapMap();
 
     const currentViolations = detectViolations(
@@ -915,10 +914,18 @@ function runLocalSearch(
     );
     let currentScore = computeQualityScore(currentViolations, []);
 
-    // Try swapping staff for each role between every pair of jobs
-    for (let i = 0; i < jobResults.length; i++) {
-      for (let j = i + 1; j < jobResults.length; j++) {
-        const jr1 = jobResults[i];
+    // Identify jobs that contain a violating staff member — only swap these
+    const violatingUserIds = new Set(currentViolations.map((v) => v.userId).filter(Boolean) as string[]);
+    const isHotJob = (jr: JobResult) => jr.placements.some((p) => violatingUserIds.has(p.userId));
+
+    let detectCalls = 0;
+
+    for (let i = 0; i < jobResults.length && detectCalls < MAX_DETECT_CALLS; i++) {
+      const jr1 = jobResults[i];
+      // Only iterate pairs where at least one side has a violating staff member
+      if (!isHotJob(jr1)) continue;
+
+      for (let j = i + 1; j < jobResults.length && detectCalls < MAX_DETECT_CALLS; j++) {
         const jr2 = jobResults[j];
 
         for (const role of ROLE_ASSIGNMENT_ORDER) {
@@ -934,13 +941,11 @@ function runLocalSearch(
           const s2 = staffById.get(p2.userId);
           if (!s1 || !s2 || !s1.resourceSetting || !s2.resourceSetting) continue;
 
-          // Check eligibility if swapped
           const otherRoles1 = jr1.placements.filter((p) => p.userId === p2.userId && p.role !== role).map((p) => p.role);
           const otherRoles2 = jr2.placements.filter((p) => p.userId === p1.userId && p.role !== role).map((p) => p.role);
           if (!isEligible(s2, role, otherRoles1)) continue;
           if (!isEligible(s1, role, otherRoles2)) continue;
 
-          // Recompute windows for swapped staff
           const deadline1 = getJobDeadline(job1);
           const deadline2 = getJobDeadline(job2);
           const budget1 = getBudgetForRole(job1, role);
@@ -950,7 +955,6 @@ function runLocalSearch(
           const win1 = computeWindow(budget1, safeCap1, deadline1);
           const win2 = computeWindow(budget2, safeCap2, deadline2);
 
-          // Temporarily release p1 & p2 from shared cap to check availability
           releaseCapacity(cap, p1);
           releaseCapacity(cap, p2);
 
@@ -960,13 +964,11 @@ function runLocalSearch(
           const avail2 = dailyAvailable(s1.id, safeCap2 / 5, days2, cap);
 
           if (avail1 < win1.hoursPerDay * 0.5 || avail2 < win2.hoursPerDay * 0.5) {
-            // Not feasible — restore cap and skip
             consumeCapacity(cap, p1);
             consumeCapacity(cap, p2);
             continue;
           }
 
-          // Build swapped placements
           const newP1: PlacedAllocation = {
             jobId: jr1.jobId, userId: s2.id, role,
             startDate: win1.startDate, endDate: win1.endDate,
@@ -980,20 +982,19 @@ function runLocalSearch(
             totalHours: Math.round(win2.hoursPerDay * days2.length * 100) / 100,
           };
 
-          // Evaluate trial by patching only the two affected job results
           const trialJr1 = { jobId: jr1.jobId, placements: jr1.placements.map((p) => p === p1 ? newP1 : p) };
           const trialJr2 = { jobId: jr2.jobId, placements: jr2.placements.map((p) => p === p2 ? newP2 : p) };
           const trialAllPlacements = jobResults.flatMap((jr, idx) =>
             idx === i ? trialJr1.placements : idx === j ? trialJr2.placements : jr.placements
           );
 
-          const trialViolations = detectViolations(
-            trialAllPlacements, jobsInScope, staff, constraintOrder, today, existingAllocations,
+          detectCalls++;
+          const trialScore = computeQualityScore(
+            detectViolations(trialAllPlacements, jobsInScope, staff, constraintOrder, today, existingAllocations),
+            [],
           );
-          const trialScore = computeQualityScore(trialViolations, []);
 
           if (trialScore < currentScore) {
-            // Accept: update jobResults and consume new placements into cap
             jobResults[i] = trialJr1;
             jobResults[j] = trialJr2;
             consumeCapacity(cap, newP1);
@@ -1001,7 +1002,6 @@ function runLocalSearch(
             currentScore = trialScore;
             improved = true;
           } else {
-            // Reject: restore old placements into cap
             consumeCapacity(cap, p1);
             consumeCapacity(cap, p2);
           }
