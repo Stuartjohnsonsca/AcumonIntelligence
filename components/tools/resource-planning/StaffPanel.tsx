@@ -13,6 +13,7 @@ interface Props {
 }
 
 export function StaffPanel({ isResourceAdmin }: Props) {
+  // ── All hooks must be at the top — no hooks after any conditional return ──
   const staff = useResourcePlanningStore((s) => s.staff);
   const jobs = useResourcePlanningStore((s) => s.jobs);
   const allocations = useResourcePlanningStore((s) => s.allocations);
@@ -22,12 +23,14 @@ export function StaffPanel({ isResourceAdmin }: Props) {
   const viewMode = useResourcePlanningStore((s) => s.viewMode);
   const leftPanelFilter = useResourcePlanningStore((s) => s.leftPanelFilter);
   const setLeftPanelFilter = useResourcePlanningStore((s) => s.setLeftPanelFilter);
+  const currentUserId = useResourcePlanningStore((s) => s.currentUserId);
 
   const [filter, setFilter] = useState('');
+  const [myScheduleOnly, setMyScheduleOnly] = useState(!isResourceAdmin);
 
   const isStaffAxis = viewMode.startsWith('staff');
 
-  // Compute availability for staff view
+  // Compute availability for client view
   const availabilityMap = useMemo(() => {
     if (isStaffAxis) return new Map<string, boolean>();
     const caps = computeStaffCapacity(staff, allocations, new Date(visibleStart), new Date(visibleEnd));
@@ -35,6 +38,27 @@ export function StaffPanel({ isResourceAdmin }: Props) {
     for (const c of caps) map.set(c.userId, c.netHrs > 0);
     return map;
   }, [staff, allocations, visibleStart, visibleEnd, isStaffAxis]);
+
+  const filteredStaff = useMemo(() => {
+    let result = staff;
+    if (myScheduleOnly && currentUserId) {
+      const myEngagements = new Set(
+        allocations.filter((a) => a.userId === currentUserId).map((a) => a.engagementId),
+      );
+      const teamIds = new Set<string>();
+      teamIds.add(currentUserId);
+      for (const alloc of allocations) {
+        if (myEngagements.has(alloc.engagementId)) teamIds.add(alloc.userId);
+      }
+      result = staff.filter((s) => teamIds.has(s.id));
+    }
+    if (selectedStaffIds.length > 0) {
+      result = result.filter((s) => selectedStaffIds.includes(s.id));
+    } else if (filter) {
+      result = result.filter((s) => s.name.toLowerCase().includes(filter.toLowerCase()));
+    }
+    return result;
+  }, [staff, selectedStaffIds, filter, myScheduleOnly, currentUserId, allocations]);
 
   if (isStaffAxis) {
     // Show clients list when axis is staff
@@ -69,34 +93,6 @@ export function StaffPanel({ isResourceAdmin }: Props) {
       </div>
     );
   }
-
-  // Staff list — only those with ResourceStaffSetting (set in admin)
-  // No separate filter panel — just search
-  const currentUserId = useResourcePlanningStore((s) => s.currentUserId);
-  const [myScheduleOnly, setMyScheduleOnly] = useState(!isResourceAdmin);
-
-  const filteredStaff = useMemo(() => {
-    let result = staff; // Already filtered server-side to only those with ResourceStaffSetting
-
-    if (myScheduleOnly && currentUserId) {
-      const myEngagements = new Set(
-        allocations.filter((a) => a.userId === currentUserId).map((a) => a.engagementId),
-      );
-      const teamIds = new Set<string>();
-      teamIds.add(currentUserId);
-      for (const alloc of allocations) {
-        if (myEngagements.has(alloc.engagementId)) teamIds.add(alloc.userId);
-      }
-      result = staff.filter((s) => teamIds.has(s.id));
-    }
-
-    if (selectedStaffIds.length > 0) {
-      result = result.filter((s) => selectedStaffIds.includes(s.id));
-    } else if (filter) {
-      result = result.filter((s) => s.name.toLowerCase().includes(filter.toLowerCase()));
-    }
-    return result;
-  }, [staff, selectedStaffIds, filter, myScheduleOnly, currentUserId, allocations]);
 
   return (
     <div className="w-1/4 min-w-[180px] max-w-[280px] border-r bg-slate-50 flex flex-col overflow-hidden">
