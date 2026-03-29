@@ -20,6 +20,13 @@ const CONSTRAINT_LABELS: Record<string, { label: string; color: string }> = {
   'under-budget':           { label: 'Under-allocated',       color: 'bg-blue-100 text-blue-700'  },
   'custom-completion-date': { label: 'Past deadline',         color: 'bg-red-100 text-red-700'    },
   'no-overtime':            { label: 'Staff overloaded',      color: 'bg-purple-100 text-purple-700' },
+  'team-continuity':        { label: 'Team changed year-on-year', color: 'bg-sky-100 text-sky-700' },
+  'job-count-limit':        { label: 'Job limit exceeded',    color: 'bg-orange-100 text-orange-700' },
+  'standard-hours':         { label: 'Standard hours exceeded', color: 'bg-purple-100 text-purple-700' },
+  'started-team':           { label: 'Started team changed',  color: 'bg-red-100 text-red-700'    },
+  'forty-pct-rule':         { label: '< 40% role contribution', color: 'bg-slate-100 text-slate-600' },
+  'reviewer-min-hours':     { label: 'Reviewer hours too low', color: 'bg-slate-100 text-slate-600' },
+  'preparer-min-hours':     { label: 'Preparer hours too low', color: 'bg-slate-100 text-slate-600' },
 };
 
 function constraintLabel(id: string) {

@@ -442,6 +442,12 @@ interface ScoringContext {
   capacityMap?: CapacityMap;
   currentJobDeadline?: Date;
   currentBudgetHours?: number;
+  /** clientId:auditType:role → userIds who held that role previously */
+  previousTeam?: Map<string, string[]>;
+  /** clientId of the job currently being scored */
+  currentJobClientId?: string;
+  /** auditType of the job currently being scored */
+  currentJobAuditType?: string;
 }
 
 /**
@@ -499,6 +505,16 @@ function scoreCandidate(
     score += urgencySum * 0.1;
   }
 
+  // Continuity preference: strongly prefer staff who held this role on the
+  // same client engagement last year (lower score = preferred).
+  if (ctx.previousTeam && ctx.currentJobClientId && ctx.currentJobAuditType) {
+    const key = `${ctx.currentJobClientId}:${ctx.currentJobAuditType}:${role}`.toLowerCase();
+    const prev = ctx.previousTeam.get(key);
+    if (prev && prev.includes(candidate.id)) {
+      score -= 0.4; // significant preference without hard-locking
+    }
+  }
+
   if (ctx.options.multiPass && ctx.jitterScale > 0) {
     score += Math.random() * 0.15 * ctx.jitterScale;
   }
@@ -529,6 +545,7 @@ function detectViolations(
   constraintOrder: string[],
   today: Date,
   existingAllocations: Allocation[],
+  previousTeam: Map<string, string[]>,
 ): OptimizationViolation[] {
   const order = constraintOrder.length > 0 ? constraintOrder : DEFAULT_CONSTRAINT_ORDER;
   const violations: OptimizationViolation[] = [];
@@ -609,6 +626,43 @@ function detectViolations(
         const s = staffMap.get(p.userId);
         addViolation('reviewer-no-preparer', jobId, p.userId,
           `${s?.name ?? p.userId} is Reviewer and Preparer on the same job`);
+      }
+    }
+
+    // team-continuity — different staff from last year on same engagement
+    if (previousTeam.size > 0) {
+      const job = jobMap.get(jobId);
+      if (job) {
+        for (const [role, rolePlacements] of byRole) {
+          const key = `${job.clientId}:${job.auditType}:${role}`.toLowerCase();
+          const prevUsers = previousTeam.get(key);
+          if (!prevUsers || prevUsers.length === 0) continue;
+
+          for (const p of rolePlacements) {
+            if (prevUsers.includes(p.userId)) continue; // same person — no violation
+
+            // Check if any previous team member is still active and eligible for this role
+            // (if they're no longer eligible, their "title changed" — no violation)
+            const prevStillEligible = prevUsers.some((prevUserId) => {
+              const prevStaff = staffMap.get(prevUserId);
+              if (!prevStaff || !prevStaff.isActive) return false;
+              return isEligible(prevStaff, role as ResourceRole, []);
+            });
+            if (!prevStillEligible) continue;
+
+            const s = staffMap.get(p.userId);
+            const prevNames = prevUsers
+              .map((uid) => staffMap.get(uid)?.name ?? uid)
+              .join(', ');
+            addViolation(
+              'team-continuity',
+              jobId,
+              p.userId,
+              `${s?.name ?? p.userId} replaces ${prevNames} as ${role} — team changed from last year`,
+            );
+            break; // one violation per role per job is enough
+          }
+        }
       }
     }
 
@@ -784,6 +838,7 @@ function runGreedyPass(
   options: SchedulerOptions,
   today: Date,
   jitterScale: number,
+  previousTeam: Map<string, string[]>,
 ): {
   jobResults: JobResult[];
   unschedulable: string[];
@@ -839,6 +894,9 @@ function runGreedyPass(
       const ctx: ScoringContext = {
         options, jitterScale, remainingJobs, staff: activeStaff, jobCountMap,
         capacityMap, currentJobDeadline: deadline, currentBudgetHours: budgetHours,
+        previousTeam,
+        currentJobClientId: job.clientId,
+        currentJobAuditType: job.auditType,
       };
       const scored = candidates
         .map((s) => ({ staff: s, score: scoreCandidate(s, role, ctx) }))
@@ -993,7 +1051,7 @@ function runLocalSearch(
 
     const cap = buildCurrentCapMap();
     const currentViolations = detectViolations(
-      jobResults.flatMap((jr) => jr.placements), jobsInScope, staff, constraintOrder, today, existingAllocations,
+      jobResults.flatMap((jr) => jr.placements), jobsInScope, staff, constraintOrder, today, existingAllocations, new Map(),
     );
     let currentScore = computeQualityScore(currentViolations, []);
 
@@ -1108,7 +1166,7 @@ function runLocalSearch(
 
           detectCalls++;
           const trialScore = computeQualityScore(
-            detectViolations(trialPlacements, jobsInScope, staff, constraintOrder, today, existingAllocations),
+            detectViolations(trialPlacements, jobsInScope, staff, constraintOrder, today, existingAllocations, new Map()),
             [],
           );
 
@@ -1231,6 +1289,7 @@ export function runScheduler(
   scope: OptimizationScope,
   options: SchedulerOptions,
   today: string,
+  previousTeam: Map<string, string[]> = new Map(),
 ): SchedulerResult {
   const todayDate = parseDate(today);
   const order = constraintOrder.length > 0 ? constraintOrder : DEFAULT_CONSTRAINT_ORDER;
@@ -1263,12 +1322,13 @@ export function runScheduler(
       options,
       todayDate,
       jitterScale,
+      previousTeam,
     );
 
     // Score on raw greedy result only — local search applied once after the loop
     const passPlacementsAll = jobResults.flatMap((jr) => jr.placements);
     const passScore = computeQualityScore(
-      detectViolations(passPlacementsAll, jobs.filter((j) => inScopeSet.has(j.id)), staff, order, todayDate, existingAllocations),
+      detectViolations(passPlacementsAll, jobs.filter((j) => inScopeSet.has(j.id)), staff, order, todayDate, existingAllocations, previousTeam),
       unschedulable,
     );
 
@@ -1295,6 +1355,7 @@ export function runScheduler(
     order,
     todayDate,
     existingAllocations,
+    previousTeam,
   );
 
   const schedule = postLoopResults.map((jr) => ({

@@ -40,7 +40,7 @@ async function handleOptimize(request: NextRequest) {
   };
 
   // ── Fetch data ───────────────────────────────────────────────────────────
-  const [staffRaw, jobsRaw, allocsRaw, settingsRaw, profilesRaw, clientSettingsRaw] = await Promise.all([
+  const [staffRaw, jobsRaw, allocsRaw, settingsRaw, profilesRaw, clientSettingsRaw, engagementsRaw] = await Promise.all([
     prisma.user.findMany({
       where: { firmId, isActive: true },
       include: { resourceStaffSetting: true },
@@ -59,6 +59,10 @@ async function handleOptimize(request: NextRequest) {
     prisma.resourceOptimizerSettings.findUnique({ where: { firmId } }),
     prisma.resourceJobProfile.findMany({ where: { firmId } }),
     prisma.resourceClientSetting.findMany({ where: { firmId }, select: { clientId: true, serviceType: true } }),
+    prisma.auditEngagement.findMany({
+      where: { firmId },
+      select: { id: true, clientId: true, auditType: true },
+    }),
   ]);
 
   // Map staff
@@ -89,6 +93,28 @@ async function handleOptimize(request: NextRequest) {
   const profileById = new Map(profilesRaw.map((p) => [p.id, p]));
   const profileByName = new Map(profilesRaw.map((p) => [p.name.toLowerCase(), p]));
   const serviceTypeByClient = new Map(clientSettingsRaw.map((cs) => [cs.clientId, cs.serviceType]));
+
+  // Build previousTeam: "clientId:auditType:role" → userId[]
+  // Uses existing allocations joined through AuditEngagement to get clientId + auditType.
+  // The scheduler uses this to prefer the same staff year-on-year.
+  const engIdToClient = new Map<string, { clientId: string; auditType: string }>();
+  for (const e of engagementsRaw) {
+    engIdToClient.set(e.id, { clientId: e.clientId, auditType: e.auditType });
+  }
+  // Also index by ResourceJob.id for allocations stored that way
+  for (const j of jobsRaw) {
+    engIdToClient.set(j.id, { clientId: j.clientId, auditType: j.auditType });
+  }
+
+  const previousTeam = new Map<string, string[]>();
+  for (const a of allocsRaw) {
+    const info = engIdToClient.get(a.engagementId);
+    if (!info) continue;
+    const key = `${info.clientId}:${info.auditType}:${a.role}`.toLowerCase();
+    const arr = previousTeam.get(key) ?? [];
+    if (!arr.includes(a.userId)) arr.push(a.userId);
+    previousTeam.set(key, arr);
+  }
 
   // Resolve budget hours per role: job record value if > 0, otherwise profile fallback.
   // CRM-synced jobs only have budgetHoursPreparer set — the per-role fallback ensures
@@ -221,6 +247,7 @@ async function handleOptimize(request: NextRequest) {
       scope,
       options,
       today,
+      previousTeam,  // NEW
     );
   } catch (err: any) {
     console.error('[optimize] Scheduler crashed:', err);

@@ -64,6 +64,12 @@ export const BREAKABLE_CONSTRAINTS: ConstraintDef[] = [
       "Staff should not be allocated to more concurrent jobs in a role than their configured job limit for that role.",
   },
   {
+    id: 'team-continuity',
+    label: 'Retain same team year-on-year',
+    description:
+      'Where a job is a repeat engagement, the same staff member should be assigned to each role as the previous year, unless their role or job title has changed.',
+  },
+  {
     id: 'reviewer-no-preparer',
     label: 'Reviewer should not do Preparer work',
     description: 'Staff who are Reviewers should not be assigned as Preparers on the same job.',

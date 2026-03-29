@@ -159,6 +159,49 @@ export async function GET(_request: NextRequest) {
         }
       }
 
+      // team-continuity — detect team changes from previous year
+      if (job?.previousJobId) {
+        // Find what staff were on the PREVIOUS job (by previousJobId)
+        const prevJob = jobsRaw.find((j) => j.id === job!.previousJobId);
+        if (prevJob) {
+          const prevEngId = engagementMap.get(`${prevJob.clientId}:${prevJob.auditType}`) ?? prevJob.id;
+          const prevAllocs = byEngId.get(prevEngId) ?? [];
+          const prevByRole = new Map<string, string[]>();
+          for (const pa of prevAllocs) {
+            const arr = prevByRole.get(pa.role) ?? [];
+            if (!arr.includes(pa.userId)) arr.push(pa.userId);
+            prevByRole.set(pa.role, arr);
+          }
+
+          // Compare with current year allocs
+          for (const [role, roleAllocs] of byRole) {
+            const prevUsers = prevByRole.get(role) ?? [];
+            if (prevUsers.length === 0) continue;
+
+            for (const a of roleAllocs) {
+              if (prevUsers.includes(a.userId)) continue;
+
+              // Only flag if the previous person is still active and eligible
+              const prevStillEligible = prevUsers.some((prevId) => {
+                const ps = staffMap.get(prevId);
+                return ps?.isActive === true;
+              });
+              if (!prevStillEligible) continue;
+
+              const currentName = staffMap.get(a.userId)?.name ?? a.userId;
+              const prevNames = prevUsers.map((uid) => staffMap.get(uid)?.name ?? uid).join(', ');
+              addV(
+                'team-continuity',
+                jobId,
+                a.userId,
+                `${label} — ${role}: ${currentName} replaces ${prevNames} from last year`,
+              );
+              break; // one violation per role
+            }
+          }
+        }
+      }
+
       if (job) {
         const budget = resolveJobBudget(job);
 
