@@ -187,28 +187,29 @@ async function handleOptimize(request: NextRequest) {
   // ── Run deterministic scheduler ──────────────────────────────────────────
   const today = new Date().toISOString().split('T')[0];
 
-  // ── Diagnostics ─────────────────────────────────────────────────────────
-  const riStaff    = staff.filter((s) => s.resourceSetting && (s.resourceSetting.isRI || s.resourceSetting.resourceRole === 'RI'));
-  const revStaff   = staff.filter((s) => s.resourceSetting && (s.resourceSetting.reviewerJobLimit != null ? s.resourceSetting.reviewerJobLimit > 0 : s.resourceSetting.resourceRole === 'Reviewer' || s.resourceSetting.resourceRole === 'RI'));
-  const specStaff  = staff.filter((s) => s.resourceSetting && (s.resourceSetting.specialistJobLimit != null ? s.resourceSetting.specialistJobLimit > 0 : s.resourceSetting.resourceRole === 'Specialist'));
-  const prepStaff  = staff.filter((s) => s.resourceSetting && (s.resourceSetting.preparerJobLimit != null ? s.resourceSetting.preparerJobLimit > 0 : s.resourceSetting.resourceRole === 'Preparer' || s.resourceSetting.resourceRole === 'Reviewer'));
-  console.log(`[optimize] Eligible staff — RI: ${riStaff.length} (${riStaff.map((s) => s.name).join(', ')})`);
-  console.log(`[optimize] Eligible staff — Reviewer: ${revStaff.length} (${revStaff.map((s) => s.name).join(', ')})`);
-  console.log(`[optimize] Eligible staff — Specialist: ${specStaff.length} (${specStaff.map((s) => s.name).join(', ')})`);
-  console.log(`[optimize] Eligible staff — Preparer: ${prepStaff.length} (${prepStaff.map((s) => s.name).join(', ')})`);
-  const jobsWithRI  = jobsInScope.filter((j) => j.budgetHoursRI > 0).length;
-  const jobsWithRev = jobsInScope.filter((j) => j.budgetHoursReviewer > 0).length;
-  const jobsWithSpec = jobsInScope.filter((j) => j.budgetHoursSpecialist > 0).length;
-  const jobsWithPrep = jobsInScope.filter((j) => j.budgetHoursPreparer > 0).length;
-  console.log(`[optimize] Jobs with budget — RI: ${jobsWithRI}, Reviewer: ${jobsWithRev}, Specialist: ${jobsWithSpec}, Preparer: ${jobsWithPrep} (of ${jobsInScope.length} in scope)`);
+  // ── Diagnostics (single log line so Vercel doesn't truncate) ────────────
+  const riStaff   = staff.filter((s) => s.resourceSetting && (s.resourceSetting.isRI || s.resourceSetting.resourceRole === 'RI'));
+  const revStaff  = staff.filter((s) => s.resourceSetting && (s.resourceSetting.reviewerJobLimit != null ? s.resourceSetting.reviewerJobLimit > 0 : s.resourceSetting.resourceRole === 'Reviewer' || s.resourceSetting.resourceRole === 'RI'));
+  const specStaff = staff.filter((s) => s.resourceSetting && (s.resourceSetting.specialistJobLimit != null ? s.resourceSetting.specialistJobLimit > 0 : s.resourceSetting.resourceRole === 'Specialist'));
+  const prepStaff = staff.filter((s) => s.resourceSetting && (s.resourceSetting.preparerJobLimit != null ? s.resourceSetting.preparerJobLimit > 0 : s.resourceSetting.resourceRole === 'Preparer' || s.resourceSetting.resourceRole === 'Reviewer'));
   const sampleJob = jobsInScope[0];
-  if (sampleJob) {
-    console.log(`[optimize] Sample job "${sampleJob.clientName} ${sampleJob.auditType}": RI=${sampleJob.budgetHoursRI}h, Rev=${sampleJob.budgetHoursReviewer}h, Spec=${sampleJob.budgetHoursSpecialist}h, Prep=${sampleJob.budgetHoursPreparer}h | profileId=${sampleJob.jobProfileId} serviceType=${sampleJob.serviceType}`);
-  }
-  console.log(`[optimize] Profiles available: ${profilesRaw.length} — [${profilesRaw.map((p) => p.name).join(', ')}]`);
-  console.log(`[optimize] Client service type mappings: ${clientSettingsRaw.filter((cs) => cs.serviceType).length} of ${clientSettingsRaw.length} clients have a serviceType`);
-
-  console.log(`[optimize] Running deterministic scheduler. Jobs in scope: ${jobsInScope.length}, Staff: ${staff.length}, Options: ${JSON.stringify(options)}`);
+  const diagnostics = {
+    eligibleStaff: { RI: riStaff.map((s) => s.name), Reviewer: revStaff.map((s) => s.name), Specialist: specStaff.map((s) => s.name), Preparer: prepStaff.map((s) => s.name) },
+    jobsInScope: jobsInScope.length,
+    jobsWithBudget: {
+      RI:       jobsInScope.filter((j) => j.budgetHoursRI > 0).length,
+      Reviewer: jobsInScope.filter((j) => j.budgetHoursReviewer > 0).length,
+      Specialist: jobsInScope.filter((j) => j.budgetHoursSpecialist > 0).length,
+      Preparer: jobsInScope.filter((j) => j.budgetHoursPreparer > 0).length,
+    },
+    sampleJob: sampleJob ? { client: sampleJob.clientName, type: sampleJob.auditType, RI: sampleJob.budgetHoursRI, Reviewer: sampleJob.budgetHoursReviewer, Specialist: sampleJob.budgetHoursSpecialist, Preparer: sampleJob.budgetHoursPreparer, profileId: sampleJob.jobProfileId, serviceType: sampleJob.serviceType } : null,
+    profiles: profilesRaw.map((p) => ({ name: p.name, RI: p.budgetHoursRI, Reviewer: p.budgetHoursReviewer, Specialist: p.budgetHoursSpecialist, Preparer: p.budgetHoursPreparer })),
+    clientsWithServiceType: clientSettingsRaw.filter((cs) => cs.serviceType).length,
+    totalClients: clientSettingsRaw.length,
+    options,
+  };
+  console.log('[optimize] diagnostics:', JSON.stringify(diagnostics));
+  console.log(`[optimize] Running scheduler. Jobs: ${jobsInScope.length}, Staff: ${staff.length}`);
 
   let schedulerResult: ReturnType<typeof runScheduler>;
   try {
@@ -257,5 +258,6 @@ async function handleOptimize(request: NextRequest) {
   return Response.json({
     ...schedulerResult,
     reasoning,
+    diagnostics, // temporary — remove once RI/Reviewer issue is resolved
   });
 }
