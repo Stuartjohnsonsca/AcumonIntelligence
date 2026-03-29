@@ -208,7 +208,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     },
 
     setZoomLevel: (level) => set({ zoomLevel: Math.max(0.75, Math.min(1.25, level)) }),
-    setFocusWindowWeeks: (weeks) => set({ focusWindowWeeks: Math.max(1, Math.min(6, weeks)) }),
+    setFocusWindowWeeks: (weeks) => set({ focusWindowWeeks: Math.max(1, Math.min(12, weeks)) }),
     setViewMode: (mode) => set({ viewMode: mode }),
     setEditMode: (mode) => set({ editMode: mode }),
     setSelectedAllocation: (id) => set({ selectedAllocationId: id }),

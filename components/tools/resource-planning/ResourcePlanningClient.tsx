@@ -359,30 +359,35 @@ export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles =
     </div>
   );
 
-  if (!canEdit) {
-    return content;
-  }
-
+  // DndContext must always wrap the tree — useDraggable/useDroppable throw without it,
+  // even when disabled. Gate the drag handlers on canEdit instead.
   return (
-    <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={canEdit ? handleDragStart : undefined}
+      onDragEnd={canEdit ? handleDragEnd : undefined}
+    >
       {content}
-      <DragOverlay>
-        {draggedStaff && (
-          <div className="px-3 py-1.5 bg-blue-600 text-white rounded-lg shadow-xl text-xs font-semibold flex items-center gap-1.5 cursor-grabbing">
-            <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-            {draggedStaff.name}
-            <span className="text-blue-200 text-[9px]">— drop on timeline</span>
-          </div>
-        )}
-        {draggedAlloc && (() => {
-          const colors = ROLE_COLORS[draggedAlloc.role];
-          return (
-            <div className={`px-2 py-1 ${colors.bg} border ${colors.border} rounded-full shadow-lg text-[10px] font-medium ${colors.text}`}>
-              {draggedAlloc.userName} ({draggedAlloc.role})
+      {canEdit && (
+        <DragOverlay>
+          {draggedStaff && (
+            <div className="px-3 py-1.5 bg-blue-600 text-white rounded-lg shadow-xl text-xs font-semibold flex items-center gap-1.5 cursor-grabbing">
+              <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+              {draggedStaff.name}
+              <span className="text-blue-200 text-[9px]">— drop on timeline</span>
             </div>
-          );
-        })()}
-      </DragOverlay>
+          )}
+          {draggedAlloc && (() => {
+            const colors = ROLE_COLORS[draggedAlloc.role];
+            return (
+              <div className={`px-2 py-1 ${colors.bg} border ${colors.border} rounded-full shadow-lg text-[10px] font-medium ${colors.text}`}>
+                {draggedAlloc.userName} ({draggedAlloc.role})
+              </div>
+            );
+          })()}
+        </DragOverlay>
+      )}
     </DndContext>
   );
 }

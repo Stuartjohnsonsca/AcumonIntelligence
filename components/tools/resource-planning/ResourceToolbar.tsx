@@ -126,7 +126,7 @@ export function ResourceToolbar() {
           <div className="flex items-center gap-2 flex-shrink-0 px-2">
             <div className="flex items-center gap-1" title={`Click date bar to expand ${focusWindowWeeks} week${focusWindowWeeks > 1 ? 's' : ''} of daily detail`}>
               <span className="text-[8px] text-slate-400">Days</span>
-              <input type="range" min={1} max={8} step={1} value={focusWindowWeeks}
+              <input type="range" min={1} max={12} step={1} value={focusWindowWeeks}
                 onChange={(e) => setFocusWindowWeeks(parseInt(e.target.value))}
                 className="w-24 h-1 accent-indigo-500"
                 title={`Focus window: ${focusWindowWeeks} weeks`} />
