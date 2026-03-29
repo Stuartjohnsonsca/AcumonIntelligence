@@ -1,12 +1,12 @@
 'use client';
 
-import { useMemo, memo, useState, useCallback } from 'react';
+import { useMemo, memo, useState, useCallback, type CSSProperties } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { Lock, Unlock } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
 import { ROLE_ORDER, ROLE_BAR_COLORS, ROLE_COLORS, getStaffRoles } from '@/lib/resource-planning/types';
-import { getWeeksInRange, formatShortDate, allocationOverlaps } from '@/lib/resource-planning/date-utils';
+import { getWeeksInRange, formatShortDate, allocationOverlaps, computeWeekFlexWeights } from '@/lib/resource-planning/date-utils';
 import { AllocationBar } from './AllocationBar';
 
 interface Props {
@@ -24,6 +24,13 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
   const viewMode = useResourcePlanningStore((s) => s.viewMode);
   const leftPanelFilter = useResourcePlanningStore((s) => s.leftPanelFilter);
   const currentUserId = useResourcePlanningStore((s) => s.currentUserId);
+  const zoomLevel = useResourcePlanningStore((s) => s.zoomLevel);
+  const timelineZoomStyle = useMemo(
+    () => zoomLevel !== 1
+      ? { transform: `scaleX(${zoomLevel})`, transformOrigin: 'left top', width: `${100 / zoomLevel}%` }
+      : undefined,
+    [zoomLevel],
+  );
 
   const startDate = useMemo(() => new Date(visibleStart), [visibleStart]);
   const endDate = useMemo(() => new Date(visibleEnd), [visibleEnd]);
@@ -71,6 +78,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
               startDate={startDate}
               endDate={endDate}
               weeks={weeks}
+              timelineZoomStyle={timelineZoomStyle}
             />
           ))}
           {filteredStaff.length === 0 && (
@@ -90,6 +98,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
             weeks={weeks}
             startDate={startDate}
             endDate={endDate}
+            timelineZoomStyle={timelineZoomStyle}
           />
         ))}
         {filteredStaff.length === 0 && (
@@ -113,6 +122,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
             weeks={weeks}
             startDate={startDate}
             endDate={endDate}
+            timelineZoomStyle={timelineZoomStyle}
           />
         ))}
       </div>
@@ -140,6 +150,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
           startDate={startDate}
           endDate={endDate}
           isResourceAdmin={isResourceAdmin}
+          timelineZoomStyle={timelineZoomStyle}
         />
       ))}
       {displayJobs.length === 0 && (
@@ -207,12 +218,14 @@ const StaffRow = memo(function StaffRow({
   weeks,
   startDate,
   endDate,
+  timelineZoomStyle,
 }: {
   member: StaffMember;
   allocations: Allocation[];
   weeks: Date[];
   startDate: Date;
   endDate: Date;
+  timelineZoomStyle?: CSSProperties;
 }) {
   const staffAllocs = useMemo(
     () => allocations.filter((a) => a.userId === member.id && allocationOverlaps(a.startDate, a.endDate, startDate, endDate)),
@@ -229,7 +242,7 @@ const StaffRow = memo(function StaffRow({
           <div className="text-[10px] text-slate-400">{member.resourceSetting?.resourceRole ?? 'Unassigned'}</div>
         </div>
         {/* Role lanes — one per role, matching Client Bookings layout */}
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0" style={timelineZoomStyle}>
           {ROLES.map((role) => (
             <StaffRoleLane
               key={role}
@@ -254,12 +267,14 @@ const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
   startDate,
   endDate,
   weeks,
+  timelineZoomStyle,
 }: {
   member: StaffMember;
   allocations: Allocation[];
   startDate: Date;
   endDate: Date;
   weeks: Date[];
+  timelineZoomStyle?: CSSProperties;
 }) {
   // Focus-view state — needed for flex-fraction positioning (same as AllocationBar)
   const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
@@ -293,8 +308,7 @@ const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
       });
       if (idx !== -1) expandedWeekIdx = idx;
     }
-    const expandFlex = Math.max(focusWindowWeeks * 2, 3);
-    const weekFlexes = weeks.map((_, i) => (i === expandedWeekIdx ? expandFlex : 1));
+    const weekFlexes = computeWeekFlexWeights(weeks.length, expandedWeekIdx, focusWindowWeeks);
     const totalFlex = weekFlexes.reduce((s, f) => s + f, 0);
     const cumulativeFlex: number[] = [];
     let cum = 0;
@@ -350,7 +364,7 @@ const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
           </span>
         </div>
         {/* Timeline: green background = free, gray segments = busy */}
-        <div className="flex-1 min-w-0 relative" style={{ backgroundColor: fullyFree ? '#bbf7d0' : '#dcfce7' }}>
+        <div className="flex-1 min-w-0 relative" style={{ backgroundColor: fullyFree ? '#bbf7d0' : '#dcfce7', ...timelineZoomStyle }}>
           {weeks.map((week) => (
             <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-white/40"
               style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
@@ -403,6 +417,7 @@ const RoleViewRow = memo(function RoleViewRow({
   weeks,
   startDate,
   endDate,
+  timelineZoomStyle,
 }: {
   role: ResourceRole;
   allocations: Allocation[];
@@ -411,6 +426,7 @@ const RoleViewRow = memo(function RoleViewRow({
   weeks: Date[];
   startDate: Date;
   endDate: Date;
+  timelineZoomStyle?: CSSProperties;
 }) {
   const totalMs = endDate.getTime() - startDate.getTime();
   const totalDays = useMemo(() => Math.round(totalMs / (1000 * 60 * 60 * 24)), [totalMs]);
@@ -452,7 +468,7 @@ const RoleViewRow = memo(function RoleViewRow({
           <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">{ROLE_LABELS[role]}</span>
           <span className="ml-1.5 text-[9px] text-slate-400">({roleAllocs.length} allocations)</span>
         </div>
-        <div className="flex-1 relative">
+        <div className="flex-1 relative" style={timelineZoomStyle}>
           {weeks.map((week) => (
             <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-200"
               style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
@@ -466,7 +482,7 @@ const RoleViewRow = memo(function RoleViewRow({
           <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-3 flex items-center">
             <span className="text-[9px] text-slate-300 italic">No bookings in view</span>
           </div>
-          <div className="flex-1 relative bg-red-50/30" />
+          <div className="flex-1 relative bg-red-50/30" style={timelineZoomStyle} />
         </div>
       ) : (
         roleAllocs.map((alloc) => {
@@ -482,7 +498,7 @@ const RoleViewRow = memo(function RoleViewRow({
                 <span className="text-[9px] text-slate-600 truncate">{label}</span>
               </div>
               {/* AllocationBar handles flex-fraction positioning (focus view) and drag */}
-              <div className="flex-1 relative h-[24px]">
+              <div className="flex-1 relative h-[24px]" style={timelineZoomStyle}>
                 {weeks.map((week) => (
                   <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
                     style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
@@ -510,6 +526,7 @@ const JobRow = memo(function JobRow({
   startDate,
   endDate,
   isResourceAdmin,
+  timelineZoomStyle,
 }: {
   job: ResourceJobView;
   allocations: Allocation[];
@@ -517,6 +534,7 @@ const JobRow = memo(function JobRow({
   startDate: Date;
   endDate: Date;
   isResourceAdmin: boolean;
+  timelineZoomStyle?: CSSProperties;
 }) {
   const updateJob = useResourcePlanningStore((s) => s.updateJob);
   const jobProfiles = useResourcePlanningStore((s) => s.jobProfiles);
@@ -614,7 +632,7 @@ const JobRow = memo(function JobRow({
             <BudgetBadge label="Prep" hours={resolvedBudget.preparer} />
           </div>
         </div>
-        <div className={`flex-1 min-w-0 ${job.isScheduleLocked ? 'bg-slate-50/60' : ''}`}>
+        <div className={`flex-1 min-w-0 ${job.isScheduleLocked ? 'bg-slate-50/60' : ''}`} style={timelineZoomStyle}>
           {ROLES.map((role) => {
             const roleAllocs = jobAllocations.filter((a) => a.role === role);
             return (

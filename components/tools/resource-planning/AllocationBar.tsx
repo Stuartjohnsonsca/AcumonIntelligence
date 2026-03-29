@@ -4,7 +4,7 @@ import { useMemo, useState, useRef, useCallback } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import type { Allocation } from '@/lib/resource-planning/types';
 import { ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
-import { countWorkingDays, getWeeksInRange, formatShortDate } from '@/lib/resource-planning/date-utils';
+import { countWorkingDays, getWeeksInRange, formatShortDate, computeWeekFlexWeights } from '@/lib/resource-planning/date-utils';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 
 interface Props {
@@ -75,10 +75,8 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
       if (idx !== -1) expandedWeekIdx = idx;
     }
 
-    const expandFlex = Math.max(focusWindowWeeks * 2, 3);
-
-    // Per-week flex weights and cumulative start positions
-    const weekFlexes = weeks.map((_, i) => (i === expandedWeekIdx ? expandFlex : 1));
+    // Shared distance-decay flex weights — identical algorithm to DateBar
+    const weekFlexes = computeWeekFlexWeights(weeks.length, expandedWeekIdx, focusWindowWeeks);
     const totalFlex = weekFlexes.reduce((s, f) => s + f, 0);
     const cumulativeFlex: number[] = [];
     let cum = 0;
@@ -103,7 +101,9 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
     }
 
     const leftFrac = Math.max(0, dateToFlexFraction(clampedStart));
-    const rightFrac = Math.min(1, dateToFlexFraction(clampedEnd));
+    // endDate is INCLUSIVE — add 1 day to get the right edge (end-of-day)
+    const clampedEndExclusive = new Date(clampedEnd.getTime() + 24 * 60 * 60 * 1000);
+    const rightFrac = Math.min(1, dateToFlexFraction(clampedEndExclusive));
     if (rightFrac <= leftFrac) return null;
 
     return {

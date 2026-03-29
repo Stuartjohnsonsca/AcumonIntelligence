@@ -9,6 +9,7 @@ import {
   formatShortDate,
   formatWeekLabel,
   isSameDay,
+  computeWeekFlexWeights,
 } from '@/lib/resource-planning/date-utils';
 
 export function DateBar() {
@@ -23,6 +24,7 @@ export function DateBar() {
   const goToToday = useResourcePlanningStore((s) => s.goToToday);
 
   const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
+  const zoomLevel = useResourcePlanningStore((s) => s.zoomLevel);
   const clientSearchQuery = useResourcePlanningStore((s) => s.clientSearchQuery);
   const setClientSearchQuery = useResourcePlanningStore((s) => s.setClientSearchQuery);
 
@@ -49,6 +51,12 @@ export function DateBar() {
   }, [isLocked, lockedFocusDays, weeks]);
 
   const expandedWeekIdx = isLocked ? lockedWeekIdx : hoveredWeekIdx;
+
+  // Compute flex weights once — used both for rendering and for hit-testing
+  const weekFlexes = useMemo(
+    () => computeWeekFlexWeights(weeks.length, expandedWeekIdx, focusWindowWeeks),
+    [weeks.length, expandedWeekIdx, focusWindowWeeks],
+  );
 
   /** Get weekdays for N weeks starting from a given week */
   const getDaysForFocusWindow = useCallback((weekIdx: number) => {
@@ -180,7 +188,8 @@ export function DateBar() {
         {/* Date columns - aligned with grid */}
         <div
           ref={barRef}
-          className="flex-1 flex cursor-grab active:cursor-grabbing min-w-0"
+          className="flex-1 flex cursor-grab active:cursor-grabbing min-w-0 overflow-hidden"
+          style={zoomLevel !== 1 ? { transform: `scaleX(${zoomLevel})`, transformOrigin: 'left top', width: `${100 / zoomLevel}%` } : undefined}
           onMouseMove={isPanning ? handlePanMove : handleMouseMove}
           onMouseLeave={handleMouseLeave}
           onMouseDown={handleMouseDown}
@@ -188,19 +197,17 @@ export function DateBar() {
           onClick={handleClick}
         >
           {weeks.map((week, idx) => {
+            const flexWeight = weekFlexes[idx];
             const isExpanded = expandedWeekIdx === idx;
             const isLockedWeek = isLocked && lockedWeekIdx === idx;
 
             if (isExpanded) {
               const days = getDaysForFocusWindow(idx);
-              // How many weeks does this expansion cover?
-              const expandFlex = Math.max(focusWindowWeeks * 2, 3);
-
               return (
                 <div
                   key={week.toISOString()}
-                  className={`flex ${isLockedWeek ? 'bg-blue-50 border-b-2 border-blue-400' : ''}`}
-                  style={{ flex: expandFlex }}
+                  className={`flex overflow-hidden ${isLockedWeek ? 'bg-blue-50 border-b-2 border-blue-400' : ''}`}
+                  style={{ flex: flexWeight }}
                 >
                   {days.map((day) => (
                     <div
@@ -219,10 +226,11 @@ export function DateBar() {
             return (
               <div
                 key={week.toISOString()}
-                className={`flex-1 text-center py-1 text-[9px] font-medium border-r border-slate-100 truncate
+                className={`text-center py-1 text-[9px] font-medium border-r border-slate-100 truncate overflow-hidden
                   ${isLockedWeek ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-400' : 'text-slate-500'}`}
+                style={{ flex: flexWeight }}
               >
-                {formatWeekLabel(week)}
+                {flexWeight >= 0.6 ? formatWeekLabel(week) : ''}
               </div>
             );
           })}

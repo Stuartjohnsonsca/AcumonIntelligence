@@ -106,3 +106,35 @@ export function allocationOverlaps(allocStart: string, allocEnd: string, rangeSt
   const aEnd = new Date(allocEnd);
   return aStart <= rangeEnd && aEnd >= rangeStart;
 }
+
+/**
+ * Compute per-week flex weights for focus-mode rendering.
+ *
+ * When a week is "expanded" (focused) the focused week gets a high flex
+ * weight; surrounding weeks decay outward so the extreme ends get
+ * compressed into narrow slivers.  When no week is expanded all weeks
+ * receive equal weight 1.
+ *
+ * Used by DateBar, AllocationBar, and StaffAvailabilityRow so all three
+ * always stay in pixel-perfect sync.
+ *
+ * @param weekCount       Total number of weeks in the visible range
+ * @param expandedWeekIdx Index of the focused week (null = no focus)
+ * @param focusWindowWeeks Number of weeks in the focus window (from store)
+ */
+export function computeWeekFlexWeights(
+  weekCount: number,
+  expandedWeekIdx: number | null,
+  focusWindowWeeks: number,
+): number[] {
+  if (expandedWeekIdx === null) return Array(weekCount).fill(1);
+  // Focus week gets a dominant weight; decay by 0.65 per step outward
+  const expandFlex = Math.max(focusWindowWeeks * 5, 5);
+  const minFlex = 0.35; // absolute minimum for extreme ends
+  const decay = 0.65;
+  return Array.from({ length: weekCount }, (_, i) => {
+    if (i === expandedWeekIdx) return expandFlex;
+    const dist = Math.abs(i - expandedWeekIdx);
+    return Math.max(minFlex, Math.pow(decay, dist) * expandFlex);
+  });
+}
