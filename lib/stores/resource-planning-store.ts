@@ -113,6 +113,7 @@ interface ResourcePlanningActions {
   getStaffCapacity: () => StaffCapacity[];
   getFocusedCapacity: () => StaffCapacity[];
   getSortedJobs: () => ResourceJobView[];
+  getSortedStaff: () => StaffMember[];
   getViewAxis: () => 'client' | 'staff';
   getIsAvailabilityMode: () => boolean;
   getJobRoles: (jobId: string) => ResourceRole[];
@@ -326,6 +327,33 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
         const aDist = Math.abs(new Date(a.targetCompletion).getTime() - focusStart.getTime());
         const bDist = Math.abs(new Date(b.targetCompletion).getTime() - focusStart.getTime());
         return aDist - bDist;
+      });
+    },
+
+    getSortedStaff: () => {
+      // Re-sort when the user has CLICKED to lock a Focus Date week.
+      // Hover alone does not reorder to avoid list jumping on every mouse move.
+      const { staff, allocations, lockedFocusDays, isLocked } = get();
+      if (!isLocked || lockedFocusDays.length === 0) return staff;
+
+      const sorted = [...lockedFocusDays].sort();
+      const focusStart = new Date(sorted[0]);
+      const focusEnd = new Date(sorted[sorted.length - 1]);
+
+      return [...staff].sort((a, b) => {
+        const aCount = allocations.filter(
+          (al) => al.userId === a.id && allocationOverlaps(al.startDate, al.endDate, focusStart, focusEnd),
+        ).length;
+        const bCount = allocations.filter(
+          (al) => al.userId === b.id && allocationOverlaps(al.startDate, al.endDate, focusStart, focusEnd),
+        ).length;
+        // Staff WITH activity in focus window rise to top
+        if (aCount > 0 && bCount === 0) return -1;
+        if (bCount > 0 && aCount === 0) return 1;
+        // Within the active group: more allocations first
+        if (aCount !== bCount) return bCount - aCount;
+        // Alphabetical tie-break
+        return a.name.localeCompare(b.name);
       });
     },
 

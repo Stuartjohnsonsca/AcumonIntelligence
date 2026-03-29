@@ -2,9 +2,9 @@
 
 import { useMemo, useState, useRef, useCallback } from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import type { Allocation, ResourceRole } from '@/lib/resource-planning/types';
+import type { Allocation } from '@/lib/resource-planning/types';
 import { ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
-import { countWorkingDays, getWeeksInRange } from '@/lib/resource-planning/date-utils';
+import { countWorkingDays, getWeeksInRange, formatShortDate } from '@/lib/resource-planning/date-utils';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 
 interface Props {
@@ -13,9 +13,11 @@ interface Props {
   endDate: Date;
   totalDays: number;
   isJobLocked?: boolean;
+  /** Override the auto-generated label inside the bar */
+  barLabel?: string;
 }
 
-export function AllocationBar({ allocation, startDate, endDate, totalDays, isJobLocked = false }: Props) {
+export function AllocationBar({ allocation, startDate, endDate, totalDays, isJobLocked = false, barLabel }: Props) {
   const selectedAllocationId = useResourcePlanningStore((s) => s.selectedAllocationId);
   const setSelectedAllocation = useResourcePlanningStore((s) => s.setSelectedAllocation);
   const updateAllocation = useResourcePlanningStore((s) => s.updateAllocation);
@@ -23,6 +25,18 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
   const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
   const isLocked = useResourcePlanningStore((s) => s.isLocked);
   const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
+  const viewMode = useResourcePlanningStore((s) => s.viewMode);
+  const storeJobs = useResourcePlanningStore((s) => s.jobs);
+
+  // Look up the associated job from the store so the tooltip/label works
+  // even when allocation.clientName is not populated (e.g. after page reload)
+  const job = useMemo(
+    () => storeJobs.find((j) => (j.engagementId ?? j.id) === allocation.engagementId),
+    [storeJobs, allocation.engagementId],
+  );
+  const clientName = job?.clientName ?? allocation.clientName ?? '';
+  const serviceType = job?.serviceType ?? allocation.serviceType ?? null;
+  const auditType = job?.auditType ?? allocation.auditType ?? '';
 
   const [resizing, setResizing] = useState<'left' | 'right' | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -193,6 +207,24 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
     .toUpperCase()
     .slice(0, 2);
 
+  // In staff-axis views the y-axis already tells you who → show the client abbreviation.
+  // In client-axis views the y-axis already tells you the job → show staff initials.
+  // Role View shows both role sections; show "Initials@ClientAbbrev".
+  const isStaffAxis = viewMode.startsWith('staff');
+  const isRoleView = viewMode === 'role-view';
+  const clientAbbrev = (() => {
+    if (!clientName) return '';
+    const words = clientName.trim().split(/\s+/).filter(Boolean);
+    if (words.length >= 2) return words.map((w) => w[0]).join('').toUpperCase().slice(0, 5);
+    return clientName.slice(0, 5).toUpperCase();
+  })();
+  const autoLabel = isRoleView
+    ? (clientAbbrev ? `${initials}@${clientAbbrev}` : initials)
+    : isStaffAxis
+    ? (clientAbbrev || initials)
+    : initials;
+  const displayLabel = barLabel ?? autoLabel;
+
   const displayHours = allocation.totalHours != null
     ? allocation.totalHours
     : Math.round(allocation.hoursPerDay * countWorkingDays(new Date(allocation.startDate), new Date(allocation.endDate)) * 10) / 10;
@@ -220,11 +252,13 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
       `}
       style={{ left: style.left, width: style.width, minWidth: '24px' }}
       title={[
-        allocation.clientName
-          ? `${allocation.clientName}${allocation.serviceType ? ` (${allocation.serviceType})` : ''}`
+        clientName
+          ? `📁 ${clientName}${auditType ? ` — ${auditType}` : ''}${serviceType ? ` (${serviceType})` : ''}`
           : null,
-        `${allocation.userName} · ${allocation.role} · ${allocation.hoursPerDay}h/day · ${displayHours}h total`,
-        'Drag edges to resize, drag centre to move',
+        `👤 ${allocation.userName}  |  🎯 ${allocation.role}`,
+        `📅 ${formatShortDate(new Date(allocation.startDate))} → ${formatShortDate(new Date(allocation.endDate))}`,
+        `⏱ ${allocation.hoursPerDay}h/day  |  ${displayHours}h total`,
+        isJobLocked ? '🔒 Schedule locked' : 'Drag edges to resize · drag centre to move',
       ].filter(Boolean).join('\n')}
     >
       {/* Left resize handle */}
@@ -238,7 +272,7 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
 
       {/* Content */}
       <span className="text-[8px] font-semibold truncate leading-none px-2.5 select-none">
-        {initials} ({displayHours})
+        {displayLabel} · {displayHours}h
       </span>
 
       {/* Right resize handle */}

@@ -31,6 +31,9 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
 
   const isStaffAxis = viewMode.startsWith('staff');
   const isAvailability = viewMode.endsWith('availability');
+  const getSortedStaff = useResourcePlanningStore((s) => s.getSortedStaff);
+  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
+  const isLocked = useResourcePlanningStore((s) => s.isLocked);
 
   // ── All hooks unconditionally before any early return ────────────────────
   // Non-admins only see jobs they're allocated to
@@ -51,9 +54,10 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
 
   // Staff-axis view (Staff Bookings / Staff Availability)
   if (isStaffAxis) {
+    const sortedStaff = getSortedStaff();
     const filteredStaff = leftPanelFilter.length > 0
-      ? staff.filter((s) => leftPanelFilter.includes(s.id))
-      : staff;
+      ? sortedStaff.filter((s) => leftPanelFilter.includes(s.id))
+      : sortedStaff;
 
     if (isAvailability) {
       // Availability: all staff on compact single rows — green = free, gray = busy
@@ -411,12 +415,27 @@ const RoleViewRow = memo(function RoleViewRow({
   const totalMs = endDate.getTime() - startDate.getTime();
   const totalDays = useMemo(() => Math.round(totalMs / (1000 * 60 * 60 * 24)), [totalMs]);
 
-  const roleAllocs = useMemo(
-    () => allocations.filter(
+  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
+  const isLocked = useResourcePlanningStore((s) => s.isLocked);
+
+  const roleAllocs = useMemo(() => {
+    const raw = allocations.filter(
       (a) => a.role === role && allocationOverlaps(a.startDate, a.endDate, startDate, endDate),
-    ),
-    [allocations, role, startDate, endDate],
-  );
+    );
+    if (!isLocked || lockedFocusDays.length === 0) return raw;
+    const sortedDays = [...lockedFocusDays].sort();
+    const focusStart = new Date(sortedDays[0]);
+    const focusEnd = new Date(sortedDays[sortedDays.length - 1]);
+    return [...raw].sort((a, b) => {
+      const aIn = allocationOverlaps(a.startDate, a.endDate, focusStart, focusEnd);
+      const bIn = allocationOverlaps(b.startDate, b.endDate, focusStart, focusEnd);
+      if (aIn && !bIn) return -1;
+      if (bIn && !aIn) return 1;
+      const aDist = Math.abs(new Date(a.startDate).getTime() - focusStart.getTime());
+      const bDist = Math.abs(new Date(b.startDate).getTime() - focusStart.getTime());
+      return aDist - bDist;
+    });
+  }, [allocations, role, startDate, endDate, isLocked, lockedFocusDays]);
 
   const staffMap = useMemo(() => new Map(staff.map((s) => [s.id, s.name])), [staff]);
   const jobMap = useMemo(
