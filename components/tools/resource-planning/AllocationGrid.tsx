@@ -147,6 +147,56 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
   );
 });
 
+// ─── Staff role lane (droppable — mirrors RoleLane but for the staff axis) ────
+const StaffRoleLane = memo(function StaffRoleLane({
+  staffId,
+  role,
+  allocations,
+  weeks,
+  startDate,
+  endDate,
+  totalDays,
+}: {
+  staffId: string;
+  role: ResourceRole;
+  allocations: Allocation[];
+  weeks: Date[];
+  startDate: Date;
+  endDate: Date;
+  totalDays: number;
+}) {
+  const activeDragJobId = useResourcePlanningStore((s) => s.activeDragJobId);
+
+  const { setNodeRef, isOver } = useDroppable({
+    id: `staff-lane|${staffId}|${role}`,
+    disabled: !activeDragJobId, // only active when dragging a job
+  });
+
+  const totalMs = endDate.getTime() - startDate.getTime();
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`relative h-[24px] border-b border-slate-100 group
+        ${isOver ? 'bg-blue-100/60' : ''}
+        ${activeDragJobId && !isOver ? 'bg-slate-50/30' : ''}`}
+      title={role}
+    >
+      <div className="absolute left-0 top-0 bottom-0 flex items-center z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+        <span className="text-[7px] font-bold px-1 bg-white/80 text-slate-500 rounded-r">{role.slice(0, 4)}</span>
+      </div>
+      {weeks.map((week) => (
+        <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
+          style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
+        />
+      ))}
+      {allocations.map((alloc) => (
+        <AllocationBar key={alloc.id} allocation={alloc} startDate={startDate} endDate={endDate} totalDays={totalDays} />
+      ))}
+    </div>
+  );
+});
+
 const StaffRow = memo(function StaffRow({
   member,
   allocations,
@@ -169,18 +219,24 @@ const StaffRow = memo(function StaffRow({
   return (
     <div className="border-b border-slate-100">
       <div className="flex">
+        {/* Staff name header — spans all role rows */}
         <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 py-1 select-none pointer-events-none cursor-default">
           <div className="text-xs font-semibold text-slate-800 truncate">{member.name}</div>
           <div className="text-[10px] text-slate-400">{member.resourceSetting?.resourceRole ?? 'Unassigned'}</div>
         </div>
-        <div className="flex-1 min-w-0 relative h-[24px] border-b border-slate-50">
-          {weeks.map((week) => (
-            <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
-              style={{ left: `${((week.getTime() - startDate.getTime()) / (endDate.getTime() - startDate.getTime())) * 100}%`, width: `${(7 / totalDays) * 100}%` }}
+        {/* Role lanes — one per role, matching Client Bookings layout */}
+        <div className="flex-1 min-w-0">
+          {ROLES.map((role) => (
+            <StaffRoleLane
+              key={role}
+              staffId={member.id}
+              role={role}
+              allocations={staffAllocs.filter((a) => a.role === role)}
+              weeks={weeks}
+              startDate={startDate}
+              endDate={endDate}
+              totalDays={totalDays}
             />
-          ))}
-          {staffAllocs.map((alloc) => (
-            <AllocationBar key={alloc.id} allocation={alloc} startDate={startDate} endDate={endDate} totalDays={totalDays} />
           ))}
         </div>
       </div>

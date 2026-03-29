@@ -41,8 +41,10 @@ export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles =
   const editMode = useResourcePlanningStore((s) => s.editMode);
   const setActiveDragUserId = useResourcePlanningStore((s) => s.setActiveDragUserId);
 
+  const setActiveDragJobId = useResourcePlanningStore((s) => s.setActiveDragJobId);
+
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
-  const [dragType, setDragType] = useState<'staff' | 'allocation' | null>(null);
+  const [dragType, setDragType] = useState<'staff' | 'allocation' | 'job' | null>(null);
 
   // Lock state
   const [lockStatus, setLockStatus] = useState<LockStatus>(isResourceAdmin ? 'checking' : 'denied');
@@ -166,6 +168,11 @@ export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles =
       setDragType('allocation');
       const alloc = storeAllocations.find((a) => a.id === allocId);
       setActiveDragUserId(alloc?.userId ?? null);
+    } else if (id.startsWith('job-')) {
+      const jobId = id.replace('job-', '');
+      setActiveDragId(jobId);
+      setDragType('job');
+      setActiveDragJobId(jobId);
     }
   }
 
@@ -194,11 +201,56 @@ export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles =
     setActiveDragId(null);
     setDragType(null);
     setActiveDragUserId(null);
+    setActiveDragJobId(null);
 
     if (!over) return;
 
     const overId = String(over.id);
     const activeId = String(active.id);
+
+    // ── Job dropped onto a staff role lane (staff-axis views) ─────────────────
+    if (overId.startsWith('staff-lane|') && activeId.startsWith('job-')) {
+      const parts = overId.split('|');
+      const staffId = parts[1];
+      const role = parts[2] as ResourceRole;
+      const jobDragId = activeId.replace('job-', '');
+
+      const member = storeStaff.find((s) => s.id === staffId);
+      const job = jobs.find((j) => (j.engagementId ?? j.id) === jobDragId || j.id === jobDragId);
+      if (!member || !job) return;
+
+      const engagementId = job.engagementId ?? job.id;
+      const startDate = dropDateFromEvent(event);
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 13);
+
+      const newAlloc: Allocation = {
+        id: `temp-${Date.now()}`,
+        engagementId,
+        userId: staffId,
+        userName: member.name,
+        role,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        hoursPerDay: 7.5,
+        totalHours: null,
+        notes: null,
+      };
+
+      addAllocation(newAlloc);
+      try {
+        const res = await fetch('/api/resource-planning/allocations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engagementId, userId: staffId, role, startDate: startDate.toISOString(), endDate: endDate.toISOString(), hoursPerDay: 7.5 }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          updateAllocation(newAlloc.id, { id: data.allocation.id });
+        }
+      } catch {}
+      return;
+    }
 
     const isLane = overId.startsWith('lane|');
     const isCell = overId.startsWith('cell|');
@@ -347,6 +399,7 @@ export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles =
 
   const draggedStaff = dragType === 'staff' ? storeStaff.find((s) => s.id === activeDragId) : null;
   const draggedAlloc = dragType === 'allocation' ? storeAllocations.find((a) => a.id === activeDragId) : null;
+  const draggedJob = dragType === 'job' ? jobs.find((j) => (j.engagementId ?? j.id) === activeDragId || j.id === activeDragId) : null;
 
   const content = (
     <div className="flex flex-col h-[calc(100vh-64px)]">
@@ -386,6 +439,15 @@ export function ResourcePlanningClient({ staff, jobs, allocations, jobProfiles =
               </div>
             );
           })()}
+          {draggedJob && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg shadow-xl text-xs cursor-grabbing">
+              <span className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
+              <div>
+                <div className="font-semibold text-slate-700">{draggedJob.clientName}</div>
+                <div className="text-[9px] text-slate-400">{draggedJob.auditType} — drop on a role lane</div>
+              </div>
+            </div>
+          )}
         </DragOverlay>
       )}
     </DndContext>

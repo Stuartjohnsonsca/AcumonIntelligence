@@ -4,7 +4,7 @@ import { useState, useMemo, memo } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Search } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
-import { ROLE_COLORS, type ResourceRole, getStaffRoles } from '@/lib/resource-planning/types';
+import { ROLE_COLORS, type ResourceRole, type ResourceJobView, getStaffRoles } from '@/lib/resource-planning/types';
 import { computeStaffCapacity } from '@/lib/resource-planning/capacity';
 import { ViewSelector } from './ViewSelector';
 
@@ -61,11 +61,11 @@ export function StaffPanel({ isResourceAdmin }: Props) {
   }, [staff, selectedStaffIds, filter, myScheduleOnly, currentUserId, allocations]);
 
   if (isStaffAxis) {
-    // Show clients list when axis is staff
-    const filteredClients = jobs.filter((j) =>
-      j.clientName.toLowerCase().includes(filter.toLowerCase())
+    // Show individual jobs when axis is staff so each can be dragged onto a staff row
+    const filteredJobs = jobs.filter((j) =>
+      j.clientName.toLowerCase().includes(filter.toLowerCase()) ||
+      j.auditType.toLowerCase().includes(filter.toLowerCase())
     );
-    const uniqueClients = Array.from(new Map(filteredClients.map((j) => [j.clientId, j])).values());
 
     return (
       <div className="w-1/4 min-w-[180px] max-w-[280px] border-r bg-slate-50 flex flex-col overflow-hidden">
@@ -79,14 +79,12 @@ export function StaffPanel({ isResourceAdmin }: Props) {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {uniqueClients.map((client) => (
-            <div key={client.clientId} className="flex items-center gap-2 px-2 py-1.5 border-b border-slate-100 text-[10px]">
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-slate-700 truncate">{client.clientName}</div>
-                <div className="text-slate-400">{client.auditType}</div>
-              </div>
-            </div>
+          {filteredJobs.map((job) => (
+            <JobListItem key={job.engagementId ?? job.id} job={job} />
           ))}
+          {filteredJobs.length === 0 && (
+            <div className="p-3 text-center text-[10px] text-slate-400">No jobs found</div>
+          )}
         </div>
 
         <ViewSelector />
@@ -178,6 +176,32 @@ const StaffListItem = memo(function StaffListItem({ member, allocations, isAvail
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+});
+
+// ─── Job List Item (draggable — used in staff-axis views) ────────────────────
+const JobListItem = memo(function JobListItem({ job }: { job: ResourceJobView }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `job-${job.engagementId ?? job.id}`,
+    data: { jobId: job.id, engagementId: job.engagementId, clientName: job.clientName, auditType: job.auditType },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      style={{ touchAction: 'none' }}
+      className={`flex items-center gap-2 px-2 py-1.5 border-b border-slate-100 text-[10px] cursor-grab
+        hover:bg-white transition-colors select-none
+        ${isDragging ? 'opacity-40' : ''}`}
+    >
+      <div className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-slate-700 truncate">{job.clientName}</div>
+        <div className="text-[9px] text-slate-400 truncate">{job.auditType}</div>
       </div>
     </div>
   );

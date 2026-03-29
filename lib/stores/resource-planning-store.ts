@@ -45,8 +45,6 @@ interface ResourcePlanningState {
   unscheduledJobCount: number;
   completedJobCount: number;
 
-  setActiveDragUserId: (id: string | null) => void;
-
   // Client search filter (typed in DateBar left spacer)
   clientSearchQuery: string;
 
@@ -59,6 +57,7 @@ interface ResourcePlanningState {
 
   // Active drag context (set during drag for lane validation)
   activeDragUserId: string | null;
+  activeDragJobId: string | null;
 }
 
 interface ResourcePlanningActions {
@@ -89,6 +88,8 @@ interface ResourcePlanningActions {
   setSelectedAllocation: (id: string | null) => void;
   setLeftPanelFilter: (ids: string[]) => void;
   setClientSearchQuery: (q: string) => void;
+  setActiveDragUserId: (id: string | null) => void;
+  setActiveDragJobId: (id: string | null) => void;
 
   // Allocation CRUD
   addAllocation: (alloc: Allocation) => void;
@@ -147,6 +148,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     currentUserId: null,
     isResourceAdmin: false,
     activeDragUserId: null,
+    activeDragJobId: null,
 
     init: (data) => {
       set({
@@ -213,6 +215,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     setEditMode: (mode) => set({ editMode: mode }),
     setSelectedAllocation: (id) => set({ selectedAllocationId: id }),
     setActiveDragUserId: (id) => set({ activeDragUserId: id }),
+    setActiveDragJobId: (id) => set({ activeDragJobId: id }),
     setLeftPanelFilter: (ids) => set({ leftPanelFilter: ids }),
     setClientSearchQuery: (q) => set({ clientSearchQuery: q }),
 
