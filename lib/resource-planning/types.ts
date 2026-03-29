@@ -37,8 +37,10 @@ export function getStaffRoles(setting: StaffSetting | null): { role: ResourceRol
   if (setting.reviewerJobLimit != null && setting.reviewerJobLimit > 0) {
     roles.push({ role: 'Reviewer', limit: setting.reviewerJobLimit });
   }
-  if (setting.riJobLimit != null && setting.riJobLimit > 0) {
-    roles.push({ role: 'RI', limit: setting.riJobLimit });
+  // RI: explicit limit, OR isRI flag, OR primary role is RI — matches scheduler isEligible logic
+  const riLimit = setting.riJobLimit ?? ((setting.isRI || setting.resourceRole === 'RI') ? 1 : null);
+  if (riLimit != null && riLimit > 0) {
+    roles.push({ role: 'RI', limit: riLimit });
   }
   // Fallback: if no per-role limits set, use legacy single role
   if (roles.length === 0) {
