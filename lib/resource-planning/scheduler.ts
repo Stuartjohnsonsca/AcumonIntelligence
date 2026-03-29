@@ -844,8 +844,15 @@ function runGreedyPass(
         .map((s) => ({ staff: s, score: scoreCandidate(s, role, ctx) }))
         .sort((a, b) => a.score - b.score);
 
-      // Try candidates until one fits
+      // Try candidates until one fits; track least-overloaded as fallback.
+      // If no candidate passes the soft capacity gate we still place the best
+      // available one — overbooking violations will be flagged downstream.
       let placed = false;
+      let fallbackCandidate: StaffMember | null = null;
+      let fallbackWindow: PlacementWindow | null = null;
+      let fallbackDays: string[] = [];
+      let fallbackAvailable = -Infinity;
+
       for (const { staff: candidate } of scored) {
         const rs = candidate.resourceSetting!;
         const dailyMax = rs.weeklyCapacityHrs / 5;
@@ -854,8 +861,17 @@ function runGreedyPass(
 
         // Check staff has enough capacity on each day
         const available = dailyAvailable(candidate.id, dailyMax, days, capacityMap);
+
+        // Remember the least-overloaded candidate in case everyone fails the gate
+        if (available > fallbackAvailable) {
+          fallbackAvailable = available;
+          fallbackCandidate = candidate;
+          fallbackWindow = window;
+          fallbackDays = days;
+        }
+
         if (available < window.hoursPerDay * 0.5) {
-          // Not enough capacity (allow minor over-booking — violations will be flagged)
+          // Not enough capacity — keep searching; will force-place below if needed
           continue;
         }
 
@@ -878,6 +894,29 @@ function runGreedyPass(
         assignedOnJob.set(candidate.id, existing);
         placed = true;
         break;
+      }
+
+      // ── Force-place fallback ───────────────────────────────────────────────
+      // No candidate passed the soft capacity gate but we still want the role
+      // shown in the schedule (overbooking violations will surface in the UI).
+      // For RI: also force-place so the job isn't silently dropped.
+      if (!placed && fallbackCandidate && fallbackWindow) {
+        const placement: PlacedAllocation = {
+          jobId: job.id,
+          userId: fallbackCandidate.id,
+          role,
+          startDate: fallbackWindow.startDate,
+          endDate: fallbackWindow.endDate,
+          hoursPerDay: fallbackWindow.hoursPerDay,
+          totalHours: Math.round(fallbackWindow.hoursPerDay * fallbackDays.length * 100) / 100,
+        };
+        placements.push(placement);
+        consumeCapacity(capacityMap, placement);
+        incrementJobCount(jobCountMap, fallbackCandidate.id, role);
+        const existing = assignedOnJob.get(fallbackCandidate.id) ?? [];
+        existing.push(role);
+        assignedOnJob.set(fallbackCandidate.id, existing);
+        placed = true;
       }
 
       if (!placed && role === 'RI') {
