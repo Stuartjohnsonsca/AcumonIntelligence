@@ -219,7 +219,13 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
         shadow-sm hover:shadow-md transition-shadow
       `}
       style={{ left: style.left, width: style.width, minWidth: '24px' }}
-      title={`${allocation.userName} (${allocation.role}) - ${allocation.hoursPerDay}h/day - ${displayHours}h total\nDrag edges to resize, drag centre to move`}
+      title={[
+        allocation.clientName
+          ? `${allocation.clientName}${allocation.serviceType ? ` (${allocation.serviceType})` : ''}`
+          : null,
+        `${allocation.userName} · ${allocation.role} · ${allocation.hoursPerDay}h/day · ${displayHours}h total`,
+        'Drag edges to resize, drag centre to move',
+      ].filter(Boolean).join('\n')}
     >
       {/* Left resize handle */}
       <div

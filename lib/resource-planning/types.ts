@@ -87,6 +87,9 @@ export interface Allocation {
   hoursPerDay: number;
   totalHours: number | null;
   notes: string | null;
+  clientName?: string;
+  serviceType?: string | null;
+  auditType?: string;
 }
 
 export interface StaffAbsence {

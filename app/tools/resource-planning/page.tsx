@@ -121,18 +121,27 @@ export default async function ResourcePlanningPage() {
     timesheetHours: j.timesheetHours ?? 0,
   }));
 
-  const allocations = allocsRaw.map((a: any) => ({
-    id: a.id,
-    engagementId: a.engagementId,
-    userId: a.userId,
-    userName: a.user?.name ?? 'Unknown',
-    role: a.role as ResourceRole,
-    startDate: a.startDate.toISOString(),
-    endDate: a.endDate.toISOString(),
-    hoursPerDay: a.hoursPerDay,
-    totalHours: a.totalHours ?? null,
-    notes: a.notes,
-  }));
+  // Build a lookup from engagementId → job so allocations can show client name / service type in tooltips
+  const jobByEngagementId = new Map(jobs.filter((j) => j.engagementId).map((j) => [j.engagementId!, j]));
+
+  const allocations = allocsRaw.map((a: any) => {
+    const job = jobByEngagementId.get(a.engagementId);
+    return {
+      id: a.id,
+      engagementId: a.engagementId,
+      userId: a.userId,
+      userName: a.user?.name ?? 'Unknown',
+      role: a.role as ResourceRole,
+      startDate: a.startDate.toISOString(),
+      endDate: a.endDate.toISOString(),
+      hoursPerDay: a.hoursPerDay,
+      totalHours: a.totalHours ?? null,
+      notes: a.notes,
+      clientName: job?.clientName,
+      serviceType: job?.serviceType,
+      auditType: job?.auditType,
+    };
+  });
 
   return (
     <Suspense fallback={null}>
