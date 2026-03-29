@@ -32,6 +32,24 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
   const isStaffAxis = viewMode.startsWith('staff');
   const isAvailability = viewMode.endsWith('availability');
 
+  // ── All hooks unconditionally before any early return ────────────────────
+  // Non-admins only see jobs they're allocated to
+  const myEngagementIds = useMemo(() => {
+    if (isResourceAdmin || !currentUserId) return null;
+    return new Set(allocations.filter((a) => a.userId === currentUserId).map((a) => a.engagementId));
+  }, [isResourceAdmin, currentUserId, allocations]);
+
+  const filteredJobs = useMemo(() => {
+    let result = leftPanelFilter.length > 0
+      ? jobs.filter((j) => leftPanelFilter.includes(j.clientId))
+      : jobs;
+    if (myEngagementIds) {
+      result = result.filter((j) => myEngagementIds.has(j.engagementId || j.id));
+    }
+    return result;
+  }, [jobs, leftPanelFilter, myEngagementIds]);
+
+  // Staff-axis view (Staff Bookings / Staff Availability)
   if (isStaffAxis) {
     const filteredStaff = leftPanelFilter.length > 0
       ? staff.filter((s) => leftPanelFilter.includes(s.id))
@@ -65,22 +83,7 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
     );
   }
 
-  // Non-admins only see jobs they're allocated to
-  const myEngagementIds = useMemo(() => {
-    if (isResourceAdmin || !currentUserId) return null;
-    return new Set(allocations.filter((a) => a.userId === currentUserId).map((a) => a.engagementId));
-  }, [isResourceAdmin, currentUserId, allocations]);
-
-  const filteredJobs = useMemo(() => {
-    let result = leftPanelFilter.length > 0
-      ? jobs.filter((j) => leftPanelFilter.includes(j.clientId))
-      : jobs;
-    if (myEngagementIds) {
-      result = result.filter((j) => myEngagementIds.has(j.engagementId || j.id));
-    }
-    return result;
-  }, [jobs, leftPanelFilter, myEngagementIds]);
-
+  // Client-axis view (Client Bookings / Client Availability)
   const displayJobs = isAvailability
     ? filteredJobs.filter((j) => {
         const jobAllocs = allocations.filter(
