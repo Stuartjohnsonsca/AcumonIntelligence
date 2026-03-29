@@ -55,16 +55,30 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
       ? staff.filter((s) => leftPanelFilter.includes(s.id))
       : staff;
 
-    const displayStaff = isAvailability
-      ? filteredStaff.filter((s) => {
-          const userAllocs = allocations.filter((a) => allocationOverlaps(a.startDate, a.endDate, startDate, endDate) && a.userId === s.id);
-          return userAllocs.length === 0;
-        })
-      : filteredStaff;
+    if (isAvailability) {
+      // Availability: all staff on compact single rows — green = free, gray = busy
+      return (
+        <div className="min-w-0">
+          {filteredStaff.map((member) => (
+            <StaffAvailabilityRow
+              key={member.id}
+              member={member}
+              allocations={allocations}
+              startDate={startDate}
+              endDate={endDate}
+              weeks={weeks}
+            />
+          ))}
+          {filteredStaff.length === 0 && (
+            <div className="flex items-center justify-center h-40 text-sm text-slate-400">No staff found</div>
+          )}
+        </div>
+      );
+    }
 
     return (
       <div className="min-w-0">
-        {displayStaff.map((member) => (
+        {filteredStaff.map((member) => (
           <StaffRow
             key={member.id}
             member={member}
@@ -74,10 +88,8 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
             endDate={endDate}
           />
         ))}
-        {displayStaff.length === 0 && (
-          <div className="flex items-center justify-center h-40 text-sm text-slate-400">
-            {isAvailability ? 'All staff are allocated' : 'No staff found'}
-          </div>
+        {filteredStaff.length === 0 && (
+          <div className="flex items-center justify-center h-40 text-sm text-slate-400">No staff found</div>
         )}
       </div>
     );
@@ -151,6 +163,82 @@ const StaffRow = memo(function StaffRow({
             <AllocationBar key={alloc.id} allocation={alloc} startDate={startDate} endDate={endDate} totalDays={totalDays} />
           ))}
         </div>
+      </div>
+    </div>
+  );
+});
+
+const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
+  member,
+  allocations,
+  startDate,
+  endDate,
+  weeks,
+}: {
+  member: StaffMember;
+  allocations: Allocation[];
+  startDate: Date;
+  endDate: Date;
+  weeks: Date[];
+}) {
+  const totalMs = endDate.getTime() - startDate.getTime();
+  const totalDays = useMemo(() => Math.round(totalMs / (1000 * 60 * 60 * 24)), [totalMs]);
+  const weeklyHrs = member.resourceSetting?.weeklyCapacityHrs ?? 37.5;
+  const totalCapacityHrs = (weeklyHrs / 5) * totalDays;
+
+  const staffAllocs = useMemo(
+    () => allocations.filter((a) => a.userId === member.id && allocationOverlaps(a.startDate, a.endDate, startDate, endDate)),
+    [allocations, member.id, startDate, endDate],
+  );
+
+  // Merge overlapping busy segments so they don't double-count visually
+  const busySegments = useMemo(() => {
+    const raw = staffAllocs.map((a) => ({
+      s: Math.max(new Date(a.startDate).getTime(), startDate.getTime()),
+      e: Math.min(new Date(a.endDate).getTime(), endDate.getTime()),
+    })).sort((a, b) => a.s - b.s);
+    const merged: { s: number; e: number }[] = [];
+    for (const seg of raw) {
+      if (merged.length > 0 && seg.s <= merged[merged.length - 1].e) {
+        merged[merged.length - 1].e = Math.max(merged[merged.length - 1].e, seg.e);
+      } else {
+        merged.push({ ...seg });
+      }
+    }
+    return merged.map((seg) => ({
+      left: ((seg.s - startDate.getTime()) / totalMs) * 100,
+      width: ((seg.e - seg.s) / totalMs) * 100,
+    }));
+  }, [staffAllocs, startDate, endDate, totalMs]);
+
+  const allocatedHrs = staffAllocs.reduce((sum, a) => sum + (a.totalHours ?? 0), 0);
+  const freeHrs = Math.max(0, Math.round(totalCapacityHrs - allocatedHrs));
+  const fullyFree = busySegments.length === 0;
+
+  return (
+    <div className="border-b border-slate-100 flex h-[16px]">
+      <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 flex items-center gap-1.5 select-none">
+        <div className="text-[10px] font-medium text-slate-700 truncate flex-1">{member.name}</div>
+        <span className={`text-[9px] font-mono flex-shrink-0 tabular-nums ${freeHrs > 0 ? 'text-green-600' : 'text-red-500'}`}>
+          {freeHrs}h
+        </span>
+      </div>
+      {/* Timeline: green background = free, gray segments = busy */}
+      <div className="flex-1 min-w-0 relative" style={{ backgroundColor: fullyFree ? '#bbf7d0' : '#dcfce7' }}>
+        {/* Week grid lines */}
+        {weeks.map((week) => (
+          <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-white/40"
+            style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%`, width: `${(7 / totalDays) * 100}%` }}
+          />
+        ))}
+        {/* Busy overlays */}
+        {busySegments.map((seg, i) => (
+          <div
+            key={i}
+            className="absolute top-0 bottom-0 bg-slate-400/50"
+            style={{ left: `${seg.left}%`, width: `${Math.max(seg.width, 0.3)}%` }}
+          />
+        ))}
       </div>
     </div>
   );
