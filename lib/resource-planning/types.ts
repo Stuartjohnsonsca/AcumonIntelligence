@@ -169,7 +169,7 @@ export type ResourceRole = 'Specialist' | 'Preparer' | 'Reviewer' | 'RI';
 export type SchedulingStatus = 'unscheduled' | 'pre_scheduled' | 'scheduled' | 'completed';
 export type ViewAxis = 'client' | 'staff';
 export type EditMode = 'edit' | 'create';
-export type ViewMode = 'client-bookings' | 'staff-bookings' | 'client-availability' | 'staff-availability';
+export type ViewMode = 'client-bookings' | 'staff-bookings' | 'role-view' | 'staff-availability';
 
 /** Ordered from top to bottom in grid display */
 export const ROLE_ORDER: ResourceRole[] = ['Specialist', 'RI', 'Reviewer', 'Preparer'];

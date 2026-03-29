@@ -33,7 +33,8 @@ async function handleOptimize(request: NextRequest) {
 
   // Merge provided techniques with safe defaults
   const options: SchedulerOptions = {
-    constrainedFirst: body.techniques?.constrainedFirst ?? true,
+    roleScarcity: body.techniques?.roleScarcity ?? false,
+    constrainedFirst: body.techniques?.constrainedFirst ?? false,
     lookAhead: body.techniques?.lookAhead ?? false,
     localSearch: body.techniques?.localSearch ?? false,
     multiPass: body.techniques?.multiPass ?? false,

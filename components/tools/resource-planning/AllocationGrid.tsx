@@ -5,7 +5,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { Lock, Unlock } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, Allocation, ResourceRole, StaffMember } from '@/lib/resource-planning/types';
-import { ROLE_ORDER, ROLE_BAR_COLORS, getStaffRoles } from '@/lib/resource-planning/types';
+import { ROLE_ORDER, ROLE_BAR_COLORS, ROLE_COLORS, getStaffRoles } from '@/lib/resource-planning/types';
 import { getWeeksInRange, formatShortDate, allocationOverlaps } from '@/lib/resource-planning/date-utils';
 import { AllocationBar } from './AllocationBar';
 
@@ -95,7 +95,27 @@ export const AllocationGrid = memo(function AllocationGrid({ jobs, isResourceAdm
     );
   }
 
-  // Client-axis view (Client Bookings / Client Availability)
+  // Role View — one row per role, all allocations of that role shown as bars
+  if (viewMode === 'role-view') {
+    return (
+      <div className="min-w-0">
+        {ROLES.map((role) => (
+          <RoleViewRow
+            key={role}
+            role={role}
+            allocations={allocations}
+            staff={staff}
+            jobs={filteredJobs}
+            weeks={weeks}
+            startDate={startDate}
+            endDate={endDate}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // Client-axis view (Client Bookings)
   const displayJobs = isAvailability
     ? filteredJobs.filter((j) => {
         const jobAllocs = allocations.filter(
@@ -240,6 +260,115 @@ const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
           />
         ))}
       </div>
+    </div>
+  );
+});
+
+// ─── Role View Row ─────────────────────────────────────────────────────────────
+// One row per role — shows all allocations of that role as colour-coded bars,
+// labelled with staff name + client so the whole portfolio is visible at a glance.
+
+const ROLE_LABELS: Record<ResourceRole, string> = {
+  RI: 'Responsible Individual (RI)',
+  Specialist: 'Specialist',
+  Reviewer: 'Reviewer',
+  Preparer: 'Preparer',
+};
+
+const RoleViewRow = memo(function RoleViewRow({
+  role,
+  allocations,
+  staff,
+  jobs,
+  weeks,
+  startDate,
+  endDate,
+}: {
+  role: ResourceRole;
+  allocations: Allocation[];
+  staff: StaffMember[];
+  jobs: ResourceJobView[];
+  weeks: Date[];
+  startDate: Date;
+  endDate: Date;
+}) {
+  const totalMs = endDate.getTime() - startDate.getTime();
+  const totalDays = useMemo(() => Math.round(totalMs / (1000 * 60 * 60 * 24)), [totalMs]);
+
+  const roleAllocs = useMemo(
+    () => allocations.filter(
+      (a) => a.role === role && allocationOverlaps(a.startDate, a.endDate, startDate, endDate),
+    ),
+    [allocations, role, startDate, endDate],
+  );
+
+  const staffMap = useMemo(() => new Map(staff.map((s) => [s.id, s.name])), [staff]);
+  const jobMap = useMemo(
+    () => new Map(jobs.map((j) => [j.engagementId ?? j.id, j])),
+    [jobs],
+  );
+  const colors = ROLE_COLORS[role];
+
+  return (
+    <div className="border-b border-slate-200">
+      {/* Role header */}
+      <div className="flex h-[22px] bg-slate-50 border-b border-slate-100">
+        <div className="w-[280px] flex-shrink-0 border-r bg-slate-100 sticky left-0 z-10 px-3 flex items-center">
+          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wide">{ROLE_LABELS[role]}</span>
+          <span className="ml-1.5 text-[9px] text-slate-400">({roleAllocs.length} allocations)</span>
+        </div>
+        <div className="flex-1 relative">
+          {weeks.map((week) => (
+            <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-200"
+              style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
+            />
+          ))}
+        </div>
+      </div>
+      {/* One sub-row per allocation */}
+      {roleAllocs.length === 0 ? (
+        <div className="flex h-[20px]">
+          <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-3 flex items-center">
+            <span className="text-[9px] text-slate-300 italic">No bookings in view</span>
+          </div>
+          <div className="flex-1 relative bg-red-50/30" />
+        </div>
+      ) : (
+        roleAllocs.map((alloc) => {
+          const staffName = staffMap.get(alloc.userId) ?? alloc.userId;
+          const job = jobMap.get(alloc.engagementId);
+          const label = job
+            ? `${staffName} — ${job.clientName}${job.serviceType ? ` (${job.serviceType})` : ''}`
+            : staffName;
+          const left = ((Math.max(new Date(alloc.startDate).getTime(), startDate.getTime()) - startDate.getTime()) / totalMs) * 100;
+          const right = ((Math.min(new Date(alloc.endDate).getTime(), endDate.getTime()) - startDate.getTime()) / totalMs) * 100;
+          const width = Math.max(right - left, 0.3);
+
+          return (
+            <div key={alloc.id} className="flex h-[20px] border-b border-slate-50 last:border-b-0">
+              <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 flex items-center overflow-hidden">
+                <span className="text-[9px] text-slate-600 truncate">{label}</span>
+              </div>
+              <div className="flex-1 relative">
+                {weeks.map((week) => (
+                  <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
+                    style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
+                  />
+                ))}
+                <div
+                  className={`absolute top-[2px] bottom-[2px] rounded-sm ${colors.bg} flex items-center overflow-hidden`}
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                  title={`${label} | ${alloc.startDate} – ${alloc.endDate} | ${alloc.totalHours ?? '?'}h`}
+                >
+                  <span className={`px-1 text-[8px] font-medium truncate ${colors.text}`}>
+                    {staffName}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 });

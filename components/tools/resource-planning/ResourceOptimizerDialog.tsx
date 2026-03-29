@@ -190,10 +190,16 @@ interface TechniqueDef {
 
 const TECHNIQUES: TechniqueDef[] = [
   {
+    key: 'roleScarcity',
+    label: 'Role scarcity (recommended)',
+    description: 'RI → Specialist → Reviewer → Preparer allocated across all jobs by deadline before moving to next role. Ensures senior roles are distributed fairly.',
+    defaultChecked: true,
+  },
+  {
     key: 'constrainedFirst',
     label: 'Smart job ordering',
     description: 'Schedule hardest-to-fill jobs first. Reduces conflicts. (~0ms extra)',
-    defaultChecked: true,
+    defaultChecked: false,
   },
   {
     key: 'lookAhead',
@@ -225,6 +231,7 @@ interface StepDef {
 
 function buildSteps(techniques: SchedulerOptions): StepDef[] {
   const base: SchedulerOptions = {
+    roleScarcity: false,
     constrainedFirst: false,
     lookAhead: false,
     localSearch: false,
@@ -233,8 +240,9 @@ function buildSteps(techniques: SchedulerOptions): StepDef[] {
 
   const steps: StepDef[] = [{ label: 'Baseline greedy', options: { ...base } }];
 
-  const techOrder: (keyof SchedulerOptions)[] = ['constrainedFirst', 'lookAhead', 'localSearch', 'multiPass'];
+  const techOrder: (keyof SchedulerOptions)[] = ['roleScarcity', 'constrainedFirst', 'lookAhead', 'localSearch', 'multiPass'];
   const techLabels: Record<keyof SchedulerOptions, string> = {
+    roleScarcity: '+ Role scarcity',
     constrainedFirst: '+ Smart job ordering',
     lookAhead: '+ Staff look-ahead',
     localSearch: '+ Improvement pass',
@@ -272,7 +280,8 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
 
   // Technique checkboxes
   const [techniques, setTechniques] = useState<SchedulerOptions>({
-    constrainedFirst: TECHNIQUES.find((t) => t.key === 'constrainedFirst')?.defaultChecked ?? true,
+    roleScarcity: TECHNIQUES.find((t) => t.key === 'roleScarcity')?.defaultChecked ?? true,
+    constrainedFirst: TECHNIQUES.find((t) => t.key === 'constrainedFirst')?.defaultChecked ?? false,
     lookAhead: TECHNIQUES.find((t) => t.key === 'lookAhead')?.defaultChecked ?? false,
     localSearch: TECHNIQUES.find((t) => t.key === 'localSearch')?.defaultChecked ?? false,
     multiPass: TECHNIQUES.find((t) => t.key === 'multiPass')?.defaultChecked ?? false,

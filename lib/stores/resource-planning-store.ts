@@ -328,7 +328,8 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
 
     getViewAxis: () => {
       const { viewMode } = get();
-      return viewMode.startsWith('staff') ? 'staff' : 'client';
+      if (viewMode.startsWith('staff')) return 'staff';
+      return 'client';
     },
 
     getIsAvailabilityMode: () => {

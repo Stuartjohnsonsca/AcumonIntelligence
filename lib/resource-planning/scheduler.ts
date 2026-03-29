@@ -38,6 +38,13 @@ export interface SchedulerOptions {
   localSearch: boolean;
   /** Run greedy 15 times with score jitter, return best result. */
   multiPass: boolean;
+  /**
+   * Role-scarcity mode: jobs sorted by target completion date + profile presence,
+   * then each role (RI → Specialist → Reviewer → Preparer) is allocated across
+   * ALL jobs before moving to the next role. Ensures scarce senior roles are
+   * distributed fairly by deadline rather than consumed job-by-job.
+   */
+  roleScarcity: boolean;
 }
 
 export interface SchedulerResult extends OptimizationResult {
@@ -1009,6 +1016,195 @@ function runGreedyPass(
   return { jobResults, unschedulable, capacityMap, jobCountMap };
 }
 
+// ─── Role-Scarcity Pass ────────────────────────────────────────────────────────
+
+/**
+ * Role-scarcity scheduler: assign ONE role across ALL jobs before moving to
+ * the next role.  Order: RI → Specialist → Reviewer → Preparer.
+ * Jobs are sorted by target-completion date (ascending), with jobs that have an
+ * explicit profile sorted before those without on the same deadline.
+ *
+ * This prevents a single role from being "used up" by the first jobs in a
+ * deadline-ordered list — every job gets its senior roles filled before preparers
+ * are distributed.
+ */
+function runRoleScarcityPass(
+  orderedJobs: ResourceJobView[],
+  staff: StaffMember[],
+  existingAllocations: Allocation[],
+  constraintOrder: string[],
+  scope: OptimizationScope,
+  options: SchedulerOptions,
+  today: Date,
+  jitterScale: number,
+  previousTeam: Map<string, string[]>,
+): {
+  jobResults: JobResult[];
+  unschedulable: string[];
+  capacityMap: CapacityMap;
+  jobCountMap: JobCountMap;
+} {
+  // Sort by targetCompletion asc; jobs with a profile first on ties
+  const sorted = [...orderedJobs].sort((a, b) => {
+    const da = new Date(a.targetCompletion).getTime();
+    const db = new Date(b.targetCompletion).getTime();
+    if (da !== db) return da - db;
+    return (a.jobProfileId ? 0 : 1) - (b.jobProfileId ? 0 : 1);
+  });
+
+  const inScopeSet = new Set(sorted.map((j) => j.id));
+  const capacityMap = buildCapacityMap(existingAllocations, inScopeSet);
+  const jobCountMap: JobCountMap = new Map();
+
+  for (const alloc of existingAllocations) {
+    if (!inScopeSet.has(alloc.engagementId)) {
+      incrementJobCount(jobCountMap, alloc.userId, alloc.role as ResourceRole);
+    }
+  }
+
+  const activeStaff = staff.filter((s) => s.isActive && s.resourceSetting);
+
+  // Per-job state — persists across role passes
+  const jobPlacementsMap = new Map<string, PlacedAllocation[]>();
+  // jobId → userId → roles already assigned on that job (cross-role constraint)
+  const assignedOnJob = new Map<string, Map<string, ResourceRole[]>>();
+  const failedJobs = new Set<string>();
+
+  for (const role of ROLE_ASSIGNMENT_ORDER) {
+    for (let jobIdx = 0; jobIdx < sorted.length; jobIdx++) {
+      const job = sorted[jobIdx];
+      if (failedJobs.has(job.id)) continue;
+
+      const budgetHours = getBudgetForRole(job, role);
+      if (budgetHours <= 0) continue;
+
+      const deadline = getJobDeadline(job);
+      const jobRoleMap = assignedOnJob.get(job.id) ?? new Map<string, ResourceRole[]>();
+
+      const candidates = activeStaff.filter((s) => {
+        const otherRoles = jobRoleMap.get(s.id) ?? [];
+        return isEligible(s, role, otherRoles);
+      });
+
+      if (candidates.length === 0) {
+        if (role === 'RI') failedJobs.add(job.id);
+        continue;
+      }
+
+      const ctx: ScoringContext = {
+        options,
+        jitterScale,
+        remainingJobs: sorted.slice(jobIdx + 1),
+        staff: activeStaff,
+        jobCountMap,
+        capacityMap,
+        currentJobDeadline: deadline,
+        currentBudgetHours: budgetHours,
+        previousTeam,
+        currentJobClientId: job.clientId,
+        currentJobAuditType: job.auditType,
+        today,
+      };
+
+      const scored = candidates
+        .map((s) => ({ staff: s, score: scoreCandidate(s, role, ctx) }))
+        .sort((a, b) => a.score - b.score);
+
+      let placed = false;
+      let fallbackCandidate: StaffMember | null = null;
+      let fallbackWindow: PlacementWindow | null = null;
+      let fallbackDays: string[] = [];
+      let fallbackAvailable = -Infinity;
+
+      for (const { staff: candidate } of scored) {
+        const rs = candidate.resourceSetting!;
+        const dailyMax = rs.weeklyCapacityHrs / 5;
+        const window = computeWindow(budgetHours, rs.weeklyCapacityHrs, deadline, today);
+        const days = workingDaysInRange(parseDate(window.startDate), parseDate(window.endDate));
+        const available = dailyAvailable(candidate.id, dailyMax, days, capacityMap);
+
+        if (available > fallbackAvailable) {
+          fallbackAvailable = available;
+          fallbackCandidate = candidate;
+          fallbackWindow = window;
+          fallbackDays = days;
+        }
+
+        if (available < window.hoursPerDay * 0.5) continue;
+
+        const placement: PlacedAllocation = {
+          jobId: job.id,
+          userId: candidate.id,
+          role,
+          startDate: window.startDate,
+          endDate: window.endDate,
+          hoursPerDay: window.hoursPerDay,
+          totalHours: Math.round(window.hoursPerDay * days.length * 100) / 100,
+        };
+
+        if (!jobPlacementsMap.has(job.id)) jobPlacementsMap.set(job.id, []);
+        jobPlacementsMap.get(job.id)!.push(placement);
+        consumeCapacity(capacityMap, placement);
+        incrementJobCount(jobCountMap, candidate.id, role);
+
+        const existing = jobRoleMap.get(candidate.id) ?? [];
+        existing.push(role);
+        jobRoleMap.set(candidate.id, existing);
+        assignedOnJob.set(job.id, jobRoleMap);
+
+        placed = true;
+        break;
+      }
+
+      // Force-place if no candidate cleared the soft capacity gate
+      if (!placed && fallbackCandidate && fallbackWindow) {
+        const placement: PlacedAllocation = {
+          jobId: job.id,
+          userId: fallbackCandidate.id,
+          role,
+          startDate: fallbackWindow.startDate,
+          endDate: fallbackWindow.endDate,
+          hoursPerDay: fallbackWindow.hoursPerDay,
+          totalHours: Math.round(fallbackWindow.hoursPerDay * fallbackDays.length * 100) / 100,
+        };
+
+        if (!jobPlacementsMap.has(job.id)) jobPlacementsMap.set(job.id, []);
+        jobPlacementsMap.get(job.id)!.push(placement);
+        consumeCapacity(capacityMap, placement);
+        incrementJobCount(jobCountMap, fallbackCandidate.id, role);
+
+        const existing = jobRoleMap.get(fallbackCandidate.id) ?? [];
+        existing.push(role);
+        jobRoleMap.set(fallbackCandidate.id, existing);
+        assignedOnJob.set(job.id, jobRoleMap);
+        placed = true;
+      }
+
+      if (!placed && role === 'RI') {
+        failedJobs.add(job.id);
+      }
+    }
+  }
+
+  // Build results; release capacity for any job that had RI fail
+  const jobResults: JobResult[] = [];
+  const unschedulable: string[] = [];
+
+  for (const job of sorted) {
+    if (failedJobs.has(job.id)) {
+      unschedulable.push(job.id);
+      for (const p of (jobPlacementsMap.get(job.id) ?? [])) {
+        releaseCapacity(capacityMap, p);
+        decrementJobCount(jobCountMap, p.userId, p.role);
+      }
+    } else {
+      jobResults.push({ jobId: job.id, placements: jobPlacementsMap.get(job.id) ?? [] });
+    }
+  }
+
+  return { jobResults, unschedulable, capacityMap, jobCountMap };
+}
+
 // ─── Local Search ─────────────────────────────────────────────────────────────
 
 /**
@@ -1314,6 +1510,61 @@ export function runScheduler(
   orderedJobs.sort((a, b) => getJobDeadline(a).getTime() - getJobDeadline(b).getTime());
 
   const MULTI_PASS_COUNT = 15;
+
+  // Role-scarcity mode runs a single deterministic pass with its own job ordering
+  if (options.roleScarcity) {
+    const { jobResults, unschedulable } = runRoleScarcityPass(
+      orderedJobs,
+      staff,
+      existingAllocations,
+      order,
+      scope,
+      options,
+      todayDate,
+      0,
+      previousTeam,
+    );
+    const postScarcityResults = options.localSearch
+      ? runLocalSearch(jobResults, jobs, staff, existingAllocations, order, todayDate)
+      : jobResults;
+
+    const staffNameMap = new Map(staff.map((s) => [s.id, s.name]));
+    const finalPlacements = postScarcityResults.flatMap((jr) => jr.placements);
+    const violations = detectViolations(
+      finalPlacements,
+      jobs.filter((j) => inScopeSet.has(j.id)),
+      staff,
+      order,
+      todayDate,
+      existingAllocations,
+      previousTeam,
+    );
+    const scarcitySchedule = postScarcityResults.map((jr) => ({
+      jobId: jr.jobId,
+      allocations: jr.placements.map((p): ProposedAllocation => ({
+        userId: p.userId,
+        userName: staffNameMap.get(p.userId) ?? p.userId,
+        role: p.role,
+        startDate: p.startDate,
+        endDate: p.endDate,
+        hoursPerDay: p.hoursPerDay,
+        totalHours: p.totalHours,
+        availabilityScore: 0,
+        familiarityScore: 0,
+      })),
+    }));
+    const scarcityChanges = computeChanges(postScarcityResults, jobs, staff, existingAllocations);
+    return {
+      schedule: scarcitySchedule,
+      violations,
+      changes: scarcityChanges,
+      unschedulable,
+      reasoning: '',
+      qualityScore: computeQualityScore(violations, unschedulable),
+      passesRun: 1,
+    };
+  }
+
   const passCount = options.multiPass ? MULTI_PASS_COUNT : 1;
 
   // Run pass 0 with no jitter as baseline, then subsequent passes with increasing jitter

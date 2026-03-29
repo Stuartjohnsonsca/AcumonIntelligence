@@ -7,7 +7,7 @@ import type { ViewMode, EditMode } from '@/lib/resource-planning/types';
 const VIEW_OPTIONS: { value: ViewMode; label: string }[] = [
   { value: 'client-bookings', label: 'Client Bookings' },
   { value: 'staff-bookings', label: 'Staff Bookings' },
-  { value: 'client-availability', label: 'Client Availability' },
+  { value: 'role-view', label: 'Role View' },
   { value: 'staff-availability', label: 'Staff Availability' },
 ];
 
