@@ -271,8 +271,10 @@ function isEligible(
 
   switch (role) {
     case 'RI':
-      if (!rs.isRI) return false;
-      // If isRI but no explicit limit, default to 1 concurrent RI job
+      // isRI flag OR resourceRole === 'RI' both qualify (admins often set the role
+      // dropdown without separately ticking the isRI checkbox)
+      if (!rs.isRI && rs.resourceRole !== 'RI') return false;
+      // If no explicit limit, default to 1 concurrent RI job
       return (rs.riJobLimit ?? 1) > 0;
 
     case 'Reviewer':
@@ -289,7 +291,9 @@ function isEligible(
              rs.concurrentJobLimit > 0;
 
     case 'Specialist':
-      return (rs.specialistJobLimit ?? 0) > 0;
+      if (rs.specialistJobLimit != null) return rs.specialistJobLimit > 0;
+      // Fallback: eligible if primary role is a specialist type
+      return rs.resourceRole === 'Specialist' && rs.concurrentJobLimit > 0;
 
     default:
       return false;
@@ -299,12 +303,13 @@ function isEligible(
 /** Get the concurrent job limit for a specific role. */
 function jobLimitForRole(rs: StaffSetting, role: ResourceRole): number {
   switch (role) {
-    case 'RI':       return rs.riJobLimit ?? (rs.isRI ? 1 : 0);
+    case 'RI':       return rs.riJobLimit ?? ((rs.isRI || rs.resourceRole === 'RI') ? 1 : 0);
     case 'Reviewer': return rs.reviewerJobLimit ??
                        ((rs.resourceRole === 'Reviewer' || rs.resourceRole === 'RI') ? rs.concurrentJobLimit : 0);
     case 'Preparer': return rs.preparerJobLimit ??
                        ((rs.resourceRole === 'Preparer' || rs.resourceRole === 'Reviewer') ? rs.concurrentJobLimit : 0);
-    case 'Specialist': return rs.specialistJobLimit ?? 0;
+    case 'Specialist': return rs.specialistJobLimit ??
+                         (rs.resourceRole === 'Specialist' ? rs.concurrentJobLimit : 0);
     default: return 0;
   }
 }
