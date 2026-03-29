@@ -364,6 +364,7 @@ function computeWindow(
   budgetHours: number,
   weeklyCapacityHrs: number,
   targetDate: Date,
+  today: Date = new Date(),
 ): PlacementWindow {
   const safeCap = weeklyCapacityHrs > 0 ? weeklyCapacityHrs : 37.5; // fallback: standard full-time
   const targetHoursPerDay = Math.min(7.5, safeCap / 5);
@@ -377,7 +378,15 @@ function computeWindow(
   // Round hoursPerDay to 2 decimal places
   hoursPerDay = Math.round(hoursPerDay * 100) / 100;
 
-  const endDate = prevFriday(targetDate);
+  // If the deadline is already in the past, schedule as soon as possible starting
+  // from today — work can't be placed in the past (it would never appear in the grid).
+  const todayStart = new Date(today);
+  todayStart.setHours(0, 0, 0, 0);
+  const naturalEnd = prevFriday(targetDate);
+  const endDate = naturalEnd < todayStart
+    ? prevFriday(addWorkingDays(todayStart, daysNeeded + 4)) // push end to cover the work
+    : naturalEnd;
+
   const startDateRaw = addWorkingDays(endDate, -(daysNeeded - 1));
   // Snap back to Monday if the raw start isn't a Monday
   const startDate = nextMonday(addWorkingDays(startDateRaw, -1));
@@ -444,6 +453,8 @@ interface ScoringContext {
   currentBudgetHours?: number;
   /** clientId:auditType:role → userIds who held that role previously */
   previousTeam?: Map<string, string[]>;
+  /** today reference used to clamp past deadlines in computeWindow */
+  today?: Date;
   /** clientId of the job currently being scored */
   currentJobClientId?: string;
   /** auditType of the job currently being scored */
@@ -472,7 +483,7 @@ function scoreCandidate(
   if (ctx.options.constrainedFirst && ctx.capacityMap && ctx.currentJobDeadline && ctx.currentBudgetHours && ctx.currentBudgetHours > 0 && rs.weeklyCapacityHrs > 0) {
     // Compute the window this candidate would occupy for this job.
     // Guard: weeklyCapacityHrs must be > 0 to avoid divide-by-zero in computeWindow.
-    const win = computeWindow(ctx.currentBudgetHours, rs.weeklyCapacityHrs, ctx.currentJobDeadline);
+    const win = computeWindow(ctx.currentBudgetHours, rs.weeklyCapacityHrs, ctx.currentJobDeadline, ctx.today);
     const days = workingDaysInRange(parseDate(win.startDate), parseDate(win.endDate));
     if (days.length > 0) {
       const dailyMax = rs.weeklyCapacityHrs / 5;
@@ -914,7 +925,7 @@ function runGreedyPass(
       for (const { staff: candidate } of scored) {
         const rs = candidate.resourceSetting!;
         const dailyMax = rs.weeklyCapacityHrs / 5;
-        const window = computeWindow(budgetHours, rs.weeklyCapacityHrs, deadline);
+        const window = computeWindow(budgetHours, rs.weeklyCapacityHrs, deadline, today);
         const days = workingDaysInRange(parseDate(window.startDate), parseDate(window.endDate));
 
         // Check staff has enough capacity on each day
@@ -1102,8 +1113,8 @@ function runLocalSearch(
           const budget2 = getBudgetForRole(job2, role);
 
           // Compute proposed new windows (s2 takes job1, s1 takes job2)
-          const win1 = computeWindow(budget1, safeCap_s2, deadline1);
-          const win2 = computeWindow(budget2, safeCap_s1, deadline2);
+          const win1 = computeWindow(budget1, safeCap_s2, deadline1, today);
+          const win2 = computeWindow(budget2, safeCap_s1, deadline2, today);
           const days1 = workingDaysInRange(parseDate(win1.startDate), parseDate(win1.endDate));
           const days2 = workingDaysInRange(parseDate(win2.startDate), parseDate(win2.endDate));
 
