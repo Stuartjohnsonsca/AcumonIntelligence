@@ -201,17 +201,60 @@ const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
   endDate: Date;
   weeks: Date[];
 }) {
+  // Focus-view state — needed for flex-fraction positioning (same as AllocationBar)
+  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
+  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
+  const isLocked = useResourcePlanningStore((s) => s.isLocked);
+  const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
+
   const totalMs = endDate.getTime() - startDate.getTime();
   const totalDays = useMemo(() => Math.round(totalMs / (1000 * 60 * 60 * 24)), [totalMs]);
+
+  // Fix: capacity = weeks × weeklyHrs (not calendar-days / 5, which overcounts weekends)
   const weeklyHrs = member.resourceSetting?.weeklyCapacityHrs ?? 37.5;
-  const totalCapacityHrs = (weeklyHrs / 5) * totalDays;
+  const totalCapacityHrs = (totalDays / 7) * weeklyHrs;
 
   const staffAllocs = useMemo(
     () => allocations.filter((a) => a.userId === member.id && allocationOverlaps(a.startDate, a.endDate, startDate, endDate)),
     [allocations, member.id, startDate, endDate],
   );
 
-  // Merge overlapping busy segments so they don't double-count visually
+  // Build the same flex-fraction function as AllocationBar so segments track
+  // the expanded focus week in the DateBar.
+  const dateToFlexFraction = useMemo(() => {
+    const activeDays = isLocked ? lockedFocusDays : focusedDays;
+    let expandedWeekIdx: number | null = null;
+    if (activeDays.length > 0) {
+      const pivotDay = new Date(activeDays[0]);
+      const idx = weeks.findIndex((w) => {
+        const weekEnd = new Date(w);
+        weekEnd.setDate(weekEnd.getDate() + 7);
+        return pivotDay >= w && pivotDay < weekEnd;
+      });
+      if (idx !== -1) expandedWeekIdx = idx;
+    }
+    const expandFlex = Math.max(focusWindowWeeks * 2, 3);
+    const weekFlexes = weeks.map((_, i) => (i === expandedWeekIdx ? expandFlex : 1));
+    const totalFlex = weekFlexes.reduce((s, f) => s + f, 0);
+    const cumulativeFlex: number[] = [];
+    let cum = 0;
+    for (const f of weekFlexes) { cumulativeFlex.push(cum); cum += f; }
+
+    return (date: Date): number => {
+      const ms = date.getTime();
+      for (let i = 0; i < weeks.length; i++) {
+        const wStart = weeks[i].getTime();
+        const wEnd = wStart + 7 * 24 * 60 * 60 * 1000;
+        if (ms >= wStart && ms < wEnd) {
+          const posInWeek = (ms - wStart) / (7 * 24 * 60 * 60 * 1000);
+          return (cumulativeFlex[i] + posInWeek * weekFlexes[i]) / totalFlex;
+        }
+      }
+      return ms < weeks[0]?.getTime() ? 0 : 1;
+    };
+  }, [weeks, focusedDays, lockedFocusDays, isLocked, focusWindowWeeks]);
+
+  // Merge overlapping busy segments, positioned using flex-fractions
   const busySegments = useMemo(() => {
     const raw = staffAllocs.map((a) => ({
       s: Math.max(new Date(a.startDate).getTime(), startDate.getTime()),
@@ -225,41 +268,58 @@ const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
         merged.push({ ...seg });
       }
     }
-    return merged.map((seg) => ({
-      left: ((seg.s - startDate.getTime()) / totalMs) * 100,
-      width: ((seg.e - seg.s) / totalMs) * 100,
-    }));
-  }, [staffAllocs, startDate, endDate, totalMs]);
+    return merged.map((seg) => {
+      const left = dateToFlexFraction(new Date(seg.s)) * 100;
+      const right = dateToFlexFraction(new Date(seg.e)) * 100;
+      return { left, width: Math.max(right - left, 0.3) };
+    });
+  }, [staffAllocs, startDate, endDate, dateToFlexFraction]);
 
   const allocatedHrs = staffAllocs.reduce((sum, a) => sum + (a.totalHours ?? 0), 0);
   const freeHrs = Math.max(0, Math.round(totalCapacityHrs - allocatedHrs));
   const fullyFree = busySegments.length === 0;
 
   return (
-    <div className="border-b border-slate-100 flex h-[16px]">
-      <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 flex items-center gap-1.5 select-none">
-        <div className="text-[10px] font-medium text-slate-700 truncate flex-1">{member.name}</div>
-        <span className={`text-[9px] font-mono flex-shrink-0 tabular-nums ${freeHrs > 0 ? 'text-green-600' : 'text-red-500'}`}>
-          {freeHrs}h
-        </span>
+    <div className="border-b border-slate-100">
+      {/* Compact summary row: green = free, gray = busy */}
+      <div className="flex h-[16px]">
+        <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 flex items-center gap-1.5 select-none">
+          <div className="text-[10px] font-medium text-slate-700 truncate flex-1">{member.name}</div>
+          <span className={`text-[9px] font-mono flex-shrink-0 tabular-nums ${freeHrs > 0 ? 'text-green-600' : 'text-red-500'}`}>
+            {freeHrs}h
+          </span>
+        </div>
+        {/* Timeline: green background = free, gray segments = busy */}
+        <div className="flex-1 min-w-0 relative" style={{ backgroundColor: fullyFree ? '#bbf7d0' : '#dcfce7' }}>
+          {weeks.map((week) => (
+            <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-white/40"
+              style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
+            />
+          ))}
+          {busySegments.map((seg, i) => (
+            <div key={i} className="absolute top-0 bottom-0 bg-slate-400/50"
+              style={{ left: `${seg.left}%`, width: `${seg.width}%` }}
+            />
+          ))}
+        </div>
       </div>
-      {/* Timeline: green background = free, gray segments = busy */}
-      <div className="flex-1 min-w-0 relative" style={{ backgroundColor: fullyFree ? '#bbf7d0' : '#dcfce7' }}>
-        {/* Week grid lines */}
-        {weeks.map((week) => (
-          <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-white/40"
-            style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%`, width: `${(7 / totalDays) * 100}%` }}
-          />
-        ))}
-        {/* Busy overlays */}
-        {busySegments.map((seg, i) => (
-          <div
-            key={i}
-            className="absolute top-0 bottom-0 bg-slate-400/50"
-            style={{ left: `${seg.left}%`, width: `${Math.max(seg.width, 0.3)}%` }}
-          />
-        ))}
-      </div>
+      {/* Individual draggable AllocationBars — one per allocation, visible on hover */}
+      {staffAllocs.length > 0 && (
+        <div className="relative h-[20px] border-t border-slate-50">
+          <div className="w-[280px] flex-shrink-0 border-r bg-slate-50/50 sticky left-0 z-10 h-full absolute" />
+          <div className="absolute left-[280px] right-0 top-0 bottom-0">
+            {staffAllocs.map((alloc) => (
+              <AllocationBar
+                key={alloc.id}
+                allocation={alloc}
+                startDate={startDate}
+                endDate={endDate}
+                totalDays={totalDays}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 });
@@ -325,9 +385,9 @@ const RoleViewRow = memo(function RoleViewRow({
           ))}
         </div>
       </div>
-      {/* One sub-row per allocation */}
+      {/* One sub-row per allocation — uses AllocationBar for focus-view & drag support */}
       {roleAllocs.length === 0 ? (
-        <div className="flex h-[20px]">
+        <div className="flex h-[24px]">
           <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-3 flex items-center">
             <span className="text-[9px] text-slate-300 italic">No bookings in view</span>
           </div>
@@ -340,30 +400,25 @@ const RoleViewRow = memo(function RoleViewRow({
           const label = job
             ? `${staffName} — ${job.clientName}${job.serviceType ? ` (${job.serviceType})` : ''}`
             : staffName;
-          const left = ((Math.max(new Date(alloc.startDate).getTime(), startDate.getTime()) - startDate.getTime()) / totalMs) * 100;
-          const right = ((Math.min(new Date(alloc.endDate).getTime(), endDate.getTime()) - startDate.getTime()) / totalMs) * 100;
-          const width = Math.max(right - left, 0.3);
 
           return (
-            <div key={alloc.id} className="flex h-[20px] border-b border-slate-50 last:border-b-0">
+            <div key={alloc.id} className="flex h-[24px] border-b border-slate-50 last:border-b-0">
               <div className="w-[280px] flex-shrink-0 border-r bg-white sticky left-0 z-10 px-2 flex items-center overflow-hidden">
                 <span className="text-[9px] text-slate-600 truncate">{label}</span>
               </div>
-              <div className="flex-1 relative">
+              {/* AllocationBar handles flex-fraction positioning (focus view) and drag */}
+              <div className="flex-1 relative h-[24px]">
                 {weeks.map((week) => (
                   <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
                     style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
                   />
                 ))}
-                <div
-                  className={`absolute top-[2px] bottom-[2px] rounded-sm ${colors.bg} flex items-center overflow-hidden`}
-                  style={{ left: `${left}%`, width: `${width}%` }}
-                  title={`${label} | ${alloc.startDate} – ${alloc.endDate} | ${alloc.totalHours ?? '?'}h`}
-                >
-                  <span className={`px-1 text-[8px] font-medium truncate ${colors.text}`}>
-                    {staffName}
-                  </span>
-                </div>
+                <AllocationBar
+                  allocation={alloc}
+                  startDate={startDate}
+                  endDate={endDate}
+                  totalDays={totalDays}
+                />
               </div>
             </div>
           );
