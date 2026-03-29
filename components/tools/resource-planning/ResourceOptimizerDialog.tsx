@@ -262,6 +262,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [steps, setSteps] = useState<StepState[]>([]);
   const [result, setResult] = useState<OptimizationResult | null>(null);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
   const [committedScope, setCommittedScope] = useState<'all' | 'unscheduled'>('unscheduled');
   const [error, setError] = useState<string | null>(null);
   const [showViolations, setShowViolations] = useState(false);
@@ -323,6 +324,8 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
           return;
         }
         stepResult = data;
+        // Capture diagnostics from any pass (last one wins — all passes use same data)
+        if (data.diagnostics) setDiagnostics(data.diagnostics);
 
         const violations = stepResult?.violations?.length ?? 0;
         const jobsScheduled = stepResult?.schedule?.length ?? 0;
@@ -529,6 +532,68 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
                   </span>
                 )}
               </div>
+
+              {/* ── Scheduler diagnostics ── */}
+              {diagnostics && (
+                <details className="border border-slate-200 rounded-lg text-[11px]">
+                  <summary className="px-3 py-2 cursor-pointer font-semibold text-slate-500 hover:text-slate-700 select-none">
+                    Scheduler diagnostics
+                  </summary>
+                  <div className="px-3 pb-3 pt-1 space-y-2 text-slate-600">
+                    <div>
+                      <p className="font-semibold text-slate-500 mb-1">Jobs with budget hours</p>
+                      <div className="grid grid-cols-4 gap-1">
+                        {(['RI','Reviewer','Specialist','Preparer'] as const).map((role) => (
+                          <div key={role} className={`rounded px-2 py-1 text-center ${(diagnostics.jobsWithBudget?.[role] ?? 0) === 0 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                            <div className="font-semibold">{diagnostics.jobsWithBudget?.[role] ?? 0}</div>
+                            <div className="text-[10px]">{role}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-500 mb-1">Eligible staff per role</p>
+                      <div className="grid grid-cols-4 gap-1">
+                        {(['RI','Reviewer','Specialist','Preparer'] as const).map((role) => (
+                          <div key={role} className={`rounded px-2 py-1 ${(diagnostics.eligibleStaff?.[role]?.length ?? 0) === 0 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                            <div className="font-semibold text-center">{diagnostics.eligibleStaff?.[role]?.length ?? 0}</div>
+                            <div className="text-[10px] text-center mb-0.5">{role}</div>
+                            {diagnostics.eligibleStaff?.[role]?.length > 0 && (
+                              <div className="text-[10px] text-slate-500 leading-snug">{(diagnostics.eligibleStaff[role] as string[]).join(', ')}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {diagnostics.sampleJob && (
+                      <div>
+                        <p className="font-semibold text-slate-500 mb-1">Sample job budget ({diagnostics.sampleJob.client} / {diagnostics.sampleJob.type})</p>
+                        <div className="grid grid-cols-4 gap-1">
+                          {(['RI','Reviewer','Specialist','Preparer'] as const).map((role) => (
+                            <div key={role} className={`rounded px-2 py-1 text-center ${(diagnostics.sampleJob[role] ?? 0) === 0 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                              <div className="font-semibold">{diagnostics.sampleJob[role] ?? 0}h</div>
+                              <div className="text-[10px]">{role}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">Profile: {diagnostics.sampleJob.profileId ?? 'none'} | ServiceType: {diagnostics.sampleJob.serviceType ?? 'none'}</p>
+                      </div>
+                    )}
+                    {diagnostics.profiles?.length > 0 && (
+                      <div>
+                        <p className="font-semibold text-slate-500 mb-1">Job profiles ({diagnostics.profiles.length})</p>
+                        {(diagnostics.profiles as any[]).map((p: any, i: number) => (
+                          <div key={i} className="text-[10px] text-slate-500">{p.name}: RI={p.RI}h Rev={p.Reviewer}h Spec={p.Specialist}h Prep={p.Preparer}h</div>
+                        ))}
+                      </div>
+                    )}
+                    {diagnostics.profiles?.length === 0 && (
+                      <p className="text-red-600 font-semibold">⚠ No job profiles found — RI/Reviewer/Specialist hours cannot be resolved.</p>
+                    )}
+                    <p className="text-[10px] text-slate-400">Clients with service type: {diagnostics.clientsWithServiceType}/{diagnostics.totalClients}</p>
+                  </div>
+                </details>
+              )}
 
               {/* View violations button — prominent amber button */}
               {result.violations.length > 0 && (
