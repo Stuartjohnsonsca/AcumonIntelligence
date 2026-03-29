@@ -47,6 +47,9 @@ interface ResourcePlanningState {
 
   setActiveDragUserId: (id: string | null) => void;
 
+  // Client search filter (typed in DateBar left spacer)
+  clientSearchQuery: string;
+
   // Dynamic role lanes: extra roles added per job beyond defaults
   dynamicRoleLanes: Record<string, ResourceRole[]>;
 
@@ -85,6 +88,7 @@ interface ResourcePlanningActions {
   setEditMode: (mode: EditMode) => void;
   setSelectedAllocation: (id: string | null) => void;
   setLeftPanelFilter: (ids: string[]) => void;
+  setClientSearchQuery: (q: string) => void;
 
   // Allocation CRUD
   addAllocation: (alloc: Allocation) => void;
@@ -136,6 +140,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     editMode: 'edit',
     selectedAllocationId: null,
     leftPanelFilter: [],
+    clientSearchQuery: '',
     unscheduledJobCount: 0,
     completedJobCount: 0,
     dynamicRoleLanes: {},
@@ -209,6 +214,7 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     setSelectedAllocation: (id) => set({ selectedAllocationId: id }),
     setActiveDragUserId: (id) => set({ activeDragUserId: id }),
     setLeftPanelFilter: (ids) => set({ leftPanelFilter: ids }),
+    setClientSearchQuery: (q) => set({ clientSearchQuery: q }),
 
     addAllocation: (alloc) => {
       set((state) => ({ allocations: [...state.allocations, alloc] }));
@@ -288,25 +294,32 @@ export const useResourcePlanningStore = create<ResourcePlanningState & ResourceP
     },
 
     getSortedJobs: () => {
-      const { jobs, allocations, focusedDays, lockedFocusDays, isLocked } = get();
-      const days = isLocked ? lockedFocusDays : focusedDays;
-      if (days.length === 0) return jobs;
+      // Only re-order when the user has CLICKED to lock a Focus Date week.
+      // Hover alone (focusedDays) does not reorder — that would cause the list
+      // to jump on every mouse movement.
+      const { jobs, allocations, lockedFocusDays, isLocked } = get();
+      if (!isLocked || lockedFocusDays.length === 0) return jobs;
 
-      const sorted = [...days].sort();
+      const sorted = [...lockedFocusDays].sort();
       const focusStart = new Date(sorted[0]);
       const focusEnd = new Date(sorted[sorted.length - 1]);
 
       return [...jobs].sort((a, b) => {
+        // Use job's engagementId if available, otherwise fall back to job.id
+        const aKey = a.engagementId ?? a.id;
+        const bKey = b.engagementId ?? b.id;
         const aAllocs = allocations.filter(
-          (al) => al.engagementId === a.engagementId && allocationOverlaps(al.startDate, al.endDate, focusStart, focusEnd),
+          (al) => al.engagementId === aKey && allocationOverlaps(al.startDate, al.endDate, focusStart, focusEnd),
         );
         const bAllocs = allocations.filter(
-          (al) => al.engagementId === b.engagementId && allocationOverlaps(al.startDate, al.endDate, focusStart, focusEnd),
+          (al) => al.engagementId === bKey && allocationOverlaps(al.startDate, al.endDate, focusStart, focusEnd),
         );
 
+        // Jobs WITH activity in the focus window rise to the top
         if (aAllocs.length > 0 && bAllocs.length === 0) return -1;
         if (bAllocs.length > 0 && aAllocs.length === 0) return 1;
 
+        // Tie-break: jobs whose target completion is closest to the focus window
         const aDist = Math.abs(new Date(a.targetCompletion).getTime() - focusStart.getTime());
         const bDist = Math.abs(new Date(b.targetCompletion).getTime() - focusStart.getTime());
         return aDist - bDist;

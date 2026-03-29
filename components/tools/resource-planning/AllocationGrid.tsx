@@ -169,7 +169,21 @@ const JobRow = memo(function JobRow({
   isResourceAdmin: boolean;
 }) {
   const updateJob = useResourcePlanningStore((s) => s.updateJob);
+  const jobProfiles = useResourcePlanningStore((s) => s.jobProfiles);
   const [toggling, setToggling] = useState(false);
+
+  // Resolve effective budget hours: job record first, then matched profile as fallback.
+  // CRM-synced jobs only carry budgetHoursPreparer; other roles come from the profile.
+  const resolvedBudget = useMemo(() => {
+    const profile = jobProfiles.find((p) => p.id === job.jobProfileId)
+      ?? jobProfiles.find((p) => job.serviceType && p.name.toLowerCase() === job.serviceType.toLowerCase());
+    return {
+      specialist: job.budgetHoursSpecialist > 0 ? job.budgetHoursSpecialist : (profile?.budgetHoursSpecialist ?? 0),
+      ri:         job.budgetHoursRI         > 0 ? job.budgetHoursRI         : (profile?.budgetHoursRI         ?? 0),
+      reviewer:   job.budgetHoursReviewer   > 0 ? job.budgetHoursReviewer   : (profile?.budgetHoursReviewer   ?? 0),
+      preparer:   job.budgetHoursPreparer   > 0 ? job.budgetHoursPreparer   : (profile?.budgetHoursPreparer   ?? 0),
+    };
+  }, [job.jobProfileId, job.serviceType, job.budgetHoursSpecialist, job.budgetHoursRI, job.budgetHoursReviewer, job.budgetHoursPreparer, jobProfiles]);
 
   const jobKey = job.engagementId || job.id;
   const jobAllocations = useMemo(
@@ -224,10 +238,10 @@ const JobRow = memo(function JobRow({
               </button>
             )}
           </div>
-          {/* Timesheet actuals */}
+          {/* Timesheet actuals vs resolved total budget */}
           {(() => {
-            const totalBudget = (job.budgetHoursRI ?? 0) + (job.budgetHoursReviewer ?? 0) +
-                                (job.budgetHoursPreparer ?? 0) + (job.budgetHoursSpecialist ?? 0);
+            const totalBudget = resolvedBudget.ri + resolvedBudget.reviewer +
+                                resolvedBudget.preparer + resolvedBudget.specialist;
             const actual = job.timesheetHours ?? 0;
             if (totalBudget <= 0 && actual <= 0) return null;
             const pct = totalBudget > 0 ? Math.round((actual / totalBudget) * 100) : null;
@@ -244,10 +258,10 @@ const JobRow = memo(function JobRow({
             <span className="text-[9px] text-slate-400">TC: {formatShortDate(new Date(job.targetCompletion))}</span>
           </div>
           <div className="flex gap-1.5 mt-0.5">
-            <BudgetBadge label="Spec" hours={job.budgetHoursSpecialist} />
-            <BudgetBadge label="RI" hours={job.budgetHoursRI} />
-            <BudgetBadge label="Rev" hours={job.budgetHoursReviewer} />
-            <BudgetBadge label="Prep" hours={job.budgetHoursPreparer} />
+            <BudgetBadge label="Spec" hours={resolvedBudget.specialist} />
+            <BudgetBadge label="RI" hours={resolvedBudget.ri} />
+            <BudgetBadge label="Rev" hours={resolvedBudget.reviewer} />
+            <BudgetBadge label="Prep" hours={resolvedBudget.preparer} />
           </div>
         </div>
         <div className={`flex-1 min-w-0 ${job.isScheduleLocked ? 'bg-slate-50/60' : ''}`}>

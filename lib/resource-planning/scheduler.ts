@@ -255,15 +255,42 @@ function isEligible(
     if (otherRolesOnJob.some((r) => r === 'RI' || r === 'Reviewer' || r === 'Preparer')) return false;
   }
 
+  // ── Role eligibility with graceful fallback ─────────────────────────────
+  //
+  // Many firms configure staff with only a primary resourceRole and the
+  // legacy concurrentJobLimit — without setting per-role limits in admin.
+  // The fallback rules below make the scheduler usable without needing
+  // full per-role configuration:
+  //
+  //   RI:        isRI flag enables RI; riJobLimit defaults to 1 when unset.
+  //   Reviewer:  reviewerJobLimit set → use it; else eligible if primary role
+  //              is 'Reviewer' or 'RI' (defaulting to concurrentJobLimit).
+  //   Preparer:  preparerJobLimit set → use it; else eligible if primary role
+  //              is NOT a specialist-only or Reviewer-only type (default limit).
+  //   Specialist: specialistJobLimit must be explicitly set (no fallback).
+
   switch (role) {
     case 'RI':
-      return rs.isRI === true && (rs.riJobLimit ?? 0) > 0;
+      if (!rs.isRI) return false;
+      // If isRI but no explicit limit, default to 1 concurrent RI job
+      return (rs.riJobLimit ?? 1) > 0;
+
     case 'Reviewer':
-      return (rs.reviewerJobLimit ?? 0) > 0;
+      if (rs.reviewerJobLimit != null) return rs.reviewerJobLimit > 0;
+      // Fallback: eligible if primary role is Reviewer or RI
+      return (rs.resourceRole === 'Reviewer' || rs.resourceRole === 'RI') &&
+             rs.concurrentJobLimit > 0;
+
     case 'Preparer':
-      return (rs.preparerJobLimit ?? 0) > 0;
+      if (rs.preparerJobLimit != null) return rs.preparerJobLimit > 0;
+      // Fallback: eligible if primary role is Preparer or Reviewer
+      // (Reviewers can typically also prepare; exclude RI-only staff)
+      return (rs.resourceRole === 'Preparer' || rs.resourceRole === 'Reviewer') &&
+             rs.concurrentJobLimit > 0;
+
     case 'Specialist':
       return (rs.specialistJobLimit ?? 0) > 0;
+
     default:
       return false;
   }
@@ -272,9 +299,11 @@ function isEligible(
 /** Get the concurrent job limit for a specific role. */
 function jobLimitForRole(rs: StaffSetting, role: ResourceRole): number {
   switch (role) {
-    case 'RI': return rs.riJobLimit ?? 0;
-    case 'Reviewer': return rs.reviewerJobLimit ?? 0;
-    case 'Preparer': return rs.preparerJobLimit ?? 0;
+    case 'RI':       return rs.riJobLimit ?? (rs.isRI ? 1 : 0);
+    case 'Reviewer': return rs.reviewerJobLimit ??
+                       ((rs.resourceRole === 'Reviewer' || rs.resourceRole === 'RI') ? rs.concurrentJobLimit : 0);
+    case 'Preparer': return rs.preparerJobLimit ??
+                       ((rs.resourceRole === 'Preparer' || rs.resourceRole === 'Reviewer') ? rs.concurrentJobLimit : 0);
     case 'Specialist': return rs.specialistJobLimit ?? 0;
     default: return 0;
   }

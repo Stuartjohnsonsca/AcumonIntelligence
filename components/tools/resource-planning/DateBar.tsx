@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Circle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Circle, Search } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import {
   getWeeksInRange,
@@ -23,6 +23,8 @@ export function DateBar() {
   const goToToday = useResourcePlanningStore((s) => s.goToToday);
 
   const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
+  const clientSearchQuery = useResourcePlanningStore((s) => s.clientSearchQuery);
+  const setClientSearchQuery = useResourcePlanningStore((s) => s.setClientSearchQuery);
 
   const barRef = useRef<HTMLDivElement>(null);
   const [isPanning, setIsPanning] = useState(false);
@@ -141,23 +143,37 @@ export function DateBar() {
   return (
     <div className="sticky top-0 z-20 bg-white border-b select-none">
       <div className="flex items-center">
-        {/* Job info spacer + Today button */}
-        <div className="w-[280px] flex-shrink-0 flex items-center justify-between px-2 border-r">
-          <button
-            onClick={goToToday}
-            className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-blue-50 text-blue-600 transition-colors"
-            title="Go to today"
-          >
-            <Circle className="h-2.5 w-2.5 fill-blue-600" />
-            <span className="text-[9px] font-semibold">Today</span>
-          </button>
-          <div className="flex items-center gap-0.5">
-            <button onClick={() => shiftDateRange(-7)} className="p-0.5 hover:bg-slate-100 rounded">
-              <ChevronLeft className="h-3.5 w-3.5 text-slate-500" />
+        {/* Job info spacer — Today button, nav arrows, and client search */}
+        <div className="w-[280px] flex-shrink-0 flex flex-col justify-center gap-0.5 px-2 py-1 border-r">
+          <div className="flex items-center">
+            <button
+              onClick={goToToday}
+              className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-blue-50 text-blue-600 transition-colors"
+              title="Go to today"
+            >
+              <Circle className="h-2.5 w-2.5 fill-blue-600" />
+              <span className="text-[9px] font-semibold">Today</span>
             </button>
-            <button onClick={() => shiftDateRange(7)} className="p-0.5 hover:bg-slate-100 rounded">
-              <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
-            </button>
+            <div className="flex items-center gap-0.5 ml-auto">
+              <button onClick={() => shiftDateRange(-7)} className="p-0.5 hover:bg-slate-100 rounded">
+                <ChevronLeft className="h-3.5 w-3.5 text-slate-500" />
+              </button>
+              <button onClick={() => shiftDateRange(7)} className="p-0.5 hover:bg-slate-100 rounded">
+                <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
+              </button>
+            </div>
+          </div>
+          {/* select-text overrides the parent select-none so the input is typeable */}
+          <div className="relative select-text" onMouseDown={(e) => e.stopPropagation()}>
+            <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 h-2.5 w-2.5 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search clients…"
+              value={clientSearchQuery}
+              onChange={(e) => setClientSearchQuery(e.target.value)}
+              className="w-full pl-5 pr-1.5 py-1 text-[10px] border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 transition-colors cursor-text select-text"
+              style={{ userSelect: 'text' }}
+            />
           </div>
         </div>
 

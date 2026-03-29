@@ -530,17 +530,20 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
                 )}
               </div>
 
-              {/* View violations button */}
+              {/* View violations button — prominent amber button */}
               {result.violations.length > 0 && (
                 <button
                   onClick={() => setShowViolations(true)}
-                  className="flex items-center gap-1.5 text-xs text-amber-700 hover:text-amber-900 underline underline-offset-2"
+                  className="w-full flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-300 rounded-lg text-xs font-semibold text-amber-800 hover:bg-amber-100 transition-colors"
                 >
-                  <ClipboardList className="h-3.5 w-3.5" />
-                  Review {result.violations.length} violation{result.violations.length !== 1 ? 's' : ''}
+                  <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                  <span>
+                    Review {result.violations.length} Constraint Violation{result.violations.length !== 1 ? 's' : ''}
+                  </span>
                   {acknowledgedViolations.size > 0 && (
-                    <span className="ml-1 text-green-600">({acknowledgedViolations.size} acknowledged)</span>
+                    <span className="text-green-600 font-medium ml-1">({acknowledgedViolations.size} acknowledged)</span>
                   )}
+                  <ChevronDown className="h-3.5 w-3.5 ml-auto text-amber-400" />
                 </button>
               )}
 

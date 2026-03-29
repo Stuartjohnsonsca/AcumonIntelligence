@@ -1,12 +1,13 @@
 'use client';
 
 import { useMemo, useState, useTransition } from 'react';
-import { Search, ZoomIn, ZoomOut, CalendarDays, RotateCw, RefreshCw, Sparkles } from 'lucide-react';
+import { Search, ZoomIn, ZoomOut, CalendarDays, RotateCw, RefreshCw, Sparkles, ShieldCheck } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import { UnscheduledJobsDialog } from './UnscheduledJobsDialog';
 import { RollForwardDialog } from './RollForwardDialog';
 import { ResourceOptimizerDialog } from './ResourceOptimizerDialog';
+import { ScheduleValidationDialog } from './ScheduleValidationDialog';
 
 export function ResourceToolbar() {
   const staff = useResourcePlanningStore((s) => s.staff);
@@ -35,6 +36,7 @@ export function ResourceToolbar() {
   const [showUnscheduled, setShowUnscheduled] = useState(false);
   const [showRollForward, setShowRollForward] = useState(false);
   const [showOptimizer, setShowOptimizer] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
 
   function handleRefresh() {
     startTransition(() => { router.refresh(); });
@@ -173,6 +175,18 @@ export function ResourceToolbar() {
             <RefreshCw className={`h-3.5 w-3.5 ${isPending ? 'animate-spin' : ''}`} />
           </button>
 
+          {/* Validate schedule — admin only */}
+          {isResourceAdmin && (
+            <button
+              onClick={() => setShowValidation(true)}
+              className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded bg-green-50 hover:bg-green-100 text-green-700 text-[11px] font-medium transition-colors border border-green-200"
+              title="Validate current schedule"
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Validate
+            </button>
+          )}
+
           {/* AI Optimiser — admin only */}
           {isResourceAdmin && (
             <button
@@ -217,6 +231,7 @@ export function ResourceToolbar() {
       {showUnscheduled && <UnscheduledJobsDialog onClose={() => setShowUnscheduled(false)} />}
       {showRollForward && <RollForwardDialog onClose={() => setShowRollForward(false)} />}
       {showOptimizer && <ResourceOptimizerDialog onClose={() => setShowOptimizer(false)} />}
+      {showValidation && <ScheduleValidationDialog onClose={() => setShowValidation(false)} />}
     </>
   );
 }

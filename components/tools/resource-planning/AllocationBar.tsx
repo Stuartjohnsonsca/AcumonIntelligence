@@ -4,7 +4,7 @@ import { useMemo, useState, useRef, useCallback } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import type { Allocation, ResourceRole } from '@/lib/resource-planning/types';
 import { ROLE_BAR_COLORS } from '@/lib/resource-planning/types';
-import { countWorkingDays } from '@/lib/resource-planning/date-utils';
+import { countWorkingDays, getWeeksInRange } from '@/lib/resource-planning/date-utils';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 
 interface Props {
@@ -19,6 +19,10 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
   const selectedAllocationId = useResourcePlanningStore((s) => s.selectedAllocationId);
   const setSelectedAllocation = useResourcePlanningStore((s) => s.setSelectedAllocation);
   const updateAllocation = useResourcePlanningStore((s) => s.updateAllocation);
+  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
+  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
+  const isLocked = useResourcePlanningStore((s) => s.isLocked);
+  const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
 
   const [resizing, setResizing] = useState<'left' | 'right' | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -34,17 +38,65 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
   const style = useMemo(() => {
     const allocStart = new Date(allocation.startDate);
     const allocEnd = new Date(allocation.endDate);
-    const visibleStart = Math.max(allocStart.getTime(), startDate.getTime());
-    const visibleEnd = Math.min(allocEnd.getTime(), endDate.getTime());
-    if (visibleStart > visibleEnd) return null;
+    const clampedStart = new Date(Math.max(allocStart.getTime(), startDate.getTime()));
+    const clampedEnd = new Date(Math.min(allocEnd.getTime(), endDate.getTime()));
+    if (clampedStart.getTime() > clampedEnd.getTime()) return null;
 
-    const startOffset = (visibleStart - startDate.getTime()) / (1000 * 60 * 60 * 24);
-    const duration = (visibleEnd - visibleStart) / (1000 * 60 * 60 * 24);
+    // ── Flex-aware positioning ─────────────────────────────────────────────
+    // The DateBar uses CSS flex: the focused week gets `flex: expandFlex`
+    // while every other week gets `flex: 1`. We replicate that here so
+    // allocation bars grow/shrink in sync with the DateBar column widths.
+    const weeks = getWeeksInRange(startDate, endDate);
+    const activeDays = isLocked ? lockedFocusDays : focusedDays;
+
+    // Find which week is currently expanded (same derivation as DateBar)
+    let expandedWeekIdx: number | null = null;
+    if (activeDays.length > 0) {
+      const pivotDay = new Date(activeDays[0]);
+      const idx = weeks.findIndex((w) => {
+        const weekEnd = new Date(w);
+        weekEnd.setDate(weekEnd.getDate() + 7);
+        return pivotDay >= w && pivotDay < weekEnd;
+      });
+      if (idx !== -1) expandedWeekIdx = idx;
+    }
+
+    const expandFlex = Math.max(focusWindowWeeks * 2, 3);
+
+    // Per-week flex weights and cumulative start positions
+    const weekFlexes = weeks.map((_, i) => (i === expandedWeekIdx ? expandFlex : 1));
+    const totalFlex = weekFlexes.reduce((s, f) => s + f, 0);
+    const cumulativeFlex: number[] = [];
+    let cum = 0;
+    for (const f of weekFlexes) {
+      cumulativeFlex.push(cum);
+      cum += f;
+    }
+
+    // Map a Date to a flex-fraction in [0, 1] across the full weeks span
+    function dateToFlexFraction(date: Date): number {
+      const ms = date.getTime();
+      for (let i = 0; i < weeks.length; i++) {
+        const wStart = weeks[i].getTime();
+        const wEnd = wStart + 7 * 24 * 60 * 60 * 1000;
+        if (ms >= wStart && ms < wEnd) {
+          const posInWeek = (ms - wStart) / (7 * 24 * 60 * 60 * 1000);
+          return (cumulativeFlex[i] + posInWeek * weekFlexes[i]) / totalFlex;
+        }
+      }
+      if (ms < weeks[0].getTime()) return 0;
+      return 1;
+    }
+
+    const leftFrac = Math.max(0, dateToFlexFraction(clampedStart));
+    const rightFrac = Math.min(1, dateToFlexFraction(clampedEnd));
+    if (rightFrac <= leftFrac) return null;
+
     return {
-      left: `${(startOffset / totalDays) * 100}%`,
-      width: `${Math.max((duration / totalDays) * 100, 1)}%`,
+      left: `${leftFrac * 100}%`,
+      width: `${Math.max((rightFrac - leftFrac) * 100, 0.5)}%`,
     };
-  }, [allocation.startDate, allocation.endDate, startDate, endDate, totalDays]);
+  }, [allocation.startDate, allocation.endDate, startDate, endDate, focusedDays, lockedFocusDays, isLocked, focusWindowWeeks]);
 
   // Snap a date to the nearest weekday (Mon-Fri)
   function snapToWeekday(date: Date): Date {

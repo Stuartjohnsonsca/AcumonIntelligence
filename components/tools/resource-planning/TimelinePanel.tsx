@@ -11,19 +11,26 @@ interface Props {
 }
 
 export function TimelinePanel({ isResourceAdmin }: Props) {
-  const { jobs, allocations, focusedDays, lockedFocusDays, isLocked, zoomLevel } =
+  const { jobs, allocations, lockedFocusDays, isLocked, zoomLevel, clientSearchQuery } =
     useResourcePlanningStore(useShallow((s) => ({
       jobs: s.jobs,
       allocations: s.allocations,
-      focusedDays: s.focusedDays,
       lockedFocusDays: s.lockedFocusDays,
       isLocked: s.isLocked,
       zoomLevel: s.zoomLevel,
+      clientSearchQuery: s.clientSearchQuery,
     })));
   const getSortedJobs = useResourcePlanningStore((s) => s.getSortedJobs);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const sortedJobs = useMemo(() => getSortedJobs(), [jobs, allocations, focusedDays, lockedFocusDays, isLocked]);
+
+  // Sort only responds to lock changes (not hover), then apply client search
+  const sortedJobs = useMemo(() => {
+    const sorted = getSortedJobs();
+    if (!clientSearchQuery.trim()) return sorted;
+    const q = clientSearchQuery.toLowerCase();
+    return sorted.filter((j) => j.clientName.toLowerCase().includes(q));
+  }, [jobs, allocations, lockedFocusDays, isLocked, clientSearchQuery]);
 
   // Zoom scales the entire timeline (DateBar + grid) together so dates stay aligned
   const zoomStyle = zoomLevel !== 1

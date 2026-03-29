@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { X, ChevronLeft, ChevronRight, Wand2, Zap } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import type { ResourceJobView, ResourceJobProfile, ResourceRole, ScheduleProposal } from '@/lib/resource-planning/types';
@@ -14,6 +15,8 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
   const jobProfiles = useResourcePlanningStore((s) => s.jobProfiles);
   const updateJob = useResourcePlanningStore((s) => s.updateJob);
   const setUnscheduledCount = useResourcePlanningStore((s) => s.setUnscheduledCount);
+  const router = useRouter();
+  const [, startTransition] = useTransition();
 
   // Filter to audit/assurance jobs only (not all 400+)
   const AUDIT_TYPES = ['SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS', 'GROUP'];
@@ -132,13 +135,17 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
     if (!job || !proposal) return;
     setSaving(true);
     try {
+      // Use job.engagementId if set (AuditEngagement.id), otherwise fall back to
+      // job.id (ResourceJob.id) so the allocation is visible in the timeline grid.
+      const engagementId = job.engagementId ?? job.id;
+
       // Create allocations from proposal
       for (const alloc of proposal.allocations) {
         await fetch('/api/resource-planning/allocations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            engagementId: job.engagementId,
+            engagementId,
             userId: alloc.userId,
             role: alloc.role,
             startDate: alloc.startDate,
@@ -164,6 +171,9 @@ export function UnscheduledJobsDialog({ onClose }: Props) {
       if (currentIdx >= unscheduled.length - 1) {
         setCurrentIdx(Math.max(0, currentIdx - 1));
       }
+
+      // Refresh server data so new allocations appear in the Activity Window
+      startTransition(() => { router.refresh(); });
     } finally {
       setSaving(false);
     }
