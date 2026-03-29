@@ -6,7 +6,7 @@ import { fetchUncompletedAuditJobs } from '@/lib/dynamics-crm';
  */
 export async function GET() {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) {
+  if (!session?.user?.firmId) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

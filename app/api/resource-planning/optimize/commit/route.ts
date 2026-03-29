@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
 
 async function handleCommit(request: NextRequest) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) {
+  if (!session?.user?.firmId) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
   if (!session.user.isResourceAdmin && !session.user.isSuperAdmin) {

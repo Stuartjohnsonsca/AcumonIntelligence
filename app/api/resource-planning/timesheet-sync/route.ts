@@ -12,7 +12,7 @@ const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export async function POST(request: NextRequest) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) {
+  if (!session?.user?.firmId) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

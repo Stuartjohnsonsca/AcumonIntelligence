@@ -6,7 +6,7 @@ const LOCK_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes inactivity
 
 async function requireAdmin() {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) return null;
+  if (!session?.user?.firmId) return null;
   if (!session.user.isResourceAdmin && !session.user.isSuperAdmin) return null;
   return session;
 }
@@ -73,7 +73,7 @@ export async function PATCH() {
 // DELETE /api/resource-planning/lock — release lock (only the holder can release)
 export async function DELETE() {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.firmId) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   await prisma.resourcePlanningLock.deleteMany({
     where: { firmId: session.user.firmId, userId: session.user.id },

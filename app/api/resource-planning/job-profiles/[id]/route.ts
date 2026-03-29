@@ -7,7 +7,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) {
+  if (!session?.user?.firmId) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -44,7 +44,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) {
+  if (!session?.user?.firmId) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

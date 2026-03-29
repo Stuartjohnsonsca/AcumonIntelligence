@@ -22,7 +22,7 @@ import type { OptimizationViolation } from '@/lib/resource-planning/types';
 export async function GET(_request: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user?.twoFactorVerified) {
+    if (!session?.user?.firmId) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

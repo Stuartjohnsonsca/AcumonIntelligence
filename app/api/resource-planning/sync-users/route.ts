@@ -67,7 +67,7 @@ async function fetchDataverseUsers(firmId: string) {
 
 export async function GET() {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.firmId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
     const firmId = session.user.firmId;
@@ -109,7 +109,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.firmId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
     const firmId = session.user.firmId;
@@ -154,7 +154,7 @@ export async function POST(req: Request) {
 
 export async function PUT(req: Request) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.firmId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { userId, visible, settings } = await req.json();
   if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 });
