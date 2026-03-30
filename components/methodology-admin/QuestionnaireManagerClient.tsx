@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Plus, Trash2, Save, Loader2, X, ChevronDown, ChevronUp,
-  GripVertical, Search, Copy, ClipboardList, Mic, Upload,
+  GripVertical, Search, Copy, ClipboardList, Mic, Upload, GitBranch,
 } from 'lucide-react';
 import { BackButton } from './BackButton';
 
@@ -14,6 +14,14 @@ type AnswerType = 'preset' | 'free_text' | 'yes_no' | 'yes_no_na' | 'scale' | 'm
 interface AnswerOption {
   id: string;
   label: string;
+}
+
+// Conditional branching: "if answer is X, go to question Y (or end group)"
+interface BranchRule {
+  id: string;
+  condition: string;   // answer value that triggers the rule (e.g. 'Yes', 'No', option label)
+  action: 'skip_to' | 'end_group';  // skip to a specific question or end the group
+  targetQuestionId?: string;         // target question id (for skip_to)
 }
 
 interface Question {
@@ -29,6 +37,7 @@ interface Question {
   allowFileUpload: boolean;     // Allow document/file upload as part of response
   fileUploadLabel: string;      // Custom label for file upload prompt
   acceptedFileTypes: string;    // e.g. '*' for any, or '.pdf,.docx' etc.
+  branchRules: BranchRule[];    // Conditional branching rules
 }
 
 interface QuestionGroup {
@@ -74,10 +83,30 @@ function uid() { return `q_${Date.now()}_${++idCounter}`; }
 
 function newOption(): AnswerOption { return { id: uid(), label: '' }; }
 function newQuestion(): Question {
-  return { id: uid(), text: '', answerType: 'yes_no', options: [], required: true, helpText: '', allowExplanation: false, explanationLabel: 'Please explain', allowVoiceResponse: false, allowFileUpload: false, fileUploadLabel: 'Upload supporting document', acceptedFileTypes: '*' };
+  return { id: uid(), text: '', answerType: 'yes_no', options: [], required: true, helpText: '', allowExplanation: false, explanationLabel: 'Please explain', allowVoiceResponse: false, allowFileUpload: false, fileUploadLabel: 'Upload supporting document', acceptedFileTypes: '*', branchRules: [] };
 }
 function newGroup(): QuestionGroup {
   return { id: uid(), title: '', description: '', questions: [newQuestion()] };
+}
+
+// Helper: get possible answer values for branching conditions
+function getAnswerValues(q: Question): string[] {
+  switch (q.answerType) {
+    case 'yes_no': return ['Yes', 'No'];
+    case 'yes_no_na': return ['Yes', 'No', 'N/A'];
+    case 'preset':
+    case 'multi_choice':
+      return q.options.map(o => o.label).filter(Boolean);
+    case 'scale': return ['1', '2', '3', '4', '5'];
+    case 'free_text': return ['Any response', 'No response'];
+    default: return [];
+  }
+}
+
+// Helper: question label for target dropdown
+function questionLabel(q: Question, gi: number, qi: number): string {
+  const text = q.text || 'Untitled';
+  return `${gi + 1}.${qi + 1} — ${text.length > 40 ? text.slice(0, 40) + '…' : text}`;
 }
 
 // ─── Component ───────────────────────────────────────────────────
@@ -182,6 +211,36 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
       [qs[idx], qs[idx + dir]] = [qs[idx + dir], qs[idx]];
       return { ...g, questions: qs };
     }));
+  }
+
+  // ─── Branch rule operations ─────────────────────────────────────
+  function addBranchRule(groupId: string, questionId: string) {
+    const group = editGroups.find(g => g.id === groupId);
+    const question = group?.questions.find(q => q.id === questionId);
+    if (!question) return;
+    const values = getAnswerValues(question);
+    const usedConditions = (question.branchRules || []).map(r => r.condition);
+    const firstUnused = values.find(v => !usedConditions.includes(v)) || values[0] || '';
+    const newRule: BranchRule = { id: uid(), condition: firstUnused, action: 'end_group' };
+    updateQuestion(groupId, questionId, {
+      branchRules: [...(question.branchRules || []), newRule],
+    });
+  }
+
+  function updateBranchRule(groupId: string, questionId: string, ruleId: string, patch: Partial<BranchRule>) {
+    setEditGroups(gs => gs.map(g => g.id === groupId ? {
+      ...g, questions: g.questions.map(q => q.id === questionId ? {
+        ...q, branchRules: (q.branchRules || []).map(r => r.id === ruleId ? { ...r, ...patch } : r),
+      } : q),
+    } : g));
+  }
+
+  function removeBranchRule(groupId: string, questionId: string, ruleId: string) {
+    setEditGroups(gs => gs.map(g => g.id === groupId ? {
+      ...g, questions: g.questions.map(q => q.id === questionId ? {
+        ...q, branchRules: (q.branchRules || []).filter(r => r.id !== ruleId),
+      } : q),
+    } : g));
   }
 
   // ─── Option operations ─────────────────────────────────────────
@@ -459,6 +518,29 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
                                 )}
                               </div>
                             )}
+                            {/* Branching rules in view mode */}
+                            {(q.branchRules || []).length > 0 && (
+                              <div className="mt-1.5 ml-1">
+                                {(q.branchRules || []).map((rule) => {
+                                  const targetQ = rule.action === 'skip_to' && rule.targetQuestionId
+                                    ? group.questions.find(gq => gq.id === rule.targetQuestionId) : null;
+                                  const targetIdx = targetQ ? group.questions.indexOf(targetQ) : -1;
+                                  return (
+                                    <div key={rule.id} className="flex items-center gap-1 text-[10px] text-purple-500 py-0.5">
+                                      <GitBranch className="h-2.5 w-2.5" />
+                                      <span>
+                                        If <strong>{rule.condition}</strong>
+                                        {rule.action === 'end_group'
+                                          ? ' → end group'
+                                          : targetQ
+                                            ? ` → skip to ${gi + 1}.${targetIdx + 1}`
+                                            : ' → skip to (unset)'}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -712,6 +794,73 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
                                     </button>
                                   </div>
                                 )}
+                                {/* Conditional branching */}
+                                <div className="border-t border-dashed border-slate-200 pt-2 mt-1">
+                                  <div className="flex items-center gap-1.5 mb-1.5">
+                                    <GitBranch className="h-3 w-3 text-purple-500" />
+                                    <span className="text-[10px] font-semibold text-purple-600">Conditional Branching</span>
+                                    <button
+                                      onClick={() => addBranchRule(group.id, q.id)}
+                                      className="ml-auto text-[10px] text-purple-500 hover:text-purple-700 font-medium"
+                                    >
+                                      + Add rule
+                                    </button>
+                                  </div>
+                                  {(q.branchRules || []).length === 0 && (
+                                    <p className="text-[10px] text-slate-400 italic pl-4">No branching — continues to next question</p>
+                                  )}
+                                  {(q.branchRules || []).map((rule) => (
+                                    <div key={rule.id} className="flex items-center gap-1.5 pl-4 py-0.5 text-[10px]">
+                                      <span className="text-slate-500">If answer is</span>
+                                      <select
+                                        value={rule.condition}
+                                        onChange={(e) => updateBranchRule(group.id, q.id, rule.id, { condition: e.target.value })}
+                                        className="px-1.5 py-0.5 border rounded bg-white text-slate-700 text-[10px] max-w-[120px]"
+                                      >
+                                        {getAnswerValues(q).map(v => (
+                                          <option key={v} value={v}>{v}</option>
+                                        ))}
+                                      </select>
+                                      <span className="text-slate-500">then</span>
+                                      <select
+                                        value={rule.action}
+                                        onChange={(e) => updateBranchRule(group.id, q.id, rule.id, {
+                                          action: e.target.value as 'skip_to' | 'end_group',
+                                          targetQuestionId: e.target.value === 'end_group' ? undefined : rule.targetQuestionId,
+                                        })}
+                                        className="px-1.5 py-0.5 border rounded bg-white text-slate-700 text-[10px]"
+                                      >
+                                        <option value="skip_to">Skip to question</option>
+                                        <option value="end_group">End this group</option>
+                                      </select>
+                                      {rule.action === 'skip_to' && (
+                                        <select
+                                          value={rule.targetQuestionId || ''}
+                                          onChange={(e) => updateBranchRule(group.id, q.id, rule.id, { targetQuestionId: e.target.value })}
+                                          className="px-1.5 py-0.5 border rounded bg-white text-slate-700 text-[10px] max-w-[200px]"
+                                        >
+                                          <option value="">Select target...</option>
+                                          {group.questions
+                                            .filter((_tq, tqi) => tqi > qi)
+                                            .map((tq, _tqi) => {
+                                              const actualIdx = group.questions.findIndex(gq => gq.id === tq.id);
+                                              return (
+                                                <option key={tq.id} value={tq.id}>
+                                                  {questionLabel(tq, gi, actualIdx)}
+                                                </option>
+                                              );
+                                            })}
+                                        </select>
+                                      )}
+                                      <button
+                                        onClick={() => removeBranchRule(group.id, q.id, rule.id)}
+                                        className="p-0.5 hover:bg-red-100 rounded ml-auto"
+                                      >
+                                        <X className="h-2.5 w-2.5 text-red-400" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                               <div className="flex flex-col gap-0.5 flex-shrink-0">
                                 <button onClick={() => moveQuestion(group.id, q.id, -1)} disabled={qi === 0} className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30">
