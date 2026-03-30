@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-interface XeroStatus {
+interface ConnectionStatus {
   connected: boolean;
   orgName?: string;
   connectedBy?: string;
   connectedAt?: string;
   expiresAt?: string;
+  system?: string;
 }
 
 interface Props {
@@ -22,7 +23,7 @@ function formatDateTime(dateStr: string): string {
 }
 
 export function ConnectionTab({ clientId, clientName }: Props) {
-  const [status, setStatus] = useState<XeroStatus | null>(null);
+  const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -71,12 +72,17 @@ export function ConnectionTab({ clientId, clientName }: Props) {
     }
   }
 
+  function getConnectUrl() {
+    const returnUrl = encodeURIComponent(window.location.pathname);
+    return `/api/accounting/xero/connect?clientId=${clientId}&returnUrl=${returnUrl}`;
+  }
+
   function handleRenewConnection() {
-    window.location.href = `/api/accounting/xero/connect?clientId=${clientId}`;
+    window.location.href = getConnectUrl();
   }
 
   function handleConnect() {
-    window.location.href = `/api/accounting/xero/connect?clientId=${clientId}`;
+    window.location.href = getConnectUrl();
   }
 
   async function handleDisconnect() {
@@ -110,7 +116,7 @@ export function ConnectionTab({ clientId, clientName }: Props) {
   return (
     <div className="bg-white rounded-lg border border-slate-200">
       <div className="px-4 py-3 border-b border-slate-200">
-        <h3 className="text-sm font-semibold text-slate-800">Xero Connection</h3>
+        <h3 className="text-sm font-semibold text-slate-800">Accounting Connection</h3>
       </div>
 
       <div className="p-4">
@@ -121,6 +127,11 @@ export function ConnectionTab({ clientId, clientName }: Props) {
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
                 <span className="text-sm font-medium text-green-700">Connected</span>
+                {status.system && (
+                  <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-medium uppercase">
+                    {status.system}
+                  </span>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-sm">
@@ -174,13 +185,13 @@ export function ConnectionTab({ clientId, clientName }: Props) {
               <span className="text-sm font-medium text-slate-500">Not Connected</span>
             </div>
             <p className="text-xs text-slate-400 mb-4">
-              Connect {clientName} to Xero to access accounting data.
+              No accounting connection found for {clientName}. Connect to access accounting data.
             </p>
             <button
               onClick={handleConnect}
               className="text-xs px-4 py-2 bg-[#13b5ea] text-white rounded-md hover:bg-[#0fa2d3] font-medium"
             >
-              Connect to Xero
+              Connect
             </button>
           </>
         )}
@@ -199,9 +210,9 @@ export function ConnectionTab({ clientId, clientName }: Props) {
       {showConfirm === 'disconnect' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm mx-4">
-            <h4 className="text-sm font-semibold text-slate-800 mb-2">Disconnect Xero?</h4>
+            <h4 className="text-sm font-semibold text-slate-800 mb-2">Disconnect?</h4>
             <p className="text-xs text-slate-500 mb-4">
-              This will revoke the Xero connection for {clientName}. You can reconnect later.
+              This will revoke the accounting connection for {clientName}. You can reconnect later.
             </p>
             <div className="flex justify-end gap-2">
               <button
