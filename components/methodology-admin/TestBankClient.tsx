@@ -5,6 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Plus, X, Copy, Loader2, Save, Download, Upload, Pencil, Trash2 } from 'lucide-react';
 import { MANDATORY_FS_LINES, ASSERTION_TYPES } from '@/types/methodology';
 
+// Map test type names → code snippet function names (read-only, reflects actual code)
+const CODE_SNIPPET_MAP: Record<string, string> = {
+  'Verify ownership at Land Registry': 'landRegistryOwnershipCheck',
+  'Verify purchase price at Land Registry': 'landRegistryPricePaidCheck',
+};
+
 interface Industry {
   id: string;
   name: string;
@@ -301,6 +307,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
               <thead>
                 <tr className="bg-slate-100 border-b">
                   <th className="text-left px-3 py-2 text-slate-600 font-semibold">Action</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-40">CodeSnippet</th>
                   <th className="text-left px-3 py-2 text-slate-600 font-semibold w-44">Type</th>
                   <th className="text-left px-3 py-2 text-slate-600 font-semibold w-48">Code Section</th>
                   <th className="w-20 px-3 py-2"></th>
@@ -315,6 +322,9 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                           <input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter') saveEditTestType(); if (e.key === 'Escape') setEditingTestType(null); }}
                             className="w-full border border-slate-300 rounded px-2 py-1 text-sm" autoFocus />
+                        </td>
+                        <td className="px-2 py-1.5 text-xs text-slate-400 font-mono">
+                          {CODE_SNIPPET_MAP[tt.name] || '—'}
                         </td>
                         <td className="px-2 py-1.5">
                           <select value={editActionType} onChange={e => setEditActionType(e.target.value)}
@@ -338,6 +348,13 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                     ) : (
                       <>
                         <td className="px-3 py-2 text-slate-700 font-medium">{tt.name}</td>
+                        <td className="px-3 py-2">
+                          {CODE_SNIPPET_MAP[tt.name] ? (
+                            <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">{CODE_SNIPPET_MAP[tt.name]}</span>
+                          ) : (
+                            <span className="text-xs text-slate-300">—</span>
+                          )}
+                        </td>
                         <td className="px-3 py-2">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
                             tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' :
