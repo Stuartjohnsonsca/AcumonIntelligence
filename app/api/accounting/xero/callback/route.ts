@@ -21,6 +21,7 @@ export async function GET(req: Request) {
   // Parse the state to determine if this is a delegated or authenticated flow
   let clientId: string;
   let delegatedToken: string | null = null;
+  let returnUrl: string | null = null;
 
   if (stateParam) {
     try {
@@ -28,12 +29,16 @@ export async function GET(req: Request) {
       const parsed = JSON.parse(stateJson);
       clientId = parsed.clientId;
       delegatedToken = parsed.delegatedToken || null;
+      returnUrl = parsed.returnUrl || null;
     } catch {
       clientId = '';
     }
   } else {
     clientId = '';
   }
+
+  // Build the non-delegated redirect base URL (fallback to data-extraction for backwards compat)
+  const baseRedirect = returnUrl || '/tools/data-extraction';
 
   const isDelegated = !!delegatedToken;
 
@@ -44,7 +49,7 @@ export async function GET(req: Request) {
       );
     }
     return clearOAuthCookies(
-      NextResponse.redirect(new URL(`/tools/data-extraction?xeroError=${encodeURIComponent(error)}`, req.url)),
+      NextResponse.redirect(new URL(`${baseRedirect}${baseRedirect.includes('?') ? '&' : '?'}xeroError=${encodeURIComponent(error)}`, req.url)),
     );
   }
 
@@ -55,7 +60,7 @@ export async function GET(req: Request) {
       );
     }
     return clearOAuthCookies(
-      NextResponse.redirect(new URL('/tools/data-extraction?xeroError=missing_params', req.url)),
+      NextResponse.redirect(new URL(`${baseRedirect}${baseRedirect.includes('?') ? '&' : '?'}xeroError=missing_params`, req.url)),
     );
   }
 
@@ -68,7 +73,7 @@ export async function GET(req: Request) {
       );
     }
     return clearOAuthCookies(
-      NextResponse.redirect(new URL('/tools/data-extraction?xeroError=state_mismatch', req.url)),
+      NextResponse.redirect(new URL(`${baseRedirect}${baseRedirect.includes('?') ? '&' : '?'}xeroError=state_mismatch`, req.url)),
     );
   }
 
@@ -91,7 +96,7 @@ export async function GET(req: Request) {
       );
     }
     return clearOAuthCookies(
-      NextResponse.redirect(new URL('/tools/data-extraction?xeroError=missing_pkce', req.url)),
+      NextResponse.redirect(new URL(`${baseRedirect}${baseRedirect.includes('?') ? '&' : '?'}xeroError=missing_pkce`, req.url)),
     );
   }
 
@@ -110,7 +115,7 @@ export async function GET(req: Request) {
       );
     }
     return clearOAuthCookies(
-      NextResponse.redirect(new URL('/tools/data-extraction?xeroError=invalid_state', req.url)),
+      NextResponse.redirect(new URL(`${baseRedirect}${baseRedirect.includes('?') ? '&' : '?'}xeroError=invalid_state`, req.url)),
     );
   }
 
@@ -124,7 +129,7 @@ export async function GET(req: Request) {
     if (!tenants || tenants.length === 0) {
       const noOrgUrl = isDelegated
         ? `/xero-authorise/${delegatedToken}?error=no_organisation`
-        : '/tools/data-extraction?xeroError=no_organisation';
+        : `${baseRedirect}${baseRedirect.includes('?') ? '&' : '?'}xeroError=no_organisation`;
       return clearOAuthCookies(NextResponse.redirect(new URL(noOrgUrl, req.url)));
     }
 
@@ -204,8 +209,9 @@ export async function GET(req: Request) {
       );
     }
 
+    const sep = baseRedirect.includes('?') ? '&' : '?';
     return clearOAuthCookies(
-      NextResponse.redirect(new URL(`/tools/data-extraction?xeroConnected=true&clientId=${clientId}`, req.url)),
+      NextResponse.redirect(new URL(`${baseRedirect}${sep}xeroConnected=true&clientId=${clientId}`, req.url)),
     );
   } catch (err) {
     console.error('Xero callback error:', err);
@@ -216,7 +222,7 @@ export async function GET(req: Request) {
       );
     }
     return clearOAuthCookies(
-      NextResponse.redirect(new URL(`/tools/data-extraction?xeroError=${encodeURIComponent(msg)}`, req.url)),
+      NextResponse.redirect(new URL(`${baseRedirect}${baseRedirect.includes('?') ? '&' : '?'}xeroError=${encodeURIComponent(msg)}`, req.url)),
     );
   }
 }

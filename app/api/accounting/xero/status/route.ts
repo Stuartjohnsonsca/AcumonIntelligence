@@ -23,6 +23,7 @@ export async function GET(req: Request) {
   const conn = await prisma.accountingConnection.findUnique({
     where: { clientId_system: { clientId, system: 'xero' } },
     select: {
+      system: true,
       orgName: true,
       connectedBy: true,
       connectedAt: true,
@@ -36,6 +37,7 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     connected: true,
+    system: conn.system,
     orgName: conn.orgName,
     connectedBy: conn.connectedBy,
     connectedAt: conn.connectedAt,

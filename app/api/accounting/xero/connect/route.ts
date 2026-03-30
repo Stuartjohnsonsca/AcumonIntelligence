@@ -29,9 +29,12 @@ export async function GET(req: Request) {
   const redirectUri = process.env.XERO_REDIRECT_URI
     || `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/accounting/xero/callback`;
 
+  const returnUrl = searchParams.get('returnUrl') || null;
+
   const state = JSON.stringify({
     clientId,
     nonce: crypto.randomBytes(16).toString('hex'),
+    ...(returnUrl ? { returnUrl } : {}),
   });
   const stateEncoded = Buffer.from(state).toString('base64url');
 
