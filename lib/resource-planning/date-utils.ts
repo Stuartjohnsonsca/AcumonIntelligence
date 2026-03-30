@@ -110,17 +110,12 @@ export function allocationOverlaps(allocStart: string, allocEnd: string, rangeSt
 /**
  * Compute per-week flex weights for focus-mode rendering.
  *
- * When a week is "expanded" (focused) the focused week gets a high flex
- * weight; surrounding weeks decay outward so the extreme ends get
- * compressed into narrow slivers.  When no week is expanded all weeks
- * receive equal weight 1.
+ * ALL weeks inside the focus window (expandedWeekIdx … expandedWeekIdx+focusWindowWeeks-1)
+ * receive equal weight `BASE_FLEX`.  Weeks outside decay by 0.65 per step from the
+ * nearest edge of the focus window, flooring at MIN_FLEX.
  *
- * Used by DateBar, AllocationBar, and StaffAvailabilityRow so all three
- * always stay in pixel-perfect sync.
- *
- * @param weekCount       Total number of weeks in the visible range
- * @param expandedWeekIdx Index of the focused week (null = no focus)
- * @param focusWindowWeeks Number of weeks in the focus window (from store)
+ * Used by DateBar, AllocationBar, and StaffAvailabilityRow — they must all call this
+ * with identical arguments so bars stay pixel-aligned with date-column headers.
  */
 export function computeWeekFlexWeights(
   weekCount: number,
@@ -128,13 +123,20 @@ export function computeWeekFlexWeights(
   focusWindowWeeks: number,
 ): number[] {
   if (expandedWeekIdx === null) return Array(weekCount).fill(1);
-  // Focus week gets a dominant weight; decay by 0.65 per step outward
-  const expandFlex = Math.max(focusWindowWeeks * 5, 5);
-  const minFlex = 0.35; // absolute minimum for extreme ends
-  const decay = 0.65;
+
+  const BASE_FLEX = 5;   // each focus-window week gets this weight
+  const MIN_FLEX  = 0.35; // floor for extreme-end weeks
+  const DECAY     = 0.65; // multiplier per step outside the window
+
   return Array.from({ length: weekCount }, (_, i) => {
-    if (i === expandedWeekIdx) return expandFlex;
-    const dist = Math.abs(i - expandedWeekIdx);
-    return Math.max(minFlex, Math.pow(decay, dist) * expandFlex);
+    // Inside the focus window → full weight
+    if (i >= expandedWeekIdx && i < expandedWeekIdx + focusWindowWeeks) {
+      return BASE_FLEX;
+    }
+    // Outside → decay from the nearest window edge
+    const dist = i < expandedWeekIdx
+      ? expandedWeekIdx - i
+      : i - (expandedWeekIdx + focusWindowWeeks - 1);
+    return Math.max(MIN_FLEX, Math.pow(DECAY, dist) * BASE_FLEX);
   });
 }

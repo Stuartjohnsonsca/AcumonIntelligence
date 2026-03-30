@@ -5,7 +5,6 @@ import { ChevronLeft, ChevronRight, Circle, Search } from 'lucide-react';
 import { useResourcePlanningStore } from '@/lib/stores/resource-planning-store';
 import {
   getWeeksInRange,
-  getDaysInRange,
   formatShortDate,
   formatWeekLabel,
   isSameDay,
@@ -58,16 +57,6 @@ export function DateBar() {
     [weeks.length, expandedWeekIdx, focusWindowWeeks],
   );
 
-  /** Get weekdays for N weeks starting from a given week */
-  const getDaysForFocusWindow = useCallback((weekIdx: number) => {
-    const weekStart = weeks[weekIdx];
-    if (!weekStart) return [];
-    const windowEnd = new Date(weekStart);
-    windowEnd.setDate(windowEnd.getDate() + (focusWindowWeeks * 7) - 3); // -3 to land on Friday of last week
-    const days = getDaysInRange(weekStart, windowEnd).filter((d) => d.getDay() !== 0 && d.getDay() !== 6);
-    return days;
-  }, [weeks, focusWindowWeeks]);
-
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       if (isPanning) return;
@@ -79,12 +68,21 @@ export function DateBar() {
       if (idx >= 0 && idx < weeks.length) {
         setHoveredWeekIdx(idx);
         if (!isLocked) {
-          const days = getDaysForFocusWindow(idx);
+          const days = (() => {
+            const wStart = weeks[idx];
+            const result: Date[] = [];
+            for (let d = 0; d < focusWindowWeeks * 7; d++) {
+              const day = new Date(wStart);
+              day.setDate(day.getDate() + d);
+              if (day.getDay() !== 0 && day.getDay() !== 6) result.push(day);
+            }
+            return result;
+          })();
           setFocusedDays(days);
         }
       }
     },
-    [isPanning, weeks, setFocusedDays, isLocked, getDaysForFocusWindow],
+    [isPanning, weeks, setFocusedDays, isLocked, focusWindowWeeks],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -106,7 +104,16 @@ export function DateBar() {
         toggleFocusLock();
       } else if (!isLocked && idx >= 0 && idx < weeks.length) {
         // Set focused days based on focus window slider, then lock
-        const days = getDaysForFocusWindow(idx);
+        const days = (() => {
+          const wStart = weeks[idx];
+          const result: Date[] = [];
+          for (let d = 0; d < focusWindowWeeks * 7; d++) {
+            const day = new Date(wStart);
+            day.setDate(day.getDate() + d);
+            if (day.getDay() !== 0 && day.getDay() !== 6) result.push(day);
+          }
+          return result;
+        })();
         const store = useResourcePlanningStore.getState();
         store.setFocusedDays(days);
         setTimeout(() => useResourcePlanningStore.getState().toggleFocusLock(), 0);
@@ -115,7 +122,16 @@ export function DateBar() {
         const store = useResourcePlanningStore.getState();
         store.toggleFocusLock(); // unlock
         if (idx >= 0 && idx < weeks.length) {
-          const days = getDaysForFocusWindow(idx);
+          const days = (() => {
+            const wStart = weeks[idx];
+            const result: Date[] = [];
+            for (let d = 0; d < focusWindowWeeks * 7; d++) {
+              const day = new Date(wStart);
+              day.setDate(day.getDate() + d);
+              if (day.getDay() !== 0 && day.getDay() !== 6) result.push(day);
+            }
+            return result;
+          })();
           setTimeout(() => {
             const s = useResourcePlanningStore.getState();
             s.setFocusedDays(days);
@@ -124,7 +140,7 @@ export function DateBar() {
         }
       }
     },
-    [isPanning, weeks, isLocked, lockedWeekIdx, toggleFocusLock],
+    [isPanning, weeks, isLocked, lockedWeekIdx, toggleFocusLock, focusWindowWeeks],
   );
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -198,11 +214,27 @@ export function DateBar() {
         >
           {weeks.map((week, idx) => {
             const flexWeight = weekFlexes[idx];
-            const isExpanded = expandedWeekIdx === idx;
-            const isLockedWeek = isLocked && lockedWeekIdx === idx;
+            // A week is "in focus" if it falls inside the focus window
+            const inFocusWindow = expandedWeekIdx !== null
+              && idx >= expandedWeekIdx
+              && idx < expandedWeekIdx + focusWindowWeeks;
+            const isLockedWeek = isLocked && lockedWeekIdx !== null
+              && idx >= lockedWeekIdx
+              && idx < lockedWeekIdx + focusWindowWeeks;
 
-            if (isExpanded) {
-              const days = getDaysForFocusWindow(idx);
+            if (inFocusWindow) {
+              // Show individual working-day columns for this week
+              const days = (() => {
+                const weekStart = weeks[idx];
+                const days: Date[] = [];
+                for (let d = 0; d < 7; d++) {
+                  const day = new Date(weekStart);
+                  day.setDate(day.getDate() + d);
+                  if (day.getDay() !== 0 && day.getDay() !== 6) days.push(day);
+                }
+                return days;
+              })();
+
               return (
                 <div
                   key={week.toISOString()}
@@ -223,6 +255,7 @@ export function DateBar() {
               );
             }
 
+            // Non-focus week: compressed label
             return (
               <div
                 key={week.toISOString()}

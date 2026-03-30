@@ -85,14 +85,30 @@ export function AllocationBar({ allocation, startDate, endDate, totalDays, isJob
       cum += f;
     }
 
-    // Map a Date to a flex-fraction in [0, 1] across the full weeks span
+    // Map a Date to a flex-fraction in [0, 1] across the full weeks span.
+    // For weeks INSIDE the focus window: use working-day slot position (÷5 per week)
+    // because the DateBar renders Mon–Fri as 5 equal slots in those weeks.
+    // For weeks OUTSIDE: use calendar-day proportion (÷7) — fine for compressed weeks.
     function dateToFlexFraction(date: Date): number {
       const ms = date.getTime();
       for (let i = 0; i < weeks.length; i++) {
         const wStart = weeks[i].getTime();
         const wEnd = wStart + 7 * 24 * 60 * 60 * 1000;
         if (ms >= wStart && ms < wEnd) {
-          const posInWeek = (ms - wStart) / (7 * 24 * 60 * 60 * 1000);
+          let posInWeek: number;
+          const inFocusWindow = expandedWeekIdx !== null
+            && i >= expandedWeekIdx
+            && i < expandedWeekIdx + focusWindowWeeks;
+          if (inFocusWindow) {
+            // Working-day slot: Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat(excl-end)=5
+            const dow = new Date(ms).getDay(); // 0=Sun … 6=Sat
+            const slot = dow === 6 ? 5        // Saturday midnight = exclusive end of Friday
+                       : dow === 0 ? 0        // Sunday (shouldn't happen) → treat as start
+                       : dow - 1;             // Mon=0, Tue=1, Wed=2, Thu=3, Fri=4
+            posInWeek = slot / 5;
+          } else {
+            posInWeek = (ms - wStart) / (7 * 24 * 60 * 60 * 1000);
+          }
           return (cumulativeFlex[i] + posInWeek * weekFlexes[i]) / totalFlex;
         }
       }

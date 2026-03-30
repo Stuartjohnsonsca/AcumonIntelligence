@@ -181,13 +181,36 @@ const StaffRoleLane = memo(function StaffRoleLane({
   totalDays: number;
 }) {
   const activeDragJobId = useResourcePlanningStore((s) => s.activeDragJobId);
+  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
+  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
+  const isLocked = useResourcePlanningStore((s) => s.isLocked);
+  const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
 
   const { setNodeRef, isOver } = useDroppable({
     id: `staff-lane|${staffId}|${role}`,
     disabled: !activeDragJobId, // only active when dragging a job
   });
 
-  const totalMs = endDate.getTime() - startDate.getTime();
+  const weekLeftPcts = useMemo(() => {
+    const activeDays = isLocked ? lockedFocusDays : focusedDays;
+    let expandedWeekIdx: number | null = null;
+    if (activeDays.length > 0) {
+      const pivotDay = new Date(activeDays[0]);
+      const idx = weeks.findIndex((w) => {
+        const we = new Date(w); we.setDate(we.getDate() + 7);
+        return pivotDay >= w && pivotDay < we;
+      });
+      if (idx !== -1) expandedWeekIdx = idx;
+    }
+    const wf = computeWeekFlexWeights(weeks.length, expandedWeekIdx, focusWindowWeeks);
+    const totalFlex = wf.reduce((s, f) => s + f, 0);
+    let cum = 0;
+    return weeks.map((_, i) => {
+      const pct = (cum / totalFlex) * 100;
+      cum += wf[i];
+      return pct;
+    });
+  }, [weeks, focusedDays, lockedFocusDays, isLocked, focusWindowWeeks]);
 
   return (
     <div
@@ -200,9 +223,9 @@ const StaffRoleLane = memo(function StaffRoleLane({
       <div className="absolute left-0 top-0 bottom-0 flex items-center z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
         <span className="text-[7px] font-bold px-1 bg-white/80 text-slate-500 rounded-r">{role.slice(0, 4)}</span>
       </div>
-      {weeks.map((week) => (
+      {weeks.map((week, wi) => (
         <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
-          style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
+          style={{ left: `${weekLeftPcts[wi]}%` }}
         />
       ))}
       {allocations.map((alloc) => (
@@ -320,7 +343,17 @@ const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
         const wStart = weeks[i].getTime();
         const wEnd = wStart + 7 * 24 * 60 * 60 * 1000;
         if (ms >= wStart && ms < wEnd) {
-          const posInWeek = (ms - wStart) / (7 * 24 * 60 * 60 * 1000);
+          let posInWeek: number;
+          const inFocusWindow = expandedWeekIdx !== null
+            && i >= expandedWeekIdx
+            && i < expandedWeekIdx + focusWindowWeeks;
+          if (inFocusWindow) {
+            const dow = new Date(ms).getDay();
+            const slot = dow === 6 ? 5 : dow === 0 ? 0 : dow - 1;
+            posInWeek = slot / 5;
+          } else {
+            posInWeek = (ms - wStart) / (7 * 24 * 60 * 60 * 1000);
+          }
           return (cumulativeFlex[i] + posInWeek * weekFlexes[i]) / totalFlex;
         }
       }
@@ -367,7 +400,7 @@ const StaffAvailabilityRow = memo(function StaffAvailabilityRow({
         <div className="flex-1 min-w-0 relative" style={{ backgroundColor: fullyFree ? '#bbf7d0' : '#dcfce7', ...timelineZoomStyle }}>
           {weeks.map((week) => (
             <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-white/40"
-              style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
+              style={{ left: `${dateToFlexFraction(week) * 100}%` }}
             />
           ))}
           {busySegments.map((seg, i) => (
@@ -431,8 +464,31 @@ const RoleViewRow = memo(function RoleViewRow({
   const totalMs = endDate.getTime() - startDate.getTime();
   const totalDays = useMemo(() => Math.round(totalMs / (1000 * 60 * 60 * 24)), [totalMs]);
 
+  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
   const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
   const isLocked = useResourcePlanningStore((s) => s.isLocked);
+  const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
+
+  const weekLeftPcts = useMemo(() => {
+    const activeDays = isLocked ? lockedFocusDays : focusedDays;
+    let expandedWeekIdx: number | null = null;
+    if (activeDays.length > 0) {
+      const pivotDay = new Date(activeDays[0]);
+      const idx = weeks.findIndex((w) => {
+        const we = new Date(w); we.setDate(we.getDate() + 7);
+        return pivotDay >= w && pivotDay < we;
+      });
+      if (idx !== -1) expandedWeekIdx = idx;
+    }
+    const wf = computeWeekFlexWeights(weeks.length, expandedWeekIdx, focusWindowWeeks);
+    const totalFlex = wf.reduce((s, f) => s + f, 0);
+    let cum = 0;
+    return weeks.map((_, i) => {
+      const pct = (cum / totalFlex) * 100;
+      cum += wf[i];
+      return pct;
+    });
+  }, [weeks, focusedDays, lockedFocusDays, isLocked, focusWindowWeeks]);
 
   const roleAllocs = useMemo(() => {
     const raw = allocations.filter(
@@ -469,9 +525,9 @@ const RoleViewRow = memo(function RoleViewRow({
           <span className="ml-1.5 text-[9px] text-slate-400">({roleAllocs.length} allocations)</span>
         </div>
         <div className="flex-1 relative" style={timelineZoomStyle}>
-          {weeks.map((week) => (
+          {weeks.map((week, wi) => (
             <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-200"
-              style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
+              style={{ left: `${weekLeftPcts[wi]}%` }}
             />
           ))}
         </div>
@@ -499,9 +555,9 @@ const RoleViewRow = memo(function RoleViewRow({
               </div>
               {/* AllocationBar handles flex-fraction positioning (focus view) and drag */}
               <div className="flex-1 relative h-[24px]" style={timelineZoomStyle}>
-                {weeks.map((week) => (
+                {weeks.map((week, wi) => (
                   <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
-                    style={{ left: `${((week.getTime() - startDate.getTime()) / totalMs) * 100}%` }}
+                    style={{ left: `${weekLeftPcts[wi]}%` }}
                   />
                 ))}
                 <AllocationBar
@@ -672,6 +728,10 @@ const RoleLane = memo(function RoleLane({
 
   const activeDragUserId = useResourcePlanningStore((s) => s.activeDragUserId);
   const staff = useResourcePlanningStore((s) => s.staff);
+  const focusedDays = useResourcePlanningStore((s) => s.focusedDays);
+  const lockedFocusDays = useResourcePlanningStore((s) => s.lockedFocusDays);
+  const isLocked = useResourcePlanningStore((s) => s.isLocked);
+  const focusWindowWeeks = useResourcePlanningStore((s) => s.focusWindowWeeks);
 
   const isDisabled = useMemo(() => {
     // Job schedule lock takes priority — no drops at all
@@ -687,6 +747,27 @@ const RoleLane = memo(function RoleLane({
     return false;
   }, [job.isScheduleLocked, activeDragUserId, staff, role, allocations]);
 
+  const weekLeftPcts = useMemo(() => {
+    const activeDays = isLocked ? lockedFocusDays : focusedDays;
+    let expandedWeekIdx: number | null = null;
+    if (activeDays.length > 0) {
+      const pivotDay = new Date(activeDays[0]);
+      const idx = weeks.findIndex((w) => {
+        const we = new Date(w); we.setDate(we.getDate() + 7);
+        return pivotDay >= w && pivotDay < we;
+      });
+      if (idx !== -1) expandedWeekIdx = idx;
+    }
+    const wf = computeWeekFlexWeights(weeks.length, expandedWeekIdx, focusWindowWeeks);
+    const totalFlex = wf.reduce((s, f) => s + f, 0);
+    let cum = 0;
+    return weeks.map((_, i) => {
+      const pct = (cum / totalFlex) * 100;
+      cum += wf[i];
+      return pct;
+    });
+  }, [weeks, focusedDays, lockedFocusDays, isLocked, focusWindowWeeks]);
+
   const { setNodeRef, isOver } = useDroppable({ id: `lane|${job.engagementId || job.id}|${role}`, disabled: isDisabled });
 
   return (
@@ -701,9 +782,9 @@ const RoleLane = memo(function RoleLane({
         <span className="text-[7px] font-bold px-1 bg-white/80 text-slate-500 rounded-r">{role.slice(0, 4)}</span>
       </div>
       {/* Week grid lines */}
-      {weeks.map((week) => (
+      {weeks.map((week, wi) => (
         <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
-          style={{ left: `${((week.getTime() - startDate.getTime()) / (endDate.getTime() - startDate.getTime())) * 100}%` }}
+          style={{ left: `${weekLeftPcts[wi]}%` }}
         />
       ))}
       {allocations.map((alloc) => (
