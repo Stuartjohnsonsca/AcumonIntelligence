@@ -213,6 +213,20 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
     }));
   }
 
+  // Move question to a different group
+  function moveQuestionToGroup(fromGroupId: string, questionId: string, toGroupId: string) {
+    setEditGroups(gs => {
+      const fromGroup = gs.find(g => g.id === fromGroupId);
+      const question = fromGroup?.questions.find(q => q.id === questionId);
+      if (!question) return gs;
+      return gs.map(g => {
+        if (g.id === fromGroupId) return { ...g, questions: g.questions.filter(q => q.id !== questionId) };
+        if (g.id === toGroupId) return { ...g, questions: [...g.questions, question] };
+        return g;
+      });
+    });
+  }
+
   // ─── Branch rule operations ─────────────────────────────────────
   function addBranchRule(groupId: string, questionId: string) {
     const group = editGroups.find(g => g.id === groupId);
@@ -862,15 +876,47 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
                                   ))}
                                 </div>
                               </div>
-                              <div className="flex flex-col gap-0.5 flex-shrink-0">
-                                <button onClick={() => moveQuestion(group.id, q.id, -1)} disabled={qi === 0} className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30">
-                                  <ChevronUp className="h-3 w-3 text-slate-500" />
+                              <div className="flex flex-col gap-1 flex-shrink-0 bg-slate-100 rounded-md p-1">
+                                <button
+                                  onClick={() => moveQuestion(group.id, q.id, -1)}
+                                  disabled={qi === 0}
+                                  className="p-1 hover:bg-blue-100 rounded disabled:opacity-20 transition-colors"
+                                  title="Move up"
+                                >
+                                  <ChevronUp className="h-4 w-4 text-blue-600" />
                                 </button>
-                                <button onClick={() => moveQuestion(group.id, q.id, 1)} disabled={qi === group.questions.length - 1} className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30">
-                                  <ChevronDown className="h-3 w-3 text-slate-500" />
+                                <button
+                                  onClick={() => moveQuestion(group.id, q.id, 1)}
+                                  disabled={qi === group.questions.length - 1}
+                                  className="p-1 hover:bg-blue-100 rounded disabled:opacity-20 transition-colors"
+                                  title="Move down"
+                                >
+                                  <ChevronDown className="h-4 w-4 text-blue-600" />
                                 </button>
-                                <button onClick={() => removeQuestion(group.id, q.id)} className="p-0.5 hover:bg-red-100 rounded">
-                                  <Trash2 className="h-3 w-3 text-red-400" />
+                                {editGroups.length > 1 && (
+                                  <select
+                                    value=""
+                                    onChange={(e) => {
+                                      if (e.target.value) moveQuestionToGroup(group.id, q.id, e.target.value);
+                                    }}
+                                    className="w-6 h-5 text-[8px] border-0 bg-transparent text-slate-400 hover:text-slate-600 cursor-pointer p-0"
+                                    title="Move to another group"
+                                  >
+                                    <option value="">↗</option>
+                                    {editGroups.filter(g => g.id !== group.id).map((g, i) => (
+                                      <option key={g.id} value={g.id}>
+                                        → {g.title || `Group ${editGroups.indexOf(g) + 1}`}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                                <div className="border-t border-slate-300 my-0.5" />
+                                <button
+                                  onClick={() => removeQuestion(group.id, q.id)}
+                                  className="p-1 hover:bg-red-100 rounded transition-colors"
+                                  title="Delete question"
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-400" />
                                 </button>
                               </div>
                             </div>
