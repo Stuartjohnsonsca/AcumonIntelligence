@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import {
   Save, Loader2, Plus, X, Trash2, Copy, Eye, Code,
   FileText, Variable, Search, ToggleLeft, ToggleRight,
-  List, ListOrdered, Table, Bold, Italic, MessageSquare,
+  List, ListOrdered, Table, Bold, Italic, MessageSquare, Hash,
 } from 'lucide-react';
 import { BackButton } from './BackButton';
 
@@ -475,6 +475,32 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     } else {
       for (const row of Array.from(table.rows)) {
         if (row.cells[colIdx]) row.cells[colIdx].remove();
+      }
+    }
+    setTableMenu(null);
+  }
+
+  /** Renumber all <ol> elements inside a table so numbering flows across rows in the same column */
+  function renumberTableLists(table?: HTMLTableElement | null) {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const tables = table ? [table] : Array.from(editor.querySelectorAll('table'));
+    for (const tbl of tables) {
+      const rows = Array.from(tbl.rows);
+      if (rows.length === 0) continue;
+      const colCount = rows[0].cells.length;
+      // For each column, find all <ol> elements across rows and set sequential start values
+      for (let col = 0; col < colCount; col++) {
+        let counter = 1;
+        for (const row of rows) {
+          const cell = row.cells[col];
+          if (!cell) continue;
+          const lists = cell.querySelectorAll('ol');
+          for (const ol of Array.from(lists)) {
+            ol.setAttribute('start', String(counter));
+            counter += ol.querySelectorAll('li').length;
+          }
+        }
       }
     }
     setTableMenu(null);
@@ -1079,6 +1105,14 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                           >
                             <Table className="h-3.5 w-3.5" />
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => renumberTableLists()}
+                            title="Renumber lists across table rows (1, 2, 3...)"
+                            className="p-1.5 rounded hover:bg-slate-200 text-slate-600 transition-colors"
+                          >
+                            <Hash className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                         <div
                           ref={editorRef}
@@ -1207,6 +1241,8 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
           <button onClick={tableAddColLeft} className="w-full text-left px-3 py-1.5 hover:bg-slate-100 text-slate-700">Insert Column Left</button>
           <button onClick={tableAddColRight} className="w-full text-left px-3 py-1.5 hover:bg-slate-100 text-slate-700">Insert Column Right</button>
           <button onClick={tableDeleteCol} className="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-600">Delete Column</button>
+          <div className="border-t border-slate-100 my-1" />
+          <button onClick={() => renumberTableLists(tableMenu.cell.closest('table'))} className="w-full text-left px-3 py-1.5 hover:bg-blue-50 text-blue-600">Renumber Lists in Table</button>
         </div>
       )}
     </div>
