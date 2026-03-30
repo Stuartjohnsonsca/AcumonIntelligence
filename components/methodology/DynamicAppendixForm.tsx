@@ -16,6 +16,8 @@ interface Props {
   initialData: FormValues;
   crossRefData?: Record<string, FormValues>;
   currencySymbol?: string;
+  showActionTriggers?: boolean;
+  actionTriggerOptions?: string[];
 }
 
 export function DynamicAppendixForm({
@@ -24,16 +26,41 @@ export function DynamicAppendixForm({
   questions,
   initialData,
   crossRefData,
+  showActionTriggers = false,
+  actionTriggerOptions = [],
 }: Props) {
   const [values, setValues] = useState<FormValues>(initialData);
+  const [triggerValues, setTriggerValues] = useState<Record<string, string>>(() => {
+    // Load trigger selections from initialData (stored as trigger_<questionId>)
+    const t: Record<string, string> = {};
+    for (const [k, v] of Object.entries(initialData)) {
+      if (k.startsWith('trigger_') && typeof v === 'string') {
+        t[k.replace('trigger_', '')] = v;
+      }
+    }
+    return t;
+  });
   const { trackFieldEdit, getFieldOutline } = useSignOff();
 
   useEffect(() => { setValues(initialData); }, [initialData]);
 
   const saveEndpoint = `/api/engagements/${engagementId}/${endpoint}`;
-  useAutoSave(saveEndpoint, { data: values }, {
-    enabled: JSON.stringify(values) !== JSON.stringify(initialData),
+  // Merge trigger values into save payload
+  const saveData = useMemo(() => {
+    const merged = { ...values };
+    for (const [qId, trigger] of Object.entries(triggerValues)) {
+      merged[`trigger_${qId}`] = trigger;
+    }
+    return merged;
+  }, [values, triggerValues]);
+
+  useAutoSave(saveEndpoint, { data: saveData }, {
+    enabled: JSON.stringify(saveData) !== JSON.stringify(initialData),
   });
+
+  function handleTriggerChange(questionId: string, trigger: string) {
+    setTriggerValues(prev => ({ ...prev, [questionId]: trigger }));
+  }
 
   // Group questions by section
   const sections = useMemo(() => {
@@ -107,6 +134,20 @@ export function DynamicAppendixForm({
                         validationMax={q.validationMax}
                       />
                     </div>
+                    {showActionTriggers && actionTriggerOptions.length > 0 && (
+                      <div className="w-36 flex-shrink-0 px-1.5 py-1.5 border-l border-slate-100">
+                        <select
+                          value={triggerValues[q.id] || ''}
+                          onChange={e => handleTriggerChange(q.id, e.target.value)}
+                          className="w-full text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        >
+                          <option value="">No trigger</option>
+                          {actionTriggerOptions.map(t => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Save, Loader2, Plus, X } from 'lucide-react';
+import { Save, Loader2, Plus, X, Zap } from 'lucide-react';
 import {
   DEFAULT_AGREED_DATES,
   DEFAULT_INFO_REQUEST_STANDARD,
@@ -45,7 +45,16 @@ const APPENDIX_TEMPLATE_TYPES = [
 const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;
 const AUDIT_TYPES = ['ALL', 'SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS'];
 
-type ViewMode = 'lists' | 'appendix';
+type ViewMode = 'lists' | 'appendix' | 'triggers';
+
+const DEFAULT_ACTION_TRIGGERS = [
+  'On Start',
+  'On Upload',
+  'On Push to Portal',
+  'On Verification',
+  'On Portal Response',
+  'On Section Sign Off',
+];
 
 export function SchedulesClient({ firmId, initialTemplates }: Props) {
   const [templates, setTemplates] = useState<Record<string, string[]>>(() => {
@@ -79,6 +88,15 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [newItem, setNewItem] = useState('');
+
+  // Action Triggers
+  const [actionTriggers, setActionTriggers] = useState<string[]>(() => {
+    const triggerTemplate = initialTemplates.find(t => t.templateType === 'action_triggers');
+    return (triggerTemplate?.items as string[]) || DEFAULT_ACTION_TRIGGERS;
+  });
+  const [newTrigger, setNewTrigger] = useState('');
+  const [triggerSaving, setTriggerSaving] = useState(false);
+  const [triggerSaved, setTriggerSaved] = useState(false);
 
   const key = `${activeTemplateType}|${activeAuditType}`;
   const currentItems = templates[key] || TEMPLATE_TYPES.find((t) => t.key === activeTemplateType)?.defaults || [];
@@ -137,6 +155,43 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
     });
   }
 
+  async function handleTriggerSave() {
+    setTriggerSaving(true);
+    try {
+      await fetch('/api/methodology-admin/templates', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateType: 'action_triggers', auditType: 'ALL', items: actionTriggers }),
+      });
+      setTriggerSaved(true);
+      setTimeout(() => setTriggerSaved(false), 3000);
+    } catch {}
+    setTriggerSaving(false);
+  }
+
+  function handleAddTrigger() {
+    if (newTrigger.trim() && !actionTriggers.includes(newTrigger.trim())) {
+      setActionTriggers(prev => [...prev, newTrigger.trim()]);
+      setNewTrigger('');
+      setTriggerSaved(false);
+    }
+  }
+
+  function handleRemoveTrigger(index: number) {
+    setActionTriggers(prev => prev.filter((_, i) => i !== index));
+    setTriggerSaved(false);
+  }
+
+  function handleReorderTrigger(from: number, to: number) {
+    setActionTriggers(prev => {
+      const items = [...prev];
+      const [moved] = items.splice(from, 1);
+      items.splice(to, 0, moved);
+      return items;
+    });
+    setTriggerSaved(false);
+  }
+
   const currentAppendixKey = `${activeAppendixType}|${activeAuditType}`;
   const currentAppendixQuestions = appendixTemplates[currentAppendixKey] || [];
   const currentAppendixType = APPENDIX_TEMPLATE_TYPES.find(t => t.key === activeAppendixType);
@@ -157,9 +212,64 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
         >
           Schedules
         </button>
+        <button
+          onClick={() => setViewMode('triggers')}
+          className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'triggers' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+        >
+          <Zap className="h-3.5 w-3.5 inline mr-1" />Action Triggers
+        </button>
       </div>
 
-      {viewMode === 'appendix' ? (
+      {viewMode === 'triggers' ? (
+        <div className="border rounded-lg">
+          <div className="px-4 py-3 bg-slate-50 rounded-t-lg flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-700">Action Triggers</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Define triggers that can be assigned to schedule items. These appear as dropdowns in engagement tabs.</p>
+            </div>
+            <Button onClick={handleTriggerSave} disabled={triggerSaving} size="sm" className="bg-blue-600 hover:bg-blue-700">
+              {triggerSaving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+              {triggerSaved ? 'Saved' : 'Save'}
+            </Button>
+          </div>
+          <div className="p-4 space-y-2">
+            {actionTriggers.map((trigger, i) => (
+              <div key={i} className="flex items-center space-x-2 group">
+                <span className="text-xs text-slate-400 w-6 text-right">{i + 1}.</span>
+                <div className="flex-1 flex items-center gap-2 bg-white border border-slate-200 rounded px-3 py-2">
+                  <Zap className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+                  <span className="text-sm text-slate-700">{trigger}</span>
+                </div>
+                <div className="opacity-0 group-hover:opacity-100 flex space-x-1 transition-opacity">
+                  {i > 0 && (
+                    <button onClick={() => handleReorderTrigger(i, i - 1)} className="text-slate-400 hover:text-slate-600 text-xs px-1">↑</button>
+                  )}
+                  {i < actionTriggers.length - 1 && (
+                    <button onClick={() => handleReorderTrigger(i, i + 1)} className="text-slate-400 hover:text-slate-600 text-xs px-1">↓</button>
+                  )}
+                  <button onClick={() => handleRemoveTrigger(i)} className="text-red-400 hover:text-red-600">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <div className="flex items-center space-x-2 pt-2 border-t mt-3">
+              <input
+                type="text"
+                value={newTrigger}
+                onChange={(e) => setNewTrigger(e.target.value)}
+                placeholder="Add new trigger (e.g. On Review Complete)..."
+                className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onKeyDown={(e) => e.key === 'Enter' && handleAddTrigger()}
+              />
+              <Button onClick={handleAddTrigger} size="sm" variant="outline">
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : viewMode === 'appendix' ? (
         <>
           {/* Appendix Type Tabs */}
           <div className="flex flex-wrap gap-2 border-b pb-2">
