@@ -5,17 +5,28 @@ const senderAddress = process.env.EMAIL_FROM || 'DoNotReply@acumonintelligence.c
 
 async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   if (!connectionString) {
-    console.warn('[Portal Email] AZURE_COMMUNICATION_CONNECTION_STRING not configured — skipping email');
-    return;
+    console.error('[Portal Email] AZURE_COMMUNICATION_CONNECTION_STRING not configured');
+    throw new Error('Email service not configured');
   }
 
+  console.log(`[Portal Email] Sending to ${to}: "${subject}"`);
   const client = new EmailClient(connectionString);
-  const poller = await client.beginSend({
-    senderAddress,
-    content: { subject, html },
-    recipients: { to: [{ address: to }] },
-  });
-  await poller.pollUntilDone();
+  try {
+    const poller = await client.beginSend({
+      senderAddress,
+      content: { subject, html },
+      recipients: { to: [{ address: to }] },
+    });
+    const result = await poller.pollUntilDone();
+    console.log(`[Portal Email] Sent successfully to ${to}, status: ${result.status}`);
+    if (result.status !== 'Succeeded') {
+      console.error(`[Portal Email] Send status was ${result.status}:`, JSON.stringify(result));
+      throw new Error(`Email send status: ${result.status}`);
+    }
+  } catch (err) {
+    console.error(`[Portal Email] Failed to send to ${to}:`, err);
+    throw err;
+  }
 }
 
 export async function sendPortalVerificationCode(email: string, name: string, code: string): Promise<void> {
@@ -30,6 +41,22 @@ export async function sendPortalVerificationCode(email: string, name: string, co
         <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#1e293b">${code}</span>
       </div>
       <p style="color:#94a3b8;font-size:12px">This code expires in 10 minutes. If you did not request this, please ignore this email.</p>
+    </div>`,
+  );
+}
+
+export async function sendPortalPasswordResetCode(email: string, name: string, code: string): Promise<void> {
+  await sendEmail(
+    email,
+    `Password reset code: ${code}`,
+    `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:20px">
+      <h2 style="color:#1e40af;margin-bottom:4px">Acumon Client Portal</h2>
+      <p style="color:#475569;font-size:14px">Hi ${name},</p>
+      <p style="color:#475569;font-size:14px">You requested a password reset. Your code is:</p>
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px;text-align:center;margin:16px 0">
+        <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#1e293b">${code}</span>
+      </div>
+      <p style="color:#94a3b8;font-size:12px">This code expires in 15 minutes. If you did not request a password reset, please ignore this email — your password will remain unchanged.</p>
     </div>`,
   );
 }

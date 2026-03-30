@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { sendPortalVerificationCode } from '@/lib/email-portal';
+import { sendPortalPasswordResetCode } from '@/lib/email-portal';
 
 /**
  * POST /api/portal/auth/reset-password
@@ -42,12 +42,17 @@ export async function POST(req: Request) {
 
       // Send email
       try {
-        await sendPortalVerificationCode(user.email, user.name, resetCode);
+        await sendPortalPasswordResetCode(user.email, user.name, resetCode);
       } catch (emailErr) {
         console.error('Failed to send reset code email:', emailErr);
+        // Clean up the code since email failed
+        await prisma.clientPortalTwoFactor.deleteMany({
+          where: { userId: user.id, code: resetCode },
+        });
+        return NextResponse.json({ error: 'Failed to send reset email. Please try again or contact your auditor.' }, { status: 500 });
       }
 
-      return NextResponse.json({ message: 'If an account exists with that email, a reset code has been sent.' });
+      return NextResponse.json({ message: 'A reset code has been sent to your email.' });
     }
 
     // ─── Step 2: Verify reset code ───────────────────────────────
