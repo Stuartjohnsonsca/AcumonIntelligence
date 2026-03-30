@@ -219,6 +219,12 @@ const TECHNIQUES: TechniqueDef[] = [
     description: 'Run 15 variations, keep the best result. (+15–30s)',
     defaultChecked: false,
   },
+  {
+    key: 'combinatorial',
+    label: 'Combinatorial (Simulated Annealing)',
+    description: 'Escapes local optima via probabilistic exploration. Best for 40+ jobs with cascading conflicts. (~2–4s)',
+    defaultChecked: false,
+  },
 ];
 
 // ─── Build sequential steps from selected techniques ─────────────────────────
@@ -236,17 +242,19 @@ function buildSteps(techniques: SchedulerOptions): StepDef[] {
     lookAhead: false,
     localSearch: false,
     multiPass: false,
+    combinatorial: false,
   };
 
   const steps: StepDef[] = [{ label: 'Baseline greedy', options: { ...base } }];
 
-  const techOrder: (keyof SchedulerOptions)[] = ['roleScarcity', 'constrainedFirst', 'lookAhead', 'localSearch', 'multiPass'];
+  const techOrder: (keyof SchedulerOptions)[] = ['roleScarcity', 'constrainedFirst', 'lookAhead', 'localSearch', 'multiPass', 'combinatorial'];
   const techLabels: Record<keyof SchedulerOptions, string> = {
     roleScarcity: '+ Role scarcity',
     constrainedFirst: '+ Smart job ordering',
     lookAhead: '+ Staff look-ahead',
     localSearch: '+ Improvement pass',
     multiPass: `+ Multi-pass ×${MULTI_PASS_COUNT}`,
+    combinatorial: '+ Simulated Annealing',
   };
 
   let cumulative = { ...base };
@@ -285,6 +293,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
     lookAhead: TECHNIQUES.find((t) => t.key === 'lookAhead')?.defaultChecked ?? false,
     localSearch: TECHNIQUES.find((t) => t.key === 'localSearch')?.defaultChecked ?? false,
     multiPass: TECHNIQUES.find((t) => t.key === 'multiPass')?.defaultChecked ?? false,
+    combinatorial: TECHNIQUES.find((t) => t.key === 'combinatorial')?.defaultChecked ?? false,
   });
 
   function toggleTechnique(key: keyof SchedulerOptions) {

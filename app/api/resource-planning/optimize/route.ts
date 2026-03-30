@@ -38,6 +38,7 @@ async function handleOptimize(request: NextRequest) {
     lookAhead: body.techniques?.lookAhead ?? false,
     localSearch: body.techniques?.localSearch ?? false,
     multiPass: body.techniques?.multiPass ?? false,
+    combinatorial: body.techniques?.combinatorial ?? false,
   };
 
   // ── Fetch data ───────────────────────────────────────────────────────────

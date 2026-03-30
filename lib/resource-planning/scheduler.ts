@@ -45,6 +45,12 @@ export interface SchedulerOptions {
    * distributed fairly by deadline rather than consumed job-by-job.
    */
   roleScarcity: boolean;
+  /**
+   * Simulated Annealing post-processing: run 800 iterations of probabilistic
+   * search (T₀=15 → T_final=0.05) on the warm-start greedy result.
+   * Escapes local optima that pairwise swaps cannot reach. Best for 40+ jobs.
+   */
+  combinatorial: boolean;
 }
 
 export interface SchedulerResult extends OptimizationResult {
@@ -1475,6 +1481,223 @@ function computeChanges(
   return changes;
 }
 
+// ─── Simulated Annealing ──────────────────────────────────────────────────────
+
+/**
+ * Post-processing optimiser: 800 iterations of probabilistic search using
+ * geometric cooling (T₀=15 → T_final=0.05). Escapes local optima that
+ * pairwise swaps in runLocalSearch cannot reach.
+ */
+function runSimulatedAnnealing(
+  warmStart: JobResult[],
+  unschedulableWarm: string[],
+  orderedJobs: ResourceJobView[],
+  staff: StaffMember[],
+  existingAllocations: Allocation[],
+  constraintOrder: string[],
+  scope: OptimizationScope,
+  options: SchedulerOptions,
+  today: Date,
+  jitterScale: number,
+  previousTeam: Map<string, string[]>,
+): { jobResults: JobResult[]; unschedulable: string[] } {
+  const T0 = 15.0;
+  const T_FINAL = 0.05;
+  const N_ITER = 800;
+
+  const activeStaff = staff.filter((s) => s.isActive !== false && s.resourceSetting);
+  const jobMap = new Map(orderedJobs.map((j) => [j.id, j]));
+
+  function cloneState(state: JobResult[]): JobResult[] {
+    return state.map((jr) => ({ jobId: jr.jobId, placements: [...jr.placements] }));
+  }
+
+  function evalScore(state: JobResult[]): number {
+    const allPlacements = state.flatMap((jr) => jr.placements);
+    const violations = detectViolations(
+      allPlacements,
+      orderedJobs,
+      staff,
+      constraintOrder,
+      today,
+      existingAllocations,
+      previousTeam,
+    );
+    return computeQualityScore(violations, unschedulableWarm);
+  }
+
+  // ── Move A: Reassign one (job, role) to a different eligible staff member ──
+  function moveReassign(state: JobResult[]): JobResult[] | null {
+    const scheduled = state.filter((jr) => jr.placements.length > 0);
+    if (scheduled.length === 0) return null;
+    const jr = scheduled[Math.floor(Math.random() * scheduled.length)];
+    const pIdx = Math.floor(Math.random() * jr.placements.length);
+    const placement = jr.placements[pIdx];
+    const job = jobMap.get(jr.jobId);
+    if (!job) return null;
+
+    const eligible = activeStaff.filter((s) => {
+      if (s.id === placement.userId) return false;
+      return isEligible(s, placement.role, []);
+    });
+    if (eligible.length === 0) return null;
+
+    const candidate = eligible[Math.floor(Math.random() * eligible.length)];
+    const budget = getBudgetForRole(job, placement.role);
+    if (budget <= 0) return null;
+    const weeklyHrs = candidate.resourceSetting!.weeklyCapacityHrs ?? 37.5;
+    const deadline = getJobDeadline(job);
+    const win = computeWindow(budget, weeklyHrs, deadline, today);
+
+    const newState = cloneState(state);
+    const newJr = newState.find((r) => r.jobId === jr.jobId)!;
+    const daysCount = workingDaysBetween(parseDate(win.startDate), parseDate(win.endDate));
+    newJr.placements[pIdx] = {
+      jobId: jr.jobId,
+      userId: candidate.id,
+      role: placement.role,
+      startDate: win.startDate,
+      endDate: win.endDate,
+      hoursPerDay: win.hoursPerDay,
+      totalHours: Math.round(win.hoursPerDay * daysCount * 10) / 10,
+    };
+    return newState;
+  }
+
+  // ── Move B: Swap staff for the same role between two jobs ──────────────────
+  function moveSwap(state: JobResult[]): JobResult[] | null {
+    if (state.length < 2) return null;
+    const i = Math.floor(Math.random() * state.length);
+    let j = Math.floor(Math.random() * (state.length - 1));
+    if (j >= i) j++;
+    const jr1 = state[i];
+    const jr2 = state[j];
+    const role = ROLE_ASSIGNMENT_ORDER[Math.floor(Math.random() * ROLE_ASSIGNMENT_ORDER.length)];
+    const p1 = jr1.placements.find((p) => p.role === role);
+    const p2 = jr2.placements.find((p) => p.role === role);
+    if (!p1 || !p2 || p1.userId === p2.userId) return null;
+
+    const s1 = staff.find((s) => s.id === p1.userId);
+    const s2 = staff.find((s) => s.id === p2.userId);
+    if (!s1 || !s2) return null;
+
+    if (!isEligible(s2, role, [])) return null;
+    if (!isEligible(s1, role, [])) return null;
+
+    const job1 = jobMap.get(jr1.jobId);
+    const job2 = jobMap.get(jr2.jobId);
+    if (!job1 || !job2) return null;
+
+    const weeklyHrs1 = s2.resourceSetting!.weeklyCapacityHrs ?? 37.5;
+    const weeklyHrs2 = s1.resourceSetting!.weeklyCapacityHrs ?? 37.5;
+    const budget1 = getBudgetForRole(job1, role);
+    const budget2 = getBudgetForRole(job2, role);
+    if (budget1 <= 0 || budget2 <= 0) return null;
+
+    const win1 = computeWindow(budget1, weeklyHrs1, getJobDeadline(job1), today);
+    const win2 = computeWindow(budget2, weeklyHrs2, getJobDeadline(job2), today);
+
+    const newState = cloneState(state);
+    const newJr1 = newState[i];
+    const newJr2 = newState[j];
+    const p1idx = newJr1.placements.findIndex((p) => p.role === role);
+    const p2idx = newJr2.placements.findIndex((p) => p.role === role);
+    const days1 = workingDaysBetween(parseDate(win1.startDate), parseDate(win1.endDate));
+    const days2 = workingDaysBetween(parseDate(win2.startDate), parseDate(win2.endDate));
+
+    newJr1.placements[p1idx] = {
+      jobId: jr1.jobId, userId: s2.id, role,
+      startDate: win1.startDate, endDate: win1.endDate, hoursPerDay: win1.hoursPerDay,
+      totalHours: Math.round(win1.hoursPerDay * days1 * 10) / 10,
+    };
+    newJr2.placements[p2idx] = {
+      jobId: jr2.jobId, userId: s1.id, role,
+      startDate: win2.startDate, endDate: win2.endDate, hoursPerDay: win2.hoursPerDay,
+      totalHours: Math.round(win2.hoursPerDay * days2 * 10) / 10,
+    };
+    return newState;
+  }
+
+  // ── Move C: Drop a non-RI placement and re-fill with single-job greedy ──────
+  function moveDropFill(state: JobResult[]): JobResult[] | null {
+    const withNonRI = state.filter((jr) => jr.placements.some((p) => p.role !== 'RI'));
+    if (withNonRI.length === 0) return null;
+    const jr = withNonRI[Math.floor(Math.random() * withNonRI.length)];
+    const nonRI = jr.placements.filter((p) => p.role !== 'RI');
+    const target = nonRI[Math.floor(Math.random() * nonRI.length)];
+    const job = jobMap.get(jr.jobId);
+    if (!job) return null;
+
+    const newState = cloneState(state);
+    const newJr = newState.find((r) => r.jobId === jr.jobId)!;
+    newJr.placements = newJr.placements.filter(
+      (p) => !(p.role === target.role && p.userId === target.userId),
+    );
+
+    // Build synthetic existing allocations from the rest of the state for capacity context
+    const syntheticAllocs: Allocation[] = newState.flatMap((r) =>
+      r.placements.map((p, idx) => ({
+        id: `sa-temp-${r.jobId}-${idx}`,
+        engagementId: p.jobId,
+        userId: p.userId,
+        userName: '',
+        role: p.role,
+        startDate: p.startDate,
+        endDate: p.endDate,
+        hoursPerDay: p.hoursPerDay,
+        totalHours: p.totalHours,
+        notes: null,
+      } as Allocation)),
+    );
+
+    const { jobResults: refilled } = runGreedyPass(
+      [job], staff, [...existingAllocations, ...syntheticAllocs],
+      constraintOrder, scope, options, today, 0, previousTeam,
+    );
+    const refilledJr = refilled.find((r) => r.jobId === jr.jobId);
+    const newPlacement = refilledJr?.placements.find((p) => p.role === target.role);
+    if (newPlacement) newJr.placements.push(newPlacement);
+
+    return newState;
+  }
+
+  // ── SA main loop ──────────────────────────────────────────────────────────
+  let current = cloneState(warmStart);
+  let currentScore = evalScore(current);
+  let best = cloneState(current);
+  let bestScore = currentScore;
+
+  for (let k = 0; k < N_ITER; k++) {
+    const T = T0 * Math.pow(T_FINAL / T0, k / N_ITER);
+    const r = Math.random();
+
+    let candidate: JobResult[] | null;
+    if (r < 0.60) {
+      candidate = moveReassign(current);
+    } else if (r < 0.90) {
+      candidate = moveSwap(current);
+    } else {
+      candidate = moveDropFill(current);
+    }
+
+    if (!candidate) continue;
+
+    const candidateScore = evalScore(candidate);
+    const deltaE = candidateScore - currentScore;
+
+    if (deltaE < 0 || Math.random() < Math.exp(-deltaE / T)) {
+      current = candidate;
+      currentScore = candidateScore;
+      if (currentScore < bestScore) {
+        best = cloneState(current);
+        bestScore = currentScore;
+      }
+    }
+  }
+
+  return { jobResults: best, unschedulable: unschedulableWarm };
+}
+
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 /**
@@ -1528,8 +1751,24 @@ export function runScheduler(
       ? runLocalSearch(jobResults, jobs, staff, existingAllocations, order, todayDate)
       : jobResults;
 
+    const postSAScarcityResults = options.combinatorial
+      ? runSimulatedAnnealing(
+          postScarcityResults,
+          unschedulable,
+          orderedJobs,
+          staff,
+          existingAllocations,
+          order,
+          scope,
+          options,
+          todayDate,
+          0,
+          previousTeam,
+        ).jobResults
+      : postScarcityResults;
+
     const staffNameMap = new Map(staff.map((s) => [s.id, s.name]));
-    const finalPlacements = postScarcityResults.flatMap((jr) => jr.placements);
+    const finalPlacements = postSAScarcityResults.flatMap((jr) => jr.placements);
     const violations = detectViolations(
       finalPlacements,
       jobs.filter((j) => inScopeSet.has(j.id)),
@@ -1539,7 +1778,7 @@ export function runScheduler(
       existingAllocations,
       previousTeam,
     );
-    const scarcitySchedule = postScarcityResults.map((jr) => ({
+    const scarcitySchedule = postSAScarcityResults.map((jr) => ({
       jobId: jr.jobId,
       allocations: jr.placements.map((p): ProposedAllocation => ({
         userId: p.userId,
@@ -1553,7 +1792,7 @@ export function runScheduler(
         familiarityScore: 0,
       })),
     }));
-    const scarcityChanges = computeChanges(postScarcityResults, jobs, staff, existingAllocations);
+    const scarcityChanges = computeChanges(postSAScarcityResults, jobs, staff, existingAllocations);
     return {
       schedule: scarcitySchedule,
       violations,
@@ -1606,9 +1845,25 @@ export function runScheduler(
     ? runLocalSearch(bestJobResults, jobs, staff, existingAllocations, order, todayDate)
     : bestJobResults;
 
+  const postSAResults = options.combinatorial
+    ? runSimulatedAnnealing(
+        postLoopResults,
+        bestUnschedulable,
+        orderedJobs,
+        staff,
+        existingAllocations,
+        order,
+        scope,
+        options,
+        todayDate,
+        0,
+        previousTeam,
+      ).jobResults
+    : postLoopResults;
+
   // ── Build final result ──────────────────────────────────────────────────────
   const staffNameMap = new Map(staff.map((s) => [s.id, s.name]));
-  const finalPlacements = postLoopResults.flatMap((jr) => jr.placements);
+  const finalPlacements = postSAResults.flatMap((jr) => jr.placements);
 
   const violations = detectViolations(
     finalPlacements,
@@ -1620,7 +1875,7 @@ export function runScheduler(
     previousTeam,
   );
 
-  const schedule = postLoopResults.map((jr) => ({
+  const schedule = postSAResults.map((jr) => ({
     jobId: jr.jobId,
     allocations: jr.placements.map((p): ProposedAllocation => ({
       userId: p.userId,
@@ -1635,7 +1890,7 @@ export function runScheduler(
     })),
   }));
 
-  const changes = computeChanges(postLoopResults, jobs, staff, existingAllocations);
+  const changes = computeChanges(postSAResults, jobs, staff, existingAllocations);
 
   return {
     schedule,
