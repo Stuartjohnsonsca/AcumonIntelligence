@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ClipboardCheck, Calculator, Briefcase, Receipt, Monitor } from 'lucide-react';
@@ -52,7 +53,7 @@ const SERVICE_TILES = [
   },
 ];
 
-export default function PortalDashboardPage() {
+function DashboardContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
 
@@ -82,4 +83,8 @@ export default function PortalDashboardPage() {
       </div>
     </div>
   );
+}
+
+export default function PortalDashboardPage() {
+  return <Suspense><DashboardContent /></Suspense>;
 }
