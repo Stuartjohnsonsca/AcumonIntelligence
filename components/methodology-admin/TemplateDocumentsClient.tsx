@@ -265,6 +265,9 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
   const [fieldSearch, setFieldSearch] = useState('');
 
   const editorRef = useRef<HTMLDivElement>(null);
+  const subjectRef = useRef<HTMLInputElement>(null);
+  // Track which editor area was last focused so palette inserts go to the right place
+  const lastFocusRef = useRef<'body' | 'subject'>('body');
   // Track whether we should skip the next useEffect innerHTML reset
   const editorInitRef = useRef(0);
 
@@ -376,6 +379,24 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
   }
 
   const insertMergeField = useCallback((key: string, label: string, source: string, path: string) => {
+    const tag = `{{${key}}}`;
+
+    // If subject was last focused, insert into subject line as text
+    if (lastFocusRef.current === 'subject' && subjectRef.current) {
+      const input = subjectRef.current;
+      const start = input.selectionStart ?? editSubject.length;
+      const end = input.selectionEnd ?? start;
+      const newVal = editSubject.slice(0, start) + tag + editSubject.slice(end);
+      setEditSubject(newVal);
+      // Restore cursor after React re-render
+      setTimeout(() => {
+        input.focus();
+        input.setSelectionRange(start + tag.length, start + tag.length);
+      }, 0);
+      return;
+    }
+
+    // Otherwise insert pill into body editor
     const editor = editorRef.current;
     if (!editor) return;
 
@@ -404,7 +425,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
 
     syncMergeFieldsFromEditor();
     editor.focus();
-  }, []);
+  }, [editSubject]);
 
   async function handleSave() {
     if (!editName.trim()) return;
@@ -827,12 +848,14 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">
                     Subject Line
-                    <span className="text-slate-400 font-normal ml-1">Can include merge fields e.g. {'{{client_name}}'}</span>
+                    <span className="text-slate-400 font-normal ml-1">Click here then use the palette to insert merge fields</span>
                   </label>
                   <input
+                    ref={subjectRef}
                     type="text"
                     value={editSubject}
                     onChange={(e) => setEditSubject(e.target.value)}
+                    onFocus={() => { lastFocusRef.current = 'subject'; }}
                     placeholder="e.g. Audit of {{client_name}} — {{period_end}}"
                     className="w-full px-2 py-1.5 text-sm border rounded-md"
                   />
@@ -943,6 +966,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                           contentEditable
                           suppressContentEditableWarning
                           onClick={handleEditorClick}
+                          onFocus={() => { lastFocusRef.current = 'body'; }}
                           onInput={syncMergeFieldsFromEditor}
                           className="w-full px-3 py-2 text-sm border rounded-b-md min-h-[400px] bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 overflow-y-auto [&_ul]:list-disc [&_ul]:ml-5 [&_ol]:list-decimal [&_ol]:ml-5 [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-1 [&_th]:border [&_th]:border-slate-300 [&_th]:p-1 [&_th]:bg-slate-50"
                           style={{ lineHeight: '1.8' }}
