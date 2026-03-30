@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import {
-  Save, Loader2, Plus, X, Trash2, Copy, ChevronLeft, Eye, Code,
+  Save, Loader2, Plus, X, Trash2, Copy, Eye, Code,
   FileText, Variable, Search, ToggleLeft, ToggleRight,
 } from 'lucide-react';
 import { BackButton } from './BackButton';
@@ -18,7 +18,8 @@ const MERGE_FIELD_CATEGORIES = [
       { key: 'client_address', label: 'Client Address', source: 'client', path: 'address' },
       { key: 'client_reg_number', label: 'Registration Number', source: 'client', path: 'registrationNumber' },
       { key: 'client_industry', label: 'Industry', source: 'client', path: 'industry' },
-      { key: 'client_contact_name', label: 'Contact Name', source: 'client', path: 'contactName' },
+      { key: 'client_contact_first_name', label: 'Contact First Name', source: 'client', path: 'contactFirstName' },
+      { key: 'client_contact_surname', label: 'Contact Surname', source: 'client', path: 'contactSurname' },
       { key: 'client_contact_email', label: 'Contact Email', source: 'client', path: 'contactEmail' },
     ],
   },
@@ -60,6 +61,14 @@ const MERGE_FIELD_CATEGORIES = [
   },
 ];
 
+// Flat lookup for field key → label
+const FIELD_LOOKUP: Record<string, { label: string; source: string; path: string }> = {};
+for (const cat of MERGE_FIELD_CATEGORIES) {
+  for (const f of cat.fields) {
+    FIELD_LOOKUP[f.key] = { label: f.label, source: f.source, path: f.path };
+  }
+}
+
 const CATEGORIES = [
   { value: 'general', label: 'General' },
   { value: 'engagement', label: 'Engagement' },
@@ -76,6 +85,13 @@ const AUDIT_TYPES = [
   { value: 'PIE_CONTROLS', label: 'PIE Controls' },
 ];
 
+interface MergeField {
+  key: string;
+  label: string;
+  source: string;
+  path: string;
+}
+
 interface DocumentTemplate {
   id: string;
   name: string;
@@ -83,7 +99,7 @@ interface DocumentTemplate {
   category: string;
   auditType: string;
   content: string;
-  mergeFields: { key: string; label: string; source: string; path: string }[];
+  mergeFields: MergeField[];
   isActive: boolean;
   version: number;
   createdAt: string;
@@ -94,6 +110,86 @@ interface Props {
   initialTemplates: DocumentTemplate[];
 }
 
+// ─── Helpers: convert between raw {{key}} content and pill HTML ───
+function contentToHtml(content: string): string {
+  // Escape HTML entities in plain text, then convert {{key}} to pill spans
+  const escaped = content
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return escaped.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+    const info = FIELD_LOOKUP[key];
+    const label = info?.label || key;
+    return `<span contenteditable="false" data-field="${key}" class="inline-flex items-center gap-0.5 px-2 py-0.5 mx-0.5 rounded-full text-[11px] font-medium bg-teal-100 text-teal-800 border border-teal-300 cursor-pointer select-none hover:bg-red-100 hover:text-red-700 hover:border-red-300 transition-colors" title="Click to remove">${label}<span class="text-[9px] ml-0.5 opacity-60">\u00d7</span></span>`;
+  });
+}
+
+function htmlToContent(el: HTMLElement): string {
+  let result = '';
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      result += node.textContent || '';
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const elem = node as HTMLElement;
+      if (elem.dataset.field) {
+        result += `{{${elem.dataset.field}}}`;
+      } else if (elem.tagName === 'BR') {
+        result += '\n';
+      } else if (elem.tagName === 'DIV' || elem.tagName === 'P') {
+        // contentEditable wraps lines in divs
+        if (result.length > 0 && !result.endsWith('\n')) result += '\n';
+        result += htmlToContent(elem);
+      } else {
+        result += htmlToContent(elem);
+      }
+    }
+  }
+  return result;
+}
+
+function getUsedFields(content: string): MergeField[] {
+  const fields: MergeField[] = [];
+  const regex = /\{\{(\w+)\}\}/g;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    const key = match[1];
+    const info = FIELD_LOOKUP[key];
+    if (info && !fields.find(f => f.key === key)) {
+      fields.push({ key, label: info.label, source: info.source, path: info.path });
+    }
+  }
+  return fields;
+}
+
+// ─── Sample data for preview ─────────────────────────────────────
+const SAMPLE_DATA: Record<string, string> = {
+  client_name: 'Acme Corporation Ltd',
+  client_ref: 'ACM001',
+  client_address: '123 Business Street, London EC1A 1BB',
+  client_reg_number: '12345678',
+  client_industry: 'Technology',
+  client_contact_first_name: 'John',
+  client_contact_surname: 'Smith',
+  client_contact_email: 'john@acme.com',
+  engagement_type: 'Statutory Audit',
+  period_end: '31 March 2026',
+  target_completion: '30 June 2026',
+  compliance_deadline: '31 December 2026',
+  engagement_partner: 'Stuart Thomson',
+  engagement_manager: 'Edmund Cartwright',
+  firm_name: 'Johnsons Chartered Accountants',
+  firm_address: '456 Audit Lane, London SW1A 1AA',
+  firm_registration: 'C123456',
+  current_date: new Date().toLocaleDateString('en-GB'),
+  current_year: new Date().getFullYear().toString(),
+  prior_period_end: '31 March 2025',
+  ri_name: 'Stuart Thomson',
+  reviewer_name: 'Mandhu Chennupati',
+  preparer_name: 'Sarah Williams',
+  current_user: 'Stuart Thomson',
+};
+
+// ─── Component ───────────────────────────────────────────────────
 export function TemplateDocumentsClient({ initialTemplates }: Props) {
   const [templates, setTemplates] = useState<DocumentTemplate[]>(initialTemplates);
   const [selected, setSelected] = useState<DocumentTemplate | null>(null);
@@ -109,17 +205,43 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
   const [editCategory, setEditCategory] = useState('general');
   const [editAuditType, setEditAuditType] = useState('ALL');
   const [editContent, setEditContent] = useState('');
-  const [editMergeFields, setEditMergeFields] = useState<{ key: string; label: string; source: string; path: string }[]>([]);
+  const [editMergeFields, setEditMergeFields] = useState<MergeField[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [fieldSearch, setFieldSearch] = useState('');
 
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const isUpdatingRef = useRef(false);
 
   const filteredTemplates = templates.filter((t) => {
     if (filterCategory !== 'all' && t.category !== filterCategory) return false;
     if (searchQuery && !t.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     return true;
   });
+
+  // Sync editor HTML when editContent changes externally (not from typing)
+  useEffect(() => {
+    if (editorRef.current && !isUpdatingRef.current) {
+      editorRef.current.innerHTML = contentToHtml(editContent);
+    }
+  }, [editContent, isEditing]);
+
+  function syncContentFromEditor() {
+    if (!editorRef.current) return;
+    isUpdatingRef.current = true;
+    const raw = htmlToContent(editorRef.current);
+    setEditContent(raw);
+    setEditMergeFields(getUsedFields(raw));
+    isUpdatingRef.current = false;
+  }
+
+  function handleEditorClick(e: React.MouseEvent) {
+    const target = e.target as HTMLElement;
+    const pill = target.closest('[data-field]') as HTMLElement | null;
+    if (pill && editorRef.current?.contains(pill)) {
+      pill.remove();
+      syncContentFromEditor();
+    }
+  }
 
   function startCreate() {
     setIsCreating(true);
@@ -153,75 +275,83 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
   }
 
   const insertMergeField = useCallback((key: string, label: string, source: string, path: string) => {
-    const tag = `{{${key}}}`;
-    const textarea = editorRef.current;
-    if (textarea) {
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const newContent = editContent.slice(0, start) + tag + editContent.slice(end);
-      setEditContent(newContent);
-      // Track used merge fields
-      if (!editMergeFields.find((f) => f.key === key)) {
-        setEditMergeFields([...editMergeFields, { key, label, source, path }]);
-      }
-      setTimeout(() => {
-        textarea.focus();
-        textarea.setSelectionRange(start + tag.length, start + tag.length);
-      }, 0);
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    // Build pill element
+    const pill = document.createElement('span');
+    pill.contentEditable = 'false';
+    pill.dataset.field = key;
+    pill.className = 'inline-flex items-center gap-0.5 px-2 py-0.5 mx-0.5 rounded-full text-[11px] font-medium bg-teal-100 text-teal-800 border border-teal-300 cursor-pointer select-none hover:bg-red-100 hover:text-red-700 hover:border-red-300 transition-colors';
+    pill.title = 'Click to remove';
+    pill.innerHTML = `${label}<span class="text-[9px] ml-0.5 opacity-60">\u00d7</span>`;
+
+    // Insert at current cursor or append
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && editor.contains(sel.anchorNode)) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(pill);
+      // Move cursor after pill
+      range.setStartAfter(pill);
+      range.setEndAfter(pill);
+      sel.removeAllRanges();
+      sel.addRange(range);
     } else {
-      setEditContent(editContent + tag);
-      if (!editMergeFields.find((f) => f.key === key)) {
-        setEditMergeFields([...editMergeFields, { key, label, source, path }]);
-      }
+      editor.appendChild(pill);
     }
-  }, [editContent, editMergeFields]);
+
+    syncContentFromEditor();
+    editor.focus();
+  }, []);
 
   async function handleSave() {
     if (!editName.trim()) return;
-    setSaving(true);
-    try {
-      if (isCreating) {
-        const res = await fetch('/api/methodology-admin/template-documents', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: editName,
-            description: editDescription,
-            category: editCategory,
-            auditType: editAuditType,
-            content: editContent,
-            mergeFields: editMergeFields,
-          }),
-        });
-        if (res.ok) {
-          const newTemplate = await res.json();
-          setTemplates([...templates, newTemplate]);
-          setSelected(newTemplate);
-          setIsCreating(false);
-          setIsEditing(false);
+    // Sync from editor one final time
+    if (editorRef.current) {
+      const raw = htmlToContent(editorRef.current);
+      const fields = getUsedFields(raw);
+
+      setSaving(true);
+      try {
+        const payload = {
+          name: editName,
+          description: editDescription,
+          category: editCategory,
+          auditType: editAuditType,
+          content: raw,
+          mergeFields: fields,
+        };
+
+        if (isCreating) {
+          const res = await fetch('/api/methodology-admin/template-documents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (res.ok) {
+            const newTemplate = await res.json();
+            setTemplates([...templates, newTemplate]);
+            setSelected(newTemplate);
+            setIsCreating(false);
+            setIsEditing(false);
+          }
+        } else if (selected) {
+          const res = await fetch(`/api/methodology-admin/template-documents/${selected.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (res.ok) {
+            const updated = await res.json();
+            setTemplates(templates.map((t) => (t.id === updated.id ? updated : t)));
+            setSelected(updated);
+            setIsEditing(false);
+          }
         }
-      } else if (selected) {
-        const res = await fetch(`/api/methodology-admin/template-documents/${selected.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: editName,
-            description: editDescription,
-            category: editCategory,
-            auditType: editAuditType,
-            content: editContent,
-            mergeFields: editMergeFields,
-          }),
-        });
-        if (res.ok) {
-          const updated = await res.json();
-          setTemplates(templates.map((t) => (t.id === updated.id ? updated : t)));
-          setSelected(updated);
-          setIsEditing(false);
-        }
+      } finally {
+        setSaving(false);
       }
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -272,32 +402,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
   // Preview: replace merge fields with sample data
   function getPreviewContent() {
     let preview = editContent;
-    const sampleData: Record<string, string> = {
-      client_name: 'Acme Corporation Ltd',
-      client_ref: 'ACM001',
-      client_address: '123 Business Street, London EC1A 1BB',
-      client_reg_number: '12345678',
-      client_industry: 'Technology',
-      client_contact_name: 'John Smith',
-      client_contact_email: 'john@acme.com',
-      engagement_type: 'Statutory Audit',
-      period_end: '31 March 2026',
-      target_completion: '30 June 2026',
-      compliance_deadline: '31 December 2026',
-      engagement_partner: 'Stuart Thomson',
-      engagement_manager: 'Edmund Cartwright',
-      firm_name: 'Johnsons Chartered Accountants',
-      firm_address: '456 Audit Lane, London SW1A 1AA',
-      firm_registration: 'C123456',
-      current_date: new Date().toLocaleDateString('en-GB'),
-      current_year: new Date().getFullYear().toString(),
-      prior_period_end: '31 March 2025',
-      ri_name: 'Stuart Thomson',
-      reviewer_name: 'Mandhu Chennupati',
-      preparer_name: 'Sarah Williams',
-      current_user: 'Stuart Thomson',
-    };
-    for (const [key, value] of Object.entries(sampleData)) {
+    for (const [key, value] of Object.entries(SAMPLE_DATA)) {
       preview = preview.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), `<span class="bg-teal-100 text-teal-800 px-1 rounded font-medium">${value}</span>`);
     }
     // Highlight any unmatched fields
@@ -305,15 +410,24 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
     return preview;
   }
 
+  // View-mode: show pills for fields in read-only view
+  function getViewHtml(content: string) {
+    return content.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+      const info = FIELD_LOOKUP[key];
+      const label = info?.label || key;
+      return `<span class="inline-flex items-center px-2 py-0.5 mx-0.5 rounded-full text-[11px] font-medium bg-teal-50 text-teal-700 border border-teal-200">${label}</span>`;
+    });
+  }
+
   // ─── Render ────────────────────────────────────────────────────
   return (
     <div className="max-w-7xl mx-auto">
-      <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
+      <BackButton href="/methodology-admin/template-documents" label="Back to Templates" />
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Template Documents</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Email Templates</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Create document templates with merge fields that are populated from system data
+            Create email templates with merge fields populated from system data
           </p>
         </div>
         <Button onClick={startCreate} size="sm">
@@ -422,7 +536,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
                 </div>
                 <div
                   className="prose prose-sm max-w-none border rounded-md p-4 bg-white min-h-[300px] whitespace-pre-wrap"
-                  dangerouslySetInnerHTML={{ __html: selected.content.replace(/\{\{(\w+)\}\}/g, '<code class="text-teal-700 bg-teal-50 px-1 rounded text-xs">{{$1}}</code>') }}
+                  dangerouslySetInnerHTML={{ __html: getViewHtml(selected.content) }}
                 />
               </div>
             </div>
@@ -502,7 +616,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
                     <label className="block text-xs font-medium text-slate-600 mb-1">
                       Template Content
                       <span className="text-slate-400 font-normal ml-1">
-                        Use {'{{field_name}}'} to insert merge fields
+                        Click fields from the palette to insert &middot; Click a pill to remove it
                       </span>
                     </label>
                     {showPreview ? (
@@ -511,12 +625,14 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
                         dangerouslySetInnerHTML={{ __html: getPreviewContent() }}
                       />
                     ) : (
-                      <textarea
+                      <div
                         ref={editorRef}
-                        value={editContent}
-                        onChange={(e) => setEditContent(e.target.value)}
-                        placeholder={`Dear {{client_contact_name}},\n\nRe: Audit of {{client_name}} for the year ended {{period_end}}\n\nWe are pleased to confirm our appointment as auditors...\n\nYours faithfully,\n{{engagement_partner}}\n{{firm_name}}`}
-                        className="w-full px-3 py-2 text-sm border rounded-md font-mono min-h-[400px] resize-y"
+                        contentEditable
+                        suppressContentEditableWarning
+                        onClick={handleEditorClick}
+                        onInput={syncContentFromEditor}
+                        className="w-full px-3 py-2 text-sm border rounded-md min-h-[400px] bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 whitespace-pre-wrap overflow-y-auto"
+                        style={{ lineHeight: '1.8' }}
                       />
                     )}
                   </div>
@@ -539,7 +655,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
                         <div className="max-h-[350px] overflow-y-auto space-y-2">
                           {MERGE_FIELD_CATEGORIES.map((cat) => {
                             const filtered = cat.fields.filter((f) =>
-                              !fieldSearch || f.label.toLowerCase().includes(fieldSearch.toLowerCase()) || f.key.includes(fieldSearch.toLowerCase())
+                              !fieldSearch || f.label.toLowerCase().includes(fieldSearch.toLowerCase())
                             );
                             if (filtered.length === 0) return null;
                             return (
@@ -553,11 +669,11 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
                                     <button
                                       key={field.key}
                                       onClick={() => insertMergeField(field.key, field.label, field.source, field.path)}
-                                      className={`w-full text-left px-1.5 py-1 rounded text-[11px] hover:bg-teal-100 transition-colors flex items-center gap-1 ${
+                                      className={`w-full text-left px-1.5 py-1 rounded text-[11px] hover:bg-teal-100 transition-colors flex items-center gap-1.5 ${
                                         isUsed ? 'bg-teal-50 text-teal-700' : 'text-slate-600'
                                       }`}
                                     >
-                                      <code className="text-[9px] text-teal-600 bg-teal-50 px-0.5 rounded">{`{{${field.key}}}`}</code>
+                                      <span className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: isUsed ? '#0d9488' : '#cbd5e1' }} />
                                       <span className="truncate">{field.label}</span>
                                     </button>
                                   );
@@ -575,15 +691,12 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
                 {editMergeFields.length > 0 && (
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">
-                      Fields used in this template ({editMergeFields.length})
+                      Fields used ({editMergeFields.length})
                     </label>
                     <div className="flex flex-wrap gap-1">
                       {editMergeFields.map((f) => (
-                        <span key={f.key} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                        <span key={f.key} className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
                           {f.label}
-                          <button onClick={() => setEditMergeFields(editMergeFields.filter((mf) => mf.key !== f.key))} className="hover:text-red-500">
-                            <X className="h-2.5 w-2.5" />
-                          </button>
                         </span>
                       ))}
                     </div>

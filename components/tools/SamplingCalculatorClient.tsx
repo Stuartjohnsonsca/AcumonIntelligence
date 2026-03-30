@@ -19,7 +19,8 @@ interface Client {
   id: string;
   clientName: string;
   software: string | null;
-  contactName: string | null;
+  contactFirstName: string | null;
+  contactSurname: string | null;
   contactEmail: string | null;
 }
 
@@ -2635,7 +2636,7 @@ export function SamplingCalculatorClient({
           periodId={selectedPeriod.id}
           runId={runId}
           clientContactEmail={selectedClient.contactEmail}
-          clientContactName={selectedClient.contactName}
+          clientContactName={`${selectedClient.contactFirstName || ''} ${selectedClient.contactSurname || ''}`.trim()}
         />
       )}
     </div>

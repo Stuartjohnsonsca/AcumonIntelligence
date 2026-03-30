@@ -17,7 +17,7 @@ export default async function SamplingPage() {
       clientAssignments: {
         include: {
           client: {
-            select: { id: true, clientName: true, software: true, contactName: true, contactEmail: true, isActive: true },
+            select: { id: true, clientName: true, software: true, contactFirstName: true, contactSurname: true, contactEmail: true, isActive: true },
           },
         },
       },

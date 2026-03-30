@@ -44,12 +44,13 @@ export async function POST(req: Request) {
   // Bulk CSV import: body.clients = array of client objects
   if (Array.isArray(body.clients)) {
     const created = await prisma.$transaction(
-      body.clients.map((c: { clientName: string; software?: string; contactName?: string; contactEmail?: string }) =>
+      body.clients.map((c: { clientName: string; software?: string; contactFirstName?: string; contactSurname?: string; contactEmail?: string }) =>
         prisma.client.create({
           data: {
             clientName: c.clientName,
             software: c.software || null,
-            contactName: c.contactName || null,
+            contactFirstName: c.contactFirstName || null,
+            contactSurname: c.contactSurname || null,
             contactEmail: c.contactEmail || null,
             firmId: targetFirmId,
           },
@@ -59,14 +60,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ created: created.length });
   }
 
-  const { clientName, software, contactName, contactEmail, portfolioManagerId } = body;
+  const { clientName, software, contactFirstName, contactSurname, contactEmail, portfolioManagerId } = body;
   if (!clientName) return NextResponse.json({ error: 'clientName is required' }, { status: 400 });
 
   const client = await prisma.client.create({
     data: {
       clientName,
       software: software || null,
-      contactName: contactName || null,
+      contactFirstName: contactFirstName || null,
+      contactSurname: contactSurname || null,
       contactEmail: contactEmail || null,
       portfolioManagerId: portfolioManagerId || null,
       firmId: targetFirmId,

@@ -13,7 +13,7 @@ export default async function XeroAuthorisePage({ params }: Props) {
     where: { token },
     include: {
       client: {
-        select: { clientName: true, contactName: true },
+        select: { clientName: true, contactFirstName: true, contactSurname: true },
       },
     },
   });

@@ -17,7 +17,8 @@ interface Client {
   id: string;
   clientName: string;
   software: string | null;
-  contactName: string | null;
+  contactFirstName: string | null;
+  contactSurname: string | null;
   contactEmail: string | null;
   portfolioManagerId: string | null;
   isActive: boolean;
@@ -54,7 +55,7 @@ interface ClientPeriod {
   productAssignments: PeriodAssignment[];
 }
 
-type SortKey = 'clientName' | 'software' | 'contactName' | 'contactEmail';
+type SortKey = 'clientName' | 'software' | 'contactFirstName' | 'contactEmail';
 type SortDir = 'asc' | 'desc';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -165,7 +166,8 @@ export default function ManagePage() {
       return (
         c.clientName.toLowerCase().includes(term) ||
         (c.software || '').toLowerCase().includes(term) ||
-        (c.contactName || '').toLowerCase().includes(term)
+        (c.contactFirstName || '').toLowerCase().includes(term) ||
+        (c.contactSurname || '').toLowerCase().includes(term)
       );
     })
     .sort((a, b) => {
@@ -406,7 +408,8 @@ export default function ManagePage() {
 
         {/* ─── Editable fields ──────────────────────────────────────────────── */}
         <div className="bg-white rounded-lg border border-slate-200 p-4 mb-6">
-          <EditableField field="contactName" label="Contact Name" value={selectedClient.contactName || ''} />
+          <EditableField field="contactFirstName" label="First Name" value={selectedClient.contactFirstName || ''} />
+          <EditableField field="contactSurname" label="Surname" value={selectedClient.contactSurname || ''} />
           <EditableField field="contactEmail" label="Contact Email" value={selectedClient.contactEmail || ''} />
           <EditableField field="software" label="Accounting System" value={selectedClient.software || ''} type="select" />
 
@@ -710,7 +713,7 @@ export default function ManagePage() {
             <tr>
               <SortHeader k="clientName" label="Client Name" />
               <SortHeader k="software" label="Software" />
-              <SortHeader k="contactName" label="Contact" />
+              <SortHeader k="contactFirstName" label="Contact" />
               <SortHeader k="contactEmail" label="Email" />
               <th className="px-3 py-2 text-left">
                 <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Manager</span>
@@ -744,7 +747,7 @@ export default function ManagePage() {
                     )}
                   </td>
                   <td className="px-3 py-3 text-slate-500">{c.software || '—'}</td>
-                  <td className="px-3 py-3 text-slate-500">{c.contactName || '—'}</td>
+                  <td className="px-3 py-3 text-slate-500">{`${c.contactFirstName || ''} ${c.contactSurname || ''}`.trim() || '—'}</td>
                   <td className="px-3 py-3 text-slate-500">{c.contactEmail || '—'}</td>
                   <td className="px-3 py-3 text-slate-500">{c.portfolioManager?.name || '—'}</td>
                   <td className="px-3 py-3 text-slate-500">{c._count?.userAssignments || 0}</td>

@@ -255,7 +255,8 @@ async function main() {
         firmId: firm.id,
         clientName: c.name,
         sector: c.sector,
-        contactName: `${c.name.split(' ')[0]} Contact`,
+        contactFirstName: c.name.split(' ')[0],
+        contactSurname: 'Contact',
         contactEmail: `contact@${c.name.split(' ')[0].toLowerCase()}.co.uk`,
       },
     });

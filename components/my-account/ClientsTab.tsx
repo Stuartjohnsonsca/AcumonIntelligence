@@ -36,7 +36,8 @@ interface Client {
   id: string;
   clientName: string;
   software: string | null;
-  contactName: string | null;
+  contactFirstName: string | null;
+  contactSurname: string | null;
   contactEmail: string | null;
   portfolioManagerId: string | null;
   portfolioManager: PortfolioManagerInfo | null;
@@ -57,11 +58,11 @@ interface FirmUser {
 
 const ACCOUNTING_SYSTEMS = ['', 'Xero'] as const;
 
-type SortKey = 'clientName' | 'software' | 'contactName' | 'contactEmail' | 'isActive';
+type SortKey = 'clientName' | 'software' | 'contactFirstName' | 'contactEmail' | 'isActive';
 type SortDir = 'asc' | 'desc';
 type ViewMode = 'list' | 'add-manual' | 'add-csv' | 'assign' | 'import-crm';
 
-const EMPTY_FORM = { clientName: '', software: '', contactName: '', contactEmail: '', portfolioManagerId: '' };
+const EMPTY_FORM = { clientName: '', software: '', contactFirstName: '', contactSurname: '', contactEmail: '', portfolioManagerId: '' };
 
 interface Props {
   firmId: string;
@@ -80,7 +81,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
 
   // Filters / sort
   const [search, setSearch] = useState<Record<SortKey, string>>({
-    clientName: '', software: '', contactName: '', contactEmail: '', isActive: '',
+    clientName: '', software: '', contactFirstName: '', contactEmail: '', isActive: '',
   });
   const [sortKey, setSortKey] = useState<SortKey>('clientName');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -144,7 +145,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
       const s = search;
       if (s.clientName && !c.clientName.toLowerCase().includes(s.clientName.toLowerCase())) return false;
       if (s.software && !(c.software || '').toLowerCase().includes(s.software.toLowerCase())) return false;
-      if (s.contactName && !(c.contactName || '').toLowerCase().includes(s.contactName.toLowerCase())) return false;
+      if (s.contactFirstName && !(`${c.contactFirstName || ''} ${c.contactSurname || ''}`).toLowerCase().includes(s.contactFirstName.toLowerCase())) return false;
       if (s.contactEmail && !(c.contactEmail || '').toLowerCase().includes(s.contactEmail.toLowerCase())) return false;
       if (s.isActive) {
         const activeStr = c.isActive ? 'active' : 'inactive';
@@ -165,7 +166,8 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
     setEditForm({
       clientName: c.clientName,
       software: c.software || '',
-      contactName: c.contactName || '',
+      contactFirstName: c.contactFirstName || '',
+      contactSurname: c.contactSurname || '',
       contactEmail: c.contactEmail || '',
       portfolioManagerId: c.portfolioManagerId || '',
     });
@@ -199,7 +201,8 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
     const payload = {
       clientName: addForm.clientName,
       software: addForm.software || null,
-      contactName: addForm.contactName || null,
+      contactFirstName: addForm.contactFirstName || null,
+      contactSurname: addForm.contactSurname || null,
       contactEmail: addForm.contactEmail || null,
       portfolioManagerId: addForm.portfolioManagerId || null,
       firmId,
@@ -231,7 +234,8 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
       if (nameIdx === -1) { setCsvError('CSV must have a column named "Client Name" or "Name".'); return; }
 
       const softwareIdx = headers.findIndex((h) => h.includes('software'));
-      const contactNameIdx = headers.findIndex((h) => h.includes('contactname') || h.includes('contact_name'));
+      const contactFirstNameIdx = headers.findIndex((h) => h.includes('contactfirstname') || h.includes('contact_first_name') || h.includes('contactname') || h.includes('contact_name'));
+      const contactSurnameIdx = headers.findIndex((h) => h.includes('contactsurname') || h.includes('contact_surname'));
       const contactEmailIdx = headers.findIndex((h) => h.includes('contactemail') || h.includes('contact_email') || h.includes('email'));
 
       const rows = lines.slice(1).map((line) => {
@@ -239,7 +243,8 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
         return {
           clientName: cols[nameIdx] || '',
           software: softwareIdx >= 0 ? cols[softwareIdx] || '' : '',
-          contactName: contactNameIdx >= 0 ? cols[contactNameIdx] || '' : '',
+          contactFirstName: contactFirstNameIdx >= 0 ? cols[contactFirstNameIdx] || '' : '',
+          contactSurname: contactSurnameIdx >= 0 ? cols[contactSurnameIdx] || '' : '',
           contactEmail: contactEmailIdx >= 0 ? cols[contactEmailIdx] || '' : '',
           portfolioManagerId: '',
         };
@@ -431,8 +436,12 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label>Contact Name</Label>
-                <Input value={addForm.contactName} onChange={(e) => setAddForm({ ...addForm, contactName: e.target.value })} />
+                <Label>Contact First Name</Label>
+                <Input value={addForm.contactFirstName} onChange={(e) => setAddForm({ ...addForm, contactFirstName: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Contact Surname</Label>
+                <Input value={addForm.contactSurname} onChange={(e) => setAddForm({ ...addForm, contactSurname: e.target.value })} />
               </div>
               <div className="space-y-1.5">
                 <Label>Contact Email</Label>
@@ -471,7 +480,8 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
             <CardDescription>
               CSV must have a header row. Required column: <code className="bg-slate-100 px-1 rounded text-xs">Client Name</code>.
               Optional: <code className="bg-slate-100 px-1 rounded text-xs">Software</code>,{' '}
-              <code className="bg-slate-100 px-1 rounded text-xs">Contact Name</code>,{' '}
+              <code className="bg-slate-100 px-1 rounded text-xs">Contact First Name</code>,{' '}
+              <code className="bg-slate-100 px-1 rounded text-xs">Contact Surname</code>,{' '}
               <code className="bg-slate-100 px-1 rounded text-xs">Contact Email</code>.
             </CardDescription>
           </CardHeader>
@@ -493,7 +503,8 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                       <tr>
                         <th className="text-left px-3 py-2 font-medium">Client Name</th>
                         <th className="text-left px-3 py-2 font-medium">Software</th>
-                        <th className="text-left px-3 py-2 font-medium">Contact Name</th>
+                        <th className="text-left px-3 py-2 font-medium">First Name</th>
+                        <th className="text-left px-3 py-2 font-medium">Surname</th>
                         <th className="text-left px-3 py-2 font-medium">Contact Email</th>
                       </tr>
                     </thead>
@@ -502,7 +513,8 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                         <tr key={i} className="border-t border-slate-100">
                           <td className="px-3 py-1.5">{r.clientName}</td>
                           <td className="px-3 py-1.5 text-slate-500">{r.software}</td>
-                          <td className="px-3 py-1.5 text-slate-500">{r.contactName}</td>
+                          <td className="px-3 py-1.5 text-slate-500">{r.contactFirstName}</td>
+                          <td className="px-3 py-1.5 text-slate-500">{r.contactSurname}</td>
                           <td className="px-3 py-1.5 text-slate-500">{r.contactEmail}</td>
                         </tr>
                       ))}
@@ -694,7 +706,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                   <tr>
                     <SortableHeader k="clientName" label="Client Name" />
                     <SortableHeader k="software" label="Accounting System" />
-                    <SortableHeader k="contactName" label="Contact Name" />
+                    <SortableHeader k="contactFirstName" label="Contact" />
                     <SortableHeader k="contactEmail" label="Contact Email" />
                     <th className="px-3 py-2 text-left">
                       <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Portfolio Manager</span>
@@ -730,7 +742,10 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                             </select>
                           </td>
                           <td className="px-3 py-2">
-                            <Input value={editForm.contactName} onChange={(e) => setEditForm({ ...editForm, contactName: e.target.value })} className="h-8 text-sm" />
+                            <div className="flex gap-1">
+                              <Input value={editForm.contactFirstName} onChange={(e) => setEditForm({ ...editForm, contactFirstName: e.target.value })} className="h-8 text-sm" placeholder="First" />
+                              <Input value={editForm.contactSurname} onChange={(e) => setEditForm({ ...editForm, contactSurname: e.target.value })} className="h-8 text-sm" placeholder="Surname" />
+                            </div>
                           </td>
                           <td className="px-3 py-2">
                             <Input value={editForm.contactEmail} onChange={(e) => setEditForm({ ...editForm, contactEmail: e.target.value })} className="h-8 text-sm" />
@@ -781,7 +796,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                         <>
                           <td className="px-3 py-3 font-medium text-slate-800">{c.clientName}</td>
                           <td className="px-3 py-3 text-slate-500">{c.software || '—'}</td>
-                          <td className="px-3 py-3 text-slate-500">{c.contactName || '—'}</td>
+                          <td className="px-3 py-3 text-slate-500">{`${c.contactFirstName || ''} ${c.contactSurname || ''}`.trim() || '—'}</td>
                           <td className="px-3 py-3 text-slate-500">{c.contactEmail || '—'}</td>
                           <td className="px-3 py-3 text-slate-500">{c.portfolioManager?.name || '—'}</td>
                           {(() => {

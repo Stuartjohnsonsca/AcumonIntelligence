@@ -116,7 +116,8 @@ export async function POST(req: Request) {
                   clientName: action.crmOrg.name,
                   crmAccountId: crmId,
                   sector: action.crmOrg.industry || null,
-                  contactName: null,
+                  contactFirstName: null,
+                  contactSurname: null,
                   contactEmail: action.crmOrg.email || null,
                 },
                 update: {
@@ -131,7 +132,8 @@ export async function POST(req: Request) {
                   clientName: action.crmOrg.name,
                   crmAccountId: null,
                   sector: action.crmOrg.industry || null,
-                  contactName: null,
+                  contactFirstName: null,
+                  contactSurname: null,
                   contactEmail: action.crmOrg.email || null,
                 },
               });

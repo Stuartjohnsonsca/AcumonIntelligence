@@ -24,7 +24,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   const body = await req.json();
 
-  const allowed = ['clientName', 'software', 'contactName', 'contactEmail', 'isActive', 'readOnly', 'portfolioManagerId'];
+  const allowed = ['clientName', 'software', 'contactFirstName', 'contactSurname', 'contactEmail', 'isActive', 'readOnly', 'portfolioManagerId'];
   const data: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) data[key] = body[key];

@@ -17,7 +17,8 @@ interface Client {
   id: string;
   clientName: string;
   software: string | null;
-  contactName: string | null;
+  contactFirstName: string | null;
+  contactSurname: string | null;
   contactEmail: string | null;
   portfolioManagerId: string | null;
   isActive: boolean;
@@ -34,10 +35,10 @@ interface FirmUser {
 }
 
 type ViewMode = 'list' | 'create' | 'edit' | 'archived';
-type SortKey = 'clientName' | 'software' | 'contactName' | 'contactEmail';
+type SortKey = 'clientName' | 'software' | 'contactFirstName' | 'contactEmail';
 type SortDir = 'asc' | 'desc';
 
-const EMPTY_FORM = { clientName: '', software: '', contactName: '', contactEmail: '', portfolioManagerId: '' };
+const EMPTY_FORM = { clientName: '', software: '', contactFirstName: '', contactSurname: '', contactEmail: '', portfolioManagerId: '' };
 
 export default function AddDeletePage() {
   const { data: session, status } = useSession();
@@ -99,7 +100,8 @@ export default function AddDeletePage() {
       return (
         c.clientName.toLowerCase().includes(term) ||
         (c.software || '').toLowerCase().includes(term) ||
-        (c.contactName || '').toLowerCase().includes(term)
+        (c.contactFirstName || '').toLowerCase().includes(term) ||
+        (c.contactSurname || '').toLowerCase().includes(term)
       );
     })
     .sort((a, b) => {
@@ -129,7 +131,8 @@ export default function AddDeletePage() {
       body: JSON.stringify({
         clientName: form.clientName,
         software: form.software || null,
-        contactName: form.contactName || null,
+        contactFirstName: form.contactFirstName || null,
+        contactSurname: form.contactSurname || null,
         contactEmail: form.contactEmail || null,
         portfolioManagerId: form.portfolioManagerId || null,
         firmId,
@@ -151,7 +154,8 @@ export default function AddDeletePage() {
       body: JSON.stringify({
         clientName: form.clientName,
         software: form.software || null,
-        contactName: form.contactName || null,
+        contactFirstName: form.contactFirstName || null,
+        contactSurname: form.contactSurname || null,
         contactEmail: form.contactEmail || null,
         portfolioManagerId: form.portfolioManagerId || null,
       }),
@@ -172,7 +176,8 @@ export default function AddDeletePage() {
     setForm({
       clientName: client.clientName,
       software: client.software || '',
-      contactName: client.contactName || '',
+      contactFirstName: client.contactFirstName || '',
+      contactSurname: client.contactSurname || '',
       contactEmail: client.contactEmail || '',
       portfolioManagerId: client.portfolioManagerId || '',
     });
@@ -337,8 +342,12 @@ export default function AddDeletePage() {
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label>Contact Name</Label>
-                <Input value={form.contactName} onChange={(e) => setForm({ ...form, contactName: e.target.value })} />
+                <Label>First Name</Label>
+                <Input value={form.contactFirstName} onChange={(e) => setForm({ ...form, contactFirstName: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Surname</Label>
+                <Input value={form.contactSurname} onChange={(e) => setForm({ ...form, contactSurname: e.target.value })} />
               </div>
               <div className="space-y-1.5">
                 <Label>Contact Email</Label>
@@ -408,7 +417,7 @@ export default function AddDeletePage() {
                   </th>
                   <SortHeader k="clientName" label="Client Name" />
                   <SortHeader k="software" label="Software" />
-                  <SortHeader k="contactName" label="Contact" />
+                  <SortHeader k="contactFirstName" label="Contact" />
                   <SortHeader k="contactEmail" label="Email" />
                   <th className="px-3 py-2 text-left">
                     <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Status</span>
@@ -449,7 +458,7 @@ export default function AddDeletePage() {
                         )}
                       </td>
                       <td className="px-3 py-3 text-slate-500">{c.software || '—'}</td>
-                      <td className="px-3 py-3 text-slate-500">{c.contactName || '—'}</td>
+                      <td className="px-3 py-3 text-slate-500">{`${c.contactFirstName || ''} ${c.contactSurname || ''}`.trim() || '—'}</td>
                       <td className="px-3 py-3 text-slate-500">{c.contactEmail || '—'}</td>
                       <td className="px-3 py-3">
                         <Badge

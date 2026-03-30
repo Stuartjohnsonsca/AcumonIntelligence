@@ -17,7 +17,7 @@ export default async function DataExtractionPage() {
       firm: true,
       clientAssignments: {
         include: {
-          client: { select: { id: true, clientName: true, software: true, contactName: true, contactEmail: true, isActive: true } },
+          client: { select: { id: true, clientName: true, software: true, contactFirstName: true, contactSurname: true, contactEmail: true, isActive: true } },
         },
       },
     },
@@ -34,7 +34,7 @@ export default async function DataExtractionPage() {
   // All firm clients not assigned to this user (for access request)
   const allFirmClients = await prisma.client.findMany({
     where: { firmId: userWithClients.firmId, isActive: true },
-    select: { id: true, clientName: true, software: true, contactName: true, contactEmail: true },
+    select: { id: true, clientName: true, software: true, contactFirstName: true, contactSurname: true, contactEmail: true },
   });
 
   const assignedIds = new Set(assignedClients.map(c => c.id));

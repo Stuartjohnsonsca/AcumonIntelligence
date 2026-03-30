@@ -18,7 +18,8 @@ interface Client {
   id: string;
   clientName: string;
   software: string | null;
-  contactName: string | null;
+  contactFirstName: string | null;
+  contactSurname: string | null;
   contactEmail: string | null;
   isActive: boolean;
   readOnly: boolean;
@@ -336,7 +337,7 @@ export default function NewPeriodPage() {
                   >
                     <td className="px-3 py-3 font-medium text-slate-800">{c.clientName}</td>
                     <td className="px-3 py-3 text-slate-500">{c.software || '—'}</td>
-                    <td className="px-3 py-3 text-slate-500">{c.contactName || '—'}</td>
+                    <td className="px-3 py-3 text-slate-500">{`${c.contactFirstName || ''} ${c.contactSurname || ''}`.trim() || '—'}</td>
                   </tr>
                 ))
               )}

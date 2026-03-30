@@ -24,7 +24,8 @@ export async function POST(req: Request) {
       where: { id: clientId },
       select: {
         clientName: true,
-        contactName: true,
+        contactFirstName: true,
+        contactSurname: true,
         contactEmail: true,
         firmId: true,
       },
@@ -79,7 +80,7 @@ export async function POST(req: Request) {
         clientId,
         requestedBy: session.user.email || session.user.name || 'Unknown',
         recipientEmail: client.contactEmail,
-        recipientName: client.contactName,
+        recipientName: [client.contactFirstName, client.contactSurname].filter(Boolean).join(' ') || null,
         token,
         expiresAt,
       },
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
     try {
       emailResult = await sendXeroAccessRequestEmail(
         client.contactEmail,
-        client.contactName || 'Client',
+        [client.contactFirstName, client.contactSurname].filter(Boolean).join(' ') || 'Client',
         client.clientName,
         session.user.name || session.user.email || 'Your auditor',
         authoriseUrl,

@@ -34,7 +34,8 @@ interface Client {
   id: string;
   clientName: string;
   software: string | null;
-  contactName: string | null;
+  contactFirstName: string | null;
+  contactSurname: string | null;
   contactEmail: string | null;
 }
 
@@ -1795,7 +1796,7 @@ export function DataExtractionClient({
                     <div className="font-semibold text-slate-800 group-hover:text-blue-700">{c.clientName}</div>
                     <div className="text-sm text-slate-500">
                       {c.software && <span className="mr-3">{c.software}</span>}
-                      {c.contactName && <span>{c.contactName}</span>}
+                      {(c.contactFirstName || c.contactSurname) && <span>{`${c.contactFirstName || ''} ${c.contactSurname || ''}`.trim()}</span>}
                     </div>
                   </div>
                   <ChevronRight className="h-5 w-5 text-slate-300 group-hover:text-blue-400" />
@@ -1906,7 +1907,7 @@ export function DataExtractionClient({
             <span className="text-slate-300">|</span>
             <div>
               <span className="font-semibold text-slate-800">{selectedClient.clientName}</span>
-              <span className="text-slate-400 text-sm ml-2">· {selectedClient.contactName}</span>
+              <span className="text-slate-400 text-sm ml-2">· {`${selectedClient.contactFirstName || ''} ${selectedClient.contactSurname || ''}`.trim()}</span>
             </div>
           </div>
           <div className="flex gap-2">

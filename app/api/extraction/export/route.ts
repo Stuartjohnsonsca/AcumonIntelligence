@@ -24,7 +24,7 @@ export async function GET(req: Request) {
     include: {
       files: true,
       records: { orderBy: { referenceId: 'asc' } },
-      client: { select: { clientName: true, software: true, contactName: true } },
+      client: { select: { clientName: true, software: true, contactFirstName: true, contactSurname: true } },
       user: { select: { name: true, displayId: true } },
     },
   });

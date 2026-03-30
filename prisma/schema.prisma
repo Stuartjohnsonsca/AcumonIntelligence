@@ -170,7 +170,8 @@ model Client {
   firmId              String   @map("firm_id")
   clientName          String   @map("client_name")
   software            String?
-  contactName         String?  @map("contact_name")
+  contactFirstName    String?  @map("contact_first_name")
+  contactSurname      String?  @map("contact_surname")
   contactEmail        String?  @map("contact_email")
   sector              String?  // Financial Services, Healthcare, Manufacturing, Technology, Public Sector, Retail, Energy, Education, Construction, Legal, Charities & Non-Profit
   portfolioManagerId  String?  @map("portfolio_manager_id")

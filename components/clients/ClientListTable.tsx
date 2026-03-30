@@ -9,7 +9,8 @@ export interface ClientRow {
   id: string;
   clientName: string;
   software: string | null;
-  contactName: string | null;
+  contactFirstName: string | null;
+  contactSurname: string | null;
   contactEmail: string | null;
   isActive: boolean;
   readOnly: boolean;
@@ -18,7 +19,7 @@ export interface ClientRow {
   _count?: { subscriptions: number; userAssignments: number };
 }
 
-type SortKey = 'clientName' | 'software' | 'contactName' | 'contactEmail';
+type SortKey = 'clientName' | 'software' | 'contactFirstName' | 'contactEmail';
 type SortDir = 'asc' | 'desc';
 
 interface Props {
@@ -59,7 +60,8 @@ export function ClientListTable({
         return (
           c.clientName.toLowerCase().includes(term) ||
           (c.software || '').toLowerCase().includes(term) ||
-          (c.contactName || '').toLowerCase().includes(term) ||
+          (c.contactFirstName || '').toLowerCase().includes(term) ||
+          (c.contactSurname || '').toLowerCase().includes(term) ||
           (c.contactEmail || '').toLowerCase().includes(term)
         );
       })
@@ -138,7 +140,7 @@ export function ClientListTable({
               )}
               <SortHeader k="clientName" label="Client Name" />
               {!compact && <SortHeader k="software" label="Software" />}
-              {!compact && <SortHeader k="contactName" label="Contact" />}
+              {!compact && <SortHeader k="contactFirstName" label="Contact" />}
               {!compact && <SortHeader k="contactEmail" label="Email" />}
               {showStatus && (
                 <th className={`${compact ? 'px-2 py-1.5' : 'px-3 py-2'} text-left`}>
@@ -193,7 +195,7 @@ export function ClientListTable({
                       )}
                     </td>
                     {!compact && <td className={`${compact ? 'px-2 py-2' : 'px-3 py-3'} text-slate-500`}>{c.software || '—'}</td>}
-                    {!compact && <td className={`${compact ? 'px-2 py-2' : 'px-3 py-3'} text-slate-500`}>{c.contactName || '—'}</td>}
+                    {!compact && <td className={`${compact ? 'px-2 py-2' : 'px-3 py-3'} text-slate-500`}>{`${c.contactFirstName || ''} ${c.contactSurname || ''}`.trim() || '—'}</td>}
                     {!compact && <td className={`${compact ? 'px-2 py-2' : 'px-3 py-3'} text-slate-500`}>{c.contactEmail || '—'}</td>}
                     {showStatus && (
                       <td className={`${compact ? 'px-2 py-2' : 'px-3 py-3'}`}>

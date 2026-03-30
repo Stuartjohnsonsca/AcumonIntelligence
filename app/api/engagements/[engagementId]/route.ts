@@ -27,7 +27,7 @@ export async function GET(
         contacts: { orderBy: [{ isMainContact: 'desc' }, { name: 'asc' }] },
         agreedDates: { orderBy: { sortOrder: 'asc' } },
         informationRequests: { orderBy: { sortOrder: 'asc' } },
-        client: { select: { id: true, clientName: true, contactName: true, contactEmail: true } },
+        client: { select: { id: true, clientName: true, contactFirstName: true, contactSurname: true, contactEmail: true } },
         period: { select: { id: true, startDate: true, endDate: true } },
       },
     });

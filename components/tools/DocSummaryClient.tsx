@@ -14,7 +14,8 @@ interface Client {
   id: string;
   clientName: string;
   software: string | null;
-  contactName: string | null;
+  contactFirstName: string | null;
+  contactSurname: string | null;
   contactEmail: string | null;
 }
 
@@ -1125,8 +1126,8 @@ export function DocSummaryClient({
                     className="w-full text-left px-5 py-3 hover:bg-slate-50 border-b border-slate-50 transition-colors"
                   >
                     <div className="text-sm font-medium text-slate-800">{client.clientName}</div>
-                    {client.contactName && (
-                      <div className="text-xs text-slate-400 mt-0.5">{client.contactName}</div>
+                    {(client.contactFirstName || client.contactSurname) && (
+                      <div className="text-xs text-slate-400 mt-0.5">{`${client.contactFirstName || ''} ${client.contactSurname || ''}`.trim()}</div>
                     )}
                   </button>
                 ))}
@@ -1154,8 +1155,8 @@ export function DocSummaryClient({
                           className="w-full text-left px-5 py-3 hover:bg-slate-50 border-b border-slate-50 transition-colors"
                         >
                           <div className="text-sm font-medium text-slate-600">{client.clientName}</div>
-                          {client.contactName && (
-                            <div className="text-xs text-slate-400 mt-0.5">{client.contactName}</div>
+                          {(client.contactFirstName || client.contactSurname) && (
+                            <div className="text-xs text-slate-400 mt-0.5">{`${client.contactFirstName || ''} ${client.contactSurname || ''}`.trim()}</div>
                           )}
                         </button>
                       ))}
