@@ -29,7 +29,7 @@ export async function PUT(
 
   const { id } = await params;
   const body = await req.json();
-  const { name, description, category, auditType, content, mergeFields, isActive } = body;
+  const { name, description, category, auditType, subject, content, mergeFields, recipients, isActive } = body;
 
   const existing = await prisma.documentTemplate.findFirst({
     where: { id, firmId: session.user.firmId },
@@ -43,8 +43,10 @@ export async function PUT(
       ...(description !== undefined && { description: description?.trim() || null }),
       ...(category !== undefined && { category }),
       ...(auditType !== undefined && { auditType }),
+      ...(subject !== undefined && { subject: subject?.trim() || null }),
       ...(content !== undefined && { content, version: existing.version + 1 }),
       ...(mergeFields !== undefined && { mergeFields }),
+      ...(recipients !== undefined && { recipients }),
       ...(isActive !== undefined && { isActive }),
     },
   });

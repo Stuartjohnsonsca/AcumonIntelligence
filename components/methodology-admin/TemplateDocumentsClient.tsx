@@ -91,6 +91,17 @@ const AUDIT_TYPES = [
   { value: 'PIE_CONTROLS', label: 'PIE Controls' },
 ];
 
+const RECIPIENT_CATEGORIES = [
+  { key: 'client', label: 'Client' },
+  { key: 'technical_team', label: 'Technical Team' },
+  { key: 'ethics_team', label: 'Ethics Team' },
+  { key: 'eqr', label: 'EQR' },
+  { key: 'ri', label: 'RI' },
+  { key: 'reviewer', label: 'Reviewer' },
+  { key: 'preparer', label: 'Preparer' },
+  { key: 'regulator', label: 'Regulator' },
+];
+
 interface MergeField {
   key: string;
   label: string;
@@ -104,8 +115,10 @@ interface DocumentTemplate {
   description: string | null;
   category: string;
   auditType: string;
+  subject: string | null;
   content: string;
   mergeFields: MergeField[];
+  recipients: string[];
   isActive: boolean;
   version: number;
   createdAt: string;
@@ -223,8 +236,10 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
   const [editDescription, setEditDescription] = useState('');
   const [editCategory, setEditCategory] = useState('general');
   const [editAuditType, setEditAuditType] = useState('ALL');
+  const [editSubject, setEditSubject] = useState('');
   const [editContent, setEditContent] = useState('');
   const [editMergeFields, setEditMergeFields] = useState<MergeField[]>([]);
+  const [editRecipients, setEditRecipients] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [fieldSearch, setFieldSearch] = useState('');
 
@@ -275,8 +290,10 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     setEditDescription('');
     setEditCategory('general');
     setEditAuditType('ALL');
+    setEditSubject('');
     setEditContent('');
     setEditMergeFields([]);
+    setEditRecipients([]);
     setShowPreview(false);
     editorInitRef.current++;
   }
@@ -289,10 +306,18 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     setEditDescription(template.description || '');
     setEditCategory(template.category);
     setEditAuditType(template.auditType);
+    setEditSubject(template.subject || '');
     setEditContent(template.content);
     setEditMergeFields(template.mergeFields || []);
+    setEditRecipients(template.recipients || []);
     setShowPreview(false);
     editorInitRef.current++;
+  }
+
+  function toggleRecipient(key: string) {
+    setEditRecipients(prev =>
+      prev.includes(key) ? prev.filter(r => r !== key) : [...prev, key]
+    );
   }
 
   function cancelEdit() {
@@ -345,8 +370,10 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
           description: editDescription,
           category: editCategory,
           auditType: editAuditType,
+          subject: editSubject || null,
           content: raw,
           mergeFields: fields,
+          recipients: editRecipients,
         };
 
         if (isCreating) {
@@ -640,7 +667,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                 </Button>
               </div>
               <div className="p-4">
-                <div className="flex gap-2 mb-4">
+                <div className="flex gap-2 mb-3">
                   <span className="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600">
                     {categories.find((c) => c.value === selected.category)?.label || selected.category}
                   </span>
@@ -649,6 +676,27 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                     {selected.mergeFields?.length || 0} merge fields
                   </span>
                 </div>
+                {selected.subject && (
+                  <div className="mb-3 p-2 bg-slate-50 rounded-md">
+                    <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Subject</span>
+                    <p className="text-sm text-slate-800 mt-0.5" dangerouslySetInnerHTML={{ __html: getViewHtml(selected.subject) }} />
+                  </div>
+                )}
+                {selected.recipients && selected.recipients.length > 0 && (
+                  <div className="mb-3">
+                    <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Recipients</span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {selected.recipients.map((r: string) => {
+                        const rc = RECIPIENT_CATEGORIES.find(c => c.key === r);
+                        return (
+                          <span key={r} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                            {rc?.label || r}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div
                   className="prose prose-sm max-w-none border rounded-md p-4 bg-white min-h-[300px] whitespace-pre-wrap"
                   dangerouslySetInnerHTML={{ __html: getViewHtml(selected.content) }}
@@ -723,6 +771,60 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                       ))}
                     </select>
                   </div>
+                </div>
+
+                {/* Subject line */}
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Subject Line
+                    <span className="text-slate-400 font-normal ml-1">Can include merge fields e.g. {'{{client_name}}'}</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editSubject}
+                    onChange={(e) => setEditSubject(e.target.value)}
+                    placeholder="e.g. Audit of {{client_name}} — {{period_end}}"
+                    className="w-full px-2 py-1.5 text-sm border rounded-md"
+                  />
+                </div>
+
+                {/* Recipient categories */}
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Allowed Recipients
+                    <span className="text-slate-400 font-normal ml-1">Template can only be sent to selected recipient types</span>
+                  </label>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {RECIPIENT_CATEGORIES.map((rc) => {
+                      const checked = editRecipients.includes(rc.key);
+                      return (
+                        <label
+                          key={rc.key}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer transition-colors select-none ${
+                            checked
+                              ? 'bg-blue-50 text-blue-700 border-blue-300'
+                              : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleRecipient(rc.key)}
+                            className="sr-only"
+                          />
+                          <span className={`w-3 h-3 rounded flex items-center justify-center text-[8px] ${
+                            checked ? 'bg-blue-500 text-white' : 'bg-slate-200 text-transparent'
+                          }`}>
+                            {checked ? '✓' : ''}
+                          </span>
+                          {rc.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {editRecipients.length === 0 && (
+                    <p className="text-[10px] text-amber-600 mt-1">No recipients selected — template cannot be sent until at least one is chosen.</p>
+                  )}
                 </div>
 
                 {/* Editor + Merge fields sidebar */}

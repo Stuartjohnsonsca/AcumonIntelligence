@@ -21,7 +21,7 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json();
-  const { name, description, category, auditType, content, mergeFields } = body;
+  const { name, description, category, auditType, subject, content, mergeFields, recipients } = body;
 
   if (!name?.trim()) {
     return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -34,8 +34,10 @@ export async function POST(req: Request) {
       description: description?.trim() || null,
       category: category || 'general',
       auditType: auditType || 'ALL',
+      subject: subject?.trim() || null,
       content: content || '',
       mergeFields: mergeFields || [],
+      recipients: recipients || [],
       createdBy: session.user.id,
     },
   });
