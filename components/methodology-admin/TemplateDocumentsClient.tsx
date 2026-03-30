@@ -210,7 +210,8 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
   const [fieldSearch, setFieldSearch] = useState('');
 
   const editorRef = useRef<HTMLDivElement>(null);
-  const isUpdatingRef = useRef(false);
+  // Track whether we should skip the next useEffect innerHTML reset
+  const editorInitRef = useRef(0);
 
   const filteredTemplates = templates.filter((t) => {
     if (filterCategory !== 'all' && t.category !== filterCategory) return false;
@@ -218,20 +219,24 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
     return true;
   });
 
-  // Sync editor HTML when editContent changes externally (not from typing)
+  // Only set editor innerHTML when entering edit mode (not on every keystroke)
   useEffect(() => {
-    if (editorRef.current && !isUpdatingRef.current) {
+    if (editorRef.current) {
       editorRef.current.innerHTML = contentToHtml(editContent);
     }
-  }, [editContent, isEditing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorInitRef.current]);
 
-  function syncContentFromEditor() {
-    if (!editorRef.current) return;
-    isUpdatingRef.current = true;
-    const raw = htmlToContent(editorRef.current);
-    setEditContent(raw);
+  /** Read the current DOM content back into raw {{key}} format */
+  function readEditorContent(): string {
+    if (!editorRef.current) return editContent;
+    return htmlToContent(editorRef.current);
+  }
+
+  /** Sync merge-field pill badges (no innerHTML reset) */
+  function syncMergeFieldsFromEditor() {
+    const raw = readEditorContent();
     setEditMergeFields(getUsedFields(raw));
-    isUpdatingRef.current = false;
   }
 
   function handleEditorClick(e: React.MouseEvent) {
@@ -239,7 +244,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
     const pill = target.closest('[data-field]') as HTMLElement | null;
     if (pill && editorRef.current?.contains(pill)) {
       pill.remove();
-      syncContentFromEditor();
+      syncMergeFieldsFromEditor();
     }
   }
 
@@ -254,6 +259,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
     setEditContent('');
     setEditMergeFields([]);
     setShowPreview(false);
+    editorInitRef.current++;
   }
 
   function startEdit(template: DocumentTemplate) {
@@ -267,6 +273,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
     setEditContent(template.content);
     setEditMergeFields(template.mergeFields || []);
     setShowPreview(false);
+    editorInitRef.current++;
   }
 
   function cancelEdit() {
@@ -301,7 +308,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
       editor.appendChild(pill);
     }
 
-    syncContentFromEditor();
+    syncMergeFieldsFromEditor();
     editor.focus();
   }, []);
 
@@ -401,7 +408,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
 
   // Preview: replace merge fields with sample data
   function getPreviewContent() {
-    let preview = editContent;
+    let preview = readEditorContent();
     for (const [key, value] of Object.entries(SAMPLE_DATA)) {
       preview = preview.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), `<span class="bg-teal-100 text-teal-800 px-1 rounded font-medium">${value}</span>`);
     }
@@ -630,7 +637,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
                         contentEditable
                         suppressContentEditableWarning
                         onClick={handleEditorClick}
-                        onInput={syncContentFromEditor}
+                        onInput={syncMergeFieldsFromEditor}
                         className="w-full px-3 py-2 text-sm border rounded-md min-h-[400px] bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 whitespace-pre-wrap overflow-y-auto"
                         style={{ lineHeight: '1.8' }}
                       />
