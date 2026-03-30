@@ -334,7 +334,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
         const res = await fetch('/api/resource-planning/optimize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scope, techniques: stepDefs[i].options }),
+          body: JSON.stringify({ scope, techniques: stepDefs[i].options, skipSummary: true }),
         });
 
         const data = await res.json();
