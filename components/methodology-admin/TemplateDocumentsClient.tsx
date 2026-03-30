@@ -6,6 +6,7 @@ import {
   Save, Loader2, Plus, X, Trash2, Copy, Eye, Code,
   FileText, Variable, Search, ToggleLeft, ToggleRight,
   List, ListOrdered, Table, Bold, Italic, MessageSquare, Hash,
+  Layout, Link2,
 } from 'lucide-react';
 import { BackButton } from './BackButton';
 
@@ -79,9 +80,11 @@ const MERGE_FIELD_CATEGORIES = [
     ],
   },
   {
-    category: 'Portal',
+    category: 'Links',
     fields: [
       { key: 'portal_link', label: 'Client Portal Link', source: 'portal', path: 'portalLink' },
+      { key: 'custom_link', label: 'Custom Link', source: 'system', path: 'customLink' },
+      { key: 'job_section_link', label: 'Job Section Link', source: 'engagement', path: 'jobSectionLink' },
     ],
   },
 ];
@@ -124,6 +127,20 @@ const RECIPIENT_CATEGORIES = [
 const RESPONSE_OPTIONS = [
   { key: 'yes_no', label: 'Yes / No', options: ['Yes', 'No'] },
   { key: 'yes_no_na', label: 'Yes / No / N/A', options: ['Yes', 'No', 'N/A'] },
+];
+
+const JOB_SECTIONS = [
+  { key: 'opening', label: 'Opening' },
+  { key: 'prior-period', label: 'Prior Period' },
+  { key: 'permanent-file', label: 'Permanent File' },
+  { key: 'ethics', label: 'Ethics' },
+  { key: 'continuance', label: 'Continuance' },
+  { key: 'tb', label: 'Trial Balance CY v PY' },
+  { key: 'materiality', label: 'Materiality' },
+  { key: 'par', label: 'Preliminary Analytical Review' },
+  { key: 'rmm', label: 'Identifying & Assessing RMM' },
+  { key: 'documents', label: 'Documents' },
+  { key: 'portal', label: 'Client Portal' },
 ];
 
 interface MergeField {
@@ -239,6 +256,8 @@ const SAMPLE_DATA: Record<string, string> = {
   preparer_name: 'Sarah Williams',
   current_user: 'Stuart Thomson',
   portal_link: 'https://app.acumon.co.uk/portal?token=abc123&client=acme&engagement=fy2026',
+  custom_link: 'https://example.com/custom-resource',
+  job_section_link: 'https://app.acumon.co.uk/methodology/sme-audit?tab=ethics',
 };
 
 // ─── Component ───────────────────────────────────────────────────
@@ -266,6 +285,8 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
   const [editContent, setEditContent] = useState('');
   const [editMergeFields, setEditMergeFields] = useState<MergeField[]>([]);
   const [editRecipients, setEditRecipients] = useState<string[]>([]);
+  const [editCustomLinkLabel, setEditCustomLinkLabel] = useState('');
+  const [editCustomLinkUrl, setEditCustomLinkUrl] = useState('');
   const [showPreview, setShowPreview] = useState(false);
   const [fieldSearch, setFieldSearch] = useState('');
 
@@ -407,6 +428,8 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     setEditContent('');
     setEditMergeFields([]);
     setEditRecipients([]);
+    setEditCustomLinkLabel('');
+    setEditCustomLinkUrl('');
     setShowPreview(false);
     editorInitRef.current++;
   }
@@ -423,6 +446,9 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     setEditContent(template.content);
     setEditMergeFields(template.mergeFields || []);
     setEditRecipients(template.recipients || []);
+    const meta = (template as any).customLinkConfig;
+    setEditCustomLinkLabel(meta?.label || '');
+    setEditCustomLinkUrl(meta?.url || '');
     setShowPreview(false);
     editorInitRef.current++;
   }
@@ -654,6 +680,14 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     setTableMenu(null);
   }
 
+  function insertJobSectionLink(section: typeof JOB_SECTIONS[number]) {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const html = `<a contenteditable="false" data-job-section="${section.key}" href="#" class="inline-flex items-center px-2 py-0.5 mx-0.5 rounded text-[11px] font-medium bg-indigo-100 text-indigo-800 border border-indigo-300 no-underline select-none">${section.label}</a>`;
+    document.execCommand('insertHTML', false, html);
+    editor.focus();
+  }
+
   function insertResponseOption(opt: typeof RESPONSE_OPTIONS[number]) {
     const editor = editorRef.current;
     if (!editor) return;
@@ -738,6 +772,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
           content: raw,
           mergeFields: fields,
           recipients: editRecipients,
+          customLinkConfig: (editCustomLinkLabel || editCustomLinkUrl) ? { label: editCustomLinkLabel, url: editCustomLinkUrl } : null,
         };
 
         if (isCreating) {
@@ -1400,6 +1435,65 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                               </span>
                             </button>
                           ))}
+                        </div>
+                      </div>
+
+                      {/* Job Sections */}
+                      <div className="border rounded-lg bg-indigo-50/50 p-2 mt-2">
+                        <div className="flex items-center gap-1 mb-2">
+                          <Layout className="h-3.5 w-3.5 text-indigo-600" />
+                          <span className="text-xs font-semibold text-slate-700">Job Sections</span>
+                        </div>
+                        <div className="max-h-[200px] overflow-y-auto space-y-0.5">
+                          {JOB_SECTIONS.map((section) => (
+                            <button
+                              key={section.key}
+                              onClick={() => insertJobSectionLink(section)}
+                              className="w-full text-left px-1.5 py-1 rounded text-[11px] text-slate-600 hover:bg-indigo-100 transition-colors flex items-center gap-1.5"
+                            >
+                              <span className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 bg-indigo-400" />
+                              <span className="truncate">{section.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Custom Link */}
+                      <div className="border rounded-lg bg-violet-50/50 p-2 mt-2">
+                        <div className="flex items-center gap-1 mb-2">
+                          <Link2 className="h-3.5 w-3.5 text-violet-600" />
+                          <span className="text-xs font-semibold text-slate-700">Custom Link</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mb-2">Set when sending — the user provides the URL at send time.</p>
+                        <div className="space-y-1.5">
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Link Label (display text)</label>
+                            <input
+                              type="text"
+                              value={editCustomLinkLabel}
+                              onChange={(e) => setEditCustomLinkLabel(e.target.value)}
+                              placeholder="e.g. View Document"
+                              className="w-full px-1.5 py-1 text-[11px] border rounded"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Default URL (optional)</label>
+                            <input
+                              type="text"
+                              value={editCustomLinkUrl}
+                              onChange={(e) => setEditCustomLinkUrl(e.target.value)}
+                              placeholder="e.g. https://..."
+                              className="w-full px-1.5 py-1 text-[11px] border rounded"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => insertMergeField('custom_link', editCustomLinkLabel || 'Custom Link', 'system', 'customLink')}
+                            className="w-full text-left px-1.5 py-1.5 rounded text-[11px] text-violet-700 bg-violet-100 hover:bg-violet-200 transition-colors flex items-center gap-1.5 font-medium"
+                          >
+                            <Link2 className="h-3 w-3" />
+                            Insert Custom Link
+                          </button>
                         </div>
                       </div>
                     </div>
