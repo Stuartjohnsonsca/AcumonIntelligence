@@ -1503,7 +1503,9 @@ function runSimulatedAnnealing(
 ): { jobResults: JobResult[]; unschedulable: string[] } {
   const T0 = 15.0;
   const T_FINAL = 0.05;
-  const N_ITER = 800;
+  const N_ITER = 200;
+  const SA_WALL_MS = 8_000; // stop early if Vercel function is running long
+  const saDeadline = Date.now() + SA_WALL_MS;
 
   const activeStaff = staff.filter((s) => s.isActive !== false && s.resourceSetting);
   const jobMap = new Map(orderedJobs.map((j) => [j.id, j]));
@@ -1668,6 +1670,7 @@ function runSimulatedAnnealing(
   let bestScore = currentScore;
 
   for (let k = 0; k < N_ITER; k++) {
+    if (Date.now() > saDeadline) break; // time guard — stay within Vercel function budget
     const T = T0 * Math.pow(T_FINAL / T0, k / N_ITER);
     const r = Math.random();
 

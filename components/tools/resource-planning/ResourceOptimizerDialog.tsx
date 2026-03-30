@@ -222,7 +222,7 @@ const TECHNIQUES: TechniqueDef[] = [
   {
     key: 'combinatorial',
     label: 'Combinatorial (Simulated Annealing)',
-    description: 'Escapes local optima via probabilistic exploration. Best for 40+ jobs with cascading conflicts. (~2–4s)',
+    description: 'Escapes local optima via probabilistic exploration. Best for 40+ jobs with cascading conflicts. Adapts to server time budget (~3–8s).',
     defaultChecked: false,
   },
 ];

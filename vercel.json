@@ -4,6 +4,11 @@
   "installCommand": "npm install",
   "outputDirectory": ".next",
   "regions": ["lhr1"],
+  "functions": {
+    "app/api/resource-planning/optimize/route.ts": {
+      "maxDuration": 30
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/cleanup-xero",
