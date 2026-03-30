@@ -222,7 +222,7 @@ const TECHNIQUES: TechniqueDef[] = [
   {
     key: 'combinatorial',
     label: 'Combinatorial (Simulated Annealing)',
-    description: 'Escapes local optima via probabilistic exploration. Best for 40+ jobs with cascading conflicts. Adapts to server time budget (~3–8s).',
+    description: 'Escapes local optima via probabilistic exploration. Best for 40+ jobs with cascading conflicts. (~2–4s)',
     defaultChecked: false,
   },
 ];
@@ -235,7 +235,7 @@ interface StepDef {
   isMultiPass?: boolean; // triggers 15 client-side calls instead of 1
 }
 
-function buildSteps(techniques: SchedulerOptions): StepDef[] {
+function buildSteps(techniques: SchedulerOptions, includeBaseline: boolean): StepDef[] {
   const base: SchedulerOptions = {
     roleScarcity: false,
     constrainedFirst: false,
@@ -245,7 +245,7 @@ function buildSteps(techniques: SchedulerOptions): StepDef[] {
     combinatorial: false,
   };
 
-  const steps: StepDef[] = [{ label: 'Baseline greedy', options: { ...base } }];
+  const steps: StepDef[] = includeBaseline ? [{ label: 'Baseline greedy', options: { ...base } }] : [];
 
   const techOrder: (keyof SchedulerOptions)[] = ['roleScarcity', 'constrainedFirst', 'lookAhead', 'localSearch', 'multiPass', 'combinatorial'];
   const techLabels: Record<keyof SchedulerOptions, string> = {
@@ -287,6 +287,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
   const [, startTransition] = useTransition();
 
   // Technique checkboxes
+  const [includeBaseline, setIncludeBaseline] = useState(false);
   const [techniques, setTechniques] = useState<SchedulerOptions>({
     roleScarcity: TECHNIQUES.find((t) => t.key === 'roleScarcity')?.defaultChecked ?? true,
     constrainedFirst: TECHNIQUES.find((t) => t.key === 'constrainedFirst')?.defaultChecked ?? false,
@@ -296,12 +297,14 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
     combinatorial: TECHNIQUES.find((t) => t.key === 'combinatorial')?.defaultChecked ?? false,
   });
 
+  const hasSteps = includeBaseline || Object.values(techniques).some(Boolean);
+
   function toggleTechnique(key: keyof SchedulerOptions) {
     setTechniques((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
   async function runOptimize(scope: 'all' | 'unscheduled') {
-    const stepDefs = buildSteps(techniques);
+    const stepDefs = buildSteps(techniques, includeBaseline);
 
     // Initialise all steps as pending
     const initialSteps: StepState[] = stepDefs.map((s) => ({
@@ -444,6 +447,23 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
                   Select one or more — each selected technique runs as an additional step, building on the previous.
                 </p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                  {/* Baseline greedy — opt-in, not automatic */}
+                  <label className="flex items-start gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={includeBaseline}
+                      onChange={() => setIncludeBaseline((v) => !v)}
+                      className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500 cursor-pointer flex-shrink-0"
+                    />
+                    <span className="space-y-0.5">
+                      <span className="block text-xs font-medium text-slate-700 group-hover:text-slate-900 leading-tight">
+                        Baseline greedy
+                      </span>
+                      <span className="block text-[11px] text-slate-400 leading-snug">
+                        Plain greedy pass with no enhancements. Use as a comparison baseline.
+                      </span>
+                    </span>
+                  </label>
                   {TECHNIQUES.map((t) => (
                     <label key={t.key} className="flex items-start gap-2 cursor-pointer group">
                       <input
@@ -466,10 +486,16 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
               </div>
 
               {/* Scope buttons */}
+              {!hasSteps && (
+                <p className="text-[11px] text-amber-600 text-center font-medium">
+                  Select at least one technique above to enable the optimiser.
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => runOptimize('all')}
-                  className="flex flex-col items-start gap-1 border-2 border-violet-200 rounded-lg p-4 hover:border-violet-400 hover:bg-violet-50 transition-colors text-left"
+                  disabled={!hasSteps}
+                  className="flex flex-col items-start gap-1 border-2 border-violet-200 rounded-lg p-4 hover:border-violet-400 hover:bg-violet-50 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-violet-200 disabled:hover:bg-transparent"
                 >
                   <div className="flex items-center gap-2">
                     <Zap className="h-4 w-4 text-violet-600" />
@@ -481,7 +507,8 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
                 </button>
                 <button
                   onClick={() => runOptimize('unscheduled')}
-                  className="flex flex-col items-start gap-1 border-2 border-blue-200 rounded-lg p-4 hover:border-blue-400 hover:bg-blue-50 transition-colors text-left"
+                  disabled={!hasSteps}
+                  className="flex flex-col items-start gap-1 border-2 border-blue-200 rounded-lg p-4 hover:border-blue-400 hover:bg-blue-50 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-blue-200 disabled:hover:bg-transparent"
                 >
                   <div className="flex items-center gap-2">
                     <ListTodo className="h-4 w-4 text-blue-600" />

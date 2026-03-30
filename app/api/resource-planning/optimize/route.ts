@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth';
+
+// Allow up to 30 s on Vercel Pro/Enterprise (capped at plan limit on Hobby)
+export const maxDuration = 30;
 import { prisma } from '@/lib/db';
 import { summarizeSchedule } from '@/lib/resource-planning/optimizer-ai';
 import { runScheduler, type SchedulerOptions } from '@/lib/resource-planning/scheduler';

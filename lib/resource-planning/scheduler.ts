@@ -1503,8 +1503,8 @@ function runSimulatedAnnealing(
 ): { jobResults: JobResult[]; unschedulable: string[] } {
   const T0 = 15.0;
   const T_FINAL = 0.05;
-  const N_ITER = 200;
-  const SA_WALL_MS = 8_000; // stop early if Vercel function is running long
+  const N_ITER = 100;
+  const SA_WALL_MS = 4_000; // 4 s max — leaves headroom for DB + greedy phases
   const saDeadline = Date.now() + SA_WALL_MS;
 
   const activeStaff = staff.filter((s) => s.isActive !== false && s.resourceSetting);
