@@ -61,9 +61,10 @@ interface Props {
   teamMembers: TeamMember[];
   children: React.ReactNode;
   savingStatus?: { saving: boolean; lastSaved: Date | null; error?: string | null };
+  headerActions?: React.ReactNode; // Custom buttons to the left of sign-off dots
 }
 
-export function SignOffHeader({ engagementId, endpoint, title, teamMembers, children, savingStatus }: Props) {
+export function SignOffHeader({ engagementId, endpoint, title, teamMembers, children, savingStatus, headerActions }: Props) {
   const { data: session } = useSession();
   const [signOffs, setSignOffs] = useState<SignOffs>({});
   const [fieldMeta, setFieldMeta] = useState<Record<string, FieldMeta>>({});
@@ -167,6 +168,9 @@ export function SignOffHeader({ engagementId, endpoint, title, teamMembers, chil
                 </div>
               )}
             </div>
+
+            {/* Custom header actions */}
+            {headerActions}
 
             {/* Sign-off dots */}
             <div className="flex items-center gap-5">
