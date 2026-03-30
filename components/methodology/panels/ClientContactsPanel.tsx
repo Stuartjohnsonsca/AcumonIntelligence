@@ -17,10 +17,36 @@ export function ClientContactsPanel({ engagementId, clientId, initialContacts }:
 
   useEffect(() => { setContacts(initialContacts); }, [initialContacts]);
 
+  // Load portal users to set portalAccess checkboxes on mount
+  useEffect(() => {
+    async function loadPortalUsers() {
+      try {
+        const res = await fetch(`/api/portal/users?clientId=${clientId}`);
+        if (res.ok) {
+          const users = await res.json();
+          const activeEmails = new Set(
+            (Array.isArray(users) ? users : [])
+              .filter((u: any) => u.isActive)
+              .map((u: any) => u.email?.toLowerCase())
+          );
+          setContacts(prev => prev.map(c => ({
+            ...c,
+            portalAccess: c.email ? activeEmails.has(c.email.toLowerCase()) : false,
+          })));
+        }
+      } catch {}
+    }
+    if (clientId) loadPortalUsers();
+  }, [clientId, initialContacts]);
+
+  // Strip portalAccess before saving — it's not a DB field on AuditClientContact
+  const contactsForSave = contacts.map(({ portalAccess, ...rest }) => rest);
+  const initialForSave = initialContacts.map(({ portalAccess, ...rest }) => rest);
+
   const { saving, lastSaved } = useAutoSave(
     `/api/engagements/${engagementId}/contacts`,
-    { contacts },
-    { enabled: contacts !== initialContacts }
+    { contacts: contactsForSave },
+    { enabled: JSON.stringify(contactsForSave) !== JSON.stringify(initialForSave) }
   );
 
   function addContact() {
