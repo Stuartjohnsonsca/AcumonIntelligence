@@ -5,6 +5,8 @@ import {
   Upload, CheckCircle2, AlertCircle, Loader2, X, FileText, Mail, MapPin, ArrowLeft,
 } from 'lucide-react';
 import Link from 'next/link';
+import { OutstandingTab } from '@/components/portal/OutstandingTab';
+import { RespondedTab } from '@/components/portal/RespondedTab';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,8 +56,8 @@ const EVIDENCE_COLUMNS = [
 const CONFIRMATION_TYPES = new Set(['supplierConfirmation', 'debtorConfirmation']);
 
 const AUDIT_SUB_TABS = [
-  { key: 'background', label: 'Background' },
-  { key: 'financial', label: 'Financial' },
+  { key: 'outstanding', label: 'Outstanding' },
+  { key: 'responded', label: 'Responded' },
   { key: 'evidence', label: 'Evidence' },
   { key: 'concerns', label: 'Concerns' },
   { key: 'confirmations', label: 'Confirmations' },
@@ -87,7 +89,7 @@ const DOT_STYLES = {
 export default function PortalAuditPage() {
   const [clients, setClients] = useState<ClientInfo[]>([]);
   const [activeClientId, setActiveClientId] = useState('');
-  const [activeSubTab, setActiveSubTab] = useState('evidence');
+  const [activeSubTab, setActiveSubTab] = useState('outstanding');
   const [requests, setRequests] = useState<EvidenceRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -357,20 +359,12 @@ export default function PortalAuditPage() {
         </div>
       )}
 
-      {activeSubTab === 'background' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Background Information</h3>
-          <p className="text-xs text-slate-400">Client background, industry context, and key information for the audit engagement.</p>
-          <p className="text-xs text-slate-300 mt-4 italic">Coming soon</p>
-        </div>
+      {activeSubTab === 'outstanding' && activeClientId && (
+        <OutstandingTab clientId={activeClientId} token={token} />
       )}
 
-      {activeSubTab === 'financial' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Financial Information</h3>
-          <p className="text-xs text-slate-400">Financial statements, trial balance data, and key financial metrics.</p>
-          <p className="text-xs text-slate-300 mt-4 italic">Coming soon</p>
-        </div>
+      {activeSubTab === 'responded' && activeClientId && (
+        <RespondedTab clientId={activeClientId} token={token} />
       )}
 
       {activeSubTab === 'concerns' && (

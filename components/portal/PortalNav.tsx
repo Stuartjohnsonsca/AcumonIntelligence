@@ -1,10 +1,11 @@
 'use client';
 
+import { Suspense } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Home, User, LogOut } from 'lucide-react';
 
-export function PortalNav() {
+function PortalNavInner() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
@@ -75,4 +76,8 @@ export function PortalNav() {
       </div>
     </header>
   );
+}
+
+export function PortalNav() {
+  return <Suspense><PortalNavInner /></Suspense>;
 }

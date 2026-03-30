@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2, Plus, Trash2, Lock, Users, Building2, Check } from 'lucide-react';
 
@@ -19,7 +19,7 @@ interface PortalUser {
   lastLoginAt: string | null;
 }
 
-export default function MyDetailsPage() {
+function MyDetailsContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
 
@@ -255,4 +255,8 @@ export default function MyDetailsPage() {
       </div>
     </div>
   );
+}
+
+export default function MyDetailsPage() {
+  return <Suspense><MyDetailsContent /></Suspense>;
 }
