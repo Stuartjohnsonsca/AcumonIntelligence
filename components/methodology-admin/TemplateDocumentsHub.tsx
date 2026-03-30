@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Mail, FileText } from 'lucide-react';
+import { Mail, FileText, ClipboardList } from 'lucide-react';
 import { BackButton } from './BackButton';
 
 const options = [
@@ -23,6 +23,15 @@ const options = [
     iconColor: 'text-indigo-600',
     iconBg: 'bg-indigo-100',
   },
+  {
+    title: 'Questionnaires',
+    description: 'Build custom questionnaires with grouped questions, preset answers, and free text responses',
+    href: '/methodology-admin/template-documents/questionnaires',
+    icon: ClipboardList,
+    color: 'bg-amber-50 border-amber-200 hover:bg-amber-100 hover:border-amber-300',
+    iconColor: 'text-amber-600',
+    iconBg: 'bg-amber-100',
+  },
 ];
 
 export function TemplateDocumentsHub() {
@@ -36,7 +45,7 @@ export function TemplateDocumentsHub() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {options.map((opt) => (
           <Link
             key={opt.href}

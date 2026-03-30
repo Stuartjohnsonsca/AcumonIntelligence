@@ -27,6 +27,27 @@ export async function GET(req: Request) {
   return NextResponse.json({ templates });
 }
 
+export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const { templateType, auditType, items } = await req.json();
+  const firmId = session.user.firmId;
+
+  // For types that allow multiple records (e.g. questionnaire), use a unique auditType suffix
+  const uniqueAuditType = templateType === 'questionnaire'
+    ? `${auditType}_${Date.now()}`
+    : auditType;
+
+  const template = await prisma.methodologyTemplate.create({
+    data: { firmId, templateType, auditType: uniqueAuditType, items },
+  });
+
+  return NextResponse.json(template, { status: 201 });
+}
+
 export async function PUT(req: Request) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin)) {
