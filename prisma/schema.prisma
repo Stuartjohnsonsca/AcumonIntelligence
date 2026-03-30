@@ -891,6 +891,7 @@ model ClientPortalUser {
   name           String
   passwordHash   String    @map("password_hash")
   isActive       Boolean   @default(true) @map("is_active")
+  isClientAdmin  Boolean   @default(false) @map("is_client_admin")
   lastLoginAt    DateTime? @map("last_login_at")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
