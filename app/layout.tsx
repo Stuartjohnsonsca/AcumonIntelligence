@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { Navbar } from '@/components/Navbar';
+import { PortalFooterHider } from '@/components/portal/PortalFooterHider';
 import { AuthProvider } from '@/components/AuthProvider';
 import { BackgroundTaskProvider } from '@/components/BackgroundTaskProvider';
 import { Toaster } from '@/components/ui/toaster';
@@ -33,13 +34,7 @@ export default function RootLayout({
           <div className="min-h-screen flex flex-col">
             <Navbar />
             <main className="flex-1">{children}</main>
-            <footer className="border-t py-8 bg-slate-900 text-slate-400">
-              <div className="container mx-auto px-4 text-center">
-                <p className="text-sm">
-                  &copy; {new Date().getFullYear()} Acumon Intelligence. All rights reserved.
-                </p>
-              </div>
-            </footer>
+            <PortalFooterHider />
           </div>
           <Toaster />
           </KeyboardShortcutProvider>

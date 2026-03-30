@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { useState } from 'react';
 import { Menu, X, ChevronDown, LogIn, LogOut, User, Layers } from 'lucide-react';
@@ -14,6 +14,11 @@ import { BackgroundTaskDots } from '@/components/BackgroundTaskDots';
 export function Navbar() {
   const { data: session } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Hide the main navbar on portal pages — portal has its own nav
+  if (pathname.startsWith('/portal')) return null;
+
   const [mobileOpen, setMobileOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [assuranceOpen, setAssuranceOpen] = useState(false);
