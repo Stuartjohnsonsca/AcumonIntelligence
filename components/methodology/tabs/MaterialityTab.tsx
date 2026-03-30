@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { DynamicAppendixForm } from '../DynamicAppendixForm';
+import { useActionTriggers } from '@/hooks/useActionTriggers';
 import type { TemplateQuestion } from '@/types/methodology';
 
 interface Props {
@@ -24,6 +25,7 @@ export function MaterialityTab({ engagementId }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
   const [questions, setQuestions] = useState<TemplateQuestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const actionTriggers = useActionTriggers();
   const [reportingCurrency, setReportingCurrency] = useState<string | null>(null);
   const [materialityRange, setMaterialityRange] = useState<{ benchmark: string; low: number; high: number }[] | null>(null);
 
@@ -153,6 +155,8 @@ export function MaterialityTab({ engagementId }: Props) {
         questions={processedQuestions}
         initialData={data as Record<string, string | number | boolean | null>}
         currencySymbol={currencySymbol || undefined}
+        showActionTriggers
+        actionTriggerOptions={actionTriggers}
       />
     </div>
   );

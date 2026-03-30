@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { DynamicAppendixForm } from '../DynamicAppendixForm';
+import { useActionTriggers } from '@/hooks/useActionTriggers';
 import type { TemplateQuestion } from '@/types/methodology';
 
 interface Props {
@@ -12,6 +13,7 @@ export function ContinuanceTab({ engagementId }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
   const [questions, setQuestions] = useState<TemplateQuestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const actionTriggers = useActionTriggers();
 
   const loadData = useCallback(async () => {
     try {
@@ -63,6 +65,8 @@ export function ContinuanceTab({ engagementId }: Props) {
       endpoint="continuance"
       questions={questions}
       initialData={data as Record<string, string | number | boolean | null>}
+      showActionTriggers
+      actionTriggerOptions={actionTriggers}
     />
   );
 }
