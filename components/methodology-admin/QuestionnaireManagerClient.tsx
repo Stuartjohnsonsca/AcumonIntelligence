@@ -23,6 +23,8 @@ interface Question {
   options: AnswerOption[];  // For preset / multi_choice
   required: boolean;
   helpText: string;
+  allowExplanation: boolean;  // Show free text explanation box after selection
+  explanationLabel: string;   // Custom label for the explanation box
 }
 
 interface QuestionGroup {
@@ -68,7 +70,7 @@ function uid() { return `q_${Date.now()}_${++idCounter}`; }
 
 function newOption(): AnswerOption { return { id: uid(), label: '' }; }
 function newQuestion(): Question {
-  return { id: uid(), text: '', answerType: 'yes_no', options: [], required: true, helpText: '' };
+  return { id: uid(), text: '', answerType: 'yes_no', options: [], required: true, helpText: '', allowExplanation: false, explanationLabel: 'Please explain' };
 }
 function newGroup(): QuestionGroup {
   return { id: uid(), title: '', description: '', questions: [newQuestion()] };
@@ -409,8 +411,18 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
                                   {q.options.map(o => o.label).filter(Boolean).join(' / ')}
                                 </span>
                               )}
+                              {q.allowExplanation && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600">+ Explanation</span>
+                              )}
                             </div>
                             {q.helpText && <p className="text-[10px] text-slate-400 mt-0.5 italic">{q.helpText}</p>}
+                            {q.allowExplanation && (
+                              <div className="mt-1 ml-1 flex items-center gap-1 text-[10px] text-amber-600">
+                                <span className="px-1.5 py-0.5 bg-amber-50 rounded border border-amber-200 text-amber-500 italic">
+                                  {q.explanationLabel || 'Please explain'}: _______________
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -555,6 +567,27 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
                                     placeholder="Help text (optional)"
                                     className="flex-1 px-2 py-1 text-[11px] border rounded-md text-slate-500 min-w-[120px]"
                                   />
+                                </div>
+                                {/* Explanation box toggle */}
+                                <div className="flex items-center gap-3 pl-1">
+                                  <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                                    <input
+                                      type="checkbox"
+                                      checked={q.allowExplanation ?? false}
+                                      onChange={(e) => updateQuestion(group.id, q.id, { allowExplanation: e.target.checked })}
+                                      className="rounded border-slate-300"
+                                    />
+                                    Add explanation box
+                                  </label>
+                                  {q.allowExplanation && (
+                                    <input
+                                      type="text"
+                                      value={q.explanationLabel ?? 'Please explain'}
+                                      onChange={(e) => updateQuestion(group.id, q.id, { explanationLabel: e.target.value })}
+                                      placeholder="Label for explanation box"
+                                      className="px-2 py-0.5 text-[11px] border rounded-md text-slate-600 w-48"
+                                    />
+                                  )}
                                 </div>
                                 {/* Preset / multi-choice options */}
                                 {(q.answerType === 'preset' || q.answerType === 'multi_choice') && (
