@@ -89,6 +89,39 @@ export function RespondedTab({ clientId, token }: Props) {
     };
   }, [items]);
 
+  // Frequency chart: bucket items by response time bands
+  const chartBuckets = useMemo(() => {
+    const withTimes = items.filter(i => i.requestedAt && i.respondedAt);
+    if (withTimes.length === 0) return null;
+
+    const HOUR = 60 * 60 * 1000;
+    const buckets = [
+      { label: '<1h', max: HOUR, items: [] as typeof withTimes, color: 'bg-green-500' },
+      { label: '1-4h', max: 4 * HOUR, items: [] as typeof withTimes, color: 'bg-green-400' },
+      { label: '4-12h', max: 12 * HOUR, items: [] as typeof withTimes, color: 'bg-blue-400' },
+      { label: '12-24h', max: 24 * HOUR, items: [] as typeof withTimes, color: 'bg-blue-500' },
+      { label: '1-2d', max: 48 * HOUR, items: [] as typeof withTimes, color: 'bg-amber-400' },
+      { label: '2-3d', max: 72 * HOUR, items: [] as typeof withTimes, color: 'bg-amber-500' },
+      { label: '3-7d', max: 168 * HOUR, items: [] as typeof withTimes, color: 'bg-orange-500' },
+      { label: '>7d', max: Infinity, items: [] as typeof withTimes, color: 'bg-red-500' },
+    ];
+
+    for (const item of withTimes) {
+      const dur = durationBetween(item.requestedAt, item.respondedAt!);
+      for (const bucket of buckets) {
+        if (dur < bucket.max) {
+          bucket.items.push(item);
+          break;
+        }
+      }
+    }
+
+    const maxCount = Math.max(...buckets.map(b => b.items.length), 1);
+    return { buckets, maxCount };
+  }, [items]);
+
+  const [hoveredBar, setHoveredBar] = useState<{ bucketIdx: number; x: number; y: number } | null>(null);
+
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 text-blue-500 animate-spin" /></div>;
 
   return (
@@ -190,6 +223,72 @@ export function RespondedTab({ clientId, token }: Props) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Frequency chart */}
+      {chartBuckets && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5 relative">
+          <div className="flex items-center gap-2 mb-4">
+            <BarChart3 className="h-4 w-4 text-purple-600" />
+            <h3 className="text-sm font-semibold text-slate-800">Response Time Frequency</h3>
+          </div>
+
+          <div className="flex items-end gap-2 h-40">
+            {chartBuckets.buckets.map((bucket, idx) => {
+              const heightPct = chartBuckets.maxCount > 0 ? (bucket.items.length / chartBuckets.maxCount) * 100 : 0;
+              return (
+                <div key={bucket.label} className="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+                  {/* Count label */}
+                  {bucket.items.length > 0 && (
+                    <span className="text-[10px] font-bold text-slate-600">{bucket.items.length}</span>
+                  )}
+                  {/* Bar */}
+                  <div
+                    className={`w-full rounded-t-md ${bucket.color} transition-all cursor-pointer hover:opacity-80 relative`}
+                    style={{ height: `${Math.max(heightPct, bucket.items.length > 0 ? 4 : 0)}%`, minHeight: bucket.items.length > 0 ? '4px' : '0' }}
+                    onMouseEnter={(e) => {
+                      if (bucket.items.length > 0) {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setHoveredBar({ bucketIdx: idx, x: rect.left + rect.width / 2, y: rect.top });
+                      }
+                    }}
+                    onMouseLeave={() => setHoveredBar(null)}
+                  />
+                  {/* Label */}
+                  <span className="text-[9px] text-slate-500 font-medium">{bucket.label}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Hover tooltip */}
+          {hoveredBar !== null && chartBuckets.buckets[hoveredBar.bucketIdx].items.length > 0 && (
+            <div
+              className="absolute z-50 bg-slate-900 text-white rounded-lg shadow-xl p-3 max-w-sm max-h-48 overflow-y-auto"
+              style={{
+                left: '50%',
+                transform: 'translateX(-50%)',
+                bottom: '100%',
+                marginBottom: '8px',
+              }}
+            >
+              <p className="text-[10px] font-semibold text-slate-300 mb-2 border-b border-slate-700 pb-1">
+                {chartBuckets.buckets[hoveredBar.bucketIdx].label} — {chartBuckets.buckets[hoveredBar.bucketIdx].items.length} response{chartBuckets.buckets[hoveredBar.bucketIdx].items.length !== 1 ? 's' : ''}
+              </p>
+              <div className="space-y-2">
+                {chartBuckets.buckets[hoveredBar.bucketIdx].items.map(item => (
+                  <div key={item.id} className="text-[10px]">
+                    <p className="text-slate-200 font-medium">{item.question.length > 80 ? item.question.slice(0, 80) + '…' : item.question}</p>
+                    <p className="text-slate-400 italic mt-0.5">{(item.response || '').length > 60 ? (item.response || '').slice(0, 60) + '…' : item.response}</p>
+                    <p className="text-slate-500 mt-0.5">
+                      {item.respondedAt ? formatDuration(durationBetween(item.requestedAt, item.respondedAt)) : '—'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
