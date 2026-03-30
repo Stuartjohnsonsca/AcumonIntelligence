@@ -61,6 +61,26 @@ export async function sendPortalPasswordResetCode(email: string, name: string, c
   );
 }
 
+export async function sendPortalWelcomeEmail(email: string, name: string, tempPassword: string): Promise<void> {
+  const portalUrl = `${process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app'}/portal`;
+  await sendEmail(
+    email,
+    'Your Audit Portal Access',
+    `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:20px">
+      <h2 style="color:#1e40af;margin-bottom:4px">Acumon Client Portal</h2>
+      <p style="color:#475569;font-size:14px">Hi ${name},</p>
+      <p style="color:#475569;font-size:14px">You have been granted access to the Client Audit Portal. Use the credentials below to sign in:</p>
+      <div style="background:#f1f5f9;border-radius:8px;padding:16px;margin:16px 0">
+        <p style="margin:0 0 8px 0;color:#475569;font-size:13px"><strong>Email:</strong> ${email}</p>
+        <p style="margin:0 0 8px 0;color:#475569;font-size:13px"><strong>Temporary Password:</strong> <code style="background:#e2e8f0;padding:2px 6px;border-radius:4px;font-size:14px">${tempPassword}</code></p>
+        <p style="margin:0;color:#475569;font-size:13px"><strong>Portal:</strong> <a href="${portalUrl}" style="color:#2563eb">${portalUrl}</a></p>
+      </div>
+      <p style="color:#ef4444;font-size:12px;font-weight:600">Please change your password after first login using the "Forgot your password?" link.</p>
+      <p style="color:#94a3b8;font-size:12px">If you did not expect this email, please contact your auditor.</p>
+    </div>`,
+  );
+}
+
 export async function sendEvidenceUploadNotification(
   firmEmail: string,
   clientName: string,

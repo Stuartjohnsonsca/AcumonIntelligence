@@ -46,6 +46,7 @@ export interface ContactData {
   email?: string;
   phone?: string;
   isMainContact: boolean;
+  portalAccess?: boolean;
 }
 
 export interface AgreedDateData {

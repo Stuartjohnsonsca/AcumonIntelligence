@@ -3,12 +3,15 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { verifyClientAccess } from '@/lib/client-access';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import { sendPortalWelcomeEmail } from '@/lib/email-portal';
 
 /**
  * POST /api/portal/users
  * Create a client portal user. Only accessible by firm users with client access.
  *
- * Body: { clientId, email, name, password }
+ * Body: { clientId, email, name, password? }
+ * If password is omitted, a temporary password is generated and emailed.
  */
 export async function POST(req: Request) {
   const session = await auth();
@@ -19,12 +22,8 @@ export async function POST(req: Request) {
   try {
     const { clientId, email, name, password } = await req.json();
 
-    if (!clientId || !email || !name || !password) {
-      return NextResponse.json({ error: 'clientId, email, name, and password are required' }, { status: 400 });
-    }
-
-    if (password.length < 8) {
-      return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
+    if (!clientId || !email || !name) {
+      return NextResponse.json({ error: 'clientId, email, and name are required' }, { status: 400 });
     }
 
     const access = await verifyClientAccess(
@@ -35,7 +34,41 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    // Check if user already exists for this client
+    const existing = await prisma.clientPortalUser.findFirst({
+      where: { clientId, email: email.toLowerCase() },
+    });
+
+    if (existing) {
+      // Re-activate if deactivated
+      if (!existing.isActive) {
+        await prisma.clientPortalUser.update({
+          where: { id: existing.id },
+          data: { isActive: true },
+        });
+        return NextResponse.json({
+          id: existing.id,
+          email: existing.email,
+          name: existing.name,
+          reactivated: true,
+          message: 'Portal access re-activated',
+        });
+      }
+      return NextResponse.json({
+        id: existing.id,
+        email: existing.email,
+        name: existing.name,
+        message: 'Portal user already exists',
+      });
+    }
+
+    // Generate temp password if none provided
+    const tempPassword = password || crypto.randomBytes(6).toString('base64url').slice(0, 12);
+    if (password && password.length < 8) {
+      return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
+    }
+
+    const passwordHash = await bcrypt.hash(tempPassword, 12);
 
     const user = await prisma.clientPortalUser.create({
       data: {
@@ -46,11 +79,19 @@ export async function POST(req: Request) {
       },
     });
 
+    // Send welcome email with temp password
+    try {
+      await sendPortalWelcomeEmail(email, name, tempPassword);
+    } catch (emailErr) {
+      console.error('Failed to send portal welcome email:', emailErr);
+      // Don't fail the creation — user can reset password
+    }
+
     return NextResponse.json({
       id: user.id,
       email: user.email,
       name: user.name,
-      message: 'Portal user created. They can now login at /portal',
+      message: 'Portal user created. Login credentials sent to their email.',
     });
   } catch (error) {
     if ((error as { code?: string }).code === 'P2002') {
@@ -93,4 +134,51 @@ export async function GET(req: Request) {
   });
 
   return NextResponse.json(users);
+}
+
+/**
+ * DELETE /api/portal/users
+ * Deactivate a client portal user.
+ *
+ * Body: { clientId, email }
+ */
+export async function DELETE(req: Request) {
+  const session = await auth();
+  if (!session?.user?.twoFactorVerified) {
+    return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+  }
+
+  try {
+    const { clientId, email } = await req.json();
+
+    if (!clientId || !email) {
+      return NextResponse.json({ error: 'clientId and email are required' }, { status: 400 });
+    }
+
+    const access = await verifyClientAccess(
+      session.user as { id: string; firmId: string; isSuperAdmin?: boolean },
+      clientId,
+    );
+    if (!access.allowed) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const user = await prisma.clientPortalUser.findFirst({
+      where: { clientId, email: email.toLowerCase(), isActive: true },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'Portal user not found' }, { status: 404 });
+    }
+
+    await prisma.clientPortalUser.update({
+      where: { id: user.id },
+      data: { isActive: false },
+    });
+
+    return NextResponse.json({ success: true, message: 'Portal access deactivated' });
+  } catch (error) {
+    console.error('Deactivate portal user error:', error);
+    return NextResponse.json({ error: 'Failed to deactivate portal user' }, { status: 500 });
+  }
 }

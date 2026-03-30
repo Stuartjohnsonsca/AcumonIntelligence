@@ -211,6 +211,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
         <div>
           <ClientContactsPanel
             engagementId={engagement.id}
+            clientId={engagement.clientId}
             initialContacts={engagement.contacts}
           />
         </div>

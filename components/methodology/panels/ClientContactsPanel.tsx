@@ -6,11 +6,14 @@ import { useAutoSave } from '@/hooks/useAutoSave';
 
 interface Props {
   engagementId: string;
+  clientId: string;
   initialContacts: ContactData[];
 }
 
-export function ClientContactsPanel({ engagementId, initialContacts }: Props) {
+export function ClientContactsPanel({ engagementId, clientId, initialContacts }: Props) {
   const [contacts, setContacts] = useState<ContactData[]>(initialContacts);
+  const [portalLoading, setPortalLoading] = useState<Record<number, boolean>>({});
+  const [portalError, setPortalError] = useState('');
 
   useEffect(() => { setContacts(initialContacts); }, [initialContacts]);
 
@@ -27,6 +30,7 @@ export function ClientContactsPanel({ engagementId, initialContacts }: Props) {
       email: '',
       phone: '',
       isMainContact: prev.length === 0,
+      portalAccess: false,
     }]);
   }
 
@@ -43,6 +47,62 @@ export function ClientContactsPanel({ engagementId, initialContacts }: Props) {
     setContacts(prev => prev.filter((_, i) => i !== index));
   }
 
+  async function handlePortalToggle(index: number, checked: boolean) {
+    const contact = contacts[index];
+    if (!contact.email?.trim()) {
+      setPortalError('Email address is required for portal access');
+      setTimeout(() => setPortalError(''), 3000);
+      return;
+    }
+    if (!contact.name?.trim()) {
+      setPortalError('Name is required for portal access');
+      setTimeout(() => setPortalError(''), 3000);
+      return;
+    }
+
+    setPortalLoading(prev => ({ ...prev, [index]: true }));
+    setPortalError('');
+
+    try {
+      if (checked) {
+        // Create portal user
+        const res = await fetch('/api/portal/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId,
+            email: contact.email,
+            name: contact.name,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to create portal access');
+        }
+      } else {
+        // Deactivate portal user
+        const res = await fetch('/api/portal/users', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId,
+            email: contact.email,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to remove portal access');
+        }
+      }
+      updateContact(index, 'portalAccess', checked);
+    } catch (err) {
+      setPortalError(err instanceof Error ? err.message : 'Portal access update failed');
+      setTimeout(() => setPortalError(''), 5000);
+    } finally {
+      setPortalLoading(prev => ({ ...prev, [index]: false }));
+    }
+  }
+
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-3">
@@ -56,6 +116,10 @@ export function ClientContactsPanel({ engagementId, initialContacts }: Props) {
         </div>
       </div>
 
+      {portalError && (
+        <div className="mb-2 text-xs text-red-600 bg-red-50 rounded px-2 py-1.5">{portalError}</div>
+      )}
+
       <div className="space-y-2 max-h-[250px] overflow-auto">
         {contacts.length === 0 && (
           <p className="text-xs text-slate-400 italic">No contacts added yet</p>
@@ -63,15 +127,29 @@ export function ClientContactsPanel({ engagementId, initialContacts }: Props) {
         {contacts.map((contact, i) => (
           <div key={contact.id || `new-${i}`} className={`p-2 rounded border ${contact.isMainContact ? 'border-blue-300 bg-blue-50/30' : 'border-slate-100'}`}>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="radio"
-                  checked={contact.isMainContact}
-                  onChange={() => updateContact(i, 'isMainContact', true)}
-                  className="w-3 h-3"
-                />
-                <span className={contact.isMainContact ? 'text-blue-600 font-medium' : 'text-slate-500'}>Main Contact</span>
-              </label>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 text-xs">
+                  <input
+                    type="radio"
+                    checked={contact.isMainContact}
+                    onChange={() => updateContact(i, 'isMainContact', true)}
+                    className="w-3 h-3"
+                  />
+                  <span className={contact.isMainContact ? 'text-blue-600 font-medium' : 'text-slate-500'}>Main Contact</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={contact.portalAccess ?? false}
+                    onChange={(e) => handlePortalToggle(i, e.target.checked)}
+                    disabled={portalLoading[i]}
+                    className="w-3 h-3 rounded border-slate-300"
+                  />
+                  <span className={`${contact.portalAccess ? 'text-green-600 font-medium' : 'text-slate-400'} ${portalLoading[i] ? 'animate-pulse' : ''}`}>
+                    {portalLoading[i] ? 'Updating...' : 'Portal Access'}
+                  </span>
+                </label>
+              </div>
               <button onClick={() => removeContact(i)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
             </div>
             <div className="space-y-1.5">
