@@ -278,11 +278,19 @@ export function RespondedTab({ clientId, token }: Props) {
               </p>
               <div className="space-y-2">
                 {chartBuckets.buckets[hoveredBar.bucketIdx].items.map(item => (
-                  <div key={item.id} className="text-[10px]">
-                    <p className="text-slate-200 font-medium">{item.question.length > 80 ? item.question.slice(0, 80) + '…' : item.question}</p>
-                    <p className="text-slate-400 italic mt-0.5">{(item.response || '').length > 60 ? (item.response || '').slice(0, 60) + '…' : item.response}</p>
+                  <div key={item.id} className="text-[10px] border-b border-slate-700 pb-1.5 last:border-0 last:pb-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className="px-1 py-0.5 rounded bg-slate-700 text-slate-300 font-medium uppercase text-[8px]">
+                        {SECTION_LABELS[item.section] || item.section}
+                      </span>
+                      <span className="text-slate-500">
+                        {item.respondedAt ? formatDuration(durationBetween(item.requestedAt, item.respondedAt)) : '—'}
+                      </span>
+                    </div>
+                    <p className="text-slate-200 font-medium">{item.question}</p>
+                    <p className="text-slate-400 italic mt-0.5">{item.response}</p>
                     <p className="text-slate-500 mt-0.5">
-                      {item.respondedAt ? formatDuration(durationBetween(item.requestedAt, item.respondedAt)) : '—'}
+                      By {item.requestedByName} → {item.respondedByName || 'Portal User'}
                     </p>
                   </div>
                 ))}
