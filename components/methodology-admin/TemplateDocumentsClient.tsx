@@ -159,41 +159,30 @@ interface Props {
   initialCategories?: CategoryOption[];
 }
 
-// ─── Helpers: convert between raw {{key}} content and pill HTML ───
+// ─── Helpers: convert between stored HTML content and editor pill HTML ───
+const PILL_CLASS = 'inline-flex items-center gap-0.5 px-2 py-0.5 mx-0.5 rounded-full text-[11px] font-medium bg-teal-100 text-teal-800 border border-teal-300 cursor-pointer select-none hover:bg-red-100 hover:text-red-700 hover:border-red-300 transition-colors';
+
+/** Convert stored HTML (with {{key}} placeholders) into editor HTML (with pill spans) */
 function contentToHtml(content: string): string {
-  // Escape HTML entities in plain text, then convert {{key}} to pill spans
-  const escaped = content
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  return escaped.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+  return content.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
     const info = FIELD_LOOKUP[key];
     const label = info?.label || key;
-    return `<span contenteditable="false" data-field="${key}" class="inline-flex items-center gap-0.5 px-2 py-0.5 mx-0.5 rounded-full text-[11px] font-medium bg-teal-100 text-teal-800 border border-teal-300 cursor-pointer select-none hover:bg-red-100 hover:text-red-700 hover:border-red-300 transition-colors" title="Click to remove">${label}<span class="text-[9px] ml-0.5 opacity-60">\u00d7</span></span>`;
+    return `<span contenteditable="false" data-field="${key}" class="${PILL_CLASS}" title="Click to remove">${label}<span class="text-[9px] ml-0.5 opacity-60">\u00d7</span></span>`;
   });
 }
 
+/** Convert editor HTML (with pill spans) back to stored HTML (with {{key}} placeholders).
+ *  Preserves all formatting — bold, italic, lists, tables, etc. */
 function htmlToContent(el: HTMLElement): string {
-  let result = '';
-  for (const node of Array.from(el.childNodes)) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      result += node.textContent || '';
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const elem = node as HTMLElement;
-      if (elem.dataset.field) {
-        result += `{{${elem.dataset.field}}}`;
-      } else if (elem.tagName === 'BR') {
-        result += '\n';
-      } else if (elem.tagName === 'DIV' || elem.tagName === 'P') {
-        // contentEditable wraps lines in divs
-        if (result.length > 0 && !result.endsWith('\n')) result += '\n';
-        result += htmlToContent(elem);
-      } else {
-        result += htmlToContent(elem);
-      }
-    }
+  // Clone the DOM so we don't mutate the live editor
+  const clone = el.cloneNode(true) as HTMLElement;
+  // Replace all pill spans with their {{key}} placeholder text
+  for (const pill of Array.from(clone.querySelectorAll('[data-field]'))) {
+    const key = (pill as HTMLElement).dataset.field;
+    pill.replaceWith(`{{${key}}}`);
   }
-  return result;
+  // Return the HTML with pills replaced
+  return clone.innerHTML;
 }
 
 function getUsedFields(content: string): MergeField[] {
@@ -899,7 +888,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                   </div>
                 )}
                 <div
-                  className="prose prose-sm max-w-none border rounded-md p-4 bg-white min-h-[300px] whitespace-pre-wrap"
+                  className="prose prose-sm max-w-none border rounded-md p-4 bg-white min-h-[300px] [&_ul]:list-disc [&_ul]:ml-5 [&_ol]:list-decimal [&_ol]:ml-5 [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-1 [&_th]:border [&_th]:border-slate-300 [&_th]:p-1 [&_th]:bg-slate-50"
                   dangerouslySetInnerHTML={{ __html: getViewHtml(selected.content) }}
                 />
               </div>
@@ -1041,7 +1030,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                     </label>
                     {showPreview ? (
                       <div
-                        className="border rounded-md p-4 bg-white min-h-[400px] prose prose-sm max-w-none"
+                        className="border rounded-md p-4 bg-white min-h-[400px] prose prose-sm max-w-none [&_ul]:list-disc [&_ul]:ml-5 [&_ol]:list-decimal [&_ol]:ml-5 [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-1 [&_th]:border [&_th]:border-slate-300 [&_th]:p-1 [&_th]:bg-slate-50"
                         dangerouslySetInnerHTML={{ __html: getPreviewContent() }}
                       />
                     ) : (
