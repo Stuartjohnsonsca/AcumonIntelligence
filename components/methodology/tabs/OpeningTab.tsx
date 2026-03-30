@@ -6,6 +6,7 @@ import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
 import { TeamPanel } from '../panels/TeamPanel';
 import { ClientContactsPanel } from '../panels/ClientContactsPanel';
+import { ConnectorSetupModal } from '../panels/ConnectorSetupModal';
 
 // Extended type for info requests that may have a receivedAt field
 type InfoRequestWithReceived = { receivedAt?: string | null };
@@ -41,10 +42,26 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   const [connLoading, setConnLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [showConnectorModal, setShowConnectorModal] = useState(false);
+  const [enabledSystems, setEnabledSystems] = useState<string[]>([]);
 
   useEffect(() => {
     setIsGroupAudit(engagement.isGroupAudit);
   }, [engagement.isGroupAudit]);
+
+  // Load firm's enabled connectors
+  useEffect(() => {
+    async function loadEnabledConnectors() {
+      try {
+        const res = await fetch('/api/firm/connectors');
+        if (res.ok) {
+          const data = await res.json();
+          setEnabledSystems(data.enabledConnectors || []);
+        }
+      } catch {}
+    }
+    loadEnabledConnectors();
+  }, []);
 
   // Load accounting connection status
   useEffect(() => {
@@ -87,8 +104,18 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   }
 
   function handleRenewConnection() {
-    const returnUrl = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = `/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${returnUrl}`;
+    setShowConnectorModal(true);
+  }
+
+  function handleConnectorSetupComplete() {
+    // Reload connection status after successful setup
+    setConnLoading(true);
+    setTestResult(null);
+    fetch(`/api/accounting/xero/status?clientId=${engagement.clientId}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data) setConnection(data); })
+      .catch(() => {})
+      .finally(() => setConnLoading(false));
   }
 
   async function updateSetting(field: string, value: boolean | string) {
@@ -383,6 +410,15 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
           </div>
         )}
       </div>
+
+      {/* Connector Setup Modal */}
+      <ConnectorSetupModal
+        isOpen={showConnectorModal}
+        onClose={() => setShowConnectorModal(false)}
+        clientId={engagement.clientId}
+        enabledSystems={enabledSystems}
+        onConnected={handleConnectorSetupComplete}
+      />
     </div>
   );
 }

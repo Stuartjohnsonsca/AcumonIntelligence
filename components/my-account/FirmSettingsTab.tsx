@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Save, Upload, Link2, Check, X, Search, ChevronRight, BookOpen, Plug, Eye, EyeOff, RefreshCw, Sparkles, Pencil } from 'lucide-react';
+import { Loader2, Save, Upload, Link2, Check, X, Search, ChevronRight, BookOpen, Plug, Eye, EyeOff, RefreshCw, Sparkles, Pencil, Plus, Trash2 } from 'lucide-react';
 import { CrmFilterChat } from './CrmFilterChat';
 
 interface TaxonomyConfig {
@@ -195,6 +195,159 @@ function PowerAppsSettings({ firmId }: { firmId: string }) {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Accounting Connectors ───────────────────────────────────
+const ALL_CONNECTORS = [
+  { system: 'xero', label: 'Xero' },
+  { system: 'sage', label: 'Sage' },
+  { system: 'quickbooks', label: 'QuickBooks Online' },
+  { system: 'myob', label: 'MYOB' },
+  { system: 'freeagent', label: 'FreeAgent' },
+  { system: 'kashflow', label: 'KashFlow' },
+];
+
+function AccountingConnectorsSettings() {
+  const [enabled, setEnabled] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [testingSystem, setTestingSystem] = useState('');
+  const [testResults, setTestResults] = useState<Record<string, { connected: boolean; message: string }>>({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/firm/connectors');
+        if (res.ok) {
+          const data = await res.json();
+          setEnabled(data.enabledConnectors || []);
+        }
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+
+  async function saveEnabled(newEnabled: string[]) {
+    setEnabled(newEnabled);
+    setSaving(true);
+    setSaved(false);
+    try {
+      const res = await fetch('/api/firm/connectors', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabledConnectors: newEnabled }),
+      });
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      }
+    } catch {}
+    setSaving(false);
+  }
+
+  function handleAdd(system: string) {
+    if (!enabled.includes(system)) saveEnabled([...enabled, system]);
+  }
+
+  function handleRemove(system: string) {
+    saveEnabled(enabled.filter(s => s !== system));
+  }
+
+  async function handleTest(system: string) {
+    setTestingSystem(system);
+    try {
+      const res = await fetch('/api/firm/connectors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ system }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTestResults(prev => ({ ...prev, [system]: data }));
+      }
+    } catch {
+      setTestResults(prev => ({ ...prev, [system]: { connected: false, message: 'Test failed' } }));
+    }
+    setTestingSystem('');
+  }
+
+  if (loading) return null;
+
+  const available = ALL_CONNECTORS.filter(c => !enabled.includes(c.system));
+
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-5">
+      <div className="flex items-center gap-2 mb-1">
+        <Plug className="h-4 w-4 text-blue-600" />
+        <h3 className="text-sm font-semibold text-slate-700">Accounting System Connectors</h3>
+        {saved && <span className="text-xs text-green-600 font-medium ml-2">Saved ✓</span>}
+      </div>
+      <p className="text-xs text-slate-400 mb-4">
+        Enable connectors for accounting systems your firm uses. These will be available when setting up client connections.
+      </p>
+
+      {/* Enabled connectors */}
+      {enabled.length === 0 ? (
+        <p className="text-xs text-slate-400 italic mb-3">No connectors enabled yet.</p>
+      ) : (
+        <div className="space-y-2 mb-4">
+          {enabled.map(sys => {
+            const conn = ALL_CONNECTORS.find(c => c.system === sys);
+            const result = testResults[sys];
+            return (
+              <div key={sys} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2">
+                  <Plug className="h-4 w-4 text-blue-500" />
+                  <span className="text-sm font-medium text-slate-700">{conn?.label || sys}</span>
+                  {result && (
+                    <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${
+                      result.connected ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {result.connected ? <Check className="h-2.5 w-2.5" /> : null}
+                      {result.connected ? 'Verified' : result.message}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleTest(sys)}
+                    disabled={testingSystem === sys}
+                    className="text-[10px] px-2 py-1 text-blue-600 hover:bg-blue-50 rounded font-medium disabled:opacity-40"
+                  >
+                    {testingSystem === sys ? <Loader2 className="h-3 w-3 animate-spin inline" /> : <Check className="h-3 w-3 inline mr-0.5" />}
+                    Verify
+                  </button>
+                  <button
+                    onClick={() => handleRemove(sys)}
+                    className="text-[10px] px-2 py-1 text-red-500 hover:bg-red-50 rounded font-medium"
+                  >
+                    <Trash2 className="h-3 w-3 inline mr-0.5" /> Remove
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add connector */}
+      {available.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-slate-500">Add:</span>
+          {available.map(c => (
+            <button
+              key={c.system}
+              onClick={() => handleAdd(c.system)}
+              className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 bg-white border border-dashed border-slate-300 rounded-lg hover:border-blue-400 hover:bg-blue-50 text-slate-600 hover:text-blue-700 transition-colors"
+            >
+              <Plus className="h-3 w-3" /> {c.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -459,6 +612,9 @@ export function FirmSettingsTab({ firmId }: Props) {
         )}
         {taxonomySaved && <span className="text-sm text-green-600 font-medium mt-2 block">Saved</span>}
       </div>
+
+      {/* ─── Accounting System Connectors ─────────────────────────────────── */}
+      <AccountingConnectorsSettings />
 
       {/* ─── PowerApps / Dynamics 365 ─────────────────────────────────────── */}
       <PowerAppsSettings firmId={firmId} />
