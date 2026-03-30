@@ -23,10 +23,12 @@ export async function POST(req: Request) {
         where: { email: email.toLowerCase(), isActive: true },
       });
 
-      // Always return success to avoid email enumeration
       if (!user) {
-        return NextResponse.json({ message: 'If an account exists with that email, a reset code has been sent.' });
+        console.warn(`[Portal Reset] No active portal user found for email: ${email.toLowerCase()}`);
+        return NextResponse.json({ error: 'No portal account found with that email address. Please contact your auditor to set up portal access.' }, { status: 404 });
       }
+
+      console.log(`[Portal Reset] Found portal user ${user.id} for email ${user.email}`);
 
       // Generate 6-digit code
       const resetCode = String(Math.floor(100000 + Math.random() * 900000));
