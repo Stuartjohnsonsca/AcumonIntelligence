@@ -142,7 +142,8 @@ export default function PortalAuditPage() {
 
       const clientList = Array.from(clientMap.entries()).map(([id, name]) => ({ id, clientName: name }));
       setClients(clientList);
-      if (clientList.length > 0 && !activeClientId) {
+      // Only auto-select if there's exactly 1 client
+      if (clientList.length === 1 && !activeClientId) {
         setActiveClientId(clientList[0].id);
       }
     } catch (err) {
@@ -247,30 +248,30 @@ export default function PortalAuditPage() {
         </div>
       </div>
 
-      {/* Client tabs */}
-      {clients.length > 1 && (
-        <div className="flex gap-1 border-b border-slate-200">
+      {/* Client selector */}
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium text-slate-600">Client:</label>
+        <select
+          value={activeClientId}
+          onChange={(e) => setActiveClientId(e.target.value)}
+          className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white min-w-[250px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">Select a client...</option>
           {clients.map(client => (
-            <button
-              key={client.id}
-              onClick={() => setActiveClientId(client.id)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeClientId === client.id
-                  ? 'border-blue-600 text-blue-700'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {client.clientName}
-            </button>
+            <option key={client.id} value={client.id}>{client.clientName}</option>
           ))}
+        </select>
+      </div>
+
+      {/* No client selected */}
+      {!activeClientId && clients.length > 1 && (
+        <div className="text-center py-16">
+          <p className="text-sm text-slate-500">Please select a client from the dropdown above to view audit details.</p>
         </div>
       )}
-      {clients.length === 1 && (
-        <div className="text-sm font-medium text-slate-700">{clients[0].clientName}</div>
-      )}
 
-      {/* Sub-tabs */}
-      <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+      {/* Sub-tabs — only show when client selected */}
+      {activeClientId && <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
         {AUDIT_SUB_TABS.map(tab => (
           <button
             key={tab.key}
@@ -284,7 +285,7 @@ export default function PortalAuditPage() {
             {tab.label}
           </button>
         ))}
-      </div>
+      </div>}
 
       {/* Sub-tab content */}
       {activeSubTab === 'evidence' && (
