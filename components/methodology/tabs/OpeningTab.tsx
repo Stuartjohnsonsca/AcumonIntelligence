@@ -10,6 +10,21 @@ import { ClientContactsPanel } from '../panels/ClientContactsPanel';
 // Extended type for info requests that may have a receivedAt field
 type InfoRequestWithReceived = { receivedAt?: string | null };
 
+interface ConnectionStatus {
+  connected: boolean;
+  system?: string;
+  orgName?: string;
+  connectedBy?: string;
+  connectedAt?: string;
+  expiresAt?: string;
+}
+
+function formatDateTime(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
 interface Props {
   engagement: EngagementData;
   auditType: AuditType;
@@ -22,10 +37,59 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   const [isGroupAudit, setIsGroupAudit] = useState(engagement.isGroupAudit);
   const [showCategory, setShowCategory] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [connection, setConnection] = useState<ConnectionStatus | null>(null);
+  const [connLoading, setConnLoading] = useState(true);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     setIsGroupAudit(engagement.isGroupAudit);
   }, [engagement.isGroupAudit]);
+
+  // Load accounting connection status
+  useEffect(() => {
+    async function loadConnection() {
+      try {
+        const res = await fetch(`/api/accounting/xero/status?clientId=${engagement.clientId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setConnection(data);
+        }
+      } catch (err) {
+        console.error('Failed to load connection status:', err);
+      } finally {
+        setConnLoading(false);
+      }
+    }
+    loadConnection();
+  }, [engagement.clientId]);
+
+  async function handleTestConnection() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`/api/accounting/xero/status?clientId=${engagement.clientId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setConnection(data);
+        setTestResult(data.connected
+          ? { ok: true, message: `Connected to ${data.orgName}` }
+          : { ok: false, message: 'Not connected' }
+        );
+      } else {
+        setTestResult({ ok: false, message: 'Failed to check connection' });
+      }
+    } catch {
+      setTestResult({ ok: false, message: 'Connection test failed' });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  function handleRenewConnection() {
+    const returnUrl = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${returnUrl}`;
+  }
 
   async function updateSetting(field: string, value: boolean | string) {
     setSaving(true);
@@ -239,6 +303,85 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
               );
             })}
         </div>
+      </div>
+
+      {/* Accounting Connection */}
+      <div className="bg-white border border-slate-200 rounded-lg p-5">
+        <h3 className="text-sm font-semibold text-slate-800 mb-3">Accounting Connection</h3>
+        {connLoading ? (
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <div className="animate-spin w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full" />
+            Loading connection status...
+          </div>
+        ) : connection?.connected ? (
+          <div>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-green-500" />
+                <span className="text-xs font-medium text-green-700">Connected</span>
+                {connection.system && (
+                  <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-medium uppercase">
+                    {connection.system}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-4 text-xs mb-4">
+              <div>
+                <span className="text-slate-500 block">Organisation</span>
+                <span className="text-slate-700 font-medium">{connection.orgName || '—'}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Connected by</span>
+                <span className="text-slate-700">{connection.connectedBy || '—'}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Connected</span>
+                <span className="text-slate-700">{connection.connectedAt ? formatDateTime(connection.connectedAt) : '—'}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Expires</span>
+                <span className="text-slate-700">{connection.expiresAt ? formatDateTime(connection.expiresAt) : '—'}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleTestConnection}
+                disabled={testing}
+                className="text-xs px-3 py-1.5 bg-slate-100 text-slate-700 rounded-md hover:bg-slate-200 font-medium disabled:opacity-50"
+              >
+                {testing ? 'Testing...' : 'Test Connection'}
+              </button>
+              <button
+                onClick={handleRenewConnection}
+                className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 font-medium"
+              >
+                Renew Connection
+              </button>
+            </div>
+            {testResult && (
+              <div className={`mt-2 text-xs px-3 py-2 rounded ${
+                testResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+              }`}>
+                {testResult.message}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-2 h-2 rounded-full bg-slate-300" />
+              <span className="text-xs font-medium text-slate-500">Not Connected</span>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">No accounting connection found for this client.</p>
+            <button
+              onClick={handleRenewConnection}
+              className="text-xs px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+            >
+              Connect
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
