@@ -245,7 +245,7 @@ function buildSteps(techniques: SchedulerOptions, includeBaseline: boolean): Ste
     combinatorial: false,
   };
 
-  const steps: StepDef[] = includeBaseline ? [{ label: 'Baseline greedy', options: { ...base } }] : [];
+  const steps: StepDef[] = includeBaseline ? [{ label: 'Baseline pass', options: { ...base } }] : [];
 
   const techOrder: (keyof SchedulerOptions)[] = ['roleScarcity', 'constrainedFirst', 'lookAhead', 'localSearch', 'multiPass', 'combinatorial'];
   const techLabels: Record<keyof SchedulerOptions, string> = {
@@ -447,7 +447,7 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
                   Select one or more — each selected technique runs as an additional step, building on the previous.
                 </p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-                  {/* Baseline greedy — opt-in, not automatic */}
+                  {/* Baseline pass — opt-in, not automatic */}
                   <label className="flex items-start gap-2 cursor-pointer group">
                     <input
                       type="checkbox"
@@ -457,10 +457,10 @@ export function ResourceOptimizerDialog({ onClose }: Props) {
                     />
                     <span className="space-y-0.5">
                       <span className="block text-xs font-medium text-slate-700 group-hover:text-slate-900 leading-tight">
-                        Baseline greedy
+                        Baseline pass
                       </span>
                       <span className="block text-[11px] text-slate-400 leading-snug">
-                        Plain greedy pass with no enhancements. Use as a comparison baseline.
+                        Plain pass with no enhancements. Use as a comparison baseline.
                       </span>
                     </span>
                   </label>

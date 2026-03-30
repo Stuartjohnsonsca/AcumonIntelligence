@@ -770,32 +770,49 @@ const RoleLane = memo(function RoleLane({
 
   const { setNodeRef, isOver } = useDroppable({ id: `lane|${job.engagementId || job.id}|${role}`, disabled: isDisabled });
 
+  // Build sub-rows: RI always 1; non-RI: 1 row per person (min 1 empty drop-row)
+  const subRows: (Allocation | null)[] =
+    role === 'RI'
+      ? [allocations[0] ?? null]
+      : allocations.length > 0
+        ? [...allocations]
+        : [null];
+
   return (
-    <div
-      ref={setNodeRef}
-      className={`relative h-[24px] border-b border-slate-100 group
-        ${isOver ? 'bg-blue-100/60' : ''}
-        ${isDisabled && activeDragUserId ? 'bg-red-50/40' : ''}`}
-      title={role}
-    >
-      <div className="absolute left-0 top-0 bottom-0 flex items-center z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-        <span className="text-[7px] font-bold px-1 bg-white/80 text-slate-500 rounded-r">{role.slice(0, 4)}</span>
-      </div>
-      {/* Week grid lines */}
-      {weeks.map((week, wi) => (
-        <div key={week.toISOString()} className="absolute top-0 bottom-0 border-r border-slate-100/60"
-          style={{ left: `${weekLeftPcts[wi]}%` }}
-        />
-      ))}
-      {allocations.map((alloc) => (
-        <AllocationBar
-          key={alloc.id}
-          allocation={alloc}
-          startDate={startDate}
-          endDate={endDate}
-          totalDays={totalDays}
-          isJobLocked={job.isScheduleLocked}
-        />
+    <div ref={setNodeRef}>
+      {subRows.map((alloc, i) => (
+        <div
+          key={alloc?.id ?? `${role}-empty-${i}`}
+          className={`relative h-[24px] border-b border-slate-100 group
+            ${isOver ? 'bg-blue-100/60' : ''}
+            ${isDisabled && activeDragUserId ? 'bg-red-50/40' : ''}`}
+          title={i === 0 ? role : undefined}
+        >
+          {/* Role hover label — first sub-row only */}
+          {i === 0 && (
+            <div className="absolute left-0 top-0 bottom-0 flex items-center z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+              <span className="text-[7px] font-bold px-1 bg-white/80 text-slate-500 rounded-r">{role.slice(0, 4)}</span>
+            </div>
+          )}
+          {/* Week grid lines */}
+          {weeks.map((week, wi) => (
+            <div
+              key={week.toISOString()}
+              className="absolute top-0 bottom-0 border-r border-slate-100/60"
+              style={{ left: `${weekLeftPcts[wi]}%` }}
+            />
+          ))}
+          {/* One allocation bar per sub-row */}
+          {alloc && (
+            <AllocationBar
+              allocation={alloc}
+              startDate={startDate}
+              endDate={endDate}
+              totalDays={totalDays}
+              isJobLocked={job.isScheduleLocked}
+            />
+          )}
+        </div>
       ))}
     </div>
   );

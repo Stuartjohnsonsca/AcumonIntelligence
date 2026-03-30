@@ -1713,6 +1713,68 @@ function runSimulatedAnnealing(
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 /**
+ * Post-processing: for non-RI roles where hoursPerDay > 6 (heavily loaded),
+ * split the work by adding a second eligible staff member at half the hours.
+ * This implements multi-person-per-role for the optimizer.
+ */
+function addSecondaryStaff(
+  jobResults: JobResult[],
+  orderedJobs: ResourceJobView[],
+  staff: StaffMember[],
+  today: Date,
+): JobResult[] {
+  const jobMap = new Map(orderedJobs.map((j) => [j.id, j]));
+  const NON_RI_ROLES = ['Reviewer', 'Preparer', 'Specialist'] as const;
+
+  return jobResults.map((jr) => {
+    const job = jobMap.get(jr.jobId);
+    if (!job) return jr;
+
+    const extraPlacements: PlacedAllocation[] = [];
+    const usedIds = new Set(jr.placements.map((p) => p.userId));
+
+    for (const role of NON_RI_ROLES) {
+      const primary = jr.placements.find((p) => p.role === role);
+      // Only split if heavily loaded (hoursPerDay > 6) and budget justifies it
+      if (!primary || primary.hoursPerDay <= 6) continue;
+
+      const budget = getBudgetForRole(job, role);
+      if (budget <= 0) continue;
+
+      // Find a second eligible candidate not already on this job
+      const candidate = staff.find(
+        (s) =>
+          s.isActive !== false &&
+          s.resourceSetting != null &&
+          isEligible(s, role, []) &&
+          !usedIds.has(s.id),
+      );
+      if (!candidate) continue;
+
+      const halfBudget = Math.ceil(budget / 2);
+      const weeklyHrs = candidate.resourceSetting!.weeklyCapacityHrs ?? 37.5;
+      const deadline = getJobDeadline(job);
+      const win = computeWindow(halfBudget, weeklyHrs, deadline, today);
+      const daysCount = workingDaysBetween(parseDate(win.startDate), parseDate(win.endDate));
+
+      extraPlacements.push({
+        jobId: jr.jobId,
+        userId: candidate.id,
+        role,
+        startDate: win.startDate,
+        endDate: win.endDate,
+        hoursPerDay: win.hoursPerDay,
+        totalHours: Math.round(win.hoursPerDay * daysCount * 10) / 10,
+      });
+      usedIds.add(candidate.id);
+    }
+
+    if (extraPlacements.length === 0) return jr;
+    return { ...jr, placements: [...jr.placements, ...extraPlacements] };
+  });
+}
+
+/**
  * Run the deterministic resource scheduler.
  *
  * @param jobs           All jobs to schedule (must be pre-filtered to scope, non-locked)
@@ -1873,9 +1935,11 @@ export function runScheduler(
       ).jobResults
     : postLoopResults;
 
+  const withSecondary = addSecondaryStaff(postSAResults, orderedJobs, staff, todayDate);
+
   // ── Build final result ──────────────────────────────────────────────────────
   const staffNameMap = new Map(staff.map((s) => [s.id, s.name]));
-  const finalPlacements = postSAResults.flatMap((jr) => jr.placements);
+  const finalPlacements = withSecondary.flatMap((jr) => jr.placements);
 
   const violations = detectViolations(
     finalPlacements,
@@ -1887,7 +1951,7 @@ export function runScheduler(
     previousTeam,
   );
 
-  const schedule = postSAResults.map((jr) => ({
+  const schedule = withSecondary.map((jr) => ({
     jobId: jr.jobId,
     allocations: jr.placements.map((p): ProposedAllocation => ({
       userId: p.userId,
@@ -1902,7 +1966,7 @@ export function runScheduler(
     })),
   }));
 
-  const changes = computeChanges(postSAResults, jobs, staff, existingAllocations);
+  const changes = computeChanges(withSecondary, jobs, staff, existingAllocations);
 
   return {
     schedule,
