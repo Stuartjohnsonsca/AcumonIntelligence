@@ -11,6 +11,16 @@ import { BackButton } from './BackButton';
 // ─── Available merge fields from system data ─────────────────────
 const MERGE_FIELD_CATEGORIES = [
   {
+    category: 'Recipient',
+    fields: [
+      { key: 'recipient_name', label: 'Recipient Name', source: 'recipient', path: 'name' },
+      { key: 'recipient_first_name', label: 'Recipient First Name', source: 'recipient', path: 'firstName' },
+      { key: 'recipient_surname', label: 'Recipient Surname', source: 'recipient', path: 'surname' },
+      { key: 'recipient_email', label: 'Recipient Email', source: 'recipient', path: 'email' },
+      { key: 'recipient_role', label: 'Recipient Role', source: 'recipient', path: 'role' },
+    ],
+  },
+  {
     category: 'Client',
     fields: [
       { key: 'client_name', label: 'Client Name', source: 'client', path: 'clientName' },
@@ -188,6 +198,11 @@ function getUsedFields(content: string): MergeField[] {
 
 // ─── Sample data for preview ─────────────────────────────────────
 const SAMPLE_DATA: Record<string, string> = {
+  recipient_name: 'John Smith',
+  recipient_first_name: 'John',
+  recipient_surname: 'Smith',
+  recipient_email: 'john.smith@acme.com',
+  recipient_role: 'Finance Director',
   client_name: 'Acme Corporation Ltd',
   client_ref: 'ACM001',
   client_address: '123 Business Street, London EC1A 1BB',
