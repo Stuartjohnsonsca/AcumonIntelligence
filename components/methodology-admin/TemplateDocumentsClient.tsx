@@ -680,7 +680,25 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     setTableMenu(null);
   }
 
+  /** Insert plain text into the subject input at the cursor position */
+  function insertIntoSubject(text: string) {
+    const input = subjectRef.current;
+    if (!input) return;
+    const start = input.selectionStart ?? editSubject.length;
+    const end = input.selectionEnd ?? start;
+    const newVal = editSubject.slice(0, start) + text + editSubject.slice(end);
+    setEditSubject(newVal);
+    setTimeout(() => {
+      input.focus();
+      input.setSelectionRange(start + text.length, start + text.length);
+    }, 0);
+  }
+
   function insertJobSectionLink(section: typeof JOB_SECTIONS[number]) {
+    if (lastFocusRef.current === 'subject') {
+      insertIntoSubject(`[${section.label}]`);
+      return;
+    }
     const editor = editorRef.current;
     if (!editor) return;
     const html = `<a contenteditable="false" data-job-section="${section.key}" href="#" class="inline-flex items-center px-2 py-0.5 mx-0.5 rounded text-[11px] font-medium bg-indigo-100 text-indigo-800 border border-indigo-300 no-underline select-none">${section.label}</a>`;
@@ -689,6 +707,10 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
   }
 
   function insertResponseOption(opt: typeof RESPONSE_OPTIONS[number]) {
+    if (lastFocusRef.current === 'subject') {
+      insertIntoSubject(`[${opt.options.join('/')}]`);
+      return;
+    }
     const editor = editorRef.current;
     if (!editor) return;
     const buttons = opt.options.map(o =>
@@ -706,20 +728,9 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
   }
 
   const insertMergeField = useCallback((key: string, label: string, source: string, path: string) => {
-    const tag = `{{${key}}}`;
-
-    // If subject was last focused, insert into subject line as text
-    if (lastFocusRef.current === 'subject' && subjectRef.current) {
-      const input = subjectRef.current;
-      const start = input.selectionStart ?? editSubject.length;
-      const end = input.selectionEnd ?? start;
-      const newVal = editSubject.slice(0, start) + tag + editSubject.slice(end);
-      setEditSubject(newVal);
-      // Restore cursor after React re-render
-      setTimeout(() => {
-        input.focus();
-        input.setSelectionRange(start + tag.length, start + tag.length);
-      }, 0);
+    // If subject was last focused, insert as {{key}} text
+    if (lastFocusRef.current === 'subject') {
+      insertIntoSubject(`{{${key}}}`);
       return;
     }
 
@@ -752,7 +763,8 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
 
     syncMergeFieldsFromEditor();
     editor.focus();
-  }, [editSubject]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleSave() {
     if (!editName.trim()) return;
