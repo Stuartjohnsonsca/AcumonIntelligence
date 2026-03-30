@@ -59,6 +59,12 @@ const MERGE_FIELD_CATEGORIES = [
       { key: 'current_user', label: 'Current User', source: 'system', path: 'currentUser' },
     ],
   },
+  {
+    category: 'Portal',
+    fields: [
+      { key: 'portal_link', label: 'Client Portal Link', source: 'portal', path: 'portalLink' },
+    ],
+  },
 ];
 
 // Flat lookup for field key → label
@@ -69,7 +75,7 @@ for (const cat of MERGE_FIELD_CATEGORIES) {
   }
 }
 
-const CATEGORIES = [
+const DEFAULT_CATEGORIES = [
   { value: 'general', label: 'General' },
   { value: 'engagement', label: 'Engagement' },
   { value: 'reporting', label: 'Reporting' },
@@ -106,8 +112,14 @@ interface DocumentTemplate {
   updatedAt: string;
 }
 
+interface CategoryOption {
+  value: string;
+  label: string;
+}
+
 interface Props {
   initialTemplates: DocumentTemplate[];
+  initialCategories?: CategoryOption[];
 }
 
 // ─── Helpers: convert between raw {{key}} content and pill HTML ───
@@ -187,10 +199,11 @@ const SAMPLE_DATA: Record<string, string> = {
   reviewer_name: 'Mandhu Chennupati',
   preparer_name: 'Sarah Williams',
   current_user: 'Stuart Thomson',
+  portal_link: 'https://app.acumon.co.uk/portal?token=abc123&client=acme&engagement=fy2026',
 };
 
 // ─── Component ───────────────────────────────────────────────────
-export function TemplateDocumentsClient({ initialTemplates }: Props) {
+export function TemplateDocumentsClient({ initialTemplates, initialCategories }: Props) {
   const [templates, setTemplates] = useState<DocumentTemplate[]>(initialTemplates);
   const [selected, setSelected] = useState<DocumentTemplate | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -198,6 +211,12 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
   const [saving, setSaving] = useState(false);
   const [filterCategory, setFilterCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Admin-managed categories
+  const [categories, setCategories] = useState<CategoryOption[]>(initialCategories || DEFAULT_CATEGORIES);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [newCategoryLabel, setNewCategoryLabel] = useState('');
+  const [savingCategories, setSavingCategories] = useState(false);
 
   // Edit form state
   const [editName, setEditName] = useState('');
@@ -406,6 +425,50 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
     }
   }
 
+  // ─── Category management ─────────────────────────────────────
+  async function handleAddCategory() {
+    if (!newCategoryLabel.trim()) return;
+    const value = newCategoryLabel.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    if (categories.find(c => c.value === value)) return;
+    const updated = [...categories, { value, label: newCategoryLabel.trim() }];
+    setSavingCategories(true);
+    try {
+      const res = await fetch('/api/methodology-admin/template-categories', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categories: updated }),
+      });
+      if (res.ok) {
+        setCategories(updated);
+        setNewCategoryLabel('');
+      }
+    } finally {
+      setSavingCategories(false);
+    }
+  }
+
+  async function handleRemoveCategory(value: string) {
+    const inUse = templates.some(t => t.category === value);
+    if (inUse) {
+      alert('Cannot remove a category that is in use by existing templates.');
+      return;
+    }
+    const updated = categories.filter(c => c.value !== value);
+    setSavingCategories(true);
+    try {
+      const res = await fetch('/api/methodology-admin/template-categories', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categories: updated }),
+      });
+      if (res.ok) {
+        setCategories(updated);
+      }
+    } finally {
+      setSavingCategories(false);
+    }
+  }
+
   // Preview: replace merge fields with sample data
   function getPreviewContent() {
     let preview = readEditorContent();
@@ -437,10 +500,55 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
             Create email templates with merge fields populated from system data
           </p>
         </div>
-        <Button onClick={startCreate} size="sm">
-          <Plus className="h-4 w-4 mr-1" /> New Template
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setShowCategoryManager(!showCategoryManager)} size="sm" variant="outline">
+            {showCategoryManager ? 'Hide Categories' : 'Manage Categories'}
+          </Button>
+          <Button onClick={startCreate} size="sm">
+            <Plus className="h-4 w-4 mr-1" /> New Template
+          </Button>
+        </div>
       </div>
+
+      {/* Category Manager */}
+      {showCategoryManager && (
+        <div className="mb-6 bg-white border border-slate-200 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-slate-800 mb-3">Template Categories</h3>
+          <p className="text-xs text-slate-500 mb-3">Add or remove categories available for email templates.</p>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {categories.map((c) => {
+              const inUse = templates.some(t => t.category === c.value);
+              return (
+                <span key={c.value} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                  {c.label}
+                  <button
+                    onClick={() => handleRemoveCategory(c.value)}
+                    disabled={savingCategories}
+                    className={`ml-0.5 ${inUse ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-red-500 cursor-pointer'}`}
+                    title={inUse ? 'In use — cannot remove' : 'Remove category'}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={newCategoryLabel}
+              onChange={(e) => setNewCategoryLabel(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+              placeholder="New category name..."
+              className="px-2 py-1.5 text-sm border rounded-md w-48"
+            />
+            <Button onClick={handleAddCategory} size="sm" disabled={savingCategories || !newCategoryLabel.trim()}>
+              {savingCategories ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1" />}
+              Add
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-6">
         {/* Left sidebar: template list */}
@@ -462,7 +570,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
               className="w-full px-2 py-1.5 text-sm border rounded-md"
             >
               <option value="all">All Categories</option>
-              {CATEGORIES.map((c) => (
+              {categories.map((c) => (
                 <option key={c.value} value={c.value}>{c.label}</option>
               ))}
             </select>
@@ -534,7 +642,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
               <div className="p-4">
                 <div className="flex gap-2 mb-4">
                   <span className="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600">
-                    {CATEGORIES.find((c) => c.value === selected.category)?.label || selected.category}
+                    {categories.find((c) => c.value === selected.category)?.label || selected.category}
                   </span>
                   <span className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-600">{selected.auditType}</span>
                   <span className="text-xs px-2 py-1 rounded bg-teal-50 text-teal-600">
@@ -598,7 +706,7 @@ export function TemplateDocumentsClient({ initialTemplates }: Props) {
                       onChange={(e) => setEditCategory(e.target.value)}
                       className="w-full px-2 py-1.5 text-sm border rounded-md"
                     >
-                      {CATEGORIES.map((c) => (
+                      {categories.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
                     </select>

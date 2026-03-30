@@ -13,6 +13,8 @@ export default async function EmailTemplatesPage() {
   }
 
   let templates: any[] = [];
+  let categories: { value: string; label: string }[] | undefined;
+
   try {
     templates = await prisma.documentTemplate.findMany({
       where: { firmId: session.user.firmId },
@@ -28,9 +30,27 @@ export default async function EmailTemplatesPage() {
     // Table may not exist yet
   }
 
+  // Load admin-managed categories
+  try {
+    const catRecord = await prisma.methodologyTemplate.findUnique({
+      where: {
+        firmId_templateType_auditType: {
+          firmId: session.user.firmId,
+          templateType: 'email_template_categories',
+          auditType: 'ALL',
+        },
+      },
+    });
+    if (catRecord?.items && Array.isArray(catRecord.items)) {
+      categories = catRecord.items as { value: string; label: string }[];
+    }
+  } catch {
+    // Fall back to defaults
+  }
+
   return (
     <div className="container mx-auto px-4 py-10 max-w-7xl">
-      <TemplateDocumentsClient initialTemplates={templates} />
+      <TemplateDocumentsClient initialTemplates={templates} initialCategories={categories} />
     </div>
   );
 }
