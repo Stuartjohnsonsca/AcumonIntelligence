@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Plus, Trash2, Save, Loader2, X, ChevronDown, ChevronUp,
-  GripVertical, Search, Copy, ClipboardList,
+  GripVertical, Search, Copy, ClipboardList, Mic, Upload,
 } from 'lucide-react';
 import { BackButton } from './BackButton';
 
@@ -25,6 +25,10 @@ interface Question {
   helpText: string;
   allowExplanation: boolean;  // Show free text explanation box after selection
   explanationLabel: string;   // Custom label for the explanation box
+  allowVoiceResponse: boolean;  // Enable voice recording with speech-to-text
+  allowFileUpload: boolean;     // Allow document/file upload as part of response
+  fileUploadLabel: string;      // Custom label for file upload prompt
+  acceptedFileTypes: string;    // e.g. '*' for any, or '.pdf,.docx' etc.
 }
 
 interface QuestionGroup {
@@ -70,7 +74,7 @@ function uid() { return `q_${Date.now()}_${++idCounter}`; }
 
 function newOption(): AnswerOption { return { id: uid(), label: '' }; }
 function newQuestion(): Question {
-  return { id: uid(), text: '', answerType: 'yes_no', options: [], required: true, helpText: '', allowExplanation: false, explanationLabel: 'Please explain' };
+  return { id: uid(), text: '', answerType: 'yes_no', options: [], required: true, helpText: '', allowExplanation: false, explanationLabel: 'Please explain', allowVoiceResponse: false, allowFileUpload: false, fileUploadLabel: 'Upload supporting document', acceptedFileTypes: '*' };
 }
 function newGroup(): QuestionGroup {
   return { id: uid(), title: '', description: '', questions: [newQuestion()] };
@@ -414,13 +418,45 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
                               {q.allowExplanation && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600">+ Explanation</span>
                               )}
+                              {q.allowVoiceResponse && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 inline-flex items-center gap-0.5">
+                                  <Mic className="h-2.5 w-2.5" /> Voice
+                                </span>
+                              )}
+                              {q.allowFileUpload && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 inline-flex items-center gap-0.5">
+                                  <Upload className="h-2.5 w-2.5" /> Upload
+                                </span>
+                              )}
                             </div>
                             {q.helpText && <p className="text-[10px] text-slate-400 mt-0.5 italic">{q.helpText}</p>}
-                            {q.allowExplanation && (
-                              <div className="mt-1 ml-1 flex items-center gap-1 text-[10px] text-amber-600">
-                                <span className="px-1.5 py-0.5 bg-amber-50 rounded border border-amber-200 text-amber-500 italic">
-                                  {q.explanationLabel || 'Please explain'}: _______________
-                                </span>
+                            {/* Response add-ons preview */}
+                            {(q.allowExplanation || q.allowVoiceResponse || q.allowFileUpload) && (
+                              <div className="mt-1.5 ml-1 space-y-1">
+                                {q.allowExplanation && (
+                                  <div className="flex items-center gap-1 text-[10px] text-amber-600">
+                                    <span className="px-1.5 py-0.5 bg-amber-50 rounded border border-amber-200 text-amber-500 italic">
+                                      {q.explanationLabel || 'Please explain'}: _______________
+                                    </span>
+                                  </div>
+                                )}
+                                {q.allowVoiceResponse && (
+                                  <div className="flex items-center gap-1.5 text-[10px] text-rose-500">
+                                    <span className="px-1.5 py-0.5 bg-rose-50 rounded border border-rose-200 inline-flex items-center gap-1">
+                                      <Mic className="h-2.5 w-2.5" /> Record voice response — transcribed &amp; summarised
+                                    </span>
+                                  </div>
+                                )}
+                                {q.allowFileUpload && (
+                                  <div className="flex items-center gap-1.5 text-[10px] text-indigo-500">
+                                    <span className="px-1.5 py-0.5 bg-indigo-50 rounded border border-indigo-200 inline-flex items-center gap-1">
+                                      <Upload className="h-2.5 w-2.5" /> {q.fileUploadLabel || 'Upload supporting document'}
+                                      {q.acceptedFileTypes && q.acceptedFileTypes !== '*' && (
+                                        <span className="text-indigo-400 ml-1">({q.acceptedFileTypes})</span>
+                                      )}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -568,8 +604,9 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
                                     className="flex-1 px-2 py-1 text-[11px] border rounded-md text-slate-500 min-w-[120px]"
                                   />
                                 </div>
-                                {/* Explanation box toggle */}
-                                <div className="flex items-center gap-3 pl-1">
+                                {/* Response options toggles */}
+                                <div className="flex items-center gap-4 pl-1 flex-wrap">
+                                  {/* Explanation box */}
                                   <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
                                     <input
                                       type="checkbox"
@@ -579,16 +616,76 @@ export function QuestionnaireManagerClient({ initialQuestionnaires }: Props) {
                                     />
                                     Add explanation box
                                   </label>
-                                  {q.allowExplanation && (
+                                  {/* Voice response */}
+                                  <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
                                     <input
-                                      type="text"
-                                      value={q.explanationLabel ?? 'Please explain'}
-                                      onChange={(e) => updateQuestion(group.id, q.id, { explanationLabel: e.target.value })}
-                                      placeholder="Label for explanation box"
-                                      className="px-2 py-0.5 text-[11px] border rounded-md text-slate-600 w-48"
+                                      type="checkbox"
+                                      checked={q.allowVoiceResponse ?? false}
+                                      onChange={(e) => updateQuestion(group.id, q.id, { allowVoiceResponse: e.target.checked })}
+                                      className="rounded border-slate-300"
                                     />
-                                  )}
+                                    <Mic className="h-3 w-3 text-rose-500" />
+                                    Voice response
+                                  </label>
+                                  {/* File upload */}
+                                  <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                                    <input
+                                      type="checkbox"
+                                      checked={q.allowFileUpload ?? false}
+                                      onChange={(e) => updateQuestion(group.id, q.id, { allowFileUpload: e.target.checked })}
+                                      className="rounded border-slate-300"
+                                    />
+                                    <Upload className="h-3 w-3 text-indigo-500" />
+                                    File upload
+                                  </label>
                                 </div>
+                                {/* Expanded settings for toggled options */}
+                                {(q.allowExplanation || q.allowVoiceResponse || q.allowFileUpload) && (
+                                  <div className="pl-2 space-y-1.5 border-l-2 border-slate-200 ml-1">
+                                    {q.allowExplanation && (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] text-slate-400 w-24">Explanation label:</span>
+                                        <input
+                                          type="text"
+                                          value={q.explanationLabel ?? 'Please explain'}
+                                          onChange={(e) => updateQuestion(group.id, q.id, { explanationLabel: e.target.value })}
+                                          placeholder="Label for explanation box"
+                                          className="px-2 py-0.5 text-[11px] border rounded-md text-slate-600 w-48"
+                                        />
+                                      </div>
+                                    )}
+                                    {q.allowVoiceResponse && (
+                                      <div className="flex items-center gap-1 text-[10px] text-rose-500">
+                                        <Mic className="h-3 w-3" />
+                                        <span>Voice recording enabled — audio saved as file, transcribed to text, and summarised</span>
+                                      </div>
+                                    )}
+                                    {q.allowFileUpload && (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] text-slate-400 w-24">Upload label:</span>
+                                        <input
+                                          type="text"
+                                          value={q.fileUploadLabel ?? 'Upload supporting document'}
+                                          onChange={(e) => updateQuestion(group.id, q.id, { fileUploadLabel: e.target.value })}
+                                          placeholder="Upload prompt label"
+                                          className="px-2 py-0.5 text-[11px] border rounded-md text-slate-600 w-48"
+                                        />
+                                        <span className="text-[10px] text-slate-400">Accepts:</span>
+                                        <select
+                                          value={q.acceptedFileTypes ?? '*'}
+                                          onChange={(e) => updateQuestion(group.id, q.id, { acceptedFileTypes: e.target.value })}
+                                          className="px-1.5 py-0.5 text-[10px] border rounded bg-white text-slate-600"
+                                        >
+                                          <option value="*">Any file</option>
+                                          <option value=".pdf,.docx,.doc,.xlsx,.xls,.csv">Documents &amp; spreadsheets</option>
+                                          <option value=".pdf,.docx,.doc">Documents only</option>
+                                          <option value=".jpg,.jpeg,.png,.gif,.bmp,.svg">Images only</option>
+                                          <option value=".pdf">PDF only</option>
+                                        </select>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                                 {/* Preset / multi-choice options */}
                                 {(q.answerType === 'preset' || q.answerType === 'multi_choice') && (
                                   <div className="pl-2 space-y-1">
