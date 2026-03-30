@@ -10,7 +10,8 @@ interface Period {
 
 interface Props {
   clientId: string;
-  onProceed: (periodId: string, periodLabel: string) => void;
+  selectedPeriodId: string;
+  onSelect: (periodId: string, periodLabel: string) => void;
 }
 
 function formatDate(dateStr: string): string {
@@ -18,11 +19,7 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function toInputDate(dateStr: string): string {
-  return new Date(dateStr).toISOString().split('T')[0];
-}
-
-export function PeriodsTab({ clientId, onProceed }: Props) {
+export function PeriodsTab({ clientId, selectedPeriodId, onSelect }: Props) {
   const [periods, setPeriods] = useState<Period[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -75,9 +72,9 @@ export function PeriodsTab({ clientId, onProceed }: Props) {
     }
   }
 
-  function handleOpen(period: Period) {
+  function handleSelect(period: Period) {
     const label = `${formatDate(period.startDate)} \u2013 ${formatDate(period.endDate)}`;
-    onProceed(period.id, label);
+    onSelect(period.id, label);
   }
 
   if (loading) {
@@ -151,20 +148,26 @@ export function PeriodsTab({ clientId, onProceed }: Props) {
               </tr>
             </thead>
             <tbody>
-              {periods.map(p => (
-                <tr key={p.id} className="border-b border-slate-50 hover:bg-slate-50">
-                  <td className="px-4 py-2.5 text-sm text-slate-700">{formatDate(p.startDate)}</td>
-                  <td className="px-4 py-2.5 text-sm text-slate-700">{formatDate(p.endDate)}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    <button
-                      onClick={() => handleOpen(p)}
-                      className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
-                    >
-                      Open
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {periods.map(p => {
+                const isSelected = p.id === selectedPeriodId;
+                return (
+                  <tr
+                    key={p.id}
+                    onClick={() => handleSelect(p)}
+                    className={`border-b border-slate-50 cursor-pointer transition-colors ${
+                      isSelected ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    <td className="px-4 py-2.5 text-sm text-slate-700">{formatDate(p.startDate)}</td>
+                    <td className="px-4 py-2.5 text-sm text-slate-700">{formatDate(p.endDate)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      {isSelected && (
+                        <span className="text-xs text-blue-600 font-medium">Selected</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
