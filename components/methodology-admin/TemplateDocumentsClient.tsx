@@ -276,8 +276,11 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
   // Track whether we should skip the next useEffect innerHTML reset
   const editorInitRef = useRef(0);
 
-  // Table context menu
+  // Table context menu (right-click)
   const [tableMenu, setTableMenu] = useState<{ x: number; y: number; cell: HTMLTableCellElement } | null>(null);
+  // Floating table toolbar (shows when cursor is in a table)
+  const [activeTableCell, setActiveTableCell] = useState<HTMLTableCellElement | null>(null);
+  const tableToolbarRef = useRef<HTMLDivElement>(null);
 
   // Close table menu on outside click
   useEffect(() => {
@@ -286,6 +289,22 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, [tableMenu]);
+
+  // Track cursor position in editor to show/hide table toolbar
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !isEditing) return;
+    function handleSelectionChange() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) { setActiveTableCell(null); return; }
+      const node = sel.anchorNode;
+      if (!node || !editor!.contains(node)) { setActiveTableCell(null); return; }
+      const cell = (node.nodeType === Node.ELEMENT_NODE ? node as HTMLElement : node.parentElement)?.closest('td, th') as HTMLTableCellElement | null;
+      setActiveTableCell(cell && editor!.contains(cell) ? cell : null);
+    }
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => document.removeEventListener('selectionchange', handleSelectionChange);
+  }, [isEditing]);
 
   const filteredTemplates = templates.filter((t) => {
     if (filterCategory !== 'all' && t.category !== filterCategory) return false;
@@ -319,6 +338,60 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     if (pill && editorRef.current?.contains(pill)) {
       pill.remove();
       syncMergeFieldsFromEditor();
+    }
+  }
+
+  /** Tab key navigates between table cells */
+  function handleEditorKeyDown(e: React.KeyboardEvent) {
+    if (e.key !== 'Tab') return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const node = sel.anchorNode;
+    const cell = (node?.nodeType === Node.ELEMENT_NODE ? node as HTMLElement : node?.parentElement)?.closest('td, th') as HTMLTableCellElement | null;
+    if (!cell || !editorRef.current?.contains(cell)) return;
+
+    e.preventDefault();
+    const row = cell.closest('tr');
+    const table = cell.closest('table');
+    if (!row || !table) return;
+
+    let nextCell: HTMLTableCellElement | null = null;
+    if (e.shiftKey) {
+      // Move to previous cell
+      if (cell.cellIndex > 0) {
+        nextCell = row.cells[cell.cellIndex - 1];
+      } else {
+        const prevRow = row.previousElementSibling as HTMLTableRowElement | null;
+        if (prevRow) nextCell = prevRow.cells[prevRow.cells.length - 1];
+      }
+    } else {
+      // Move to next cell, add row if at end
+      if (cell.cellIndex < row.cells.length - 1) {
+        nextCell = row.cells[cell.cellIndex + 1];
+      } else {
+        const nextRow = row.nextElementSibling as HTMLTableRowElement | null;
+        if (nextRow) {
+          nextCell = nextRow.cells[0];
+        } else {
+          // Add a new row at the end
+          const colCount = row.cells.length;
+          const newRow = table.ownerDocument.createElement('tr');
+          for (let i = 0; i < colCount; i++) {
+            const td = table.ownerDocument.createElement('td');
+            td.setAttribute('style', cellStyle);
+            td.innerHTML = '&nbsp;';
+            newRow.appendChild(td);
+          }
+          (table.querySelector('tbody') || table).appendChild(newRow);
+          nextCell = newRow.cells[0];
+        }
+      }
+    }
+    if (nextCell) {
+      const range = document.createRange();
+      range.selectNodeContents(nextCell);
+      sel.removeAllRanges();
+      sel.addRange(range);
     }
   }
 
@@ -478,6 +551,81 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
       }
     }
     setTableMenu(null);
+  }
+
+  // ─── Direct cell-based table operations (for floating toolbar) ───
+  function tableAddRowAboveFor(cell: HTMLTableCellElement) {
+    const row = cell.closest('tr');
+    if (!row) return;
+    const newRow = row.ownerDocument.createElement('tr');
+    for (let i = 0; i < row.cells.length; i++) {
+      const td = row.ownerDocument.createElement('td');
+      td.setAttribute('style', cellStyle);
+      td.innerHTML = '&nbsp;';
+      newRow.appendChild(td);
+    }
+    row.before(newRow);
+  }
+
+  function tableAddRowBelowFor(cell: HTMLTableCellElement) {
+    const row = cell.closest('tr');
+    if (!row) return;
+    const newRow = row.ownerDocument.createElement('tr');
+    for (let i = 0; i < row.cells.length; i++) {
+      const td = row.ownerDocument.createElement('td');
+      td.setAttribute('style', cellStyle);
+      td.innerHTML = '&nbsp;';
+      newRow.appendChild(td);
+    }
+    row.after(newRow);
+  }
+
+  function tableAddColLeftFor(cell: HTMLTableCellElement) {
+    const table = cell.closest('table');
+    if (!table) return;
+    const colIdx = cell.cellIndex;
+    for (const row of Array.from(table.rows)) {
+      const td = table.ownerDocument.createElement('td');
+      td.setAttribute('style', cellStyle);
+      td.innerHTML = '&nbsp;';
+      row.cells[colIdx].before(td);
+    }
+  }
+
+  function tableAddColRightFor(cell: HTMLTableCellElement) {
+    const table = cell.closest('table');
+    if (!table) return;
+    const colIdx = cell.cellIndex;
+    for (const row of Array.from(table.rows)) {
+      const td = table.ownerDocument.createElement('td');
+      td.setAttribute('style', cellStyle);
+      td.innerHTML = '&nbsp;';
+      if (colIdx + 1 < row.cells.length) {
+        row.cells[colIdx + 1].before(td);
+      } else {
+        row.appendChild(td);
+      }
+    }
+  }
+
+  function tableDeleteRowFor(cell: HTMLTableCellElement) {
+    const row = cell.closest('tr');
+    const table = cell.closest('table');
+    if (!row || !table) return;
+    if (table.rows.length <= 1) { table.remove(); } else { row.remove(); }
+    setActiveTableCell(null);
+  }
+
+  function tableDeleteColFor(cell: HTMLTableCellElement) {
+    const table = cell.closest('table');
+    if (!table) return;
+    const colIdx = cell.cellIndex;
+    if (table.rows[0].cells.length <= 1) { table.remove(); } else {
+      for (const row of Array.from(table.rows)) {
+        if (row.cells[colIdx]) row.cells[colIdx].remove();
+      }
+    }
+    setActiveTableCell(null);
   }
 
   /** Renumber all <ol> elements inside a table so numbering flows across rows in the same column */
@@ -1120,11 +1268,65 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                           suppressContentEditableWarning
                           onClick={handleEditorClick}
                           onContextMenu={handleEditorContextMenu}
+                          onKeyDown={handleEditorKeyDown}
                           onFocus={() => { lastFocusRef.current = 'body'; }}
                           onInput={syncMergeFieldsFromEditor}
                           className="w-full px-3 py-2 text-sm border rounded-b-md min-h-[400px] bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 overflow-y-auto [&_ul]:list-disc [&_ul]:ml-5 [&_ol]:list-decimal [&_ol]:ml-5 [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-1 [&_th]:border [&_th]:border-slate-300 [&_th]:p-1 [&_th]:bg-slate-50"
                           style={{ lineHeight: '1.8' }}
                         />
+                        {/* Floating table toolbar — appears when cursor is in a table */}
+                        {activeTableCell && (
+                          <div
+                            ref={tableToolbarRef}
+                            className="flex items-center gap-0.5 px-2 py-1 mt-1 bg-slate-100 border border-slate-200 rounded-md text-[10px] text-slate-600"
+                          >
+                            <span className="font-semibold text-slate-500 mr-1">Table:</span>
+                            <button
+                              type="button"
+                              onClick={() => { if (activeTableCell) tableAddRowAboveFor(activeTableCell); }}
+                              onMouseDown={e => e.preventDefault()}
+                              className="px-1.5 py-0.5 rounded hover:bg-slate-200 transition-colors"
+                            >+ Row Above</button>
+                            <button
+                              type="button"
+                              onClick={() => { if (activeTableCell) tableAddRowBelowFor(activeTableCell); }}
+                              onMouseDown={e => e.preventDefault()}
+                              className="px-1.5 py-0.5 rounded hover:bg-slate-200 transition-colors"
+                            >+ Row Below</button>
+                            <button
+                              type="button"
+                              onClick={() => { if (activeTableCell) tableAddColLeftFor(activeTableCell); }}
+                              onMouseDown={e => e.preventDefault()}
+                              className="px-1.5 py-0.5 rounded hover:bg-slate-200 transition-colors"
+                            >+ Col Left</button>
+                            <button
+                              type="button"
+                              onClick={() => { if (activeTableCell) tableAddColRightFor(activeTableCell); }}
+                              onMouseDown={e => e.preventDefault()}
+                              className="px-1.5 py-0.5 rounded hover:bg-slate-200 transition-colors"
+                            >+ Col Right</button>
+                            <div className="w-px h-3 bg-slate-300 mx-0.5" />
+                            <button
+                              type="button"
+                              onClick={() => { if (activeTableCell) tableDeleteRowFor(activeTableCell); }}
+                              onMouseDown={e => e.preventDefault()}
+                              className="px-1.5 py-0.5 rounded hover:bg-red-100 text-red-600 transition-colors"
+                            >- Row</button>
+                            <button
+                              type="button"
+                              onClick={() => { if (activeTableCell) tableDeleteColFor(activeTableCell); }}
+                              onMouseDown={e => e.preventDefault()}
+                              className="px-1.5 py-0.5 rounded hover:bg-red-100 text-red-600 transition-colors"
+                            >- Col</button>
+                            <div className="w-px h-3 bg-slate-300 mx-0.5" />
+                            <button
+                              type="button"
+                              onClick={() => renumberTableLists(activeTableCell?.closest('table') as HTMLTableElement | null)}
+                              onMouseDown={e => e.preventDefault()}
+                              className="px-1.5 py-0.5 rounded hover:bg-blue-100 text-blue-600 transition-colors"
+                            ># Renumber</button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
