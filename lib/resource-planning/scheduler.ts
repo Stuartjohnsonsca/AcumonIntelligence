@@ -1515,17 +1515,24 @@ function runSimulatedAnnealing(
   }
 
   function evalScore(state: JobResult[]): number {
-    const allPlacements = state.flatMap((jr) => jr.placements);
-    const violations = detectViolations(
-      allPlacements,
-      orderedJobs,
-      staff,
-      constraintOrder,
-      today,
-      existingAllocations,
-      previousTeam,
-    );
-    return computeQualityScore(violations, unschedulableWarm);
+    // Fast O(n) proxy — avoids calling detectViolations() on every SA iteration.
+    // With 100 jobs × 500 existing allocations, detectViolations() takes ~50 ms;
+    // called 200× per SA run that becomes 10 s — guaranteed timeout on any plan.
+    // SA's primary objective is converting unschedulable jobs → scheduled ones.
+    // Full detectViolations() runs once in runScheduler after SA returns.
+    const unscheduled = state.filter((jr) => jr.placements.length === 0).length;
+    const partialRoles = state.reduce((sum, jr) => {
+      // Penalise jobs where some roles remain unfilled (partial coverage)
+      const roleBudgets = jr.placements.map((p) => p.role);
+      const missing = (['RI', 'Reviewer', 'Preparer', 'Specialist'] as const).filter(
+        (r) => {
+          const job = orderedJobs.find((j) => j.id === jr.jobId);
+          return job && getBudgetForRole(job, r) > 0 && !roleBudgets.includes(r);
+        },
+      ).length;
+      return sum + missing;
+    }, 0);
+    return unscheduled * 100 + partialRoles;
   }
 
   // ── Move A: Reassign one (job, role) to a different eligible staff member ──
