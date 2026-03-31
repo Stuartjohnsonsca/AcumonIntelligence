@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
+const CATEGORY_TO_STATEMENT: Record<string, string> = {
+  pnl: 'Profit & Loss',
+  balance_sheet: 'Balance Sheet',
+  cashflow: 'Cash Flow Statement',
+  notes: 'Notes',
+};
+
 /**
  * GET /api/engagements/[engagementId]/fs-hierarchy
- * Returns FS hierarchy for TB dropdowns:
- *   - statements: ["Balance Sheet", "P&L", "Cashflow"]
- *   - levels: [{ name, statement }]   (FS Line Items grouped by category)
- *   - notes: [{ name, level }]        (Note Items linked to their parent FS Line)
+ * Returns FS hierarchy for TB dropdowns with proper parent-child mapping:
+ *   - statements: ["Balance Sheet", "P&L", ...]
+ *   - levels: [{ id, name, statement }]       (fs_line_items)
+ *   - notes: [{ id, name, parentName, parentId, statement }]  (note_items with parent)
  */
 export async function GET(
   _req: NextRequest,
@@ -21,7 +28,6 @@ export async function GET(
   const { engagementId } = await params;
   const firmId = session.user.firmId;
 
-  // Get the engagement's audit type to filter FS lines
   const engagement = await prisma.auditEngagement.findUnique({
     where: { id: engagementId },
     select: { auditType: true, firmId: true },
@@ -31,23 +37,19 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  // Load all active FS Lines for this firm
+  // Load all active FS Lines with parent relationship
   const fsLines = await prisma.methodologyFsLine.findMany({
     where: { firmId, isActive: true },
+    include: { parent: { select: { id: true, name: true, fsCategory: true } } },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
   });
 
-  const CATEGORY_TO_STATEMENT: Record<string, string> = {
-    pnl: 'Profit & Loss',
-    balance_sheet: 'Balance Sheet',
-    cashflow: 'Cash Flow Statement',
-    notes: 'Notes',
-  };
-
   // Build hierarchy
-  const statements = [...new Set(fsLines.map(l => CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory))];
+  const statements = [...new Set(
+    fsLines.map(l => CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory)
+  )];
 
-  // FS Level items (lineType = 'fs_line_item') — these are the aggregated items on the face of the statements
+  // FS Level items (fs_line_items) — aggregated items on the face of the statements
   const levels = fsLines
     .filter(l => l.lineType === 'fs_line_item')
     .map(l => ({
@@ -56,21 +58,21 @@ export async function GET(
       statement: CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory,
     }));
 
-  // FS Note items (lineType = 'note_item') — detailed items in the notes
-  // Try to match to a parent level by fsCategory (same statement)
+  // FS Note items (note_items) — with parent mapping from parentFsLineId
   const notes = fsLines
     .filter(l => l.lineType === 'note_item')
     .map(l => {
-      const statement = CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory;
-      // Find the most likely parent level (same category)
-      const parentLevels = levels.filter(lv => lv.statement === statement);
+      const parentLevel = l.parent;
+      const parentStatement = parentLevel
+        ? (CATEGORY_TO_STATEMENT[parentLevel.fsCategory] || parentLevel.fsCategory)
+        : (CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory);
+
       return {
         id: l.id,
         name: l.name,
-        statement,
-        // parentLevel will need to be set manually by the methodology admin
-        // For now, return all levels in the same statement as possible parents
-        possibleLevels: parentLevels.map(lv => lv.name),
+        parentId: l.parentFsLineId || null,
+        parentName: parentLevel?.name || null,
+        statement: parentStatement,
       };
     });
 
@@ -78,11 +80,13 @@ export async function GET(
     statements,
     levels,
     notes,
-    // Also return flat list for simple autocomplete
+    // Flat list for autocomplete/search
     allItems: fsLines.map(l => ({
       id: l.id,
       name: l.name,
       lineType: l.lineType,
+      parentId: l.parentFsLineId || null,
+      parentName: l.parent?.name || null,
       statement: CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory,
     })),
   });

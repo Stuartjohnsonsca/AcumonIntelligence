@@ -11,6 +11,8 @@ interface FsLine {
   sortOrder: number;
   isActive: boolean;
   isMandatory: boolean;
+  parentFsLineId: string | null;
+  parent?: { id: string; name: string } | null;
   industryMappings: { industryId: string }[];
 }
 
@@ -46,6 +48,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
   const [newName, setNewName] = useState('');
   const [newLineType, setNewLineType] = useState('fs_line_item');
   const [newCategory, setNewCategory] = useState('pnl');
+  const [newParentId, setNewParentId] = useState('');
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<'list' | 'matrix'>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -90,7 +93,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
       const res = await fetch('/api/methodology-admin/fs-lines', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), lineType: newLineType, fsCategory: newCategory }),
+        body: JSON.stringify({ name: newName.trim(), lineType: newLineType, fsCategory: newCategory, parentFsLineId: newParentId || null }),
       });
       if (res.ok) {
         const { fsLine } = await res.json();
@@ -308,6 +311,18 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
               {FS_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </div>
+          {newLineType === 'note_item' && (
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Parent FS Line</label>
+              <select value={newParentId} onChange={e => setNewParentId(e.target.value)}
+                className="border border-slate-300 rounded px-3 py-2 text-sm min-w-[160px]">
+                <option value="">— None —</option>
+                {fsLines.filter(l => l.lineType === 'fs_line_item' && l.isActive).map(l => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <button onClick={addFsLine} disabled={saving || !newName.trim()}
             className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50">
             {saving ? 'Adding...' : 'Add'}
@@ -357,6 +372,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                     <span className="text-[10px] text-slate-400">⇅</span>
                   </button>
                 </th>
+                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">Parent</th>
                 <th className="text-center px-4 py-2.5 text-slate-600 font-semibold w-24">Industries</th>
                 <th className="text-center px-4 py-2.5 text-slate-600 font-semibold w-20">Actions</th>
               </tr>
@@ -382,6 +398,23 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                           className="border border-blue-300 rounded px-2 py-1 text-sm">
                           {FS_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                         </select>
+                      </td>
+                      <td className="px-4 py-2">
+                        {editLineType === 'note_item' ? (
+                          <select value={line.parentFsLineId || ''} onChange={async e => {
+                            const parentId = e.target.value || null;
+                            await fetch('/api/methodology-admin/fs-lines', {
+                              method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ id: line.id, parentFsLineId: parentId }),
+                            });
+                            setFsLines(prev => prev.map(l => l.id === line.id ? { ...l, parentFsLineId: parentId, parent: parentId ? fsLines.find(f => f.id === parentId) ? { id: parentId, name: fsLines.find(f => f.id === parentId)!.name } : null : null } : l));
+                          }} className="border border-blue-300 rounded px-2 py-1 text-xs w-full">
+                            <option value="">—</option>
+                            {fsLines.filter(l => l.lineType === 'fs_line_item' && l.isActive).map(l => (
+                              <option key={l.id} value={l.id}>{l.name}</option>
+                            ))}
+                          </select>
+                        ) : <span className="text-xs text-slate-300">—</span>}
                       </td>
                       <td className="text-center px-4 py-2">
                         <span className="text-xs text-slate-400">{line.industryMappings.length}</span>
@@ -418,6 +451,9 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                         }`}>
                           {FS_CATEGORIES.find(c => c.value === line.fsCategory)?.label || line.fsCategory}
                         </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-slate-500">
+                        {line.parent?.name || (line.lineType === 'note_item' ? <span className="text-slate-300 italic">Not set</span> : <span className="text-slate-300">—</span>)}
                       </td>
                       <td className="text-center px-4 py-2.5 text-slate-500 text-xs">{line.industryMappings.length}</td>
                       <td className="text-center px-4 py-2.5">

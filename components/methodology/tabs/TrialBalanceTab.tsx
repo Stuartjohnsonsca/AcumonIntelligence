@@ -122,7 +122,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           const data = await res.json();
           setFsStatements(data.statements || []);
           setFsLevels(data.levels || []);
-          setFsNotes((data.allItems || []).filter((i: FsItem) => i.lineType === 'note_item'));
+          setFsNotes(data.notes || []);
           setFsAllItems(data.allItems || []);
         }
       } catch (err) {
@@ -149,20 +149,22 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     setRows(prev => prev.filter((_, i) => i !== index));
   }
 
-  // When FS Note is selected, auto-populate FS Level and FS Statement
+  // When FS Note is selected, auto-populate FS Level (from parent) and FS Statement
   function handleFsNoteChange(index: number, noteName: string) {
-    const noteItem = fsAllItems.find(i => i.name === noteName && i.lineType === 'note_item');
-    const statement = noteItem?.statement || null;
-    // Find a matching FS Level in the same statement
-    const matchingLevel = fsLevels.find(l => l.statement === statement);
+    // Look up the note in the hierarchy — use parentName for FS Level
+    const noteItem = fsNotes.find(n => n.name === noteName);
+    const parentName = (noteItem as any)?.parentName || null;
+    const statement = (noteItem as any)?.statement || null;
+
+    // If no parent mapping, try fallback from fsAllItems
+    const allItem = fsAllItems.find(i => i.name === noteName);
+    const fallbackStatement = allItem?.statement || statement;
+
     setRows(prev => prev.map((r, i) => i === index ? {
       ...r,
       fsNoteLevel: noteName || null,
-      fsStatement: statement,
-      // Keep existing fsLevel if it's in the same statement, otherwise suggest first match
-      fsLevel: (r.fsLevel && fsLevels.find(l => l.name === r.fsLevel && l.statement === statement))
-        ? r.fsLevel
-        : (matchingLevel?.name || r.fsLevel),
+      fsLevel: parentName || r.fsLevel,
+      fsStatement: fallbackStatement || r.fsStatement,
     } : r));
   }
 

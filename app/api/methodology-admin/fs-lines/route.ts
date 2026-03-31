@@ -8,7 +8,10 @@ export async function GET() {
 
   const fsLines = await prisma.methodologyFsLine.findMany({
     where: { firmId: session.user.firmId },
-    include: { industryMappings: { select: { industryId: true } } },
+    include: {
+      industryMappings: { select: { industryId: true } },
+      parent: { select: { id: true, name: true } },
+    },
     orderBy: [{ isMandatory: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
   });
 
@@ -21,7 +24,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { name, lineType, fsCategory, sortOrder, isMandatory } = await req.json();
+  const { name, lineType, fsCategory, sortOrder, isMandatory, parentFsLineId } = await req.json();
   if (!name || !lineType || !fsCategory) {
     return NextResponse.json({ error: 'name, lineType, and fsCategory are required' }, { status: 400 });
   }
@@ -34,8 +37,12 @@ export async function POST(req: Request) {
       fsCategory,
       sortOrder: sortOrder || 0,
       isMandatory: isMandatory || false,
+      ...(parentFsLineId && { parentFsLineId }),
     },
-    include: { industryMappings: { select: { industryId: true } } },
+    include: {
+      industryMappings: { select: { industryId: true } },
+      parent: { select: { id: true, name: true } },
+    },
   });
 
   return NextResponse.json({ fsLine });
@@ -47,7 +54,7 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { id, name, lineType, fsCategory, sortOrder, isActive, isMandatory } = await req.json();
+  const { id, name, lineType, fsCategory, sortOrder, isActive, isMandatory, parentFsLineId } = await req.json();
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const fsLine = await prisma.methodologyFsLine.update({
@@ -59,8 +66,12 @@ export async function PUT(req: Request) {
       ...(sortOrder !== undefined && { sortOrder }),
       ...(isActive !== undefined && { isActive }),
       ...(isMandatory !== undefined && { isMandatory }),
+      ...(parentFsLineId !== undefined && { parentFsLineId: parentFsLineId || null }),
     },
-    include: { industryMappings: { select: { industryId: true } } },
+    include: {
+      industryMappings: { select: { industryId: true } },
+      parent: { select: { id: true, name: true } },
+    },
   });
 
   return NextResponse.json({ fsLine });

@@ -209,6 +209,7 @@ model Client {
   // Resource planning relations
   resourceJobs           ResourceJob[]
   resourceClientSetting  ResourceClientSetting?
+  portalRequests         PortalRequest[]
 
   @@map("clients")
 }
@@ -916,6 +917,32 @@ model ClientPortalTwoFactor {
 
   @@index([userId])
   @@map("client_portal_two_factor")
+}
+
+// ─── Portal Requests (Outstanding / Responded) ──────────────────────────────
+
+model PortalRequest {
+  id            String    @id @default(uuid())
+  clientId      String    @map("client_id")
+  engagementId  String?   @map("engagement_id")
+  section       String    // questions | calculations | evidence | connections
+  question      String    @db.Text
+  response      String?   @db.Text
+  status        String    @default("outstanding") // outstanding | responded | verified | rejected
+  requestedById String    @map("requested_by_id") // Firm User who created the request
+  requestedByName String  @map("requested_by_name")
+  respondedById String?   @map("responded_by_id") // ClientPortalUser who responded
+  respondedByName String? @map("responded_by_name")
+  requestedAt   DateTime  @default(now()) @map("requested_at")
+  respondedAt   DateTime? @map("responded_at")
+  verifiedAt    DateTime? @map("verified_at")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([clientId, status])
+  @@index([engagementId])
+  @@map("portal_requests")
 }
 
 // ─── Audit Evidence Requests ──────────────────────────────────────────────────
@@ -1956,20 +1983,24 @@ model MethodologyTestBank {
 }
 
 model MethodologyFsLine {
-  id         String  @id @default(uuid())
-  firmId     String  @map("firm_id")
-  name       String  // e.g. "Revenue", "Trade Debtors", "Going Concern"
-  lineType   String  @map("line_type") // fs_line_item | note_item
-  fsCategory String  @map("fs_category") // pnl | balance_sheet | cashflow | notes
-  sortOrder  Int     @default(0) @map("sort_order")
-  isActive   Boolean @default(true) @map("is_active")
-  isMandatory Boolean @default(false) @map("is_mandatory") // Going Concern, Management Override, Notes & Disclosures
+  id              String  @id @default(uuid())
+  firmId          String  @map("firm_id")
+  name            String  // e.g. "Revenue", "Trade Debtors", "Going Concern"
+  lineType        String  @map("line_type") // fs_line_item | note_item
+  fsCategory      String  @map("fs_category") // pnl | balance_sheet | cashflow | notes
+  sortOrder       Int     @default(0) @map("sort_order")
+  isActive        Boolean @default(true) @map("is_active")
+  isMandatory     Boolean @default(false) @map("is_mandatory")
+  parentFsLineId  String? @map("parent_fs_line_id") // note_item links to parent fs_line_item
 
-  firm       Firm    @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  firm             Firm                @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  parent           MethodologyFsLine?  @relation("FsLineHierarchy", fields: [parentFsLineId], references: [id], onDelete: SetNull)
+  children         MethodologyFsLine[] @relation("FsLineHierarchy")
   industryMappings MethodologyFsLineIndustry[]
 
   @@unique([firmId, name])
   @@index([firmId])
+  @@index([parentFsLineId])
   @@map("methodology_fs_lines")
 }
 
