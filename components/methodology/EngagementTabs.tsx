@@ -94,6 +94,28 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [tbShowCategory, setTbShowCategory] = useState(true);
   const [showAuditPlan, setShowAuditPlan] = useState(false);
   const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
+  const [engStatus, setEngStatus] = useState(engagement.status);
+  const [starting, setStarting] = useState(false);
+
+  const isPreStart = engStatus === 'pre_start';
+
+  async function handleStartAudit() {
+    setStarting(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagement.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'active' }),
+      });
+      if (res.ok) {
+        setEngStatus('active');
+      }
+    } catch (err) {
+      console.error('Failed to start audit:', err);
+    } finally {
+      setStarting(false);
+    }
+  }
 
   // Fetch audit type → schedule mapping
   useEffect(() => {
@@ -108,9 +130,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       .catch(() => {}); // Fail silently, show all tabs
   }, [auditType]);
 
-  // Filter tabs based on audit type schedule config
+  // Filter tabs based on engagement status and audit type schedule config
   const visibleTabs = TABS.filter(tab => {
     if (tab.key === 'opening') return true; // Opening always visible
+    if (isPreStart) return false; // Only show Opening until audit is started
     if (!enabledSchedules) return true; // Not loaded yet or no config = show all
     const scheduleKey = TAB_TO_SCHEDULE[tab.key];
     return scheduleKey ? enabledSchedules.has(scheduleKey) : true;
@@ -221,6 +244,35 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             </SignOffHeader>
           ) : (
             renderTabContent()
+          )}
+
+          {/* Start Audit button — only shown on Opening tab when engagement is pre_start */}
+          {isPreStart && activeTab === 'opening' && (
+            <div className="mt-6 pt-6 border-t border-slate-200 text-center">
+              <button
+                onClick={handleStartAudit}
+                disabled={starting}
+                className="inline-flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 text-sm font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+              >
+                {starting ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Start Audit
+                  </>
+                )}
+              </button>
+              <p className="text-xs text-slate-400 mt-2">
+                Review the opening details above, then click to start the audit and unlock all tabs
+              </p>
+            </div>
           )}
         </div>
       </div>
