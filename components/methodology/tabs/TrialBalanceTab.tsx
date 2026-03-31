@@ -386,87 +386,84 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         </div>
       </div>
 
-      {/* Summary: Profit, Net Assets, Totals — aligned above the date columns */}
-      {(() => {
-        const cyTotal = rows.reduce((sum, r) => sum + (r.currentYear || 0), 0);
-        const pyTotal = rows.reduce((sum, r) => sum + (r.priorYear || 0), 0);
-        const cyPnL = rows.filter(r => r.fsStatement === 'Profit & Loss').reduce((sum, r) => sum + (r.currentYear || 0), 0);
-        const pyPnL = rows.filter(r => r.fsStatement === 'Profit & Loss').reduce((sum, r) => sum + (r.priorYear || 0), 0);
-        const cyBS = rows.filter(r => r.fsStatement === 'Balance Sheet').reduce((sum, r) => sum + (r.currentYear || 0), 0);
-        const pyBS = rows.filter(r => r.fsStatement === 'Balance Sheet').reduce((sum, r) => sum + (r.priorYear || 0), 0);
-        const cyBalanced = Math.abs(cyTotal) < 0.01;
-        const pyBalanced = Math.abs(pyTotal) < 0.01;
-        const fmtC = (v: number) => {
-          const abs = Math.abs(v);
-          const s = '£' + abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          return v < 0 ? `(${s})` : s;
-        };
-        return (
-          <table className="w-full text-xs mb-1">
-            <tbody>
-              <tr>
-                <td className="w-24" /><td className="w-48" />
-                {showCategory && <td className="w-24" />}
-                <td className="w-28 text-right pr-2 text-slate-500 font-medium">Profit</td>
-                <td className="w-28 text-right pr-2 text-slate-500 font-medium" />
-                <td colSpan={10} />
-              </tr>
-              <tr>
-                <td /><td />
-                {showCategory && <td />}
-                <td className="text-right pr-2 font-semibold text-slate-700">{fmtC(cyPnL)}</td>
-                <td className="text-right pr-2 font-semibold text-slate-700">{fmtC(pyPnL)}</td>
-                <td colSpan={10} />
-              </tr>
-              <tr>
-                <td /><td />
-                {showCategory && <td />}
-                <td className="text-right pr-2 text-slate-500 font-medium">Net Assets</td>
-                <td className="text-right pr-2 text-slate-500 font-medium" />
-                <td colSpan={10} />
-              </tr>
-              <tr>
-                <td /><td />
-                {showCategory && <td />}
-                <td className="text-right pr-2 font-semibold text-slate-700">{fmtC(cyBS)}</td>
-                <td className="text-right pr-2 font-semibold text-slate-700">{fmtC(pyBS)}</td>
-                <td colSpan={10} />
-              </tr>
-              <tr className="border-t border-slate-300">
-                <td /><td className="text-right pr-1 font-bold text-slate-500 pt-1">Total</td>
-                {showCategory && <td />}
-                <td className="text-right pr-2 font-bold text-slate-800 pt-1">
-                  <span className="inline-flex items-center gap-1 justify-end">
-                    {fmtC(cyTotal)}
-                    <span className={`inline-block w-2.5 h-2.5 rounded-full ${cyBalanced ? 'bg-green-500' : 'bg-red-500'}`} />
-                  </span>
-                </td>
-                <td className="text-right pr-2 font-bold text-slate-800 pt-1">
-                  <span className="inline-flex items-center gap-1 justify-end">
-                    {fmtC(pyTotal)}
-                    <span className={`inline-block w-2.5 h-2.5 rounded-full ${pyBalanced ? 'bg-green-500' : 'bg-red-500'}`} />
-                  </span>
-                </td>
-                <td colSpan={10} />
-              </tr>
-            </tbody>
-          </table>
-        );
-      })()}
-
-      <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 340px)' }}>
-        <table className="w-full text-xs">
+      {/* Unified table: summary rows + header + data — all share same column widths */}
+      <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 280px)' }}>
+        <table className="w-full text-xs" style={{ tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '96px' }} />{/* Account Code */}
+            <col style={{ width: '192px' }} />{/* Description */}
+            {showCategory && <col style={{ width: '96px' }} />}{/* Category */}
+            <col style={{ width: '130px' }} />{/* CY */}
+            <col style={{ width: '130px' }} />{/* PY */}
+            <col style={{ width: '160px' }} />{/* FS Note */}
+            <col style={{ width: '100px' }} />{/* FS Level */}
+            <col style={{ width: '120px' }} />{/* FS Statement */}
+            {isGroupAudit && <col style={{ width: '112px' }} />}{/* Group */}
+            <col style={{ width: '32px' }} />{/* Delete */}
+          </colgroup>
+          {/* Summary rows above the header */}
+          {(() => {
+            const cyTotal = rows.reduce((sum, r) => sum + (r.currentYear || 0), 0);
+            const pyTotal = rows.reduce((sum, r) => sum + (r.priorYear || 0), 0);
+            const cyPnL = rows.filter(r => r.fsStatement === 'Profit & Loss').reduce((sum, r) => sum + (r.currentYear || 0), 0);
+            const pyPnL = rows.filter(r => r.fsStatement === 'Profit & Loss').reduce((sum, r) => sum + (r.priorYear || 0), 0);
+            const cyBS = rows.filter(r => r.fsStatement === 'Balance Sheet').reduce((sum, r) => sum + (r.currentYear || 0), 0);
+            const pyBS = rows.filter(r => r.fsStatement === 'Balance Sheet').reduce((sum, r) => sum + (r.priorYear || 0), 0);
+            const cyBalanced = Math.abs(cyTotal) < 0.01;
+            const pyBalanced = Math.abs(pyTotal) < 0.01;
+            const fmtC = (v: number) => {
+              const abs = Math.abs(v);
+              const s = '£' + abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              return v < 0 ? `(${s})` : s;
+            };
+            const labelSpan = showCategory ? 3 : 2;
+            return (
+              <thead>
+                {/* Profit */}
+                <tr>
+                  <th colSpan={labelSpan} className="text-right pr-2 py-0.5 text-slate-400 font-medium">Profit</th>
+                  <th className="text-right px-2 py-0.5 font-semibold text-slate-700">{fmtC(cyPnL)}</th>
+                  <th className="text-right px-2 py-0.5 font-semibold text-slate-700">{fmtC(pyPnL)}</th>
+                  <th colSpan={10} />
+                </tr>
+                {/* Net Assets */}
+                <tr>
+                  <th colSpan={labelSpan} className="text-right pr-2 py-0.5 text-slate-400 font-medium">Net Assets</th>
+                  <th className="text-right px-2 py-0.5 font-semibold text-slate-700">{fmtC(cyBS)}</th>
+                  <th className="text-right px-2 py-0.5 font-semibold text-slate-700">{fmtC(pyBS)}</th>
+                  <th colSpan={10} />
+                </tr>
+                {/* Total with balance dots */}
+                <tr className="border-b border-slate-300">
+                  <th colSpan={labelSpan} className="text-right pr-2 py-1 font-bold text-slate-500">Total</th>
+                  <th className="text-right px-2 py-1 font-bold text-slate-800">
+                    <span className="inline-flex items-center gap-1 justify-end">
+                      {fmtC(cyTotal)}
+                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${cyBalanced ? 'bg-green-500' : 'bg-red-500'}`} />
+                    </span>
+                  </th>
+                  <th className="text-right px-2 py-1 font-bold text-slate-800">
+                    <span className="inline-flex items-center gap-1 justify-end">
+                      {fmtC(pyTotal)}
+                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${pyBalanced ? 'bg-green-500' : 'bg-red-500'}`} />
+                    </span>
+                  </th>
+                  <th colSpan={10} />
+                </tr>
+              </thead>
+            );
+          })()}
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-24">Account Code</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-48">Description</th>
-              {showCategory && <th className="text-left px-2 py-2 text-slate-500 font-medium w-24">Category</th>}
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">{formatDateDDMMYYYY(periodEndDate) || 'Period End'}</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">{dayBefore(periodStartDate) || 'Period Start - 1'}</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-36">FS Note</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-20">FS Level</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-28">FS Statement</th>
-              {isGroupAudit && <th className="text-left px-2 py-2 text-slate-500 font-medium w-28">Group Name</th>}
+              <th className="text-left px-2 py-2 text-slate-500 font-medium">Account Code</th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium">Description</th>
+              {showCategory && <th className="text-left px-2 py-2 text-slate-500 font-medium">Category</th>}
+              <th className="text-right px-2 py-2 text-slate-500 font-medium">{formatDateDDMMYYYY(periodEndDate) || 'Period End'}</th>
+              <th className="text-right px-2 py-2 text-slate-500 font-medium">{dayBefore(periodStartDate) || 'Period Start - 1'}</th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium">FS Note</th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium">FS Level</th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium">FS Statement</th>
+              {isGroupAudit && <th className="text-left px-2 py-2 text-slate-500 font-medium">Group Name</th>}
               <th className="w-8"></th>
             </tr>
           </thead>
