@@ -401,53 +401,40 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             {isGroupAudit && <col style={{ width: '112px' }} />}{/* Group */}
             <col style={{ width: '32px' }} />{/* Delete */}
           </colgroup>
-          {/* Summary rows above the header */}
+          {/* Compact summary rows above the column header */}
           {(() => {
-            const cyTotal = rows.reduce((sum, r) => sum + (r.currentYear || 0), 0);
-            const pyTotal = rows.reduce((sum, r) => sum + (r.priorYear || 0), 0);
-            const cyPnL = rows.filter(r => r.fsStatement === 'Profit & Loss').reduce((sum, r) => sum + (r.currentYear || 0), 0);
-            const pyPnL = rows.filter(r => r.fsStatement === 'Profit & Loss').reduce((sum, r) => sum + (r.priorYear || 0), 0);
-            const cyBS = rows.filter(r => r.fsStatement === 'Balance Sheet').reduce((sum, r) => sum + (r.currentYear || 0), 0);
-            const pyBS = rows.filter(r => r.fsStatement === 'Balance Sheet').reduce((sum, r) => sum + (r.priorYear || 0), 0);
-            const cyBalanced = Math.abs(cyTotal) < 0.01;
-            const pyBalanced = Math.abs(pyTotal) < 0.01;
-            const fmtC = (v: number) => {
-              const abs = Math.abs(v);
-              const s = '£' + abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-              return v < 0 ? `(${s})` : s;
-            };
-            const labelSpan = showCategory ? 3 : 2;
+            const sum = (filter: (r: TBRow) => boolean, field: 'currentYear' | 'priorYear') =>
+              rows.filter(filter).reduce((s, r) => s + (r[field] || 0), 0);
+            const cyRev = sum(r => r.fsLevel === 'Revenue', 'currentYear');
+            const pyRev = sum(r => r.fsLevel === 'Revenue', 'priorYear');
+            const cyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'currentYear');
+            const pyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'priorYear');
+            const cyCosts = cyPnL - cyRev;
+            const pyCosts = pyPnL - pyRev;
+            const cyBS = sum(r => r.fsStatement === 'Balance Sheet', 'currentYear');
+            const pyBS = sum(r => r.fsStatement === 'Balance Sheet', 'priorYear');
+            // Gross Assets = total of debit-side BS items (positive amounts on BS)
+            const cyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0, 'currentYear');
+            const pyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.priorYear || 0) > 0, 'priorYear');
+            const cyTotal = rows.reduce((s, r) => s + (r.currentYear || 0), 0);
+            const pyTotal = rows.reduce((s, r) => s + (r.priorYear || 0), 0);
+            const cyBal = Math.abs(cyTotal) < 0.01;
+            const pyBal = Math.abs(pyTotal) < 0.01;
+            const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
+            const ls = showCategory ? 3 : 2;
+            const rc = 'text-right px-2 py-px text-[10px]';
+            const lc = `text-right pr-2 py-px text-[10px] text-slate-400`;
             return (
               <thead>
-                {/* Profit */}
-                <tr>
-                  <th colSpan={labelSpan} className="text-right pr-2 py-0.5 text-slate-400 font-medium">Profit</th>
-                  <th className="text-right px-2 py-0.5 font-semibold text-slate-700">{fmtC(cyPnL)}</th>
-                  <th className="text-right px-2 py-0.5 font-semibold text-slate-700">{fmtC(pyPnL)}</th>
-                  <th colSpan={10} />
-                </tr>
-                {/* Net Assets */}
-                <tr>
-                  <th colSpan={labelSpan} className="text-right pr-2 py-0.5 text-slate-400 font-medium">Net Assets</th>
-                  <th className="text-right px-2 py-0.5 font-semibold text-slate-700">{fmtC(cyBS)}</th>
-                  <th className="text-right px-2 py-0.5 font-semibold text-slate-700">{fmtC(pyBS)}</th>
-                  <th colSpan={10} />
-                </tr>
-                {/* Total with balance dots */}
-                <tr className="border-b border-slate-300">
-                  <th colSpan={labelSpan} className="text-right pr-2 py-1 font-bold text-slate-500">Total</th>
-                  <th className="text-right px-2 py-1 font-bold text-slate-800">
-                    <span className="inline-flex items-center gap-1 justify-end">
-                      {fmtC(cyTotal)}
-                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${cyBalanced ? 'bg-green-500' : 'bg-red-500'}`} />
-                    </span>
-                  </th>
-                  <th className="text-right px-2 py-1 font-bold text-slate-800">
-                    <span className="inline-flex items-center gap-1 justify-end">
-                      {fmtC(pyTotal)}
-                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${pyBalanced ? 'bg-green-500' : 'bg-red-500'}`} />
-                    </span>
-                  </th>
+                <tr><th colSpan={ls} className={lc}>Revenue</th><th className={`${rc} text-slate-600`}>{f(cyRev)}</th><th className={`${rc} text-slate-600`}>{f(pyRev)}</th><th colSpan={10} /></tr>
+                <tr><th colSpan={ls} className={lc}>Costs</th><th className={`${rc} text-slate-600`}>{f(cyCosts)}</th><th className={`${rc} text-slate-600`}>{f(pyCosts)}</th><th colSpan={10} /></tr>
+                <tr><th colSpan={ls} className={`${lc} font-semibold text-slate-500`}>Profit</th><th className={`${rc} font-semibold text-slate-700`}>{f(cyPnL)}</th><th className={`${rc} font-semibold text-slate-700`}>{f(pyPnL)}</th><th colSpan={10} /></tr>
+                <tr><th colSpan={ls} className={lc}>Gross Assets</th><th className={`${rc} text-slate-600`}>{f(cyGross)}</th><th className={`${rc} text-slate-600`}>{f(pyGross)}</th><th colSpan={10} /></tr>
+                <tr><th colSpan={ls} className={`${lc} font-semibold text-slate-500`}>Net Assets</th><th className={`${rc} font-semibold text-slate-700`}>{f(cyBS)}</th><th className={`${rc} font-semibold text-slate-700`}>{f(pyBS)}</th><th colSpan={10} /></tr>
+                <tr className="border-b border-slate-200">
+                  <th colSpan={ls} className="text-right pr-2 py-px text-[10px] font-bold text-slate-500">Total</th>
+                  <th className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(cyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${cyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></th>
+                  <th className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(pyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${pyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></th>
                   <th colSpan={10} />
                 </tr>
               </thead>
