@@ -88,8 +88,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         const json = await res.json();
         const loaded = json.rows || [];
         if (loaded.length === 0) {
-          // Start with a blank grid ready for paste
-          const blank = createBlankRows(30);
+          // Start with a single blank row
+          const blank = createBlankRows(1);
           setRows(blank);
           setInitialRows([]);
         } else {
