@@ -185,8 +185,6 @@ export function MaterialityTab({ engagementId }: Props) {
         questions={processedQuestions}
         initialData={data as Record<string, string | number | boolean | null>}
         currencySymbol={currencySymbol || undefined}
-        showActionTriggers
-        actionTriggerOptions={actionTriggers}
         priorYearData={priorYearData as Record<string, string | number | boolean | null> | null}
       />
     </div>
