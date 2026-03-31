@@ -41,11 +41,24 @@ interface TBRow {
   sortOrder: number;
 }
 
+interface FsItem {
+  id: string;
+  name: string;
+  lineType: string;
+  statement: string;
+}
+
 export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCategory: initialShowCategory = true, onShowCategoryChange, periodEndDate, periodStartDate }: Props) {
   const [rows, setRows] = useState<TBRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
   const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
+
+  // FS hierarchy for cascading dropdowns
+  const [fsStatements, setFsStatements] = useState<string[]>([]);
+  const [fsLevels, setFsLevels] = useState<{ name: string; statement: string }[]>([]);
+  const [fsNotes, setFsNotes] = useState<FsItem[]>([]);
+  const [fsAllItems, setFsAllItems] = useState<FsItem[]>([]);
 
   function setShowCategory(show: boolean) {
     setShowCategoryLocal(show);
@@ -90,6 +103,25 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Load FS hierarchy for dropdowns
+  useEffect(() => {
+    async function loadFsHierarchy() {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/fs-hierarchy`);
+        if (res.ok) {
+          const data = await res.json();
+          setFsStatements(data.statements || []);
+          setFsLevels(data.levels || []);
+          setFsNotes((data.allItems || []).filter((i: FsItem) => i.lineType === 'note_item'));
+          setFsAllItems(data.allItems || []);
+        }
+      } catch (err) {
+        console.error('Failed to load FS hierarchy:', err);
+      }
+    }
+    loadFsHierarchy();
+  }, [engagementId]);
+
   function addRow() {
     setRows(prev => [...prev, {
       id: '', accountCode: '', description: '', category: null,
@@ -105,6 +137,33 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
   function removeRow(index: number) {
     setRows(prev => prev.filter((_, i) => i !== index));
+  }
+
+  // When FS Note is selected, auto-populate FS Level and FS Statement
+  function handleFsNoteChange(index: number, noteName: string) {
+    const noteItem = fsAllItems.find(i => i.name === noteName && i.lineType === 'note_item');
+    const statement = noteItem?.statement || null;
+    // Find a matching FS Level in the same statement
+    const matchingLevel = fsLevels.find(l => l.statement === statement);
+    setRows(prev => prev.map((r, i) => i === index ? {
+      ...r,
+      fsNoteLevel: noteName || null,
+      fsStatement: statement,
+      // Keep existing fsLevel if it's in the same statement, otherwise suggest first match
+      fsLevel: (r.fsLevel && fsLevels.find(l => l.name === r.fsLevel && l.statement === statement))
+        ? r.fsLevel
+        : (matchingLevel?.name || r.fsLevel),
+    } : r));
+  }
+
+  // When FS Level is selected, auto-populate FS Statement
+  function handleFsLevelChange(index: number, levelName: string) {
+    const levelItem = fsLevels.find(l => l.name === levelName);
+    setRows(prev => prev.map((r, i) => i === index ? {
+      ...r,
+      fsLevel: levelName || null,
+      fsStatement: levelItem?.statement || r.fsStatement,
+    } : r));
   }
 
   // Handle multi-cell paste from Excel/Sheets
@@ -206,14 +265,60 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 <td className="px-2 py-0.5">
                   <input type="number" value={row.priorYear ?? ''} onChange={e => updateRow(i, 'priorYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
                 </td>
+                {/* FS Note — dropdown of note_items, auto-populates Level + Statement */}
                 <td className="px-2 py-0.5">
-                  <input type="text" value={row.fsNoteLevel || ''} onChange={e => updateRow(i, 'fsNoteLevel', e.target.value || null)} className={txtCls} />
+                  <select
+                    value={row.fsNoteLevel || ''}
+                    onChange={e => handleFsNoteChange(i, e.target.value)}
+                    className={`${txtCls} appearance-none`}
+                  >
+                    <option value=""></option>
+                    {(row.fsStatement
+                      ? fsNotes.filter(n => n.statement === row.fsStatement)
+                      : fsNotes
+                    ).map(n => (
+                      <option key={n.id} value={n.name}>{n.name}</option>
+                    ))}
+                    {/* Allow current value even if not in list */}
+                    {row.fsNoteLevel && !fsNotes.find(n => n.name === row.fsNoteLevel) && (
+                      <option value={row.fsNoteLevel}>{row.fsNoteLevel}</option>
+                    )}
+                  </select>
                 </td>
+                {/* FS Level — dropdown of fs_line_items filtered by Statement */}
                 <td className="px-2 py-0.5">
-                  <input type="text" value={row.fsLevel || ''} onChange={e => updateRow(i, 'fsLevel', e.target.value || null)} className={txtCls} />
+                  <select
+                    value={row.fsLevel || ''}
+                    onChange={e => handleFsLevelChange(i, e.target.value)}
+                    className={`${txtCls} appearance-none`}
+                  >
+                    <option value=""></option>
+                    {(row.fsStatement
+                      ? fsLevels.filter(l => l.statement === row.fsStatement)
+                      : fsLevels
+                    ).map(l => (
+                      <option key={l.name} value={l.name}>{l.name}</option>
+                    ))}
+                    {row.fsLevel && !fsLevels.find(l => l.name === row.fsLevel) && (
+                      <option value={row.fsLevel}>{row.fsLevel}</option>
+                    )}
+                  </select>
                 </td>
+                {/* FS Statement — dropdown of statements */}
                 <td className="px-2 py-0.5">
-                  <input type="text" value={row.fsStatement || ''} onChange={e => updateRow(i, 'fsStatement', e.target.value || null)} className={txtCls} />
+                  <select
+                    value={row.fsStatement || ''}
+                    onChange={e => updateRow(i, 'fsStatement', e.target.value || null)}
+                    className={`${txtCls} appearance-none`}
+                  >
+                    <option value=""></option>
+                    {fsStatements.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                    {row.fsStatement && !fsStatements.includes(row.fsStatement) && (
+                      <option value={row.fsStatement}>{row.fsStatement}</option>
+                    )}
+                  </select>
                 </td>
                 {isGroupAudit && (
                   <td className="px-2 py-0.5">
