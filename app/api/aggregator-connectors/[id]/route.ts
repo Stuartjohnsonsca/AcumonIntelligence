@@ -7,7 +7,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isFirmAdmin)) {
+  if (!session?.user?.twoFactorVerified || !session.user.isSuperAdmin) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -15,7 +15,7 @@ export async function PUT(
   const body = await req.json();
 
   const existing = await prisma.methodologyTemplate.findFirst({
-    where: { id, firmId: session.user.firmId, templateType: 'aggregator_connector' },
+    where: { id, firmId: '__global__', templateType: 'aggregator_connector' },
   });
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -44,13 +44,13 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isFirmAdmin)) {
+  if (!session?.user?.twoFactorVerified || !session.user.isSuperAdmin) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const { id } = await params;
   const existing = await prisma.methodologyTemplate.findFirst({
-    where: { id, firmId: session.user.firmId, templateType: 'aggregator_connector' },
+    where: { id, firmId: '__global__', templateType: 'aggregator_connector' },
   });
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

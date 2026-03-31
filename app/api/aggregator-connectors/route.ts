@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
+const GLOBAL_FIRM_ID = '__global__';
+
 /**
  * GET /api/aggregator-connectors
- * List all aggregator connectors for the current firm.
- * Stored in MethodologyTemplate with templateType='aggregator_connector'.
+ * List all centrally-managed aggregator connectors (Super Admin scope).
+ * All firms can read these; only Super Admin can modify.
  */
 export async function GET() {
   const session = await auth();
@@ -14,7 +16,7 @@ export async function GET() {
   }
 
   const records = await prisma.methodologyTemplate.findMany({
-    where: { firmId: session.user.firmId, templateType: 'aggregator_connector' },
+    where: { firmId: GLOBAL_FIRM_ID, templateType: 'aggregator_connector' },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -22,7 +24,7 @@ export async function GET() {
     const items = typeof r.items === 'object' && r.items !== null ? r.items as Record<string, unknown> : {};
     return {
       id: r.id,
-      connectorType: r.auditType, // re-purpose auditType field for connector type
+      connectorType: r.auditType,
       label: (items.label as string) || r.auditType,
       config: (items.config as Record<string, string>) || {},
       status: (items.status as string) || 'inactive',
@@ -38,12 +40,12 @@ export async function GET() {
 
 /**
  * POST /api/aggregator-connectors
- * Add a new aggregator connector.
+ * Add a new aggregator connector (Super Admin only, stored globally).
  */
 export async function POST(req: Request) {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isFirmAdmin)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!session?.user?.twoFactorVerified || !session.user.isSuperAdmin) {
+    return NextResponse.json({ error: 'Forbidden — Super Admin only' }, { status: 403 });
   }
 
   const { connectorType, label, config } = await req.json();
@@ -53,9 +55,9 @@ export async function POST(req: Request) {
 
   const record = await prisma.methodologyTemplate.create({
     data: {
-      firmId: session.user.firmId,
+      firmId: GLOBAL_FIRM_ID,
       templateType: 'aggregator_connector',
-      auditType: connectorType, // store connector type here
+      auditType: connectorType,
       items: { label, config: config || {}, status: 'inactive', lastTestedAt: null, lastTestResult: null },
     },
   });

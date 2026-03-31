@@ -7,7 +7,6 @@ import { ClientsTab } from './ClientsTab';
 import { SubscriptionsTab } from './SubscriptionsTab';
 import { AiUsageTab } from './AiUsageTab';
 import { FirmSettingsTab } from './FirmSettingsTab';
-import { AggregatorConnectorsTab } from './AggregatorConnectorsTab';
 import { Shield, BookOpen, Keyboard, Users } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -83,7 +82,6 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
           <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
           {canManageClients && <TabsTrigger value="ai-usage">AI Usage</TabsTrigger>}
           {(isSuperAdmin || isFirmAdmin) && <TabsTrigger value="firm-settings">Firm Settings</TabsTrigger>}
-          {(isSuperAdmin || isFirmAdmin) && <TabsTrigger value="aggregator-connectors">Aggregator Connectors</TabsTrigger>}
         </TabsList>
 
         {canManageUsers && (
@@ -114,11 +112,6 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
           </TabsContent>
         )}
 
-        {(isSuperAdmin || isFirmAdmin) && (
-          <TabsContent value="aggregator-connectors">
-            <AggregatorConnectorsTab firmId={firmId} />
-          </TabsContent>
-        )}
       </Tabs>
     </div>
   );

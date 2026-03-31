@@ -21,7 +21,7 @@ export async function POST(req: Request) {
   // Load config from DB if connectorId provided
   if (connectorId) {
     const record = await prisma.methodologyTemplate.findFirst({
-      where: { id: connectorId, firmId: session.user.firmId, templateType: 'aggregator_connector' },
+      where: { id: connectorId, firmId: '__global__', templateType: 'aggregator_connector' },
     });
     if (!record) return NextResponse.json({ success: false, message: 'Connector not found' });
     const items = typeof record.items === 'object' && record.items !== null
