@@ -54,6 +54,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
   const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
 
+  // Sync when parent changes (e.g. Opening tab toggle)
+  useEffect(() => {
+    setShowCategoryLocal(initialShowCategory);
+  }, [initialShowCategory]);
+
   // FS hierarchy for cascading dropdowns
   const [fsStatements, setFsStatements] = useState<string[]>([]);
   const [fsLevels, setFsLevels] = useState<{ name: string; statement: string }[]>([]);
