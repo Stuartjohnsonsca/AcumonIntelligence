@@ -62,7 +62,17 @@ export async function POST(req: Request) {
 async function searchPricePaid(address: { paon?: string; street?: string; town?: string; postcode?: string; county?: string }) {
   // Build SPARQL filter conditions
   const filters: string[] = [];
-  if (address.paon) filters.push(`FILTER(CONTAINS(UCASE(STR(?paon)), "${address.paon.toUpperCase()}"))`);
+  if (address.paon) {
+    // Search with both exact and space-normalised forms for hyphenated PAONs
+    // e.g. "1-2" should match "1 - 2", "1-2", "1 -2" etc.
+    const raw = sanitiseSparql(address.paon.toUpperCase());
+    const spaced = sanitiseSparql(address.paon.toUpperCase().replace(/\s*-\s*/g, ' - '));
+    if (raw === spaced) {
+      filters.push(`FILTER(CONTAINS(UCASE(STR(?paon)), "${raw}"))`);
+    } else {
+      filters.push(`FILTER(CONTAINS(UCASE(STR(?paon)), "${raw}") || CONTAINS(UCASE(STR(?paon)), "${spaced}"))`);
+    }
+  }
   if (address.street) filters.push(`FILTER(CONTAINS(UCASE(STR(?street)), "${sanitiseSparql(address.street.toUpperCase())}"))`);
   if (address.town) filters.push(`FILTER(CONTAINS(UCASE(STR(?town)), "${sanitiseSparql(address.town.toUpperCase())}"))`);
   if (address.postcode) filters.push(`FILTER(CONTAINS(UCASE(STR(?postcode)), "${sanitiseSparql(address.postcode.toUpperCase().replace(/\s+/g, ''))}"))`);
