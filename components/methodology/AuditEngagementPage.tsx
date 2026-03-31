@@ -172,18 +172,7 @@ export function AuditEngagementPage({ auditType }: Props) {
 
       if (!eng) throw new Error('Failed to load engagement');
 
-      // 3. Set to active if still pre_start
-      if (eng.status === 'pre_start') {
-        const activateRes = await fetch(`/api/engagements/${eng.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'active' }),
-        });
-        if (activateRes.ok) {
-          const activateData = await activateRes.json();
-          eng = activateData.engagement;
-        }
-      }
+      // 3. Keep as pre_start — user clicks "Start Audit" on Opening tab to activate
 
       // 4. Final reload to get complete data
       const finalRes = await fetch(`/api/engagements?clientId=${clientId}&periodId=${selectedPeriodId}&auditType=${auditType}`);
