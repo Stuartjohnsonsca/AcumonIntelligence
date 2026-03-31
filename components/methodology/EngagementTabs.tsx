@@ -158,7 +158,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   function renderTabContent() {
     switch (activeTab) {
       case 'opening':
-        return <OpeningTab engagement={engagement} auditType={auditType} clientName={clientName} periodEndDate={periodEndDate} />;
+        return <OpeningTab engagement={engagement} auditType={auditType} clientName={clientName} periodEndDate={periodEndDate} onShowCategoryChange={setTbShowCategory} />;
       case 'prior-period':
         return <PriorPeriodTab engagementId={engagement.id} teamMembers={teamMembers} />;
       case 'permanent-file':
@@ -168,7 +168,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'continuance':
         return <ContinuanceTab engagementId={engagement.id} />;
       case 'tb':
-        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} onShowCategoryChange={setTbShowCategory} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />;
+        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} showCategory={tbShowCategory} onShowCategoryChange={setTbShowCategory} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />;
       case 'materiality':
         return <MaterialityTab engagementId={engagement.id} />;
       case 'par':

@@ -32,9 +32,10 @@ interface Props {
   clientName: string;
   periodEndDate: string | null;
   onEngagementUpdate?: (updated: EngagementData) => void;
+  onShowCategoryChange?: (show: boolean) => void;
 }
 
-export function OpeningTab({ engagement, auditType, clientName, periodEndDate, onEngagementUpdate }: Props) {
+export function OpeningTab({ engagement, auditType, clientName, periodEndDate, onEngagementUpdate, onShowCategoryChange }: Props) {
   const [isGroupAudit, setIsGroupAudit] = useState(engagement.isGroupAudit);
   const [showCategory, setShowCategory] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -272,7 +273,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
               onClick={() => {
                 const newVal = !showCategory;
                 setShowCategory(newVal);
-                // This is a UI preference, stored locally for now
+                onShowCategoryChange?.(newVal);
               }}
               className={`relative w-10 h-5 rounded-full transition-colors ${
                 showCategory ? 'bg-blue-500' : 'bg-slate-300'
