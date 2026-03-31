@@ -60,6 +60,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [fsNotes, setFsNotes] = useState<FsItem[]>([]);
   const [fsAllItems, setFsAllItems] = useState<FsItem[]>([]);
 
+  // AI lookup state for FS Note
+  const [aiLookupRow, setAiLookupRow] = useState<number | null>(null);
+  const [aiLookupResults, setAiLookupResults] = useState<{ name: string; label: string }[]>([]);
+  const [aiLookupLoading, setAiLookupLoading] = useState(false);
+
   function setShowCategory(show: boolean) {
     setShowCategoryLocal(show);
     onShowCategoryChange?.(show);
@@ -166,6 +171,40 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     } : r));
   }
 
+  // AI lookup: search XBRL taxonomy for FS Note based on row description
+  async function handleAiLookup(index: number) {
+    const row = rows[index];
+    const query = row.description || row.accountCode;
+    if (!query) return;
+
+    setAiLookupRow(index);
+    setAiLookupResults([]);
+    setAiLookupLoading(true);
+    try {
+      // Try searching by framework (FRS102 default, could be configured)
+      const res = await fetch(`/api/firm/taxonomy/xbrl?action=search&framework=FRS102&q=${encodeURIComponent(query)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAiLookupResults(
+          (data.concepts || [])
+            .filter((c: any) => !c.abstract)
+            .slice(0, 10)
+            .map((c: any) => ({ name: c.name, label: c.label }))
+        );
+      }
+    } catch (err) {
+      console.error('AI lookup failed:', err);
+    } finally {
+      setAiLookupLoading(false);
+    }
+  }
+
+  function selectAiResult(index: number, label: string) {
+    handleFsNoteChange(index, label);
+    setAiLookupRow(null);
+    setAiLookupResults([]);
+  }
+
   // Handle multi-cell paste from Excel/Sheets
   function handlePaste(e: React.ClipboardEvent, startRow: number, startCol: number) {
     const text = e.clipboardData.getData('text/plain');
@@ -238,7 +277,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               {showCategory && <th className="text-left px-2 py-2 text-slate-500 font-medium w-24">Category</th>}
               <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">{formatDateDDMMYYYY(periodEndDate) || 'Period End'}</th>
               <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">{dayBefore(periodStartDate) || 'Period Start - 1'}</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-20">FS Note</th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium w-36">FS Note</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-20">FS Level</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-28">FS Statement</th>
               {isGroupAudit && <th className="text-left px-2 py-2 text-slate-500 font-medium w-28">Group Name</th>}
@@ -265,25 +304,53 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 <td className="px-2 py-0.5">
                   <input type="text" inputMode="decimal" value={row.priorYear ?? ''} onChange={e => { const v = e.target.value.replace(/[^0-9.\-]/g, ''); updateRow(i, 'priorYear', v === '' || v === '-' ? (v === '-' ? -0 : null) : (parseFloat(v) || null)); }} onPaste={e => handlePaste(e, i, showCategory ? 4 : 3)} className={numCls} />
                 </td>
-                {/* FS Note — dropdown of note_items, auto-populates Level + Statement */}
-                <td className="px-2 py-0.5">
-                  <select
-                    value={row.fsNoteLevel || ''}
-                    onChange={e => handleFsNoteChange(i, e.target.value)}
-                    className={`${txtCls} appearance-none`}
-                  >
-                    <option value=""></option>
-                    {(row.fsStatement
-                      ? fsNotes.filter(n => n.statement === row.fsStatement)
-                      : fsNotes
-                    ).map(n => (
-                      <option key={n.id} value={n.name}>{n.name}</option>
-                    ))}
-                    {/* Allow current value even if not in list */}
-                    {row.fsNoteLevel && !fsNotes.find(n => n.name === row.fsNoteLevel) && (
-                      <option value={row.fsNoteLevel}>{row.fsNoteLevel}</option>
-                    )}
-                  </select>
+                {/* FS Note — text input (pastable) + AI lookup button */}
+                <td className="px-2 py-0.5 relative">
+                  <div className="flex items-center gap-0.5">
+                    <input
+                      type="text"
+                      value={row.fsNoteLevel || ''}
+                      onChange={e => handleFsNoteChange(i, e.target.value)}
+                      onPaste={e => handlePaste(e, i, showCategory ? 5 : 4)}
+                      className={`${txtCls} flex-1`}
+                      list={`fs-notes-${i}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => aiLookupRow === i ? setAiLookupRow(null) : handleAiLookup(i)}
+                      title="AI lookup from XBRL taxonomy"
+                      className={`flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-[9px] font-bold transition-colors ${
+                        aiLookupRow === i ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-blue-100 hover:text-blue-600'
+                      }`}
+                    >
+                      {aiLookupLoading && aiLookupRow === i ? '…' : '⚡'}
+                    </button>
+                  </div>
+                  {/* Datalist for paste/type suggestions from FS Lines */}
+                  <datalist id={`fs-notes-${i}`}>
+                    {fsNotes.map(n => <option key={n.id} value={n.name} />)}
+                  </datalist>
+                  {/* AI lookup results dropdown */}
+                  {aiLookupRow === i && aiLookupResults.length > 0 && (
+                    <div className="absolute left-0 top-full z-20 w-64 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-0.5">
+                      <div className="px-2 py-1 text-[9px] font-semibold text-slate-400 border-b bg-slate-50">XBRL Taxonomy Matches</div>
+                      {aiLookupResults.map((r, ri) => (
+                        <button
+                          key={ri}
+                          onClick={() => selectAiResult(i, r.label)}
+                          className="w-full text-left px-2 py-1.5 text-[10px] hover:bg-blue-50 border-b border-slate-50 last:border-0"
+                        >
+                          <span className="font-medium text-slate-800">{r.label}</span>
+                          <span className="block text-[8px] text-slate-400 font-mono truncate">{r.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {aiLookupRow === i && !aiLookupLoading && aiLookupResults.length === 0 && (
+                    <div className="absolute left-0 top-full z-20 w-48 bg-white border border-slate-200 rounded-md shadow-lg mt-0.5 px-3 py-2 text-[10px] text-slate-400">
+                      No taxonomy matches found
+                    </div>
+                  )}
                 </td>
                 {/* FS Level — dropdown of fs_line_items filtered by Statement */}
                 <td className="px-2 py-0.5">
