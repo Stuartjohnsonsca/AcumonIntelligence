@@ -347,10 +347,14 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     return htmlToContent(editorRef.current);
   }
 
-  /** Sync merge-field pill badges (no innerHTML reset) */
+  /** Sync merge-field pill badges — debounced to avoid cursor reset from React re-render */
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   function syncMergeFieldsFromEditor() {
-    const raw = readEditorContent();
-    setEditMergeFields(getUsedFields(raw));
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      const raw = readEditorContent();
+      setEditMergeFields(getUsedFields(raw));
+    }, 300);
   }
 
   function handleEditorClick(e: React.MouseEvent) {

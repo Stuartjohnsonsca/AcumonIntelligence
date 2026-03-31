@@ -58,10 +58,32 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     { enabled: JSON.stringify(rows) !== JSON.stringify(initialRows) }
   );
 
+  // Create a set of blank rows for paste-ready spreadsheet
+  function createBlankRows(count: number): TBRow[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: '', accountCode: '', description: '', category: null,
+      currentYear: null, priorYear: null, fsNoteLevel: null,
+      fsLevel: null, fsStatement: null, groupName: null,
+      sortOrder: i,
+    }));
+  }
+
   const loadData = useCallback(async () => {
     try {
       const res = await fetch(`/api/engagements/${engagementId}/trial-balance`);
-      if (res.ok) { const json = await res.json(); setRows(json.rows || []); setInitialRows(json.rows || []); }
+      if (res.ok) {
+        const json = await res.json();
+        const loaded = json.rows || [];
+        if (loaded.length === 0) {
+          // Start with a blank grid ready for paste
+          const blank = createBlankRows(30);
+          setRows(blank);
+          setInitialRows([]);
+        } else {
+          setRows(loaded);
+          setInitialRows(loaded);
+        }
+      }
     } catch (err) { console.error('Failed to load:', err); }
     finally { setLoading(false); }
   }, [engagementId]);
@@ -83,6 +105,47 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
   function removeRow(index: number) {
     setRows(prev => prev.filter((_, i) => i !== index));
+  }
+
+  // Handle multi-cell paste from Excel/Sheets
+  function handlePaste(e: React.ClipboardEvent, startRow: number, startCol: number) {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text || !text.includes('\t')) return; // Only intercept multi-cell paste
+    e.preventDefault();
+
+    const colFields: (keyof TBRow)[] = ['accountCode', 'description', 'currentYear', 'priorYear'];
+    if (showCategory) colFields.splice(2, 0, 'category' as keyof TBRow);
+    if (isGroupAudit) colFields.push('groupName' as keyof TBRow);
+
+    const pastedRows = text.split('\n').filter(line => line.trim());
+    setRows(prev => {
+      const updated = [...prev];
+      // Ensure enough rows
+      while (updated.length < startRow + pastedRows.length) {
+        updated.push({
+          id: '', accountCode: '', description: '', category: null,
+          currentYear: null, priorYear: null, fsNoteLevel: null,
+          fsLevel: null, fsStatement: null, groupName: null,
+          sortOrder: updated.length,
+        });
+      }
+      pastedRows.forEach((line, ri) => {
+        const cells = line.split('\t');
+        cells.forEach((cell, ci) => {
+          const fieldIdx = startCol + ci;
+          if (fieldIdx < colFields.length) {
+            const field = colFields[fieldIdx];
+            const val = cell.trim();
+            if (field === 'currentYear' || field === 'priorYear') {
+              (updated[startRow + ri] as any)[field] = val ? parseFloat(val.replace(/[,£$€]/g, '')) || null : null;
+            } else {
+              (updated[startRow + ri] as any)[field] = val || null;
+            }
+          }
+        });
+      });
+      return updated;
+    });
   }
 
   if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading Trial Balance...</div>;
@@ -124,15 +187,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={10} className="text-center py-8 text-slate-400 italic">No trial balance data. Click &quot;Add Row&quot; to begin.</td></tr>
-            ) : rows.map((row, i) => (
+            {rows.map((row, i) => (
               <tr key={row.id || `new-${i}`} className="border-b border-slate-100 hover:bg-slate-50/50">
                 <td className="px-2 py-0.5">
-                  <input type="text" value={row.accountCode} onChange={e => updateRow(i, 'accountCode', e.target.value)} className={txtCls} placeholder="Code" />
+                  <input type="text" value={row.accountCode} onChange={e => updateRow(i, 'accountCode', e.target.value)} onPaste={e => handlePaste(e, i, 0)} className={txtCls} placeholder="Code" />
                 </td>
                 <td className="px-2 py-0.5">
-                  <input type="text" value={row.description} onChange={e => updateRow(i, 'description', e.target.value)} className={txtCls} placeholder="Description" />
+                  <input type="text" value={row.description} onChange={e => updateRow(i, 'description', e.target.value)} onPaste={e => handlePaste(e, i, 1)} className={txtCls} placeholder="Description" />
                 </td>
                 {showCategory && (
                   <td className="px-2 py-0.5">

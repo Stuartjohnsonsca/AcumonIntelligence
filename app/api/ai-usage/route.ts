@@ -138,6 +138,17 @@ export async function GET(req: Request) {
   const clientIds = firmClients.map(c => c.id);
   const clientNameMap = new Map(firmClients.map(c => [c.id, c.clientName]));
 
+  // If no clients, return empty results instead of erroring
+  if (clientIds.length === 0) {
+    return NextResponse.json({
+      period,
+      firmSummary: { totalCalls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCostUsd: 0 },
+      byAction: [],
+      byModel: [],
+      clients: [],
+    });
+  }
+
   const firmCreatedAtFilter: Record<string, Date> = {};
   if (dateFilter) firmCreatedAtFilter.gte = dateFilter;
   if (dateFilterEnd) firmCreatedAtFilter.lte = dateFilterEnd;
