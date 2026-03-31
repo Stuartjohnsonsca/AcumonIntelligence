@@ -281,6 +281,17 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     setAiLookupResults([]);
   }
 
+  // Track which number cell is being edited (show raw value while editing)
+  const [editingCell, setEditingCell] = useState<string | null>(null);
+
+  // Format number as GBP-style: 1,234.56 / (1,234.56) for negatives
+  function formatGBP(val: number | null): string {
+    if (val == null) return '';
+    const abs = Math.abs(val);
+    const formatted = abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return val < 0 ? `(${formatted})` : formatted;
+  }
+
   // Parse a number string, treating (1,234.56) as -1234.56
   function parseNumber(val: string): number | null {
     if (!val) return null;
@@ -406,10 +417,26 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   </td>
                 )}
                 <td className="px-2 py-0.5">
-                  <input type="text" inputMode="decimal" value={row.currentYear ?? ''} onChange={e => updateRow(i, 'currentYear', parseNumber(e.target.value))} onPaste={e => handlePaste(e, i, showCategory ? 3 : 2)} className={numCls} />
+                  <input
+                    type="text" inputMode="decimal"
+                    value={editingCell === `cy-${i}` ? (row.currentYear ?? '') : formatGBP(row.currentYear)}
+                    onChange={e => updateRow(i, 'currentYear', parseNumber(e.target.value))}
+                    onFocus={() => setEditingCell(`cy-${i}`)}
+                    onBlur={() => setEditingCell(null)}
+                    onPaste={e => handlePaste(e, i, showCategory ? 3 : 2)}
+                    className={numCls}
+                  />
                 </td>
                 <td className="px-2 py-0.5">
-                  <input type="text" inputMode="decimal" value={row.priorYear ?? ''} onChange={e => updateRow(i, 'priorYear', parseNumber(e.target.value))} onPaste={e => handlePaste(e, i, showCategory ? 4 : 3)} className={numCls} />
+                  <input
+                    type="text" inputMode="decimal"
+                    value={editingCell === `py-${i}` ? (row.priorYear ?? '') : formatGBP(row.priorYear)}
+                    onChange={e => updateRow(i, 'priorYear', parseNumber(e.target.value))}
+                    onFocus={() => setEditingCell(`py-${i}`)}
+                    onBlur={() => setEditingCell(null)}
+                    onPaste={e => handlePaste(e, i, showCategory ? 4 : 3)}
+                    className={numCls}
+                  />
                 </td>
                 {/* FS Note — text input (pastable) + AI lookup button */}
                 <td className="px-2 py-0.5 relative">
