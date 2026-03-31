@@ -2,12 +2,9 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
-const GLOBAL_FIRM_ID = '__global__';
-
 /**
  * GET /api/aggregator-connectors
- * List all centrally-managed aggregator connectors (Super Admin scope).
- * All firms can read these; only Super Admin can modify.
+ * List all aggregator connectors for the Super Admin's firm.
  */
 export async function GET() {
   const session = await auth();
@@ -15,9 +12,11 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const firmId = session.user.firmId;
+
   // Auto-seed default connectors that use free/public APIs
   const existing = await prisma.methodologyTemplate.findMany({
-    where: { firmId: GLOBAL_FIRM_ID, templateType: 'aggregator_connector' },
+    where: { firmId, templateType: 'aggregator_connector' },
   });
   const existingTypes = new Set(existing.map((r: any) => r.auditType));
 
@@ -46,14 +45,18 @@ export async function GET() {
 
   for (const def of DEFAULT_CONNECTORS) {
     if (!existingTypes.has(def.auditType)) {
-      await prisma.methodologyTemplate.create({
-        data: { firmId: GLOBAL_FIRM_ID, templateType: 'aggregator_connector', auditType: def.auditType, items: def.items },
-      });
+      try {
+        await prisma.methodologyTemplate.create({
+          data: { firmId, templateType: 'aggregator_connector', auditType: def.auditType, items: def.items },
+        });
+      } catch {
+        // May already exist via unique constraint
+      }
     }
   }
 
   const records = await prisma.methodologyTemplate.findMany({
-    where: { firmId: GLOBAL_FIRM_ID, templateType: 'aggregator_connector' },
+    where: { firmId, templateType: 'aggregator_connector' },
     orderBy: { createdAt: 'asc' },
   });
 
@@ -77,7 +80,7 @@ export async function GET() {
 
 /**
  * POST /api/aggregator-connectors
- * Add a new aggregator connector (Super Admin only, stored globally).
+ * Add a new aggregator connector (Super Admin only).
  */
 export async function POST(req: Request) {
   const session = await auth();
@@ -90,9 +93,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'connectorType is required' }, { status: 400 });
   }
 
+  const firmId = session.user.firmId;
+
   const record = await prisma.methodologyTemplate.create({
     data: {
-      firmId: GLOBAL_FIRM_ID,
+      firmId,
       templateType: 'aggregator_connector',
       auditType: connectorType,
       items: { label, config: config || {}, status: 'inactive', lastTestedAt: null, lastTestResult: null },
