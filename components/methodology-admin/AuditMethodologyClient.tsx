@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3 } from 'lucide-react';
+import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3, MessageSquareMore } from 'lucide-react';
 
 const tiles = [
   {
@@ -51,6 +51,14 @@ const tiles = [
     icon: Calendar,
     color: 'bg-amber-50 border-amber-200 hover:bg-amber-100',
     iconColor: 'text-amber-600',
+  },
+  {
+    title: 'Questionnaire Actions',
+    description: 'Map action triggers to questionnaire questions across audit types',
+    href: '/methodology-admin/audit-methodology/questionnaire-actions',
+    icon: MessageSquareMore,
+    color: 'bg-teal-50 border-teal-200 hover:bg-teal-100',
+    iconColor: 'text-teal-600',
   },
 ];
 
