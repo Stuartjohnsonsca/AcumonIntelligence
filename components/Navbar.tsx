@@ -4,7 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Menu, X, ChevronDown, LogIn, LogOut, User, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { STATUTORY_AUDIT_PRODUCTS, ASSURANCE_PRODUCTS, FINANCIAL_ACCOUNTS_ITEMS } from '@/lib/products';
@@ -27,8 +27,27 @@ export function Navbar() {
   const [methodologyOpen, setMethodologyOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [toolSessions, setToolSessions] = useState<{toolKey: string; toolLabel: string; clients: {clientId: string; clientName: string; periods: {id: string; periodLabel: string; toolPath: string}[]}[]}[]>([]);
+  const [actionCount, setActionCount] = useState(0);
 
   const isAuthenticated = session?.user && session.user.twoFactorVerified;
+
+  // Poll outstanding actions count for badge
+  const pollActions = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const res = await fetch('/api/user/outstanding-actions?countOnly=true');
+      if (res.ok) {
+        const data = await res.json();
+        setActionCount(data.totalCount || 0);
+      }
+    } catch { /* ignore */ }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    pollActions();
+    const interval = setInterval(pollActions, 60000);
+    return () => clearInterval(interval);
+  }, [pollActions]);
 
   function handleProductClick(urlPrefix: string) {
     if (!isAuthenticated) {
@@ -318,9 +337,14 @@ export function Navbar() {
 
             <Link
               href="/my-account"
-              className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+              className="relative px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
             >
               My Account
+              {actionCount > 0 && (
+                <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-green-500 text-white text-[10px] font-bold leading-none">
+                  {actionCount}
+                </span>
+              )}
             </Link>
           </div>
 

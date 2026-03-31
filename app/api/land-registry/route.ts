@@ -13,7 +13,7 @@ const LR_SPARQL_ENDPOINT = 'https://landregistry.data.gov.uk/landregistry/query'
 export async function POST(req: Request) {
   const session = await auth();
   try {
-    const { action, address, clientId } = await req.json();
+    const { action, address, clientId, engagementId } = await req.json();
 
     if (!address || (!address.postcode && !address.street)) {
       return NextResponse.json({ error: 'Address details required (at least postcode or street)' }, { status: 400 });
@@ -27,6 +27,9 @@ export async function POST(req: Request) {
     } else {
       return NextResponse.json({ error: 'Invalid action. Use "verify_ownership" or "price_paid"' }, { status: 400 });
     }
+
+    // Clone the response body so we can read it and still return it
+    const resultBody = await result.clone().json();
 
     // Log usage cost (Land Registry API is free/OGL but we track for reporting)
     try {
@@ -47,6 +50,32 @@ export async function POST(req: Request) {
       }
     } catch (costErr) {
       console.error('Failed to log Land Registry usage:', costErr);
+    }
+
+    // When multiple results are returned, create a pending user_action for the user to select
+    if (resultBody.resultCount > 1 && session?.user?.id) {
+      try {
+        const addrStr = [address.paon, address.street, address.town, address.postcode].filter(Boolean).join(', ');
+        await prisma.methodologyTemplate.create({
+          data: {
+            firmId: session.user.firmId || '__global__',
+            templateType: 'user_action',
+            auditType: 'land_registry_selection',
+            items: {
+              userId: session.user.id,
+              engagementId: engagementId || null,
+              actionType: 'land_registry_selection',
+              title: `Land Registry: Select property for ${addrStr}`,
+              description: `${resultBody.resultCount} properties found — select the correct one`,
+              status: 'pending',
+              data: { query: address, action, results: resultBody.results },
+              createdAt: new Date().toISOString(),
+            },
+          },
+        });
+      } catch (err) {
+        console.error('Failed to create user_action for Land Registry:', err);
+      }
     }
 
     return result;

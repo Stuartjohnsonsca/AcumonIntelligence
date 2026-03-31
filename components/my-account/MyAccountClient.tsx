@@ -7,6 +7,7 @@ import { ClientsTab } from './ClientsTab';
 import { SubscriptionsTab } from './SubscriptionsTab';
 import { AiUsageTab } from './AiUsageTab';
 import { FirmSettingsTab } from './FirmSettingsTab';
+import { OutstandingActionsSection } from './OutstandingActionsSection';
 import { Shield, BookOpen, Keyboard, Users } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,9 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
 
   return (
     <div>
+      {/* Outstanding Actions — always visible at top */}
+      <OutstandingActionsSection />
+
       {isSuperAdmin && (
         <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
           <div className="flex items-center space-x-2">
