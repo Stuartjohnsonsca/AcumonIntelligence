@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { fireTrigger } from '@/lib/trigger-engine';
 
 // GET /api/engagements/[engagementId] - Full engagement with all relations
 export async function GET(
@@ -104,6 +105,18 @@ export async function PUT(
         period: { select: { id: true, startDate: true, endDate: true } },
       },
     });
+
+    // Fire "On Start" trigger when engagement transitions from pre_start to active
+    if (status === 'active' && existing.status === 'pre_start') {
+      fireTrigger({
+        triggerName: 'On Start',
+        engagementId,
+        clientId: engagement.clientId,
+        auditType: engagement.auditType,
+        firmId: engagement.firmId,
+        userId: session.user.id,
+      }).catch(err => console.error('[Trigger] On Start failed:', err));
+    }
 
     return NextResponse.json({ engagement });
   } catch (err) {

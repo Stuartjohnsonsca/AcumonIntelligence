@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { fireTrigger } from '@/lib/trigger-engine';
 
 /**
  * GET /api/portal/requests?clientId=X&status=outstanding|responded
@@ -72,6 +73,24 @@ export async function POST(req: Request) {
         respondedAt: new Date(),
       },
     });
+
+    // Fire "On Portal Response" trigger
+    if (updated.engagementId) {
+      const eng = await prisma.auditEngagement.findUnique({
+        where: { id: updated.engagementId },
+        select: { clientId: true, auditType: true, firmId: true },
+      });
+      if (eng) {
+        fireTrigger({
+          triggerName: 'On Portal Response',
+          engagementId: updated.engagementId,
+          clientId: eng.clientId,
+          auditType: eng.auditType,
+          firmId: eng.firmId,
+          userId: respondedById || '',
+        }).catch(err => console.error('[Trigger] On Portal Response failed:', err));
+      }
+    }
 
     return NextResponse.json({ request: updated, verified: true });
   } catch (error) {

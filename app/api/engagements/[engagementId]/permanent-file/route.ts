@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { fireTrigger } from '@/lib/trigger-engine';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -110,6 +111,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       create: { engagementId, sectionKey: SIGNOFF_KEY, data: signOffs as object },
       update: { data: signOffs as object },
     });
+
+    // Fire "On Section Sign Off" trigger
+    const eng = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { clientId: true, auditType: true, firmId: true } });
+    if (eng) {
+      fireTrigger({
+        triggerName: 'On Section Sign Off',
+        engagementId,
+        clientId: eng.clientId,
+        auditType: eng.auditType,
+        firmId: eng.firmId,
+        userId: session.user.id,
+        sectionName: 'Permanent File',
+      }).catch(err => console.error('[Trigger] Sign Off failed:', err));
+    }
 
     return NextResponse.json({ signOffs });
   }

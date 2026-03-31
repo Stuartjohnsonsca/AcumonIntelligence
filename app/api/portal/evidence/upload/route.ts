@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { uploadToInbox } from '@/lib/azure-blob';
 import { sendEvidenceUploadNotification } from '@/lib/email-portal';
+import { fireTrigger } from '@/lib/trigger-engine';
 
 /**
  * POST /api/portal/evidence/upload
@@ -98,6 +99,19 @@ export async function POST(req: Request) {
       }
     } catch (notifyErr) {
       console.warn('Failed to send upload notification (non-fatal):', notifyErr);
+    }
+
+    // Fire "On Upload" trigger
+    if (request.run?.engagement) {
+      const eng = request.run.engagement as any;
+      fireTrigger({
+        triggerName: 'On Upload',
+        engagementId: eng.id || '',
+        clientId: request.clientId,
+        auditType: eng.auditType || '',
+        firmId: eng.firmId || '',
+        userId: uploaderId,
+      }).catch(err => console.error('[Trigger] On Upload failed:', err));
     }
 
     return NextResponse.json({
