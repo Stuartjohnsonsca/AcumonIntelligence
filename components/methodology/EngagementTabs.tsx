@@ -17,6 +17,7 @@ import { ClientPortalTab } from './tabs/ClientPortalTab';
 import { OpeningTab } from './tabs/OpeningTab';
 import { PriorPeriodTab } from './tabs/PriorPeriodTab';
 import { AuditPlanPanel } from './panels/AuditPlanPanel';
+import { EngagementOutstandingTab } from './tabs/EngagementOutstandingTab';
 
 interface Props {
   engagement: EngagementData;
@@ -38,6 +39,7 @@ const TABS = [
   { key: 'par', label: 'PAR' },
   { key: 'rmm', label: 'Identifying & Assessing RMM' },
   { key: 'documents', label: 'Documents' },
+  { key: 'outstanding', label: 'Outstanding' },
   { key: 'portal', label: 'Portal' },
 ] as const;
 
@@ -152,6 +154,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         return <RMMTab engagementId={engagement.id} auditType={auditType} teamMembers={teamMembers} showCategoryOption={tbShowCategory} />;
       case 'documents':
         return <DocumentRepositoryTab engagementId={engagement.id} />;
+      case 'outstanding':
+        return <EngagementOutstandingTab engagementId={engagement.id} clientId={engagement.clientId} currentUserId={currentUserId} />;
       case 'portal':
         return <ClientPortalTab engagementId={engagement.id} clientName={clientName} />;
       default:

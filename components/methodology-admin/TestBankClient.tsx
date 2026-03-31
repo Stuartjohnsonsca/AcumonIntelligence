@@ -499,7 +499,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-100">
                   <th className="text-left font-semibold text-slate-700 p-2.5 min-w-[200px] border-b border-r border-slate-200">FS Statement Line</th>
-                  <th className="text-left font-semibold text-slate-700 p-2.5 min-w-[180px] border-b border-r border-slate-200">Assertions</th>
+                  <th className="text-left font-semibold text-slate-700 p-1 min-w-[90px] border-b border-r border-slate-200">Assertions</th>
                   {industries.map(ind => (
                     <th key={ind.id} className="text-center font-semibold text-slate-700 p-2 min-w-[80px] border-b border-r border-slate-200">
                       <div className="flex flex-col items-center gap-0.5">
@@ -526,18 +526,18 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                         </div>
                       </td>
 
-                      {/* Assertions multi-display */}
-                      <td className="p-2 border-r border-slate-100">
+                      {/* Assertions — compact abbreviations */}
+                      <td className="p-1 border-r border-slate-100">
                         {assertions.length > 0 ? (
-                          <div className="flex flex-wrap gap-0.5">
+                          <div className="flex flex-wrap gap-px">
                             {assertions.map(a => (
-                              <span key={a} className="inline-block px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] leading-tight">
-                                {a.length > 15 ? a.split(' ').map(w => w[0]).join('') : a}
+                              <span key={a} className="inline-block px-1 py-px bg-purple-100 text-purple-700 rounded text-[8px] leading-tight font-medium" title={a}>
+                                {a.length > 8 ? a.split(' ').map(w => w[0]).join('') : a}
                               </span>
                             ))}
                           </div>
                         ) : (
-                          <span className="text-slate-300 italic">—</span>
+                          <span className="text-slate-300 text-[8px]">—</span>
                         )}
                       </td>
 
