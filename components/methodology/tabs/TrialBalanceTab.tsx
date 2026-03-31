@@ -178,26 +178,34 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     } : r));
   }
 
-  // AI lookup: search XBRL taxonomy for FS Note based on row description
+  // AI classify: use Claude to intelligently classify a single row
   async function handleAiLookup(index: number) {
     const row = rows[index];
-    const query = row.description || row.accountCode;
-    if (!query) return;
+    if (!row.description && !row.accountCode) return;
 
     setAiLookupRow(index);
     setAiLookupResults([]);
     setAiLookupLoading(true);
     try {
-      // Try searching by framework (FRS102 default, could be configured)
-      const res = await fetch(`/api/firm/taxonomy/xbrl?action=search&framework=FRS102&q=${encodeURIComponent(query)}`);
+      const res = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: [{ index, accountCode: row.accountCode, description: row.description, currentYear: row.currentYear }],
+        }),
+      });
       if (res.ok) {
         const data = await res.json();
-        setAiLookupResults(
-          (data.concepts || [])
-            .filter((c: any) => !c.abstract)
-            .slice(0, 10)
-            .map((c: any) => ({ name: c.name, label: c.label }))
-        );
+        const c = data.classifications?.[0];
+        if (c) {
+          // Show result for confirmation
+          setAiLookupResults([{
+            name: `${c.fsNoteLevel} → ${c.fsLevel} → ${c.fsStatement}`,
+            label: c.fsNoteLevel,
+            fsLevel: c.fsLevel,
+            fsStatement: c.fsStatement,
+          }]);
+        }
       }
     } catch (err) {
       console.error('AI lookup failed:', err);
@@ -206,8 +214,69 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     }
   }
 
-  function selectAiResult(index: number, label: string) {
-    handleFsNoteChange(index, label);
+  // AI classify all rows at once
+  const [aiAllLoading, setAiAllLoading] = useState(false);
+  const [aiAllProgress, setAiAllProgress] = useState('');
+
+  async function handleAiClassifyAll() {
+    const rowsToClassify = rows
+      .map((r, i) => ({ index: i, accountCode: r.accountCode, description: r.description, currentYear: r.currentYear }))
+      .filter(r => (r.description || r.accountCode) && r.description !== '');
+
+    if (rowsToClassify.length === 0) return;
+
+    setAiAllLoading(true);
+    setAiAllProgress(`Classifying ${rowsToClassify.length} rows...`);
+
+    try {
+      // Process in batches of 30
+      for (let i = 0; i < rowsToClassify.length; i += 30) {
+        const batch = rowsToClassify.slice(i, i + 30);
+        setAiAllProgress(`Classifying rows ${i + 1}–${Math.min(i + 30, rowsToClassify.length)} of ${rowsToClassify.length}...`);
+
+        const res = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: batch }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.classifications) {
+            setRows(prev => {
+              const updated = [...prev];
+              for (const c of data.classifications) {
+                if (c.index >= 0 && c.index < updated.length) {
+                  updated[c.index] = {
+                    ...updated[c.index],
+                    fsNoteLevel: c.fsNoteLevel || updated[c.index].fsNoteLevel,
+                    fsLevel: c.fsLevel || updated[c.index].fsLevel,
+                    fsStatement: c.fsStatement || updated[c.index].fsStatement,
+                  };
+                }
+              }
+              return updated;
+            });
+          }
+        }
+      }
+      setAiAllProgress('Done!');
+      setTimeout(() => setAiAllProgress(''), 2000);
+    } catch (err) {
+      console.error('AI classify all failed:', err);
+      setAiAllProgress('Failed');
+    } finally {
+      setAiAllLoading(false);
+    }
+  }
+
+  function selectAiResult(index: number, result: any) {
+    setRows(prev => prev.map((r, i) => i === index ? {
+      ...r,
+      fsNoteLevel: result.label || r.fsNoteLevel,
+      fsLevel: result.fsLevel || r.fsLevel,
+      fsStatement: result.fsStatement || r.fsStatement,
+    } : r));
     setAiLookupRow(null);
     setAiLookupResults([]);
   }
@@ -296,6 +365,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
           <button onClick={addRow} className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
+          <button
+            onClick={handleAiClassifyAll}
+            disabled={aiAllLoading}
+            className="text-xs px-3 py-1 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 disabled:opacity-50 font-medium"
+          >
+            {aiAllLoading ? aiAllProgress : '⚡ AI Classify All'}
+          </button>
         </div>
       </div>
 
@@ -368,11 +444,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                       {aiLookupResults.map((r, ri) => (
                         <button
                           key={ri}
-                          onClick={() => selectAiResult(i, r.label)}
+                          onClick={() => selectAiResult(i, r)}
                           className="w-full text-left px-2 py-1.5 text-[10px] hover:bg-blue-50 border-b border-slate-50 last:border-0"
                         >
                           <span className="font-medium text-slate-800">{r.label}</span>
-                          <span className="block text-[8px] text-slate-400 font-mono truncate">{r.name}</span>
+                          <span className="block text-[8px] text-slate-400 truncate">{r.name}</span>
                         </button>
                       ))}
                     </div>
