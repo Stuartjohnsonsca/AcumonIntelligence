@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
 const CATEGORY_TO_STATEMENT: Record<string, string> = {
   pnl: 'Profit & Loss',
@@ -9,6 +9,13 @@ const CATEGORY_TO_STATEMENT: Record<string, string> = {
   cashflow: 'Cash Flow Statement',
   notes: 'Notes',
 };
+
+const client = new OpenAI({
+  apiKey: process.env.TOGETHER_API_KEY || process.env.TOGETHER_DOC_SUMMARY_KEY || '',
+  baseURL: 'https://api.together.xyz/v1',
+});
+
+const MODEL = process.env.TOGETHER_CLASSIFY_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
 
 /**
  * POST /api/engagements/[engagementId]/ai-classify-tb
@@ -63,7 +70,7 @@ export async function POST(
 
   // Build the prompt
   const rowDescriptions = rows
-    .slice(0, 50) // Limit batch size
+    .slice(0, 50)
     .map((r: any) => `[${r.index}] Code: "${r.accountCode || ''}" | Desc: "${r.description || ''}" | Amount: ${r.currentYear ?? 'nil'}`)
     .join('\n');
 
@@ -104,15 +111,17 @@ Respond ONLY with a JSON array. Each element: { "index": <number>, "fsNoteLevel"
 No other text.`;
 
   try {
-    const client = new Anthropic();
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+    const completion = await client.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: rowDescriptions },
+      ],
       max_tokens: 4096,
-      messages: [{ role: 'user', content: rowDescriptions }],
-      system: systemPrompt,
+      temperature: 0.1,
     });
 
-    const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
+    const responseText = completion.choices[0]?.message?.content || '';
 
     // Parse JSON from response (handle markdown code blocks)
     let jsonStr = responseText.trim();
@@ -124,17 +133,18 @@ No other text.`;
 
     // Log usage
     try {
+      const usage = completion.usage;
       await prisma.aiUsage.create({
         data: {
           clientId: engagement.clientId,
           userId: session.user.id,
           action: 'TB Classification',
-          model: 'claude-sonnet-4-20250514',
+          model: MODEL,
           operation: 'classify_tb_rows',
-          promptTokens: message.usage.input_tokens,
-          completionTokens: message.usage.output_tokens,
-          totalTokens: message.usage.input_tokens + message.usage.output_tokens,
-          estimatedCostUsd: (message.usage.input_tokens * 0.003 + message.usage.output_tokens * 0.015) / 1000,
+          promptTokens: usage?.prompt_tokens || 0,
+          completionTokens: usage?.completion_tokens || 0,
+          totalTokens: usage?.total_tokens || 0,
+          estimatedCostUsd: ((usage?.prompt_tokens || 0) * 0.0008 + (usage?.completion_tokens || 0) * 0.0008) / 1000,
         },
       });
     } catch {}
