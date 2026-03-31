@@ -210,15 +210,39 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     setAiLookupResults([]);
   }
 
-  // Handle multi-cell paste from Excel/Sheets
+  // Parse a number string, treating (1,234.56) as -1234.56
+  function parseNumber(val: string): number | null {
+    if (!val) return null;
+    let s = val.trim();
+    // Brackets mean negative: (1,234.56) → -1234.56
+    let negative = false;
+    if (s.startsWith('(') && s.endsWith(')')) {
+      negative = true;
+      s = s.slice(1, -1);
+    } else if (s.startsWith('-')) {
+      negative = true;
+      s = s.slice(1);
+    }
+    // Strip currency symbols and commas
+    s = s.replace(/[,£$€\s]/g, '');
+    const n = parseFloat(s);
+    if (isNaN(n)) return null;
+    return negative ? -n : n;
+  }
+
+  // Handle multi-cell paste from Excel/Sheets — all columns supported
   function handlePaste(e: React.ClipboardEvent, startRow: number, startCol: number) {
     const text = e.clipboardData.getData('text/plain');
     if (!text || !text.includes('\t')) return; // Only intercept multi-cell paste
     e.preventDefault();
 
-    const colFields: (keyof TBRow)[] = ['accountCode', 'description', 'currentYear', 'priorYear'];
-    if (showCategory) colFields.splice(2, 0, 'category' as keyof TBRow);
-    if (isGroupAudit) colFields.push('groupName' as keyof TBRow);
+    // Build column map matching visible table order
+    const colFields: (keyof TBRow)[] = ['accountCode', 'description'];
+    if (showCategory) colFields.push('category');
+    colFields.push('currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement');
+    if (isGroupAudit) colFields.push('groupName');
+
+    const numericFields = new Set<keyof TBRow>(['currentYear', 'priorYear']);
 
     const pastedRows = text.split('\n').filter(line => line.trim());
     setRows(prev => {
@@ -239,8 +263,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           if (fieldIdx < colFields.length) {
             const field = colFields[fieldIdx];
             const val = cell.trim();
-            if (field === 'currentYear' || field === 'priorYear') {
-              (updated[startRow + ri] as any)[field] = val ? parseFloat(val.replace(/[,£$€]/g, '')) || null : null;
+            if (numericFields.has(field)) {
+              (updated[startRow + ri] as any)[field] = parseNumber(val);
             } else {
               (updated[startRow + ri] as any)[field] = val || null;
             }
@@ -304,10 +328,10 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   </td>
                 )}
                 <td className="px-2 py-0.5">
-                  <input type="text" inputMode="decimal" value={row.currentYear ?? ''} onChange={e => { const v = e.target.value.replace(/[^0-9.\-]/g, ''); updateRow(i, 'currentYear', v === '' || v === '-' ? (v === '-' ? -0 : null) : (parseFloat(v) || null)); }} onPaste={e => handlePaste(e, i, showCategory ? 3 : 2)} className={numCls} />
+                  <input type="text" inputMode="decimal" value={row.currentYear ?? ''} onChange={e => updateRow(i, 'currentYear', parseNumber(e.target.value))} onPaste={e => handlePaste(e, i, showCategory ? 3 : 2)} className={numCls} />
                 </td>
                 <td className="px-2 py-0.5">
-                  <input type="text" inputMode="decimal" value={row.priorYear ?? ''} onChange={e => { const v = e.target.value.replace(/[^0-9.\-]/g, ''); updateRow(i, 'priorYear', v === '' || v === '-' ? (v === '-' ? -0 : null) : (parseFloat(v) || null)); }} onPaste={e => handlePaste(e, i, showCategory ? 4 : 3)} className={numCls} />
+                  <input type="text" inputMode="decimal" value={row.priorYear ?? ''} onChange={e => updateRow(i, 'priorYear', parseNumber(e.target.value))} onPaste={e => handlePaste(e, i, showCategory ? 4 : 3)} className={numCls} />
                 </td>
                 {/* FS Note — text input (pastable) + AI lookup button */}
                 <td className="px-2 py-0.5 relative">
