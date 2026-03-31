@@ -386,7 +386,53 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         </div>
       </div>
 
-      <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 280px)' }}>
+      {/* Summary: Profit, Net Assets, Totals with balance check */}
+      {(() => {
+        const cyTotal = rows.reduce((sum, r) => sum + (r.currentYear || 0), 0);
+        const pyTotal = rows.reduce((sum, r) => sum + (r.priorYear || 0), 0);
+        const cyPnL = rows.filter(r => r.fsStatement === 'Profit & Loss').reduce((sum, r) => sum + (r.currentYear || 0), 0);
+        const pyPnL = rows.filter(r => r.fsStatement === 'Profit & Loss').reduce((sum, r) => sum + (r.priorYear || 0), 0);
+        const cyBS = rows.filter(r => r.fsStatement === 'Balance Sheet').reduce((sum, r) => sum + (r.currentYear || 0), 0);
+        const pyBS = rows.filter(r => r.fsStatement === 'Balance Sheet').reduce((sum, r) => sum + (r.priorYear || 0), 0);
+        const cyBalanced = Math.abs(cyTotal) < 0.01;
+        const pyBalanced = Math.abs(pyTotal) < 0.01;
+        const fmtCurrency = (v: number) => {
+          const abs = Math.abs(v);
+          const s = '£' + abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          return v < 0 ? `(${s})` : s;
+        };
+        // Calculate column offsets
+        const preCols = 2 + (showCategory ? 1 : 0); // Account Code + Description + (Category)
+        return (
+          <div className="mb-2 border border-slate-200 rounded-lg bg-slate-50 px-3 py-2">
+            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${preCols}, 1fr) 7rem 7rem 1fr` }}>
+              {/* Profit row */}
+              <div className="text-xs text-slate-500 font-medium" style={{ gridColumn: `span ${preCols}` }}>Profit</div>
+              <div className="text-right text-xs font-semibold text-slate-700">{fmtCurrency(cyPnL)}</div>
+              <div className="text-right text-xs font-semibold text-slate-700">{fmtCurrency(pyPnL)}</div>
+              <div />
+              {/* Net Assets row */}
+              <div className="text-xs text-slate-500 font-medium" style={{ gridColumn: `span ${preCols}` }}>Net Assets</div>
+              <div className="text-right text-xs font-semibold text-slate-700">{fmtCurrency(cyBS)}</div>
+              <div className="text-right text-xs font-semibold text-slate-700">{fmtCurrency(pyBS)}</div>
+              <div />
+              {/* Total row with balance dot */}
+              <div className="text-xs text-slate-500 font-bold border-t border-slate-300 pt-1" style={{ gridColumn: `span ${preCols}` }}>Total</div>
+              <div className="text-right text-xs font-bold border-t border-slate-300 pt-1 flex items-center justify-end gap-1">
+                {fmtCurrency(cyTotal)}
+                <span className={`inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${cyBalanced ? 'bg-green-500' : 'bg-red-500'}`} />
+              </div>
+              <div className="text-right text-xs font-bold border-t border-slate-300 pt-1 flex items-center justify-end gap-1">
+                {fmtCurrency(pyTotal)}
+                <span className={`inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${pyBalanced ? 'bg-green-500' : 'bg-red-500'}`} />
+              </div>
+              <div className="border-t border-slate-300 pt-1" />
+            </div>
+          </div>
+        );
+      })()}
+
+      <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 340px)' }}>
         <table className="w-full text-xs">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
