@@ -260,10 +260,10 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   </td>
                 )}
                 <td className="px-2 py-0.5">
-                  <input type="number" value={row.currentYear ?? ''} onChange={e => updateRow(i, 'currentYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
+                  <input type="text" inputMode="decimal" value={row.currentYear ?? ''} onChange={e => { const v = e.target.value.replace(/[^0-9.\-]/g, ''); updateRow(i, 'currentYear', v === '' || v === '-' ? (v === '-' ? -0 : null) : (parseFloat(v) || null)); }} onPaste={e => handlePaste(e, i, showCategory ? 3 : 2)} className={numCls} />
                 </td>
                 <td className="px-2 py-0.5">
-                  <input type="number" value={row.priorYear ?? ''} onChange={e => updateRow(i, 'priorYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
+                  <input type="text" inputMode="decimal" value={row.priorYear ?? ''} onChange={e => { const v = e.target.value.replace(/[^0-9.\-]/g, ''); updateRow(i, 'priorYear', v === '' || v === '-' ? (v === '-' ? -0 : null) : (parseFloat(v) || null)); }} onPaste={e => handlePaste(e, i, showCategory ? 4 : 3)} className={numCls} />
                 </td>
                 {/* FS Note — dropdown of note_items, auto-populates Level + Statement */}
                 <td className="px-2 py-0.5">
