@@ -23,6 +23,7 @@ function getCurrencySymbol(code: string | null | undefined): string {
 
 export function MaterialityTab({ engagementId }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
+  const [priorYearData, setPriorYearData] = useState<Record<string, unknown> | null>(null);
   const [questions, setQuestions] = useState<TemplateQuestion[]>([]);
   const [loading, setLoading] = useState(true);
   const actionTriggers = useActionTriggers();
@@ -75,6 +76,35 @@ export function MaterialityTab({ engagementId }: Props) {
         if (rangeJson.table?.data) {
           setMaterialityRange(rangeJson.table.data);
         }
+      }
+      // Load prior year materiality — find previous engagement for same client/auditType
+      try {
+        const engRes = await fetch(`/api/engagements/${engagementId}`);
+        if (engRes.ok) {
+          const engJson = await engRes.json();
+          const eng = engJson.engagement;
+          if (eng?.clientId && eng?.auditType) {
+            const priorEngRes = await fetch(`/api/engagements?clientId=${eng.clientId}&auditType=${eng.auditType}&prior=true&currentEngagementId=${engagementId}`);
+            if (priorEngRes.ok) {
+              const priorEngJson = await priorEngRes.json();
+              const priorEngId = priorEngJson.engagement?.id;
+              if (priorEngId) {
+                const priorMatRes = await fetch(`/api/engagements/${priorEngId}/materiality`);
+                if (priorMatRes.ok) {
+                  const priorMatJson = await priorMatRes.json();
+                  const pd = (priorMatJson.data || {}) as Record<string, unknown>;
+                  const priorFlat: Record<string, unknown> = {};
+                  for (const [k, v] of Object.entries(pd)) {
+                    if (!k.startsWith('__') && !k.startsWith('trigger_')) priorFlat[k] = v;
+                  }
+                  if (Object.keys(priorFlat).length > 0) setPriorYearData(priorFlat);
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Prior year data is optional
       }
     } catch (err) {
       console.error('Failed to load materiality:', err);
@@ -157,6 +187,7 @@ export function MaterialityTab({ engagementId }: Props) {
         currencySymbol={currencySymbol || undefined}
         showActionTriggers
         actionTriggerOptions={actionTriggers}
+        priorYearData={priorYearData as Record<string, string | number | boolean | null> | null}
       />
     </div>
   );
