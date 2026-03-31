@@ -409,8 +409,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             const pyRev = sum(r => r.fsLevel === 'Revenue', 'priorYear');
             const cyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'currentYear');
             const pyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'priorYear');
-            const cyCosts = cyPnL - cyRev;
-            const pyCosts = pyPnL - pyRev;
+            const cyCosts = sum(r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue', 'currentYear');
+            const pyCosts = sum(r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue', 'priorYear');
             const cyBS = sum(r => r.fsStatement === 'Balance Sheet', 'currentYear');
             const pyBS = sum(r => r.fsStatement === 'Balance Sheet', 'priorYear');
             // Gross Assets = total of debit-side BS items (positive amounts on BS)
