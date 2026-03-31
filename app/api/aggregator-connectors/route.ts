@@ -15,6 +15,43 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Auto-seed default connectors that use free/public APIs
+  const existing = await prisma.methodologyTemplate.findMany({
+    where: { firmId: GLOBAL_FIRM_ID, templateType: 'aggregator_connector' },
+  });
+  const existingTypes = new Set(existing.map((r: any) => r.auditType));
+
+  const DEFAULT_CONNECTORS = [
+    {
+      auditType: 'hm_land_registry',
+      items: {
+        label: 'HM Land Registry',
+        config: { endpoint: 'https://landregistry.data.gov.uk/landregistry/query' },
+        status: 'active',
+        lastTestedAt: null,
+        lastTestResult: 'Free public API — no credentials required',
+      },
+    },
+    {
+      auditType: 'fca_register',
+      items: {
+        label: 'FCA Register',
+        config: { endpoint: 'https://register.fca.org.uk/services/V0.1' },
+        status: 'active',
+        lastTestedAt: null,
+        lastTestResult: 'Free public API — no credentials required',
+      },
+    },
+  ];
+
+  for (const def of DEFAULT_CONNECTORS) {
+    if (!existingTypes.has(def.auditType)) {
+      await prisma.methodologyTemplate.create({
+        data: { firmId: GLOBAL_FIRM_ID, templateType: 'aggregator_connector', auditType: def.auditType, items: def.items },
+      });
+    }
+  }
+
   const records = await prisma.methodologyTemplate.findMany({
     where: { firmId: GLOBAL_FIRM_ID, templateType: 'aggregator_connector' },
     orderBy: { createdAt: 'asc' },
