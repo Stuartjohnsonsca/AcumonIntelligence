@@ -197,12 +197,19 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
 
   // Get nature dropdown options for a given line item
   function getNatureOptions(lineItem: string): string[] | null {
+    if (!lineItem) return null;
+    const lc = lineItem.toLowerCase();
     const category = fsLineCategories[lineItem] || '';
+
     // Revenue lines get revenue recognition dropdown
-    if (category === 'pnl' && (lineItem.toLowerCase().includes('revenue') || lineItem.toLowerCase().includes('turnover') || lineItem.toLowerCase().includes('sales'))) {
-      return natureDropdowns['pnl_revenue'] || null;
+    // Match by name containing revenue/turnover/sales/income/fees
+    const isRevenue = lc.includes('revenue') || lc.includes('turnover') || lc.includes('sales') || lc.includes('income') || lc.includes('fees') || lc === 'revenue';
+    if (isRevenue && natureDropdowns['pnl_revenue']?.length) {
+      return natureDropdowns['pnl_revenue'];
     }
+
     // Future: add more category → dropdown mappings here
+    // e.g. if (isProperty && natureDropdowns['property_valuation']) return ...
     return null;
   }
 
