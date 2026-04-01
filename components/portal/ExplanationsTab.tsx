@@ -128,7 +128,20 @@ export function ExplanationsTab({ clientId, token, engagementId, onCountChange, 
 
   function handleTextChange(itemId: string, text: string) {
     setResponses(prev => ({ ...prev, [itemId]: text }));
-    setLastEdited(prev => ({ ...prev, [itemId]: { name: 'Portal User', at: new Date().toLocaleDateString('en-GB') } }));
+    setLastEdited(prev => ({ ...prev, [itemId]: { name: portalUserName || 'Portal User', at: new Date().toLocaleDateString('en-GB') } }));
+  }
+
+  // Assign to a team member — keeps item outstanding, just updates assignee
+  async function handleAssign(itemId: string, assigneeName: string) {
+    try {
+      await fetch('/api/portal/requests', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: itemId, action: 'assign_portal', assignTo: assigneeName }),
+      });
+      // Update local state
+      setAssignees(prev => ({ ...prev, [itemId]: assigneeName }));
+    } catch {}
   }
 
   const activeItems = items.filter(i => {
@@ -205,7 +218,7 @@ export function ExplanationsTab({ clientId, token, engagementId, onCountChange, 
                 <span className="text-xs text-slate-500">Assign to:</span>
                 <select
                   value={assignees[item.id] || ''}
-                  onChange={e => setAssignees(prev => ({ ...prev, [item.id]: e.target.value }))}
+                  onChange={e => handleAssign(item.id, e.target.value)}
                   className="text-xs border rounded px-2 py-1 min-w-[180px]"
                 >
                   <option value="">Unassigned</option>

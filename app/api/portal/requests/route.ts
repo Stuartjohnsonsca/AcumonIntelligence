@@ -183,7 +183,7 @@ export async function PUT(req: Request) {
       }
 
       case 'assign': {
-        // Assign to a specialist
+        // Assign to a specialist (firm-side)
         const updated = await prisma.portalRequest.update({
           where: { id: requestId },
           data: {
@@ -192,6 +192,28 @@ export async function PUT(req: Request) {
           },
         });
         return NextResponse.json({ request: updated });
+      }
+
+      case 'assign_portal': {
+        // Assign to a client team member — stays outstanding in the portal
+        const assigneeName = body.assignTo || '';
+        // Store assignee in chatHistory as a system message
+        const assignHistory = (request.chatHistory as any[] || []);
+        assignHistory.push({
+          from: 'client',
+          name: 'System',
+          message: `Assigned to ${assigneeName}`,
+          timestamp: new Date().toISOString(),
+        });
+        await prisma.portalRequest.update({
+          where: { id: requestId },
+          data: {
+            chatHistory: assignHistory as any,
+            respondedByName: assigneeName || request.respondedByName,
+            // Status stays 'outstanding' — not sent to audit team
+          },
+        });
+        return NextResponse.json({ success: true, assignedTo: assigneeName });
       }
 
       default:
