@@ -592,40 +592,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     </div>
                   )}
                 </td>
-                {/* FS Level — dropdown of fs_line_items filtered by Statement */}
+                {/* FS Level — read-only, auto-populated from FS Note */}
                 <td className="px-2 py-0.5">
-                  <select
-                    value={row.fsLevel || ''}
-                    onChange={e => handleFsLevelChange(i, e.target.value)}
-                    className={`${txtCls} appearance-none`}
-                  >
-                    <option value=""></option>
-                    {(row.fsStatement
-                      ? fsLevels.filter(l => l.statement === row.fsStatement)
-                      : fsLevels
-                    ).map(l => (
-                      <option key={l.name} value={l.name}>{l.name}</option>
-                    ))}
-                    {row.fsLevel && !fsLevels.find(l => l.name === row.fsLevel) && (
-                      <option value={row.fsLevel}>{row.fsLevel}</option>
-                    )}
-                  </select>
+                  <span className="text-xs text-slate-600 px-1 py-0.5 block">{row.fsLevel || ''}</span>
                 </td>
-                {/* FS Statement — dropdown of statements */}
+                {/* FS Statement — read-only, auto-populated from FS Level */}
                 <td className="px-2 py-0.5">
-                  <select
-                    value={row.fsStatement || ''}
-                    onChange={e => updateRow(i, 'fsStatement', e.target.value || null)}
-                    className={`${txtCls} appearance-none`}
-                  >
-                    <option value=""></option>
-                    {fsStatements.map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                    {row.fsStatement && !fsStatements.includes(row.fsStatement) && (
-                      <option value={row.fsStatement}>{row.fsStatement}</option>
-                    )}
-                  </select>
+                  <span className="text-xs text-slate-600 px-1 py-0.5 block">{row.fsStatement || ''}</span>
                 </td>
                 {isGroupAudit && (
                   <td className="px-2 py-0.5">
