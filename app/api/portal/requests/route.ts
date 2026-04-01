@@ -68,6 +68,15 @@ export async function POST(req: Request) {
       }, { status: 422 });
     }
 
+    // Append to chat history
+    const existingHistory = (request.chatHistory as any[] || []);
+    existingHistory.push({
+      from: 'client',
+      name: respondedByName || 'Portal User',
+      message: response,
+      timestamp: new Date().toISOString(),
+    });
+
     const updated = await prisma.portalRequest.update({
       where: { id: requestId },
       data: {
@@ -76,6 +85,7 @@ export async function POST(req: Request) {
         respondedById: respondedById || null,
         respondedByName: respondedByName || 'Portal User',
         respondedAt: new Date(),
+        chatHistory: existingHistory as any,
       },
     });
 
