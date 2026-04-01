@@ -886,16 +886,18 @@ model SamplingExportArtifact {
 // ─── Client Audit Portal ──────────────────────────────────────────────────────
 
 model ClientPortalUser {
-  id             String    @id @default(uuid())
-  clientId       String    @map("client_id")
-  email          String
-  name           String
-  passwordHash   String    @map("password_hash")
-  isActive       Boolean   @default(true) @map("is_active")
-  isClientAdmin  Boolean   @default(false) @map("is_client_admin")
-  lastLoginAt    DateTime? @map("last_login_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  id                 String    @id @default(uuid())
+  clientId           String    @map("client_id")
+  email              String
+  name               String
+  passwordHash       String    @map("password_hash")
+  isActive           Boolean   @default(true) @map("is_active")
+  isClientAdmin      Boolean   @default(false) @map("is_client_admin")
+  role               String?   @map("role") // e.g. Finance Director, Accounts Manager, etc
+  allocatedPeriodIds Json?     @map("allocated_period_ids") // Array of period IDs this user is allocated to
+  lastLoginAt        DateTime? @map("last_login_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   client             Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
   twoFactorCodes     ClientPortalTwoFactor[]

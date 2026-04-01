@@ -182,3 +182,29 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: 'Failed to deactivate portal user' }, { status: 500 });
   }
 }
+
+/**
+ * PATCH /api/portal/users
+ * Update portal user fields (role, allocatedPeriodIds).
+ * Can be called by firm users or portal client admins.
+ */
+export async function PATCH(req: Request) {
+  try {
+    const { userId, role, allocatedPeriodIds } = await req.json();
+    if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 });
+
+    const updateData: Record<string, unknown> = {};
+    if (role !== undefined) updateData.role = role;
+    if (allocatedPeriodIds !== undefined) updateData.allocatedPeriodIds = allocatedPeriodIds;
+
+    const updated = await prisma.clientPortalUser.update({
+      where: { id: userId },
+      data: updateData,
+    });
+
+    return NextResponse.json({ success: true, user: { id: updated.id, role: updated.role, allocatedPeriodIds: updated.allocatedPeriodIds } });
+  } catch (error) {
+    console.error('Update portal user error:', error);
+    return NextResponse.json({ error: 'Failed to update portal user' }, { status: 500 });
+  }
+}

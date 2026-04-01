@@ -888,7 +888,7 @@ function PARCriteriaSection({ firmId, onSave }: { firmId: string; onSave: () => 
 // ─── Revenue Recognition ─────────────────────────────────────────
 function RevenueRecognitionSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [items, setItems] = useState<{ label: string; value: string }[]>([{ label: 'Invoice', value: 'Document' }]);
+  const [items, setItems] = useState<{ label: string }[]>([{ label: 'Invoice' }]);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -898,7 +898,9 @@ function RevenueRecognitionSection({ firmId, onSave }: { firmId: string; onSave:
       const res = await fetch('/api/methodology-admin/risk-tables?tableType=revenue_recognition');
       if (res.ok) {
         const d = await res.json();
-        if (d.table?.data?.items && Array.isArray(d.table.data.items)) setItems(d.table.data.items);
+        if (d.table?.data?.items && Array.isArray(d.table.data.items)) {
+          setItems(d.table.data.items.map((i: any) => ({ label: i.label || i })));
+        }
       }
     } catch {}
     setLoaded(true);
@@ -916,10 +918,10 @@ function RevenueRecognitionSection({ firmId, onSave }: { firmId: string; onSave:
     } finally { setSaving(false); }
   }
 
-  function addItem() { setItems([...items, { label: '', value: '' }]); }
+  function addItem() { setItems([...items, { label: '' }]); }
   function removeItem(idx: number) { setItems(items.filter((_, i) => i !== idx)); }
-  function updateItem(idx: number, field: 'label' | 'value', val: string) {
-    setItems(items.map((item, i) => i === idx ? { ...item, [field]: val } : item));
+  function updateItem(idx: number, val: string) {
+    setItems(items.map((item, i) => i === idx ? { ...item, label: val } : item));
   }
 
   return (
@@ -934,15 +936,13 @@ function RevenueRecognitionSection({ firmId, onSave }: { firmId: string; onSave:
       {expanded && (
         <div className="p-4 space-y-3">
           <div className="border rounded-lg divide-y">
-            <div className="grid grid-cols-[1fr,1fr,40px] gap-2 px-3 py-2 bg-slate-50 text-xs font-semibold text-slate-600">
-              <span>Label</span>
-              <span>Value</span>
+            <div className="grid grid-cols-[1fr,40px] gap-2 px-3 py-2 bg-slate-50 text-xs font-semibold text-slate-600">
+              <span>Item</span>
               <span />
             </div>
             {items.map((item, i) => (
-              <div key={i} className="grid grid-cols-[1fr,1fr,40px] gap-2 px-3 py-1.5 items-center">
-                <input type="text" value={item.label} onChange={e => updateItem(i, 'label', e.target.value)} placeholder="Label" className="border rounded px-2 py-1 text-sm" />
-                <input type="text" value={item.value} onChange={e => updateItem(i, 'value', e.target.value)} placeholder="Value" className="border rounded px-2 py-1 text-sm" />
+              <div key={i} className="grid grid-cols-[1fr,40px] gap-2 px-3 py-1.5 items-center">
+                <input type="text" value={item.label} onChange={e => updateItem(i, e.target.value)} placeholder="e.g. Invoice" className="border rounded px-2 py-1 text-sm" />
                 <button onClick={() => removeItem(i)} className="text-red-400 hover:text-red-600 text-center"><X className="h-3.5 w-3.5 mx-auto" /></button>
               </div>
             ))}
