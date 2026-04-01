@@ -78,6 +78,11 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
   const [importingTB, setImportingTB] = useState(false);
 
+  // Nature dropdown options from Firm Wide Assumptions (e.g. Revenue Recognition)
+  const [natureDropdowns, setNatureDropdowns] = useState<Record<string, string[]>>({});
+  // FS Line → category mapping to determine which lines get dropdowns
+  const [fsLineCategories, setFsLineCategories] = useState<Record<string, string>>({});
+
   const { saving, lastSaved, error } = useAutoSave(
     `/api/engagements/${engagementId}/rmm`,
     { rows },
@@ -104,6 +109,39 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Load nature dropdown config from Firm Wide Assumptions + FS Line categories
+  useEffect(() => {
+    async function loadNatureConfig() {
+      try {
+        const [revRes, fsRes] = await Promise.all([
+          fetch('/api/methodology-admin/risk-tables?tableType=revenue_recognition'),
+          fetch('/api/methodology-admin/fs-lines'),
+        ]);
+        // Revenue Recognition items → dropdown for revenue FS lines
+        if (revRes.ok) {
+          const d = await revRes.json();
+          const items = d.table?.data?.items;
+          if (Array.isArray(items) && items.length > 0) {
+            const labels = items.map((i: any) => i.label || i).filter(Boolean);
+            if (labels.length > 0) {
+              setNatureDropdowns(prev => ({ ...prev, pnl_revenue: labels }));
+            }
+          }
+        }
+        // FS Line categories
+        if (fsRes.ok) {
+          const d = await fsRes.json();
+          const cats: Record<string, string> = {};
+          for (const fl of (d.fsLines || [])) {
+            cats[fl.name] = fl.fsCategory || '';
+          }
+          setFsLineCategories(cats);
+        }
+      } catch {}
+    }
+    loadNatureConfig();
+  }, []);
+
   const computedRows = useMemo(() => {
     return rows.map(row => {
       const finalRisk = row.relevance === 'N' ? 'N/A' : lookupInherentRisk(row.likelihood, row.magnitude);
@@ -111,6 +149,17 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
       return { ...row, finalRiskAssessment: finalRisk, overallRisk };
     });
   }, [rows]);
+
+  // Get nature dropdown options for a given line item
+  function getNatureOptions(lineItem: string): string[] | null {
+    const category = fsLineCategories[lineItem] || '';
+    // Revenue lines get revenue recognition dropdown
+    if (category === 'pnl' && (lineItem.toLowerCase().includes('revenue') || lineItem.toLowerCase().includes('turnover') || lineItem.toLowerCase().includes('sales'))) {
+      return natureDropdowns['pnl_revenue'] || null;
+    }
+    // Future: add more category → dropdown mappings here
+    return null;
+  }
 
   const currentUserId = session?.user?.id;
   const userIsReviewer = currentUserId && teamMembers.some(m => m.role === 'Manager' && m.userId === currentUserId);
@@ -395,8 +444,29 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 ${row.isMandatory ? 'font-medium' : ''}`} />
                     </td>
                     <td className="px-2 py-1 align-top">
-                      <AutoTextarea value={row.riskIdentified || ''} onChange={v => updateRow(i, 'riskIdentified', v)}
-                        className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" />
+                      {(() => {
+                        const options = getNatureOptions(row.lineItem);
+                        if (options && options.length > 0) {
+                          return (
+                            <select
+                              value={row.riskIdentified || ''}
+                              onChange={e => updateRow(i, 'riskIdentified', e.target.value)}
+                              className="w-full border border-slate-200 bg-white text-xs rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                            >
+                              <option value="">Select...</option>
+                              {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                              {/* Allow current value even if not in list */}
+                              {row.riskIdentified && !options.includes(row.riskIdentified) && (
+                                <option value={row.riskIdentified}>{row.riskIdentified}</option>
+                              )}
+                            </select>
+                          );
+                        }
+                        return (
+                          <AutoTextarea value={row.riskIdentified || ''} onChange={v => updateRow(i, 'riskIdentified', v)}
+                            className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" />
+                        );
+                      })()}
                     </td>
                     <td className="px-2 py-1 align-top">
                       <input type="number" value={row.amount ?? ''} onChange={e => updateRow(i, 'amount', e.target.value ? Number(e.target.value) : null)}
