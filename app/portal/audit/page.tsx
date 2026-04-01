@@ -15,6 +15,14 @@ interface ClientInfo {
   clientName: string;
 }
 
+interface PeriodInfo {
+  id: string;
+  startDate: string;
+  endDate: string;
+  engagementId: string;
+  status: string;
+}
+
 interface EvidenceRequest {
   id: string;
   transactionId: string;
@@ -89,6 +97,9 @@ const DOT_STYLES = {
 export default function PortalAuditPage() {
   const [clients, setClients] = useState<ClientInfo[]>([]);
   const [activeClientId, setActiveClientId] = useState('');
+  const [periods, setPeriods] = useState<PeriodInfo[]>([]);
+  const [activePeriodId, setActivePeriodId] = useState('');
+  const [periodsLoading, setPeriodsLoading] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState('outstanding');
   const [requests, setRequests] = useState<EvidenceRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,10 +168,28 @@ export default function PortalAuditPage() {
     else { setError('No authentication token'); setLoading(false); }
   }, [token, loadData]);
 
-  // Filter requests by active client
+  // Load open periods when client changes
+  useEffect(() => {
+    if (!activeClientId || !token) { setPeriods([]); setActivePeriodId(''); return; }
+    setPeriodsLoading(true);
+    fetch(`/api/portal/periods?token=${token}&clientId=${activeClientId}`)
+      .then(r => r.ok ? r.json() : { periods: [] })
+      .then(data => {
+        const p = data.periods || [];
+        setPeriods(p);
+        if (p.length === 1) setActivePeriodId(p[0].id);
+        else setActivePeriodId('');
+      })
+      .catch(() => setPeriods([]))
+      .finally(() => setPeriodsLoading(false));
+  }, [activeClientId, token]);
+
+  // Filter requests by active client and period
   const filteredRequests = useMemo(() => {
-    if (!activeClientId) return requests;
-    return requests.filter(r => r.clientId === activeClientId);
+    let filtered = requests;
+    if (activeClientId) filtered = filtered.filter(r => r.clientId === activeClientId);
+    // Period filtering would need engagementId on the request — for now filter by client
+    return filtered;
   }, [requests, activeClientId]);
 
   // Upload handler
@@ -248,19 +277,43 @@ export default function PortalAuditPage() {
         </div>
       </div>
 
-      {/* Client selector */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium text-slate-600">Client:</label>
-        <select
-          value={activeClientId}
-          onChange={(e) => setActiveClientId(e.target.value)}
-          className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white min-w-[250px] focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">Select a client...</option>
-          {clients.map(client => (
-            <option key={client.id} value={client.id}>{client.clientName}</option>
-          ))}
-        </select>
+      {/* Client + Period selector */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-slate-600">Client:</label>
+          <select
+            value={activeClientId}
+            onChange={(e) => setActiveClientId(e.target.value)}
+            className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white min-w-[250px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">Select a client...</option>
+            {clients.map(client => (
+              <option key={client.id} value={client.id}>{client.clientName}</option>
+            ))}
+          </select>
+        </div>
+        {activeClientId && (
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-slate-600">Period:</label>
+            <select
+              value={activePeriodId}
+              onChange={(e) => setActivePeriodId(e.target.value)}
+              disabled={periodsLoading || periods.length === 0}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              <option value="">
+                {periodsLoading ? 'Loading...' : periods.length === 0 ? 'No open periods' : 'Select period...'}
+              </option>
+              {periods.map(p => (
+                <option key={p.id} value={p.id}>
+                  {new Date(p.startDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  {' \u2013 '}
+                  {new Date(p.endDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* No client selected */}
