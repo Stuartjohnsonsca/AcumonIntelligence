@@ -102,6 +102,7 @@ export default function PortalAuditPage() {
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState('outstanding');
   const [outstandingCount, setOutstandingCount] = useState(0);
+  const [unacceptedCount, setUnacceptedCount] = useState(0);
   const [clientOutstandingCounts, setClientOutstandingCounts] = useState<Record<string, number>>({});
   const [periodOutstandingCounts, setPeriodOutstandingCounts] = useState<Record<string, number>>({});
   const [requests, setRequests] = useState<EvidenceRequest[]>([]);
@@ -330,9 +331,7 @@ export default function PortalAuditPage() {
           >
             <option value="">Select a client...</option>
             {clients.map(client => (
-              <option key={client.id} value={client.id}>
-                {client.clientName}{(clientOutstandingCounts[client.id] || 0) > 0 ? ` (${clientOutstandingCounts[client.id]})` : ''}
-              </option>
+              <option key={client.id} value={client.id}>{client.clientName}</option>
             ))}
           </select>
         </div>
@@ -385,6 +384,11 @@ export default function PortalAuditPage() {
             {tab.key === 'outstanding' && outstandingCount > 0 && (
               <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
                 {outstandingCount}
+              </span>
+            )}
+            {tab.key === 'responded' && unacceptedCount > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
+                {unacceptedCount}
               </span>
             )}
           </button>
@@ -469,7 +473,7 @@ export default function PortalAuditPage() {
       )}
 
       {activeSubTab === 'responded' && activeClientId && activePeriodId && (
-        <RespondedTab clientId={activeClientId} token={token} engagementId={activeEngagementId} />
+        <RespondedTab clientId={activeClientId} token={token} engagementId={activeEngagementId} onUnacceptedCount={setUnacceptedCount} />
       )}
 
       {activeSubTab === 'concerns' && activeClientId && activePeriodId && (

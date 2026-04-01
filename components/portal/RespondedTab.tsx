@@ -28,6 +28,7 @@ interface Props {
   clientId: string;
   token: string;
   engagementId?: string;
+  onUnacceptedCount?: (count: number) => void;
 }
 
 const SECTION_LABELS: Record<string, string> = {
@@ -61,7 +62,7 @@ function formatDuration(ms: number): string {
   return `${mins}m`;
 }
 
-export function RespondedTab({ clientId, token, engagementId }: Props) {
+export function RespondedTab({ clientId, token, engagementId, onUnacceptedCount }: Props) {
   const [items, setItems] = useState<PortalRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -74,7 +75,10 @@ export function RespondedTab({ clientId, token, engagementId }: Props) {
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          setItems(data.requests || []);
+          const reqs = data.requests || [];
+          setItems(reqs);
+          const unaccepted = reqs.filter((r: PortalRequestItem) => r.status !== 'committed' && r.status !== 'verified').length;
+          onUnacceptedCount?.(unaccepted);
         }
       } catch {}
       setLoading(false);
@@ -170,7 +174,7 @@ export function RespondedTab({ clientId, token, engagementId }: Props) {
                         const isVerified = item.status === 'committed' || item.status === 'verified';
                         return (
                           <span className={`font-semibold px-2 py-0.5 rounded-full ${isVerified ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-                            {isVerified ? '✓ Verified' : '⏳ Awaiting Verification'}
+                            {isVerified ? '✓ Verified' : 'Unaccepted'}
                           </span>
                         );
                       })()}
