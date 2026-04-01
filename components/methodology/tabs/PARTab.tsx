@@ -536,18 +536,43 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                       onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
                     />
                   </td>
-                  {/* Auditor View + attachment icon */}
+                  {/* Auditor View — shows last client message inline, chat history + attachments as icons */}
                   <td className="px-2 py-0.5">
                     <div className="flex items-start gap-1">
-                      <textarea
-                        value={row.auditorView || ''}
-                        onChange={e => updateRow(i, 'auditorView', e.target.value || null)}
-                        className="flex-1 border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none"
-                        rows={1}
-                        placeholder="Auditor view..."
-                        onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
-                      />
-                      {/* Attachment icon — shown if reasons contain [Attachments: ...] */}
+                      <div className="flex-1">
+                        {/* Last client message shown in the box if present */}
+                        {mgt.respondedAt && (mgt as any).clientExplanation && !row.auditorView && (
+                          <div className="text-xs text-blue-700 bg-blue-50 rounded px-1 py-0.5 mb-0.5 border border-blue-100">
+                            {(() => {
+                              const explanation = (mgt as any).clientExplanation as string;
+                              // Get last meaningful line (not attachment/metadata)
+                              const lines = explanation.split('\n').filter(l => l.trim() && !l.startsWith('['));
+                              return lines[lines.length - 1] || explanation.split('\n')[0] || '';
+                            })()}
+                          </div>
+                        )}
+                        <textarea
+                          value={row.auditorView || ''}
+                          onChange={e => updateRow(i, 'auditorView', e.target.value || null)}
+                          className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none"
+                          rows={1}
+                          placeholder="Auditor view..."
+                          onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
+                        />
+                      </div>
+                      {/* Chat history bubble — hover to see full conversation */}
+                      {mgt.respondedAt && (
+                        <div className="relative group flex-shrink-0 mt-0.5">
+                          <button className="w-5 h-5 rounded bg-green-100 text-green-600 hover:bg-green-200 flex items-center justify-center text-[10px]" title="View full conversation">
+                            💬
+                          </button>
+                          <div className="absolute right-0 top-6 z-20 bg-white border border-slate-200 rounded-lg shadow-lg p-2 min-w-[250px] max-h-56 overflow-y-auto hidden group-hover:block">
+                            <p className="text-[9px] font-semibold text-slate-500 mb-1">Full Conversation</p>
+                            <p className="text-[10px] text-slate-700 whitespace-pre-line">{(mgt as any).clientExplanation || row.reasons || ''}</p>
+                          </div>
+                        </div>
+                      )}
+                      {/* Attachment icon — separate */}
                       {row.reasons?.includes('[Attachments:') && (() => {
                         const match = row.reasons!.match(/\[Attachments:\s*(.+?)\]/);
                         const fileNames = match ? match[1].split(',').map(s => s.trim()) : [];
@@ -567,18 +592,6 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                           </div>
                         ) : null;
                       })()}
-                      {/* Chat history indicator — shown if sendMgt has respondedAt */}
-                      {mgt.respondedAt && (
-                        <div className="relative group flex-shrink-0 mt-0.5">
-                          <button className="w-5 h-5 rounded bg-green-100 text-green-600 hover:bg-green-200 flex items-center justify-center text-[10px]" title="Client response received">
-                            💬
-                          </button>
-                          <div className="absolute right-0 top-6 z-20 bg-white border border-slate-200 rounded-lg shadow-lg p-2 min-w-[220px] max-h-48 overflow-y-auto hidden group-hover:block">
-                            <p className="text-[9px] font-semibold text-slate-500 mb-1">Client Response</p>
-                            <p className="text-[10px] text-slate-700 whitespace-pre-line">{(mgt as any).clientExplanation || row.reasons || 'No response text'}</p>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </td>
                   {/* Add to RMM checkbox — cannot be unchecked by junior */}
