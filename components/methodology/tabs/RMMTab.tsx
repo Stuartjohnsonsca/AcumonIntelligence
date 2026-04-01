@@ -77,6 +77,8 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
   const [importingTB, setImportingTB] = useState(false);
+  const [populating, setPopulating] = useState(false);
+  const [hasPriorYear, setHasPriorYear] = useState(false);
 
   // Nature dropdown options from Firm Wide Assumptions (e.g. Revenue Recognition)
   const [natureDropdowns, setNatureDropdowns] = useState<Record<string, string[]>>({});
@@ -108,6 +110,49 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   }, [engagementId, auditType]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Check if prior year engagement exists
+  useEffect(() => {
+    fetch(`/api/engagements/${engagementId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.engagement?.clientId) {
+          fetch(`/api/engagements?clientId=${data.engagement.clientId}&auditType=${auditType}&prior=true&currentEngagementId=${engagementId}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d?.engagement?.id) setHasPriorYear(true); })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, [engagementId, auditType]);
+
+  // Populate Data — from PAR or TB depending on viewMode
+  async function populateData() {
+    setPopulating(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/rmm/populate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: viewMode }),
+      });
+      if (res.ok) await loadData();
+    } catch (err) { console.error('Populate failed:', err); }
+    setPopulating(false);
+  }
+
+  // Populate from Previous — copy prior year RMM with new amounts
+  async function populateFromPrevious() {
+    setPopulating(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/rmm/populate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'previous' }),
+      });
+      if (res.ok) await loadData();
+    } catch (err) { console.error('Populate from previous failed:', err); }
+    setPopulating(false);
+  }
 
   // Load nature dropdown config from Firm Wide Assumptions + FS Line categories
   useEffect(() => {
@@ -382,6 +427,19 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
+          {/* Populate buttons — show when no non-mandatory rows exist */}
+          {rows.filter(r => !r.isMandatory).length === 0 && (
+            <button onClick={populateData} disabled={populating}
+              className="text-xs px-3 py-1 bg-emerald-500 text-white rounded hover:bg-emerald-600 disabled:opacity-50 font-medium">
+              {populating ? 'Populating...' : `Populate Data (${viewMode === 'fs_line' ? 'FS Lines' : 'TB'})`}
+            </button>
+          )}
+          {hasPriorYear && rows.filter(r => !r.isMandatory).length === 0 && (
+            <button onClick={populateFromPrevious} disabled={populating}
+              className="text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 font-medium">
+              {populating ? 'Populating...' : 'Populate from Previous'}
+            </button>
+          )}
           <button onClick={addRow} className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
         </div>
       </div>
@@ -468,9 +526,14 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         );
                       })()}
                     </td>
-                    <td className="px-2 py-1 align-top">
-                      <input type="number" value={row.amount ?? ''} onChange={e => updateRow(i, 'amount', e.target.value ? Number(e.target.value) : null)}
-                        className="w-full border-0 bg-transparent text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" />
+                    <td className={`px-2 py-1 align-top ${row.isMandatory ? 'bg-slate-100' : ''}`}>
+                      {row.isMandatory ? (
+                        <span className="text-xs text-slate-300 px-1">—</span>
+                      ) : (
+                        <span className="text-xs text-right block px-1 py-0.5 text-slate-700">
+                          {row.amount != null ? `£${Math.abs(row.amount).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${row.amount < 0 ? ' Cr' : ' Dr'}` : ''}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-1 align-top">
                       <div className="flex flex-wrap gap-0.5 justify-center">

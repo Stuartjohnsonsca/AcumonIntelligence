@@ -49,12 +49,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     // Look up amount from TB aggregation
     const amount = amountsByLevel[lineItem] ?? item.currentYear ?? null;
 
-    // Build risk description from PAR context
-    const riskParts = [];
-    if (item.auditorView) riskParts.push(item.auditorView);
-    if (item.reasons) riskParts.push(`Client explanation: ${item.reasons.split('\n')[0]}`);
-    if (item.absVariance != null) {
-      riskParts.push(`PAR variance: £${Math.abs(item.absVariance).toLocaleString('en-GB', { minimumFractionDigits: 2 })} (${item.absVariancePercent?.toFixed(1) || '?'}%)`);
+    // Nature = client explanation text only (not audit team notes)
+    // Extract last client message from reasons (chat history format: [Name, date]: message)
+    let clientText = '';
+    if (item.reasons) {
+      const lines = item.reasons.split('\n').filter((l: string) => l.trim() && !l.startsWith('[Attachments:'));
+      // Find lines that are from client (not audit team metadata)
+      const clientLines = lines.filter((l: string) => !l.startsWith('PAR variance:') && !l.startsWith('['));
+      clientText = clientLines.join('\n').trim();
+      if (!clientText) clientText = lines[0] || '';
     }
 
     await prisma.auditRMMRow.create({
@@ -62,7 +65,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         engagementId,
         lineItem,
         lineType: 'fs_line',
-        riskIdentified: riskParts.join('\n') || `Flagged from PAR — significant movement identified`,
+        riskIdentified: clientText || `Flagged from PAR — significant movement identified`,
         amount: amount != null ? Math.round(amount * 100) / 100 : null,
         sortOrder: ++maxSort,
       },
