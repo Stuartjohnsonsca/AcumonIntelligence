@@ -3,6 +3,14 @@
 import { useState, useEffect } from 'react';
 import { Loader2, MessageSquare, CheckCircle2 } from 'lucide-react';
 
+interface ChatMessage {
+  from: 'firm' | 'client';
+  name: string;
+  message: string;
+  timestamp: string;
+  attachments?: { name: string; url: string }[];
+}
+
 interface CommittedItem {
   id: string;
   question: string;
@@ -13,6 +21,7 @@ interface CommittedItem {
   respondedAt?: string;
   committedAt?: string;
   committedByName?: string;
+  chatHistory?: ChatMessage[];
 }
 
 interface Props {
@@ -68,12 +77,29 @@ export function CommunicationTab({ engagementId, clientId }: Props) {
               <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
               <div className="flex-1">
                 <p className="text-sm text-slate-800 font-medium">{item.question}</p>
-                <div className="mt-2 px-3 py-2 bg-blue-50 rounded-lg border border-blue-100">
-                  <p className="text-[10px] text-blue-500 font-medium mb-0.5">
-                    {item.respondedByName || 'Client'} &middot; {item.respondedAt ? formatDate(item.respondedAt) : ''}
-                  </p>
-                  <p className="text-xs text-slate-700">{item.response}</p>
-                </div>
+                {item.response && (
+                  <div className="mt-2 px-3 py-2 bg-blue-50 rounded-lg border border-blue-100">
+                    <p className="text-[10px] text-blue-500 font-medium mb-0.5">
+                      {item.respondedByName || 'Client'} &middot; {item.respondedAt ? formatDate(item.respondedAt) : ''}
+                    </p>
+                    <p className="text-xs text-slate-700">{item.response}</p>
+                  </div>
+                )}
+                {/* Chat thread */}
+                {item.chatHistory && item.chatHistory.length > 0 && (
+                  <div className="mt-2 space-y-1 pl-2 border-l-2 border-slate-200">
+                    {item.chatHistory.filter(m => m.name !== 'System').map((msg, mi) => (
+                      <div key={mi} className={`px-2 py-1 rounded text-xs ${msg.from === 'firm' ? 'bg-blue-50' : 'bg-slate-50'}`}>
+                        <span className="font-semibold text-[10px] text-slate-600">{msg.name}</span>
+                        <span className="text-[9px] text-slate-400 ml-1">{new Date(msg.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                        <p className="text-slate-700 mt-0.5">{msg.message}</p>
+                        {msg.attachments && msg.attachments.length > 0 && (
+                          <div className="flex gap-1 mt-0.5">{msg.attachments.map((a, ai) => <span key={ai} className="text-[9px] text-blue-600">📎 {a.name}</span>)}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="flex items-center gap-2 mt-2 text-[10px] text-slate-400">
                   <span>Requested by {item.requestedByName}</span>
                   <span>&middot;</span>

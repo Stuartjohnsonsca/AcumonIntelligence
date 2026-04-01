@@ -117,10 +117,22 @@ export async function PUT(req: Request) {
 
     switch (action) {
       case 'commit': {
-        // Move to committed status — appears in Communication tab
+        // Move to committed status — appears in Communication tab, removed from Outstanding
+        // Append a closing message to chat history
+        const commitHistory = (request.chatHistory as any[] || []);
+        commitHistory.push({
+          from: 'firm',
+          name: 'System',
+          message: 'Chat closed and committed to Communication.',
+          timestamp: new Date().toISOString(),
+        });
         const updated = await prisma.portalRequest.update({
           where: { id: requestId },
-          data: { status: 'committed' },
+          data: {
+            status: 'committed',
+            chatHistory: commitHistory as any,
+            verifiedAt: new Date(),
+          },
         });
         return NextResponse.json({ request: updated });
       }

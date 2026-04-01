@@ -330,12 +330,24 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
                       </label>
                     </div>
                   </div>
+                  <div className="flex flex-col gap-1 self-end">
+                    <button
+                      onClick={() => handleChatSend(item)}
+                      disabled={(!chatText.trim() && chatFiles.length === 0) || sending === item.id}
+                      className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-40"
+                    >
+                      <Send className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+                {/* Close & Commit — resolves the chat thread */}
+                <div className="flex justify-end mt-2 pt-2 border-t border-slate-200">
                   <button
-                    onClick={() => handleChatSend(item)}
-                    disabled={(!chatText.trim() && chatFiles.length === 0) || sending === item.id}
-                    className="self-end px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-40"
+                    onClick={() => { handleCommit(item); setChatOpen(null); }}
+                    disabled={sending === item.id}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-[10px] font-semibold bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-40"
                   >
-                    <Send className="h-3 w-3" />
+                    <CheckCircle2 className="h-3 w-3" /> Close Chat & Commit to Communication
                   </button>
                 </div>
               </div>
