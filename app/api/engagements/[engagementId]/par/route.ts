@@ -31,22 +31,33 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
-  const { rows } = body as { rows: { id?: string; particulars: string; currentYear?: number; priorYear?: number; absVariance?: number; absVariancePercent?: number; significantChange?: boolean; sentToManagement?: boolean; managementResponseStatus?: string; reasons?: string; sortOrder: number }[] };
+  const { rows } = body as { rows: any[] };
 
-  const existingIds = rows.filter(r => r.id).map(r => r.id!);
+  // Filter out section headers and sanitise data for DB
+  const dataRows = (rows || []).filter((r: any) => !r.isSection);
+  const existingIds = dataRows.filter((r: any) => r.id && !r.id.startsWith('section-')).map((r: any) => r.id);
   await prisma.auditPARRow.deleteMany({ where: { engagementId, id: { notIn: existingIds } } });
 
-  for (const row of rows) {
+  for (const row of dataRows) {
+    const sigChange = typeof row.significantChange === 'string'
+      ? row.significantChange === 'Material'
+      : (row.significantChange ?? false);
+    const sendMgt = row.sendMgt?.checked ?? row.sentToManagement ?? false;
+
     const data = {
-      particulars: row.particulars,
-      currentYear: row.currentYear ?? null, priorYear: row.priorYear ?? null,
-      absVariance: row.absVariance ?? null, absVariancePercent: row.absVariancePercent ?? null,
-      significantChange: row.significantChange ?? false,
-      sentToManagement: row.sentToManagement ?? false,
-      managementResponseStatus: row.managementResponseStatus,
-      reasons: row.reasons, sortOrder: row.sortOrder,
+      particulars: row.particulars || '',
+      currentYear: row.currentYear != null ? Number(row.currentYear) || null : null,
+      priorYear: row.priorYear != null ? Number(row.priorYear) || null : null,
+      absVariance: row.absVariance != null ? Number(row.absVariance) || null : null,
+      absVariancePercent: row.absVariancePercent != null ? Number(row.absVariancePercent) || null : null,
+      significantChange: sigChange,
+      sentToManagement: sendMgt,
+      managementResponseStatus: row.managementResponseStatus || null,
+      reasons: row.reasons || null,
+      sortOrder: row.sortOrder ?? 0,
     };
-    if (row.id) {
+
+    if (row.id && !row.id.startsWith('section-') && existingIds.includes(row.id)) {
       await prisma.auditPARRow.update({ where: { id: row.id }, data });
     } else {
       await prisma.auditPARRow.create({ data: { engagementId, ...data } });
