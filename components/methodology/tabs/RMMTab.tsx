@@ -429,13 +429,13 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
           {/* Populate buttons — show when no non-mandatory rows exist */}
-          {rows.filter(r => !r.isMandatory).length === 0 && (
+          {(rows || []).filter(r => !r.isMandatory).length === 0 && (
             <button onClick={populateData} disabled={populating}
               className="text-xs px-3 py-1 bg-emerald-500 text-white rounded hover:bg-emerald-600 disabled:opacity-50 font-medium">
               {populating ? 'Populating...' : `Populate Data (${viewMode === 'fs_line' ? 'FS Lines' : 'TB'})`}
             </button>
           )}
-          {hasPriorYear && rows.filter(r => !r.isMandatory).length === 0 && (
+          {hasPriorYear && (rows || []).filter(r => !r.isMandatory).length === 0 && (
             <button onClick={populateFromPrevious} disabled={populating}
               className="text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 font-medium">
               {populating ? 'Populating...' : 'Populate from Previous'}
@@ -504,7 +504,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                     </td>
                     <td className="px-2 py-1 align-top">
                       {(() => {
-                        const options = getNatureOptions(row.lineItem);
+                        const options = row.lineItem ? getNatureOptions(row.lineItem) : null;
                         if (options && options.length > 0) {
                           return (
                             <select
@@ -532,7 +532,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         <span className="text-xs text-slate-300 px-1">—</span>
                       ) : (
                         <span className="text-xs text-right block px-1 py-0.5 text-slate-700">
-                          {row.amount != null ? `£${Math.abs(row.amount).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${row.amount < 0 ? ' Cr' : ' Dr'}` : ''}
+                          {row.amount != null ? (() => { const n = Number(row.amount); return isNaN(n) ? '' : `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${n < 0 ? ' Cr' : ' Dr'}`; })() : ''}
                         </span>
                       )}
                     </td>
