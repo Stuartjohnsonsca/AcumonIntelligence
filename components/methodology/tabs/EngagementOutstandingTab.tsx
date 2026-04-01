@@ -89,13 +89,16 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
     setLoading(false);
   }
 
-  // Filter items by My Items vs Team Items
-  const filteredItems = items.filter(i => {
-    if (view === 'my') {
-      return i.assignedTo === currentUserId || i.requestedByName === currentUserId;
-    }
-    return true; // Team shows all
-  });
+  // My Items = all team items (every team member sees everything) — "Team" is the same view
+  // The toggle filters to just items assigned/relevant to the current user
+  const myItems = items; // Every team item is a My Item
+  const filteredItems = view === 'team'
+    ? items // Team: show all
+    : items.filter(i =>
+        i.assignedTo === currentUserId ||
+        i.requestedByName === currentUserId ||
+        !i.assignedTo // Unassigned items visible to everyone
+      );
 
   // Action: Commit — push response to the Communication tab
   async function handleCommit(item: OutstandingItem) {

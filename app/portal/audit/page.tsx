@@ -102,6 +102,8 @@ export default function PortalAuditPage() {
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState('outstanding');
   const [outstandingCount, setOutstandingCount] = useState(0);
+  const [clientOutstandingCounts, setClientOutstandingCounts] = useState<Record<string, number>>({});
+  const [periodOutstandingCounts, setPeriodOutstandingCounts] = useState<Record<string, number>>({});
   const [requests, setRequests] = useState<EvidenceRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -184,6 +186,25 @@ export default function PortalAuditPage() {
       .catch(() => setPeriods([]))
       .finally(() => setPeriodsLoading(false));
   }, [activeClientId, token]);
+
+  // Load outstanding counts per client for red dots
+  useEffect(() => {
+    if (clients.length === 0) return;
+    async function loadCounts() {
+      const counts: Record<string, number> = {};
+      for (const c of clients) {
+        try {
+          const res = await fetch(`/api/portal/requests?clientId=${c.id}&status=outstanding`);
+          if (res.ok) {
+            const data = await res.json();
+            counts[c.id] = (data.requests || []).length;
+          }
+        } catch {}
+      }
+      setClientOutstandingCounts(counts);
+    }
+    loadCounts();
+  }, [clients]);
 
   // Filter requests by active client and period
   const filteredRequests = useMemo(() => {
@@ -282,6 +303,14 @@ export default function PortalAuditPage() {
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium text-slate-600">Client:</label>
+          {(() => {
+            const clientsWithOutstanding = Object.values(clientOutstandingCounts).filter(c => c > 0).length;
+            return clientsWithOutstanding > 0 ? (
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
+                {clientsWithOutstanding}
+              </span>
+            ) : null;
+          })()}
           <select
             value={activeClientId}
             onChange={(e) => setActiveClientId(e.target.value)}
@@ -289,7 +318,9 @@ export default function PortalAuditPage() {
           >
             <option value="">Select a client...</option>
             {clients.map(client => (
-              <option key={client.id} value={client.id}>{client.clientName}</option>
+              <option key={client.id} value={client.id}>
+                {client.clientName}{(clientOutstandingCounts[client.id] || 0) > 0 ? ` (${clientOutstandingCounts[client.id]})` : ''}
+              </option>
             ))}
           </select>
         </div>
