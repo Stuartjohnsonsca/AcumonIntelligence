@@ -9,13 +9,15 @@ import { fireTrigger } from '@/lib/trigger-engine';
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const clientId = searchParams.get('clientId');
-  const status = searchParams.get('status'); // outstanding | responded | all
+  const status = searchParams.get('status'); // outstanding | responded | committed | all
+  const engagementId = searchParams.get('engagementId');
 
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required' }, { status: 400 });
   }
 
   const where: Record<string, unknown> = { clientId };
+  if (engagementId) where.engagementId = engagementId;
   if (status && status !== 'all') {
     where.status = status === 'responded' ? { in: ['responded', 'verified'] } : status;
   }

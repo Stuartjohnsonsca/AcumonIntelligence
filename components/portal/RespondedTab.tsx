@@ -27,6 +27,7 @@ interface PortalRequestItem {
 interface Props {
   clientId: string;
   token: string;
+  engagementId?: string;
 }
 
 const SECTION_LABELS: Record<string, string> = {
@@ -60,7 +61,7 @@ function formatDuration(ms: number): string {
   return `${mins}m`;
 }
 
-export function RespondedTab({ clientId, token }: Props) {
+export function RespondedTab({ clientId, token, engagementId }: Props) {
   const [items, setItems] = useState<PortalRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -68,7 +69,9 @@ export function RespondedTab({ clientId, token }: Props) {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(`/api/portal/requests?clientId=${clientId}&status=responded`);
+        let url = `/api/portal/requests?clientId=${clientId}&status=responded`;
+        if (engagementId) url += `&engagementId=${engagementId}`;
+        const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
           setItems(data.requests || []);

@@ -206,13 +206,25 @@ export default function PortalAuditPage() {
     loadCounts();
   }, [clients]);
 
-  // Filter requests by active client and period
+  // Get engagement ID for selected period
+  const activeEngagementId = useMemo(() => {
+    if (!activePeriodId) return '';
+    const period = periods.find(p => p.id === activePeriodId);
+    return period?.engagementId || '';
+  }, [activePeriodId, periods]);
+
+  // Filter requests by active client and period/engagement
   const filteredRequests = useMemo(() => {
     let filtered = requests;
     if (activeClientId) filtered = filtered.filter(r => r.clientId === activeClientId);
-    // Period filtering would need engagementId on the request — for now filter by client
+    if (activeEngagementId) {
+      filtered = filtered.filter(r => {
+        const engId = (r as any).run?.engagement?.id || (r as any).engagementId;
+        return !engId || engId === activeEngagementId;
+      });
+    }
     return filtered;
-  }, [requests, activeClientId]);
+  }, [requests, activeClientId, activeEngagementId]);
 
   // Upload handler
   const handleUpload = async (requestId: string, evidenceType: string, file: File) => {
@@ -348,15 +360,17 @@ export default function PortalAuditPage() {
         )}
       </div>
 
-      {/* No client selected */}
-      {!activeClientId && clients.length > 1 && (
+      {/* No client/period selected */}
+      {(!activeClientId || !activePeriodId) && (
         <div className="text-center py-16">
-          <p className="text-sm text-slate-500">Please select a client from the dropdown above to view audit details.</p>
+          <p className="text-sm text-slate-500">
+            {!activeClientId ? 'Please select a client' : 'Please select a period'} from the dropdown{!activeClientId ? 's' : ''} above to view audit details.
+          </p>
         </div>
       )}
 
       {/* Sub-tabs — only show when client selected */}
-      {activeClientId && <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+      {activeClientId && activePeriodId && <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
         {AUDIT_SUB_TABS.map(tab => (
           <button
             key={tab.key}
@@ -451,11 +465,11 @@ export default function PortalAuditPage() {
       )}
 
       {activeSubTab === 'outstanding' && activeClientId && (
-        <OutstandingTab clientId={activeClientId} token={token} onCountChange={setOutstandingCount} />
+        <OutstandingTab clientId={activeClientId} token={token} engagementId={activeEngagementId} onCountChange={setOutstandingCount} />
       )}
 
       {activeSubTab === 'responded' && activeClientId && (
-        <RespondedTab clientId={activeClientId} token={token} />
+        <RespondedTab clientId={activeClientId} token={token} engagementId={activeEngagementId} />
       )}
 
       {activeSubTab === 'concerns' && (

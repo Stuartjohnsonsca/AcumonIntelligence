@@ -25,6 +25,7 @@ interface PortalRequestItem {
 interface Props {
   clientId: string;
   token: string;
+  engagementId?: string;
   onCountChange?: (count: number) => void;
 }
 
@@ -42,7 +43,7 @@ function cleanQuestion(text: string): { question: string; source: string | null 
   return { source: null, question: text };
 }
 
-export function OutstandingTab({ clientId, token, onCountChange }: Props) {
+export function OutstandingTab({ clientId, token, engagementId, onCountChange }: Props) {
   const [items, setItems] = useState<PortalRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(SECTIONS.map(s => s.key)));
@@ -54,12 +55,14 @@ export function OutstandingTab({ clientId, token, onCountChange }: Props) {
 
   useEffect(() => {
     loadItems();
-  }, [clientId]);
+  }, [clientId, engagementId]);
 
   async function loadItems() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/portal/requests?clientId=${clientId}&status=outstanding`);
+      let url = `/api/portal/requests?clientId=${clientId}&status=outstanding`;
+      if (engagementId) url += `&engagementId=${engagementId}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         const reqs = data.requests || [];
