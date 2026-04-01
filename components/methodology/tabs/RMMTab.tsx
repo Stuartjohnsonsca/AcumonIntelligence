@@ -406,12 +406,10 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               TB Accounts
             </button>
           </div>
-          {viewMode === 'tb_account' && (
-            <button onClick={importFromTB} disabled={importingTB}
-              className="text-xs px-3 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 disabled:opacity-50">
-              {importingTB ? 'Importing...' : '📥 Import from TB'}
-            </button>
-          )}
+          <button onClick={viewMode === 'fs_line' ? populateData : importFromTB} disabled={importingTB || populating}
+            className="text-xs px-3 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 disabled:opacity-50">
+            {(importingTB || populating) ? 'Importing...' : viewMode === 'fs_line' ? '📥 Import Data' : '📥 Import from TB'}
+          </button>
           {showCategoryOption && (
             <button onClick={() => setShowCategory(!showCategory)}
               className={`text-xs px-3 py-1 rounded transition-colors ${showCategory ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
