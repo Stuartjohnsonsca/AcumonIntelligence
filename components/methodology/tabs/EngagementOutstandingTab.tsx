@@ -3,248 +3,307 @@
 import { useState, useEffect } from 'react';
 import {
   MapPin, FileCheck, MessageSquare, CheckCircle2, Loader2, X,
-  ExternalLink, Clock, AlertCircle, ChevronDown, ChevronUp,
+  ArrowUpRight, MessageCircle, ChevronUp, UserPlus, Send,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-interface Action {
+interface OutstandingItem {
   id: string;
-  type: string;
-  title: string;
-  description: string;
-  data: any;
-  createdAt: string;
-}
-
-interface PortalRequest {
-  id: string;
-  category: string;
-  description: string;
+  type: 'client' | 'team' | 'technical';
+  question: string;
+  response: string | null;
   status: string;
-  requestedBy: string;
+  requestedByName: string;
   requestedAt: string;
-  respondedAt: string | null;
+  respondedByName?: string;
+  respondedAt?: string;
+  assignedTo?: string;
+  engagementId?: string;
 }
 
 interface Props {
   engagementId: string;
   clientId: string;
   currentUserId: string;
+  currentUserRole?: string;
+  teamMembers?: { userId: string; userName: string; role: string }[];
+  specialists?: { name: string; specialistType: string }[];
 }
 
-const TYPE_ICONS: Record<string, React.ReactNode> = {
-  land_registry_selection: <MapPin className="h-3.5 w-3.5 text-blue-500" />,
-  evidence_verification: <FileCheck className="h-3.5 w-3.5 text-orange-500" />,
-  portal_response: <MessageSquare className="h-3.5 w-3.5 text-green-500" />,
+function formatDate(d: string) {
+  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+const TYPE_COLORS = {
+  client: 'bg-blue-100 text-blue-700 border-blue-200',
+  team: 'bg-orange-100 text-orange-700 border-orange-200',
+  technical: 'bg-red-100 text-red-700 border-red-200',
 };
 
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 0 }).format(amount);
-}
-
-function daysSince(dateStr: string): number {
-  return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
-}
-
-export function EngagementOutstandingTab({ engagementId, clientId, currentUserId }: Props) {
-  const [jobActions, setJobActions] = useState<Action[]>([]);
-  const [clientRequests, setClientRequests] = useState<PortalRequest[]>([]);
+export function EngagementOutstandingTab({ engagementId, clientId, currentUserId, currentUserRole, teamMembers = [], specialists = [] }: Props) {
+  const [items, setItems] = useState<OutstandingItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [resolving, setResolving] = useState<string | null>(null);
-  const [expandedAction, setExpandedAction] = useState<string | null>(null);
+  const [view, setView] = useState<'my' | 'team'>('my');
+  const [chatOpen, setChatOpen] = useState<string | null>(null);
+  const [chatText, setChatText] = useState('');
+  const [sending, setSending] = useState<string | null>(null);
+  const [assignOpen, setAssignOpen] = useState<string | null>(null);
+  const [assignNote, setAssignNote] = useState('');
 
-  useEffect(() => {
-    loadData();
-  }, [engagementId, clientId]);
+  useEffect(() => { loadItems(); }, [engagementId, clientId]);
 
-  async function loadData() {
+  async function loadItems() {
     setLoading(true);
     try {
-      // Load job actions (user_actions for this engagement)
-      const actionsRes = await fetch('/api/user/outstanding-actions');
-      if (actionsRes.ok) {
-        const data = await actionsRes.json();
-        // Filter to this engagement
-        setJobActions((data.actions || []).filter((a: Action & { engagementId?: string }) =>
-          a.engagementId === engagementId || !a.engagementId
-        ));
-      }
-
-      // Load client portal requests (outstanding items sent to the client)
-      const portalRes = await fetch(`/api/portal/requests?clientId=${clientId}&status=pending`);
-      if (portalRes.ok) {
-        const data = await portalRes.json();
-        setClientRequests(data.requests || []);
-      }
-    } catch (err) {
-      console.error('Failed to load outstanding data:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleResolve(actionId: string, selectedData: any) {
-    setResolving(actionId);
-    try {
-      const res = await fetch(`/api/user/outstanding-actions/${actionId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedData }),
-      });
+      // Load responded portal requests (client responses)
+      const res = await fetch(`/api/portal/requests?clientId=${clientId}&status=responded`);
       if (res.ok) {
-        setJobActions(jobActions.filter(a => a.id !== actionId));
+        const data = await res.json();
+        const clientItems: OutstandingItem[] = (data.requests || []).map((r: any) => ({
+          id: r.id,
+          type: 'client' as const,
+          question: r.question,
+          response: r.response,
+          status: r.status,
+          requestedByName: r.requestedByName,
+          requestedAt: r.requestedAt,
+          respondedByName: r.respondedByName,
+          respondedAt: r.respondedAt,
+          assignedTo: r.assignedTo,
+          engagementId: r.engagementId,
+        }));
+        setItems(clientItems);
       }
-    } finally {
-      setResolving(null);
-    }
+    } catch {}
+    setLoading(false);
   }
 
-  async function handleDismiss(actionId: string) {
-    if (!confirm('Dismiss this action?')) return;
-    const res = await fetch(`/api/user/outstanding-actions/${actionId}`, { method: 'DELETE' });
-    if (res.ok) setJobActions(jobActions.filter(a => a.id !== actionId));
+  // Filter items by My Items vs Team Items
+  const filteredItems = items.filter(i => {
+    if (view === 'my') {
+      return i.assignedTo === currentUserId || i.requestedByName === currentUserId;
+    }
+    return true; // Team shows all
+  });
+
+  // Action: Commit — push response to the Communication tab
+  async function handleCommit(item: OutstandingItem) {
+    setSending(item.id);
+    try {
+      await fetch(`/api/portal/requests`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: item.id, action: 'commit' }),
+      });
+      setItems(prev => prev.filter(i => i.id !== item.id));
+    } catch {}
+    setSending(null);
+  }
+
+  // Action: Chat — send reply back
+  async function handleChatSend(item: OutstandingItem) {
+    if (!chatText.trim()) return;
+    setSending(item.id);
+    try {
+      await fetch(`/api/portal/requests`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: item.id,
+          action: 'chat',
+          message: chatText.trim(),
+          fromUserId: currentUserId,
+          itemType: item.type,
+        }),
+      });
+      setChatText('');
+      setChatOpen(null);
+      await loadItems();
+    } catch {}
+    setSending(null);
+  }
+
+  // Action: Elevate — move to next senior role
+  async function handleElevate(item: OutstandingItem) {
+    setSending(item.id);
+    try {
+      const roleHierarchy = ['Junior', 'Manager', 'RI'];
+      const currentIdx = roleHierarchy.indexOf(currentUserRole || 'Junior');
+      const nextRole = currentIdx < roleHierarchy.length - 1 ? roleHierarchy[currentIdx + 1] : null;
+      const nextPerson = nextRole ? teamMembers.find(m => m.role === nextRole) : null;
+
+      await fetch(`/api/portal/requests`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: item.id,
+          action: 'elevate',
+          assignTo: nextPerson?.userId,
+          assignToName: nextPerson?.userName,
+          fromRole: currentUserRole,
+          toRole: nextRole,
+        }),
+      });
+      await loadItems();
+    } catch {}
+    setSending(null);
+  }
+
+  // Action: Assign — send to a specialist
+  async function handleAssign(item: OutstandingItem, specialistName: string) {
+    setSending(item.id);
+    try {
+      await fetch(`/api/portal/requests`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: item.id,
+          action: 'assign',
+          assignToSpecialist: specialistName,
+          note: assignNote,
+        }),
+      });
+      setAssignOpen(null);
+      setAssignNote('');
+      await loadItems();
+    } catch {}
+    setSending(null);
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-5 w-5 animate-spin text-slate-400 mr-2" />
-        <span className="text-sm text-slate-500">Loading outstanding items...</span>
-      </div>
-    );
+    return <div className="flex items-center justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-slate-400 mr-2" /><span className="text-sm text-slate-500">Loading...</span></div>;
   }
 
   return (
-    <div className="grid grid-cols-2 gap-6">
-      {/* LEFT: Job Outstanding Actions (actionable by the audit team user) */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <h3 className="text-sm font-semibold text-slate-800">Job Actions</h3>
-          <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold ${
-            jobActions.length === 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-          }`}>
-            {jobActions.length}
-          </span>
+    <div className="space-y-3">
+      {/* Toggle: My Items / Team Items */}
+      <div className="flex items-center gap-2">
+        <div className="flex bg-slate-100 rounded-lg p-0.5">
+          <button onClick={() => setView('my')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${view === 'my' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+            My Items
+          </button>
+          <button onClick={() => setView('team')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${view === 'team' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+            Team Items
+          </button>
         </div>
-
-        {jobActions.length === 0 ? (
-          <div className="border rounded-lg p-8 text-center">
-            <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-400" />
-            <p className="text-sm text-slate-500">No outstanding job actions</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {jobActions.map(action => (
-              <div key={action.id} className="border rounded-lg bg-white p-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-2">
-                    {TYPE_ICONS[action.type] || <AlertCircle className="h-3.5 w-3.5 text-slate-400" />}
-                    <div>
-                      <p className="text-xs font-medium text-slate-800">{action.title}</p>
-                      {action.description && <p className="text-[10px] text-slate-500">{action.description}</p>}
-                      <span className="text-[10px] text-slate-400">{formatDate(action.createdAt)}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => setExpandedAction(expandedAction === action.id ? null : action.id)}
-                      className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium"
-                    >
-                      {expandedAction === action.id ? 'Hide' : 'Action'}
-                    </button>
-                    <button onClick={() => handleDismiss(action.id)} className="p-0.5 hover:bg-red-50 rounded">
-                      <X className="h-3 w-3 text-slate-400" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Land Registry selection */}
-                {expandedAction === action.id && action.type === 'land_registry_selection' && action.data?.results && (
-                  <div className="mt-2 border-t pt-2 space-y-1.5">
-                    <p className="text-[10px] font-medium text-slate-600">Select the correct property:</p>
-                    {(action.data.results as any[]).map((result: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between p-2 bg-slate-50 rounded border text-xs hover:border-blue-300">
-                        <div>
-                          <span className="font-medium text-slate-800">
-                            {result.address?.paon} {result.address?.street}, {result.address?.town}
-                          </span>
-                          <span className="text-slate-400 ml-1">{result.address?.postcode}</span>
-                          {result.pricePaid != null && (
-                            <span className="ml-2 font-medium text-blue-600">{formatCurrency(result.pricePaid)}</span>
-                          )}
-                          {result.transactionDate && (
-                            <span className="ml-1 text-slate-500">{formatDate(result.transactionDate)}</span>
-                          )}
-                        </div>
-                        <Button
-                          size="sm"
-                          className="h-6 text-[10px] px-2"
-                          onClick={() => handleResolve(action.id, result)}
-                          disabled={resolving === action.id}
-                        >
-                          {resolving === action.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Select'}
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        <span className="text-xs text-slate-400">{filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''}</span>
       </div>
 
-      {/* RIGHT: Client Outstanding Actions (requests sent to client portal) */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <h3 className="text-sm font-semibold text-slate-800">Client Requests</h3>
-          <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold ${
-            clientRequests.length === 0 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
-          }`}>
-            {clientRequests.length}
-          </span>
+      {filteredItems.length === 0 && (
+        <div className="border rounded-lg p-8 text-center">
+          <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-400" />
+          <p className="text-sm text-slate-500">No outstanding items</p>
         </div>
+      )}
 
-        {clientRequests.length === 0 ? (
-          <div className="border rounded-lg p-8 text-center">
-            <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-400" />
-            <p className="text-sm text-slate-500">No outstanding client requests</p>
-          </div>
-        ) : (
-          <div className="border rounded-lg divide-y">
+      {filteredItems.map(item => {
+        const typeColor = TYPE_COLORS[item.type] || TYPE_COLORS.team;
+        return (
+          <div key={item.id} className={`border rounded-lg bg-white overflow-hidden ${item.type === 'technical' ? 'border-red-200' : ''}`}>
             {/* Header */}
-            <div className="grid grid-cols-[1fr,auto,auto] gap-2 px-3 py-2 bg-slate-50 text-[10px] font-semibold text-slate-500 uppercase">
-              <span>Request</span>
-              <span className="w-20 text-center">Requested</span>
-              <span className="w-16 text-center">Days</span>
-            </div>
-            {clientRequests.map(req => {
-              const days = daysSince(req.requestedAt);
-              return (
-                <div key={req.id} className="grid grid-cols-[1fr,auto,auto] gap-2 px-3 py-2 items-center hover:bg-slate-50">
-                  <div>
-                    <p className="text-xs text-slate-800">{req.description}</p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{req.category}</span>
-                      <span className="text-[10px] text-slate-400">by {req.requestedBy}</span>
-                    </div>
+            <div className="px-4 py-3">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${typeColor}`}>
+                      {item.type === 'client' ? 'Client' : item.type === 'technical' ? 'Technical' : 'Team'}
+                    </span>
+                    <span className="text-[10px] text-slate-400">{formatDate(item.requestedAt)}</span>
                   </div>
-                  <span className="w-20 text-center text-[10px] text-slate-500">{formatDate(req.requestedAt)}</span>
-                  <span className={`w-16 text-center text-[10px] font-bold ${
-                    days > 14 ? 'text-red-600' : days > 7 ? 'text-orange-600' : 'text-slate-600'
-                  }`}>
-                    {days}d
-                  </span>
+                  <p className="text-sm text-slate-800 font-medium">{item.question}</p>
+                  {item.response && (
+                    <div className="mt-2 px-3 py-2 bg-blue-50 rounded-lg border border-blue-100">
+                      <p className="text-[10px] text-blue-500 font-medium mb-0.5">
+                        {item.respondedByName || 'Response'} &middot; {item.respondedAt ? formatDate(item.respondedAt) : ''}
+                      </p>
+                      <p className="text-xs text-slate-700">{item.response}</p>
+                    </div>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-1.5 mt-3">
+                <button
+                  onClick={() => handleCommit(item)}
+                  disabled={sending === item.id}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-green-50 text-green-700 border border-green-200 rounded-md hover:bg-green-100"
+                >
+                  <CheckCircle2 className="h-3 w-3" /> Commit
+                </button>
+                <button
+                  onClick={() => setChatOpen(chatOpen === item.id ? null : item.id)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded-md hover:bg-blue-100"
+                >
+                  <MessageCircle className="h-3 w-3" /> Chat
+                </button>
+                <button
+                  onClick={() => handleElevate(item)}
+                  disabled={sending === item.id || currentUserRole === 'RI'}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded-md hover:bg-amber-100 disabled:opacity-40"
+                >
+                  <ChevronUp className="h-3 w-3" /> Elevate
+                </button>
+                <button
+                  onClick={() => setAssignOpen(assignOpen === item.id ? null : item.id)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded-md hover:bg-purple-100"
+                >
+                  <UserPlus className="h-3 w-3" /> Assign
+                </button>
+              </div>
+            </div>
+
+            {/* Chat panel */}
+            {chatOpen === item.id && (
+              <div className="px-4 py-2 bg-slate-50 border-t">
+                <div className="flex gap-2">
+                  <textarea
+                    value={chatText}
+                    onChange={e => setChatText(e.target.value)}
+                    placeholder={item.type === 'client' ? 'Reply to client...' : 'Message to team member...'}
+                    rows={2}
+                    className="flex-1 px-3 py-1.5 text-xs border rounded-md resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <button
+                    onClick={() => handleChatSend(item)}
+                    disabled={!chatText.trim() || sending === item.id}
+                    className="self-end px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-40"
+                  >
+                    <Send className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Assign panel */}
+            {assignOpen === item.id && (
+              <div className="px-4 py-2 bg-slate-50 border-t">
+                <p className="text-[10px] text-slate-500 font-medium mb-1.5">Assign to Specialist</p>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {specialists.map((s, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleAssign(item, s.name)}
+                      disabled={sending === item.id}
+                      className="px-2.5 py-1 text-[10px] font-medium bg-white border border-purple-200 rounded-md hover:bg-purple-50 text-purple-700"
+                    >
+                      {s.name} <span className="text-purple-400">({s.specialistType})</span>
+                    </button>
+                  ))}
+                  {specialists.length === 0 && <span className="text-[10px] text-slate-400 italic">No specialists on this job</span>}
+                </div>
+                <input
+                  type="text"
+                  value={assignNote}
+                  onChange={e => setAssignNote(e.target.value)}
+                  placeholder="Add a note (optional)..."
+                  className="w-full px-2 py-1 text-xs border rounded-md"
+                />
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 }

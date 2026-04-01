@@ -98,3 +98,90 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Failed to submit response' }, { status: 500 });
   }
 }
+
+/**
+ * PUT /api/portal/requests
+ * Actions on a portal request: commit, chat, elevate, assign
+ */
+export async function PUT(req: Request) {
+  try {
+    const body = await req.json();
+    const { requestId, action, message, fromUserId, assignTo, assignToName, assignToSpecialist, note, itemType, fromRole, toRole } = body;
+
+    if (!requestId || !action) {
+      return NextResponse.json({ error: 'requestId and action required' }, { status: 400 });
+    }
+
+    const request = await prisma.portalRequest.findUnique({ where: { id: requestId } });
+    if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+    switch (action) {
+      case 'commit': {
+        // Move to committed status — appears in Communication tab
+        const updated = await prisma.portalRequest.update({
+          where: { id: requestId },
+          data: { status: 'committed' },
+        });
+        return NextResponse.json({ request: updated });
+      }
+
+      case 'chat': {
+        // Send reply — if client type, send back to portal as new outstanding
+        // If team type, create a new request for the responder
+        if (itemType === 'client') {
+          // Mark current as chat_replied, create new outstanding for client
+          await prisma.portalRequest.update({ where: { id: requestId }, data: { status: 'chat_replied' } });
+          const newReq = await prisma.portalRequest.create({
+            data: {
+              clientId: request.clientId,
+              engagementId: request.engagementId,
+              section: request.section,
+              question: `Re: ${request.question}\n\n${message}`,
+              status: 'outstanding',
+              requestedById: fromUserId || request.requestedById,
+              requestedByName: 'Audit Team',
+            },
+          });
+          return NextResponse.json({ request: newReq });
+        } else {
+          // Team chat — update with message
+          await prisma.portalRequest.update({
+            where: { id: requestId },
+            data: { status: 'outstanding', response: `${request.response || ''}\n\n[Reply]: ${message}` },
+          });
+          return NextResponse.json({ success: true });
+        }
+      }
+
+      case 'elevate': {
+        // Assign to the next senior role
+        const updated = await prisma.portalRequest.update({
+          where: { id: requestId },
+          data: {
+            status: 'outstanding',
+            requestedByName: `${request.requestedByName} → ${toRole || 'Senior'}`,
+          },
+        });
+        return NextResponse.json({ request: updated });
+      }
+
+      case 'assign': {
+        // Assign to a specialist
+        const updated = await prisma.portalRequest.update({
+          where: { id: requestId },
+          data: {
+            status: 'outstanding',
+            requestedByName: `${request.requestedByName} → ${assignToSpecialist || assignToName || 'Specialist'}${note ? ` (${note})` : ''}`,
+          },
+        });
+        return NextResponse.json({ request: updated });
+      }
+
+      default:
+        return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+    }
+  } catch (error) {
+    console.error('Portal request action error:', error);
+    return NextResponse.json({ error: 'Action failed' }, { status: 500 });
+  }
+}

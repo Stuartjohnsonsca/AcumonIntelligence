@@ -101,6 +101,7 @@ export default function PortalAuditPage() {
   const [activePeriodId, setActivePeriodId] = useState('');
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState('outstanding');
+  const [outstandingCount, setOutstandingCount] = useState(0);
   const [requests, setRequests] = useState<EvidenceRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -329,13 +330,18 @@ export default function PortalAuditPage() {
           <button
             key={tab.key}
             onClick={() => setActiveSubTab(tab.key)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 ${
               activeSubTab === tab.key
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-700'
             }`}
           >
             {tab.label}
+            {tab.key === 'outstanding' && outstandingCount > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
+                {outstandingCount}
+              </span>
+            )}
           </button>
         ))}
       </div>}
@@ -414,7 +420,7 @@ export default function PortalAuditPage() {
       )}
 
       {activeSubTab === 'outstanding' && activeClientId && (
-        <OutstandingTab clientId={activeClientId} token={token} />
+        <OutstandingTab clientId={activeClientId} token={token} onCountChange={setOutstandingCount} />
       )}
 
       {activeSubTab === 'responded' && activeClientId && (

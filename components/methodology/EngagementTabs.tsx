@@ -18,6 +18,7 @@ import { OpeningTab } from './tabs/OpeningTab';
 import { PriorPeriodTab } from './tabs/PriorPeriodTab';
 import { AuditPlanPanel } from './panels/AuditPlanPanel';
 import { EngagementOutstandingTab } from './tabs/EngagementOutstandingTab';
+import { CommunicationTab } from './tabs/CommunicationTab';
 
 interface Props {
   engagement: EngagementData;
@@ -41,6 +42,7 @@ const TABS = [
   { key: 'documents', label: 'Documents' },
   { key: 'outstanding', label: 'Outstanding' },
   { key: 'portal', label: 'Portal' },
+  { key: 'communication', label: 'Communication' },
 ] as const;
 
 // Tabs that get sign-off dots — everything except Documents and Portal
@@ -178,9 +180,18 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'documents':
         return <DocumentRepositoryTab engagementId={engagement.id} />;
       case 'outstanding':
-        return <EngagementOutstandingTab engagementId={engagement.id} clientId={engagement.clientId} currentUserId={currentUserId} />;
+        return <EngagementOutstandingTab
+          engagementId={engagement.id}
+          clientId={engagement.clientId}
+          currentUserId={currentUserId}
+          currentUserRole={teamMembers.find(m => m.userId === currentUserId)?.role}
+          teamMembers={teamMembers}
+          specialists={engagement.specialists?.map(s => ({ name: s.name || '', specialistType: s.specialistType })) || []}
+        />;
       case 'portal':
         return <ClientPortalTab engagementId={engagement.id} clientName={clientName} />;
+      case 'communication':
+        return <CommunicationTab engagementId={engagement.id} clientId={engagement.clientId} />;
       default:
         return null;
     }

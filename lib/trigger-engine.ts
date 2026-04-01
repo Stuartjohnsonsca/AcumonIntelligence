@@ -103,7 +103,7 @@ export async function fireTrigger(ctx: TriggerContext): Promise<number> {
       const question = questionMap.get(questionId);
       if (!question) continue;
 
-      const questionText = `[${question.questionnaireName} / ${question.groupTitle}] ${question.text}`;
+      const questionText = question.text;
       if (existingQuestions.has(questionText)) continue; // skip duplicates
 
       try {
