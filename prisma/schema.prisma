@@ -895,6 +895,7 @@ model ClientPortalUser {
   isClientAdmin      Boolean   @default(false) @map("is_client_admin")
   role               String?   @map("role") // e.g. Finance Director, Accounts Manager, etc
   allocatedPeriodIds Json?     @map("allocated_period_ids") // Array of period IDs this user is allocated to
+  allocatedServices  Json?     @map("allocated_services") // Array of service keys: audit, accounting, consulting, tax, technology
   lastLoginAt        DateTime? @map("last_login_at")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")

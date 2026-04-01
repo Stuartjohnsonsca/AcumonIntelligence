@@ -190,12 +190,13 @@ export async function DELETE(req: Request) {
  */
 export async function PATCH(req: Request) {
   try {
-    const { userId, role, allocatedPeriodIds } = await req.json();
+    const { userId, role, allocatedPeriodIds, allocatedServices } = await req.json();
     if (!userId) return NextResponse.json({ error: 'userId required' }, { status: 400 });
 
     const updateData: Record<string, unknown> = {};
     if (role !== undefined) updateData.role = role;
     if (allocatedPeriodIds !== undefined) updateData.allocatedPeriodIds = allocatedPeriodIds;
+    if (allocatedServices !== undefined) updateData.allocatedServices = allocatedServices;
 
     const updated = await prisma.clientPortalUser.update({
       where: { id: userId },
