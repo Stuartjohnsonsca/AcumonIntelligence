@@ -8,7 +8,7 @@ interface Props { engagementId: string; currentUserId?: string; userRole?: strin
 const BENCHMARKS = ['Profit before Tax', 'Gross Profit', 'Total Revenue', 'Total Expenses', 'Total Equity or Net Assets', 'Total Assets'];
 const LMH = ['Low', 'Medium', 'High'];
 
-const OM_FACTORS = [
+const OM_INDICATORS = [
   'Is the company a public limited entity? Is it listed?',
   'Exposure to borrowing facilities',
   'Minimal number of shareholders',
@@ -17,7 +17,7 @@ const OM_FACTORS = [
   'Changes in the nature of business',
 ];
 
-const PM_FACTORS = [
+const PM_INDICATORS = [
   'Deficiencies in internal controls',
   'First/second/third year audit by Firm',
   'Report of fraud or higher risk of fraud',
@@ -148,14 +148,14 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const benchmarkAmount = tbTotals[benchmark] || 0;
   const rounding = firmRounding;
 
-  // (4) Auto-calculate OM benchmark % from weighted relevant OM factors
+  // (4) Auto-calculate OM benchmark % from weighted relevant OM indicators
   const rangeRow = materialityRange.find(r => r.benchmark.toLowerCase() === benchmark.toLowerCase());
   const rangeLow = rangeRow?.low || 0;
   const rangeHigh = rangeRow?.high || 0;
   const rangeMid = (rangeLow + rangeHigh) / 2;
 
   const omWeightMap: Record<string, number> = { Low: rangeLow, Medium: rangeMid, High: rangeHigh };
-  const relevantOmFactors = OM_FACTORS
+  const relevantOmFactors = OM_INDICATORS
     .map((_, i) => ({ assessment: get(`om_factor_${i}`) as string || 'Medium', notRelevant: !!get(`om_nr_${i}`) }))
     .filter(f => !f.notRelevant);
   const calculatedBenchmarkPct = relevantOmFactors.length > 0 && rangeRow
@@ -169,9 +169,9 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const materialityRaw = benchmarkAmount * (effectiveBenchmarkPct / 100);
   const materiality = materialityRaw ? roundDown(Math.abs(materialityRaw), rounding) : 0;
 
-  // (3) Auto-calculate PM from weighted relevant PM factors + snap to nearest preset
+  // (3) Auto-calculate PM from weighted relevant PM indicators + snap to nearest preset
   const pmWeightMap: Record<string, number> = { Low: pmPresets.low, Medium: pmPresets.medium, High: pmPresets.high };
-  const relevantPmFactors = PM_FACTORS
+  const relevantPmFactors = PM_INDICATORS
     .map((_, i) => ({ assessment: get(`pm_factor_${i}`) as string || 'Medium', notRelevant: !!get(`pm_nr_${i}`) }))
     .filter(f => !f.notRelevant);
   const rawPmPct = relevantPmFactors.length > 0
@@ -195,7 +195,7 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const actualPct = effectiveBenchmarkPct / 100;
   const isBreach = !!(userBenchmarkPct != null && calculatedBenchmarkPct > 0 && userBenchmarkPct > calculatedBenchmarkPct);
   const breachWarning = isBreach
-    ? `Benchmark % (${effectiveBenchmarkPct.toFixed(2)}%) exceeds the calculated figure (${calculatedBenchmarkPct.toFixed(2)}%) based on factor assessments`
+    ? `Benchmark % (${effectiveBenchmarkPct.toFixed(2)}%) exceeds the calculated figure (${calculatedBenchmarkPct.toFixed(2)}%) based on indicator assessments`
     : null;
 
   // Load tech approval from saved data
@@ -431,13 +431,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
         </div>
       </div>
 
-      {/* ═══ Overall Materiality Assessment (OM factors) ═══ */}
+      {/* ═══ Overall Materiality Assessment (OM indicators) ═══ */}
       <div>
         <div className="bg-blue-50 px-3 py-1.5 rounded-t-lg border border-blue-100">
           <h3 className="text-xs font-semibold text-blue-800">Overall Materiality Assessment</h3>
         </div>
         <div className="border border-t-0 rounded-b-lg divide-y">
-          {OM_FACTORS.map((f, i) => {
+          {OM_INDICATORS.map((f, i) => {
             const nr = !!get(`om_nr_${i}`);
             return (
             <div key={i} className={`flex items-center ${nr ? 'opacity-40' : ''}`}>
@@ -474,16 +474,16 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
         </div>
       </div>
 
-      {/* ═══ Performance Materiality Factors ═══ */}
+      {/* ═══ Performance Materiality Indicators ═══ */}
       <div>
         <div className="bg-blue-50 px-3 py-1.5 rounded-t-lg border border-blue-100">
-          <h3 className="text-xs font-semibold text-blue-800">Performance Materiality Factors</h3>
+          <h3 className="text-xs font-semibold text-blue-800">Performance Materiality Indicators</h3>
           <p className="text-[10px] text-blue-600 mt-0.5">
             Weighted avg: {rawPmPct.toFixed(1)}% → snapped to {snappedPmPct}% (presets: {pmPresets.low}/{pmPresets.medium}/{pmPresets.high}) → PM = {fmtCurrency(performanceMateriality)}
           </p>
         </div>
         <div className="border border-t-0 rounded-b-lg divide-y">
-          {PM_FACTORS.map((f, i) => {
+          {PM_INDICATORS.map((f, i) => {
             const nr = !!get(`pm_nr_${i}`);
             return (
             <div key={i} className={`flex items-center ${nr ? 'opacity-40' : ''}`}>
