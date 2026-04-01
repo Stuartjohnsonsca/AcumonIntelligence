@@ -28,6 +28,8 @@ interface Props {
   token: string;
   engagementId?: string;
   onCountChange?: (count: number) => void;
+  viewMode?: 'my' | 'team';
+  portalUserName?: string;
 }
 
 const SECTIONS = [
@@ -44,7 +46,7 @@ function cleanQuestion(text: string): { question: string; source: string | null 
   return { source: null, question: text };
 }
 
-export function OutstandingTab({ clientId, token, engagementId, onCountChange }: Props) {
+export function OutstandingTab({ clientId, token, engagementId, onCountChange, viewMode = 'team', portalUserName }: Props) {
   const [items, setItems] = useState<PortalRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(SECTIONS.map(s => s.key)));
@@ -83,7 +85,15 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange }:
   }
 
   function getItemsBySection(sectionKey: string) {
-    return items.filter(i => i.section === sectionKey && !successes.has(i.id));
+    return items.filter(i => {
+      if (i.section !== sectionKey || successes.has(i.id)) return false;
+      if (viewMode === 'my' && portalUserName) {
+        // Show items assigned to this user, or unassigned items
+        const assignedTo = (i as any).assignedTo || '';
+        return !assignedTo || assignedTo === portalUserName || assignedTo.includes(portalUserName);
+      }
+      return true; // Team view: show all
+    });
   }
 
   async function handleSubmitItem(item: PortalRequestItem) {
@@ -182,6 +192,11 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange }:
                               <span className="text-[10px] text-slate-400">
                                 Requested by {item.requestedByName} &middot; {new Date(item.requestedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                               </span>
+                              {(item as any).assignedTo && (
+                                <span className="text-[9px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">
+                                  Assigned: {(item as any).assignedTo}
+                                </span>
+                              )}
                             </div>
                           </div>
                           {/* Chat history — show conversation thread */}

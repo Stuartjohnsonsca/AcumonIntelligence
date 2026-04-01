@@ -103,6 +103,8 @@ export default function PortalAuditPage() {
   const [activePeriodId, setActivePeriodId] = useState('');
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState('outstanding');
+  const [viewMode, setViewMode] = useState<'my' | 'team'>('my');
+  const [portalUserName, setPortalUserName] = useState('');
   const [outstandingCount, setOutstandingCount] = useState(0);
   const [explanationsCount, setExplanationsCount] = useState(0);
   const [unacceptedCount, setUnacceptedCount] = useState(0);
@@ -171,7 +173,14 @@ export default function PortalAuditPage() {
   }, [token, activeClientId]);
 
   useEffect(() => {
-    if (token) loadData();
+    if (token) {
+      loadData();
+      // Load portal user name
+      fetch(`/api/portal/my-details?token=${token}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.user?.name) setPortalUserName(d.user.name); })
+        .catch(() => {});
+    }
     else { setError('No authentication token'); setLoading(false); }
   }, [token, loadData]);
 
@@ -368,6 +377,23 @@ export default function PortalAuditPage() {
         </div>
       )}
 
+      {/* View mode toggle: My Items / Team View */}
+      {activeClientId && activePeriodId && (
+        <div className="flex items-center justify-between">
+          <div className="flex bg-blue-100 rounded-lg p-0.5">
+            <button onClick={() => setViewMode('my')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${viewMode === 'my' ? 'bg-white text-blue-900 shadow-sm' : 'text-blue-600'}`}>
+              My Items
+            </button>
+            <button onClick={() => setViewMode('team')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${viewMode === 'team' ? 'bg-white text-blue-900 shadow-sm' : 'text-blue-600'}`}>
+              Team View
+            </button>
+          </div>
+          {viewMode === 'my' && portalUserName && (
+            <span className="text-[10px] text-slate-400">Showing items assigned to or created by {portalUserName}</span>
+          )}
+        </div>
+      )}
+
       {/* Sub-tabs — only show when client selected */}
       {activeClientId && activePeriodId && <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
         {AUDIT_SUB_TABS.map(tab => (
@@ -474,11 +500,11 @@ export default function PortalAuditPage() {
       )}
 
       {activeSubTab === 'outstanding' && activeClientId && activePeriodId && (
-        <OutstandingTab clientId={activeClientId} token={token} engagementId={activeEngagementId} onCountChange={setOutstandingCount} />
+        <OutstandingTab clientId={activeClientId} token={token} engagementId={activeEngagementId} onCountChange={setOutstandingCount} viewMode={viewMode} portalUserName={portalUserName} />
       )}
 
       {activeSubTab === 'explanations' && activeClientId && activePeriodId && (
-        <ExplanationsTab clientId={activeClientId} token={token} engagementId={activeEngagementId} />
+        <ExplanationsTab clientId={activeClientId} token={token} engagementId={activeEngagementId} viewMode={viewMode} portalUserName={portalUserName} />
       )}
 
       {activeSubTab === 'responded' && activeClientId && activePeriodId && (

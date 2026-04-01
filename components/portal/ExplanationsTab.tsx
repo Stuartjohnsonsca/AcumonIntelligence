@@ -31,6 +31,8 @@ interface Props {
   token: string;
   engagementId?: string;
   onCountChange?: (count: number) => void;
+  viewMode?: 'my' | 'team';
+  portalUserName?: string;
 }
 
 function formatCurrency(v: number | null | undefined): string {
@@ -44,7 +46,7 @@ function formatDate(d: string) {
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export function ExplanationsTab({ clientId, token, engagementId, onCountChange }: Props) {
+export function ExplanationsTab({ clientId, token, engagementId, onCountChange, viewMode = 'team', portalUserName }: Props) {
   const [items, setItems] = useState<ExplanationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -129,7 +131,14 @@ export function ExplanationsTab({ clientId, token, engagementId, onCountChange }
     setLastEdited(prev => ({ ...prev, [itemId]: { name: 'Portal User', at: new Date().toLocaleDateString('en-GB') } }));
   }
 
-  const activeItems = items.filter(i => !successes.has(i.id));
+  const activeItems = items.filter(i => {
+    if (successes.has(i.id)) return false;
+    if (viewMode === 'my' && portalUserName) {
+      const assigned = assignees[i.id] || '';
+      return !assigned || assigned === portalUserName || assigned.includes(portalUserName);
+    }
+    return true;
+  });
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 text-blue-500 animate-spin" /></div>;
 
