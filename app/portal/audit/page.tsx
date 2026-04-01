@@ -108,6 +108,8 @@ export default function PortalAuditPage() {
   const [outstandingCount, setOutstandingCount] = useState(0);
   const [explanationsCount, setExplanationsCount] = useState(0);
   const [unacceptedCount, setUnacceptedCount] = useState(0);
+  // Per-tab status counts: { tabKey: { outstanding, unaccepted, verified } }
+  const [tabCounts, setTabCounts] = useState<Record<string, { outstanding: number; unaccepted: number; verified: number }>>({});
   const [clientOutstandingCounts, setClientOutstandingCounts] = useState<Record<string, number>>({});
   const [periodOutstandingCounts, setPeriodOutstandingCounts] = useState<Record<string, number>>({});
   const [requests, setRequests] = useState<EvidenceRequest[]>([]);
@@ -218,6 +220,50 @@ export default function PortalAuditPage() {
     }
     loadCounts();
   }, [clients]);
+
+  // Load per-tab status counts
+  useEffect(() => {
+    if (!activeClientId || !activePeriodId) { setTabCounts({}); return; }
+    const engId = periods.find(p => p.id === activePeriodId)?.engagementId || '';
+    if (!engId) return;
+    async function loadTabCounts() {
+      try {
+        const res = await fetch(`/api/portal/requests?clientId=${activeClientId}&status=all&engagementId=${engId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const allReqs = data.requests || [];
+
+        // Map section to tab key
+        const sectionToTab: Record<string, string> = {
+          questions: 'outstanding',
+          explanations: 'explanations',
+          evidence: 'evidence',
+          connections: 'outstanding',
+          calculations: 'outstanding',
+        };
+
+        const counts: Record<string, { outstanding: number; unaccepted: number; verified: number }> = {};
+        for (const tab of AUDIT_SUB_TABS) {
+          counts[tab.key] = { outstanding: 0, unaccepted: 0, verified: 0 };
+        }
+
+        for (const req of allReqs) {
+          const tabKey = sectionToTab[req.section] || 'outstanding';
+          if (!counts[tabKey]) counts[tabKey] = { outstanding: 0, unaccepted: 0, verified: 0 };
+          if (req.status === 'outstanding') {
+            counts[tabKey].outstanding++;
+          } else if (req.status === 'responded' || req.status === 'verified') {
+            counts[tabKey].unaccepted++;
+          } else if (req.status === 'committed') {
+            counts[tabKey].verified++;
+          }
+        }
+
+        setTabCounts(counts);
+      } catch {}
+    }
+    loadTabCounts();
+  }, [activeClientId, activePeriodId, periods, outstandingCount, explanationsCount, unacceptedCount]);
 
   // Get engagement ID for selected period
   const activeEngagementId = useMemo(() => {
@@ -407,21 +453,30 @@ export default function PortalAuditPage() {
             }`}
           >
             {tab.label}
-            {tab.key === 'outstanding' && outstandingCount > 0 && (
-              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
-                {outstandingCount}
-              </span>
-            )}
-            {tab.key === 'explanations' && explanationsCount > 0 && (
-              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[9px] font-bold">
-                {explanationsCount}
-              </span>
-            )}
-            {tab.key === 'responded' && unacceptedCount > 0 && (
-              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
-                {unacceptedCount}
-              </span>
-            )}
+            {/* Per-tab status dots */}
+            {(() => {
+              const tc = tabCounts[tab.key];
+              if (!tc) return null;
+              return (
+                <span className="inline-flex items-center gap-0.5">
+                  {tc.outstanding > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[8px] font-bold" title="Outstanding">
+                      {tc.outstanding}
+                    </span>
+                  )}
+                  {tc.unaccepted > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-orange-400 text-white text-[8px] font-bold" title="Responded, not verified">
+                      {tc.unaccepted}
+                    </span>
+                  )}
+                  {tc.verified > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-green-500 text-white text-[8px] font-bold" title="Verified">
+                      {tc.verified}
+                    </span>
+                  )}
+                </span>
+              );
+            })()}
           </button>
         ))}
       </div>}
