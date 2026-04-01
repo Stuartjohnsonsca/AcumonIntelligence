@@ -255,8 +255,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
   async function handleAiClassifyAll() {
     const rowsToClassify = rows
-      .map((r, i) => ({ index: i, accountCode: r.accountCode, description: r.description, currentYear: r.currentYear, hasFs: !!(r.fsNoteLevel || r.fsLevel || r.fsStatement) }))
-      .filter(r => (r.description || r.accountCode) && r.description !== '' && !r.hasFs);
+      .map((r, i) => ({ index: i, accountCode: r.accountCode, description: r.description, currentYear: r.currentYear, hasAllFs: !!(r.fsNoteLevel && r.fsLevel && r.fsStatement) }))
+      .filter(r => (r.description || r.accountCode) && r.description !== '' && !r.hasAllFs);
 
     if (rowsToClassify.length === 0) return;
 
