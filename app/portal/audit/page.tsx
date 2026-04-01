@@ -391,8 +391,8 @@ export default function PortalAuditPage() {
         ))}
       </div>}
 
-      {/* Sub-tab content */}
-      {activeSubTab === 'evidence' && (
+      {/* Sub-tab content — only when client AND period selected */}
+      {activeSubTab === 'evidence' && activeClientId && activePeriodId && (
         <div className="space-y-4">
           {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
 
@@ -464,15 +464,15 @@ export default function PortalAuditPage() {
         </div>
       )}
 
-      {activeSubTab === 'outstanding' && activeClientId && (
+      {activeSubTab === 'outstanding' && activeClientId && activePeriodId && (
         <OutstandingTab clientId={activeClientId} token={token} engagementId={activeEngagementId} onCountChange={setOutstandingCount} />
       )}
 
-      {activeSubTab === 'responded' && activeClientId && (
+      {activeSubTab === 'responded' && activeClientId && activePeriodId && (
         <RespondedTab clientId={activeClientId} token={token} engagementId={activeEngagementId} />
       )}
 
-      {activeSubTab === 'concerns' && (
+      {activeSubTab === 'concerns' && activeClientId && activePeriodId && (
         <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
           <h3 className="text-sm font-semibold text-slate-700 mb-2">Concerns</h3>
           <p className="text-xs text-slate-400">Going concern assessments, risk flags, and areas of concern identified during the audit.</p>
@@ -480,7 +480,7 @@ export default function PortalAuditPage() {
         </div>
       )}
 
-      {activeSubTab === 'confirmations' && (
+      {activeSubTab === 'confirmations' && activeClientId && activePeriodId && (
         <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
           <h3 className="text-sm font-semibold text-slate-700 mb-2">Confirmations</h3>
           <p className="text-xs text-slate-400">Third-party confirmation requests and responses — banks, debtors, suppliers, legal.</p>
@@ -488,7 +488,7 @@ export default function PortalAuditPage() {
         </div>
       )}
 
-      {activeSubTab === 'errors' && (
+      {activeSubTab === 'errors' && activeClientId && activePeriodId && (
         <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
           <h3 className="text-sm font-semibold text-slate-700 mb-2">Errors Identified</h3>
           <p className="text-xs text-slate-400">Misstatements, errors, and adjustments identified during the audit process.</p>
