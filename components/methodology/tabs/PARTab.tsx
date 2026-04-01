@@ -404,12 +404,13 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
     updateRow(index, 'accepted', accepted);
   }
 
+  const [sendingRmm, setSendingRmm] = useState(false);
+
   if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading PAR...</div>;
 
   const numCls = 'w-full border-0 bg-transparent text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5';
   const orangeCount = computedRows.filter(r => r.sendMgt?.checked && !r.sendMgt?.sentAt).length;
-  const rmmCount = computedRows.filter(r => r.addedToRmm && !r.addedToRmmSent).length;
-  const [sendingRmm, setSendingRmm] = useState(false);
+  const rmmCount = computedRows.filter(r => r.addedToRmm && !(r as any).addedToRmmSent).length;
 
   async function sendToRMM() {
     setSendingRmm(true);
