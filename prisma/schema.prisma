@@ -1805,8 +1805,12 @@ model AuditPARRow {
   absVariancePercent       Float?  @map("abs_variance_percent")
   significantChange        Boolean @default(false) @map("significant_change")
   sentToManagement         Boolean @default(false) @map("sent_to_management")
+  sendMgtData              Json?   @map("send_mgt_data") // { checked, checkedBy, checkedAt, sentAt, respondedAt }
   managementResponseStatus String? @map("management_response_status") // pending | responded
   reasons                  String? @db.Text
+  auditorView              String? @map("auditor_view") @db.Text
+  addedToRmm               Boolean @default(false) @map("added_to_rmm")
+  addedToRmmBy             String? @map("added_to_rmm_by")
   sortOrder                Int     @default(0) @map("sort_order")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)

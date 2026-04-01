@@ -36,6 +36,8 @@ interface PARRow {
   sendMgt: SendMgtStatus;
   reasons: string | null;
   auditorView: string | null;
+  addedToRmm?: boolean;
+  addedToRmmBy?: string | null;
   accepted: AcceptedDots;
   sortOrder: number;
   fsStatement?: string; // P&L | Balance Sheet | Cashflow
@@ -445,13 +447,14 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
               </th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium min-w-[200px]">Reasons</th>
               <th className="text-left px-2 py-2 text-slate-500 font-medium min-w-[180px]">Auditor View</th>
+              <th className="text-center px-2 py-2 text-slate-500 font-medium w-16 whitespace-nowrap" title="Add to Identifying & Assessing RMM">RMM</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-36 whitespace-nowrap">Accepted</th>
               <th className="w-6"></th>
             </tr>
           </thead>
           <tbody>
             {computedRows.length === 0 ? (
-              <tr><td colSpan={11} className="text-center py-8 text-slate-400 italic">No PAR rows. Click &quot;+ Add Row&quot; or populate from Trial Balance.</td></tr>
+              <tr><td colSpan={12} className="text-center py-8 text-slate-400 italic">No PAR rows. Click &quot;+ Add Row&quot; or populate from Trial Balance.</td></tr>
             ) : computedRows.map((row, i) => {
               // Section header row
               if (row.isSection) {
@@ -461,7 +464,7 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                   'bg-slate-100 text-slate-700';
                 return (
                   <tr key={`section-${row.particulars}`} className={`${sectionColor} border-b border-slate-200`}>
-                    <td colSpan={11} className="px-3 py-1.5 font-semibold text-xs tracking-wide uppercase">{row.particulars}</td>
+                    <td colSpan={12} className="px-3 py-1.5 font-semibold text-xs tracking-wide uppercase">{row.particulars}</td>
                   </tr>
                 );
               }
@@ -503,7 +506,7 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                         disabled={!!mgt.sentAt}
                         className={`w-5 h-5 rounded border-2 inline-flex items-center justify-center transition-colors ${
                           mgt.respondedAt ? 'bg-green-500 border-green-500 text-white' :
-                          mgt.sentAt ? 'bg-transparent border-green-500 text-green-500' :
+                          mgt.sentAt ? 'bg-blue-500 border-blue-500 text-white' :
                           mgt.checked ? 'bg-orange-400 border-orange-400 text-white' :
                           'border-slate-300 hover:border-orange-400'
                         }`}
@@ -515,7 +518,7 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                         <span className="text-[8px] text-orange-500 leading-tight">{mgt.checkedBy}<br/>{fmtTimestamp(mgt.checkedAt)}</span>
                       )}
                       {mgt.sentAt && !mgt.respondedAt && (
-                        <span className="text-[8px] text-green-600 leading-tight">Sent<br/>{fmtTimestamp(mgt.sentAt)}</span>
+                        <span className="text-[8px] text-blue-600 leading-tight">Sent<br/>{fmtTimestamp(mgt.sentAt)}</span>
                       )}
                       {mgt.respondedAt && (
                         <span className="text-[8px] text-green-700 leading-tight">Response<br/>{fmtTimestamp(mgt.respondedAt)}</span>
@@ -543,6 +546,38 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                       placeholder="Auditor view..."
                       onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
                     />
+                  </td>
+                  {/* Add to RMM checkbox — cannot be unchecked by junior */}
+                  <td className="px-2 py-0.5 text-center">
+                    {!row.isSection && (
+                      <div className="flex flex-col items-center gap-0.5">
+                        <input
+                          type="checkbox"
+                          checked={row.addedToRmm ?? false}
+                          onChange={e => {
+                            const adding = e.target.checked;
+                            // Cannot uncheck if added by a more senior role
+                            if (!adding && row.addedToRmmBy) {
+                              const roleRank: Record<string, number> = { Junior: 0, Manager: 1, RI: 2 };
+                              const myRank = roleRank[userRole || 'Junior'] ?? 0;
+                              // Parse who added it
+                              const addedRole = row.addedToRmmBy.match(/\((\w+)\)/)?.[1] || '';
+                              const addedRank = roleRank[addedRole] ?? 0;
+                              if (myRank < addedRank) return; // Can't delete senior's addition
+                            }
+                            updateRow(i, 'addedToRmm', adding);
+                            if (adding) {
+                              updateRow(i, 'addedToRmmBy', `${userName || 'Unknown'}${userRole ? ` (${userRole})` : ''}`);
+                            }
+                          }}
+                          className="w-3.5 h-3.5 rounded border-slate-300"
+                          title={row.addedToRmm ? `Added to RMM by ${row.addedToRmmBy || 'Unknown'}` : 'Add to Identifying & Assessing RMM'}
+                        />
+                        {row.addedToRmm && row.addedToRmmBy && (
+                          <span className="text-[7px] text-purple-600 leading-tight">{row.addedToRmmBy}</span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   {/* Accepted dots */}
                   <td className="px-2 py-0.5">

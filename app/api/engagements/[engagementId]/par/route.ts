@@ -20,7 +20,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     return getPermanentFileSignOffs(engagementId, 'par');
   }
 
-  const rows = await prisma.auditPARRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' } });
+  const dbRows = await prisma.auditPARRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' } });
+  // Map DB rows to include sendMgt object for the component
+  const rows = dbRows.map(r => ({
+    ...r,
+    sendMgt: r.sendMgtData || { checked: r.sentToManagement },
+  }));
   return NextResponse.json({ rows });
 }
 
@@ -52,8 +57,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
       absVariancePercent: row.absVariancePercent != null ? Number(row.absVariancePercent) || null : null,
       significantChange: sigChange,
       sentToManagement: sendMgt,
+      sendMgtData: row.sendMgt || null,
       managementResponseStatus: row.managementResponseStatus || null,
       reasons: row.reasons || null,
+      auditorView: row.auditorView || null,
+      addedToRmm: row.addedToRmm ?? false,
+      addedToRmmBy: row.addedToRmmBy || null,
       sortOrder: row.sortOrder ?? 0,
     };
 
