@@ -29,6 +29,7 @@ interface Props {
   token: string;
   engagementId?: string;
   onUnacceptedCount?: (count: number) => void;
+  analyticsOnly?: boolean;
 }
 
 const SECTION_LABELS: Record<string, string> = {
@@ -62,7 +63,7 @@ function formatDuration(ms: number): string {
   return `${mins}m`;
 }
 
-export function RespondedTab({ clientId, token, engagementId, onUnacceptedCount }: Props) {
+export function RespondedTab({ clientId, token, engagementId, onUnacceptedCount, analyticsOnly }: Props) {
   const [items, setItems] = useState<PortalRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -101,7 +102,43 @@ export function RespondedTab({ clientId, token, engagementId, onUnacceptedCount 
     };
   }, [items]);
 
-  if (loading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 text-blue-500 animate-spin" /></div>;
+  if (loading) return analyticsOnly ? null : <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 text-blue-500 animate-spin" /></div>;
+
+  // Analytics-only mode: just render the collapsible analytics section
+  if (analyticsOnly) {
+    if (!analytics) return null;
+    return (
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden mt-4">
+        <button onClick={() => setAnalyticsOpen(!analyticsOpen)} className="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-semibold text-slate-800">Response Time Analytics</span>
+            <span className="text-[10px] text-slate-400">{analytics.total} responses</span>
+          </div>
+          {analyticsOpen ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
+        </button>
+        {analyticsOpen && (
+          <div className="px-5 pb-5 border-t border-slate-100 pt-4">
+            <div className="grid grid-cols-4 gap-4 mb-4">
+              <div className="bg-slate-50 rounded-lg p-3 text-center"><p className="text-lg font-bold text-slate-800">{formatDuration(analytics.avg)}</p><p className="text-[10px] text-slate-500 mt-0.5">Average</p></div>
+              <div className="bg-slate-50 rounded-lg p-3 text-center"><p className="text-lg font-bold text-slate-800">{formatDuration(analytics.median)}</p><p className="text-[10px] text-slate-500 mt-0.5">Median</p></div>
+              <div className="bg-green-50 rounded-lg p-3 text-center"><p className="text-lg font-bold text-green-700">{formatDuration(analytics.min)}</p><p className="text-[10px] text-green-600 mt-0.5">Fastest</p></div>
+              <div className="bg-red-50 rounded-lg p-3 text-center"><p className="text-lg font-bold text-red-700">{formatDuration(analytics.max)}</p><p className="text-[10px] text-red-500 mt-0.5">Slowest</p></div>
+            </div>
+            <div className="space-y-2">
+              {[{ label: 'Within 1 hour', count: analytics.within1h, color: 'bg-green-500' },{ label: 'Within 24 hours', count: analytics.within24h, color: 'bg-blue-500' },{ label: 'Within 3 days', count: analytics.within3d, color: 'bg-amber-500' },{ label: 'Total', count: analytics.total, color: 'bg-slate-400' }].map(row => (
+                <div key={row.label} className="flex items-center gap-3">
+                  <span className="text-xs text-slate-500 w-28">{row.label}</span>
+                  <div className="flex-1 bg-slate-100 rounded-full h-3 overflow-hidden"><div className={`h-full rounded-full ${row.color}`} style={{ width: `${analytics.total > 0 ? (row.count / analytics.total) * 100 : 0}%` }} /></div>
+                  <span className="text-xs font-medium text-slate-700 w-12 text-right">{row.count}/{analytics.total}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -187,60 +224,7 @@ export function RespondedTab({ clientId, token, engagementId, onUnacceptedCount 
         );
       })}
 
-      {/* Response time analytics — collapsible, collapsed by default */}
-      {analytics && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <button
-            onClick={() => setAnalyticsOpen(!analyticsOpen)}
-            className="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-blue-600" />
-              <span className="text-sm font-semibold text-slate-800">Response Time Analytics</span>
-              <span className="text-[10px] text-slate-400">{analytics.total} responses</span>
-            </div>
-            {analyticsOpen ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
-          </button>
-          {analyticsOpen && (
-            <div className="px-5 pb-5 border-t border-slate-100 pt-4">
-              <div className="grid grid-cols-4 gap-4 mb-4">
-                <div className="bg-slate-50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-slate-800">{formatDuration(analytics.avg)}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Average</p>
-                </div>
-                <div className="bg-slate-50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-slate-800">{formatDuration(analytics.median)}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Median</p>
-                </div>
-                <div className="bg-green-50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-green-700">{formatDuration(analytics.min)}</p>
-                  <p className="text-[10px] text-green-600 mt-0.5">Fastest</p>
-                </div>
-                <div className="bg-red-50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-red-700">{formatDuration(analytics.max)}</p>
-                  <p className="text-[10px] text-red-500 mt-0.5">Slowest</p>
-                </div>
-              </div>
-              <div className="space-y-2">
-                {[
-                  { label: 'Within 1 hour', count: analytics.within1h, color: 'bg-green-500' },
-                  { label: 'Within 24 hours', count: analytics.within24h, color: 'bg-blue-500' },
-                  { label: 'Within 3 days', count: analytics.within3d, color: 'bg-amber-500' },
-                  { label: 'Total', count: analytics.total, color: 'bg-slate-400' },
-                ].map(row => (
-                  <div key={row.label} className="flex items-center gap-3">
-                    <span className="text-xs text-slate-500 w-28">{row.label}</span>
-                    <div className="flex-1 bg-slate-100 rounded-full h-3 overflow-hidden">
-                      <div className={`h-full rounded-full ${row.color}`} style={{ width: `${analytics.total > 0 ? (row.count / analytics.total) * 100 : 0}%` }} />
-                    </div>
-                    <span className="text-xs font-medium text-slate-700 w-12 text-right">{row.count}/{analytics.total}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Analytics moved to page level — rendered below all tabs */}
     </div>
   );
 }

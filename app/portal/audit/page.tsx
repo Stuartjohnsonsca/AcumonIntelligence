@@ -248,14 +248,17 @@ export default function PortalAuditPage() {
         }
 
         for (const req of allReqs) {
-          const tabKey = sectionToTab[req.section] || 'outstanding';
-          if (!counts[tabKey]) counts[tabKey] = { outstanding: 0, unaccepted: 0, verified: 0 };
           if (req.status === 'outstanding') {
+            // Outstanding items stay in their originating tab
+            const tabKey = sectionToTab[req.section] || 'outstanding';
+            if (!counts[tabKey]) counts[tabKey] = { outstanding: 0, unaccepted: 0, verified: 0 };
             counts[tabKey].outstanding++;
           } else if (req.status === 'responded' || req.status === 'verified') {
-            counts[tabKey].unaccepted++;
+            // Responded but unverified → Responded tab (orange)
+            counts['responded'].unaccepted++;
           } else if (req.status === 'committed') {
-            counts[tabKey].verified++;
+            // Verified → Responded tab (green)
+            counts['responded'].verified++;
           }
         }
 
@@ -588,6 +591,11 @@ export default function PortalAuditPage() {
           <p className="text-xs text-slate-400">Misstatements, errors, and adjustments identified during the audit process.</p>
           <p className="text-xs text-slate-300 mt-4 italic">Coming soon</p>
         </div>
+      )}
+
+      {/* Response Time Analytics — collapsible, below all tabs */}
+      {activeClientId && activePeriodId && (
+        <RespondedTab clientId={activeClientId} token={token} engagementId={activeEngagementId} analyticsOnly onUnacceptedCount={() => {}} />
       )}
 
       {/* Confirmation popup + Bulk upload modals omitted for brevity — same as original */}
