@@ -472,15 +472,17 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
   const [expanded, setExpanded] = useState(false);
   const [range, setRange] = useState<{ benchmark: string; low: number; high: number }[]>(DEFAULT_RANGE);
   const [rounding, setRounding] = useState(3);
+  const [pmPresets, setPmPresets] = useState<{ low: number; medium: number; high: number }>({ low: 50, medium: 62.5, high: 75 });
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     if (loaded) return;
     try {
-      const [rangeRes, roundRes] = await Promise.all([
+      const [rangeRes, roundRes, pmRes] = await Promise.all([
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_range'),
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_rounding'),
+        fetch('/api/methodology-admin/risk-tables?tableType=pm_presets'),
       ]);
       if (rangeRes.ok) {
         const d = await rangeRes.json();
@@ -489,6 +491,10 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
       if (roundRes.ok) {
         const d = await roundRes.json();
         if (d.table?.data?.rounding) setRounding(d.table.data.rounding);
+      }
+      if (pmRes.ok) {
+        const d = await pmRes.json();
+        if (d.table?.data) setPmPresets(d.table.data);
       }
     } catch {}
     setLoaded(true);
@@ -507,6 +513,11 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tableType: 'materiality_rounding', data: { rounding } }),
+        }),
+        fetch('/api/methodology-admin/risk-tables', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tableType: 'pm_presets', data: pmPresets }),
         }),
       ]);
       onSave();
@@ -545,37 +556,68 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
                 </tr>
               </thead>
               <tbody>
-                {range.map((r, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="px-3 py-2 text-slate-700">{r.benchmark}</td>
-                    <td className="px-3 py-1">
-                      <input type="text" inputMode="decimal" value={r.low * 100} onChange={e => {
-                        const v = e.target.value.replace(/[^0-9.]/g, '');
-                        const n = parseFloat(v);
-                        if (v === '' || (n > 0)) {
+                {range.map((r, i) => {
+                  const lowInvalid = r.low < 0;
+                  const highInvalid = r.high < 0 || r.high < r.low;
+                  return (
+                    <tr key={i} className="border-t">
+                      <td className="px-3 py-2 text-slate-700">{r.benchmark}</td>
+                      <td className="px-3 py-1">
+                        <input type="text" inputMode="decimal" value={r.low * 100} onChange={e => {
+                          const v = e.target.value.replace(/[^0-9.]/g, '');
+                          const n = parseFloat(v);
                           const updated = [...range];
-                          updated[i] = { ...r, low: v === '' ? 0 : n / 100 };
+                          updated[i] = { ...r, low: (v === '' || isNaN(n)) ? 0 : Math.max(0, n) / 100 };
                           setRange(updated);
-                        }
-                      }} className="w-full text-right border rounded px-2 py-1 text-sm" />
-                    </td>
-                    <td className="px-3 py-1">
-                      <input type="text" inputMode="decimal" value={r.high * 100} onChange={e => {
-                        const v = e.target.value.replace(/[^0-9.]/g, '');
-                        const n = parseFloat(v);
-                        if (v === '' || (n > 0)) {
+                        }} className={`w-full text-right border rounded px-2 py-1 text-sm ${lowInvalid ? 'border-red-400 bg-red-50' : ''}`} />
+                      </td>
+                      <td className="px-3 py-1">
+                        <input type="text" inputMode="decimal" value={r.high * 100} onChange={e => {
+                          const v = e.target.value.replace(/[^0-9.]/g, '');
+                          const n = parseFloat(v);
                           const updated = [...range];
-                          updated[i] = { ...r, high: v === '' ? 0 : n / 100 };
+                          updated[i] = { ...r, high: (v === '' || isNaN(n)) ? 0 : Math.max(0, n) / 100 };
                           setRange(updated);
-                        }
-                      }} className="w-full text-right border rounded px-2 py-1 text-sm" />
-                    </td>
-                  </tr>
-                ))}
+                        }} className={`w-full text-right border rounded px-2 py-1 text-sm ${highInvalid ? 'border-red-400 bg-red-50' : ''}`} />
+                        {highInvalid && r.high < r.low && <span className="text-[9px] text-red-500">Must be &ge; Low</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          <Button onClick={handleSave} size="sm" disabled={saving}>
+
+          {/* Performance Materiality Preset Values */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Performance Materiality Preset Values (%)</h3>
+            <div className="flex items-center gap-4">
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Low</label>
+                <input type="text" inputMode="decimal" value={pmPresets.low} onChange={e => {
+                  const n = parseFloat(e.target.value.replace(/[^0-9.]/g, ''));
+                  setPmPresets(p => ({ ...p, low: isNaN(n) ? 0 : Math.max(0, n) }));
+                }} className="w-24 text-right border rounded px-2 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Medium</label>
+                <input type="text" inputMode="decimal" value={pmPresets.medium} onChange={e => {
+                  const n = parseFloat(e.target.value.replace(/[^0-9.]/g, ''));
+                  setPmPresets(p => ({ ...p, medium: isNaN(n) ? 0 : Math.max(0, n) }));
+                }} className="w-24 text-right border rounded px-2 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">High</label>
+                <input type="text" inputMode="decimal" value={pmPresets.high} onChange={e => {
+                  const n = parseFloat(e.target.value.replace(/[^0-9.]/g, ''));
+                  setPmPresets(p => ({ ...p, high: isNaN(n) ? 0 : Math.max(0, n) }));
+                }} className="w-24 text-right border rounded px-2 py-1.5 text-sm" />
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">The weighted PM factor average is rounded to the nearest of these values</p>
+          </div>
+
+          <Button onClick={handleSave} size="sm" disabled={saving || range.some(r => r.high < r.low)}>
             {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
             Save Materiality Settings
           </Button>

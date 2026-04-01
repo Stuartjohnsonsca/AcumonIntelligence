@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 
-interface Props { engagementId: string; }
+interface Props { engagementId: string; currentUserId?: string; userRole?: string; }
 
 const BENCHMARKS = ['Profit before Tax', 'Gross Profit', 'Total Revenue', 'Total Expenses', 'Total Equity or Net Assets', 'Total Assets'];
 const LMH = ['Low', 'Medium', 'High'];
@@ -42,7 +42,7 @@ function roundDown(v: number, negDecimals: number): number {
   return Math.floor(v / factor) * factor;
 }
 
-export function MaterialityTab({ engagementId }: Props) {
+export function MaterialityTab({ engagementId, currentUserId, userRole }: Props) {
   const [data, setData] = useState<Record<string, any>>({});
   const [initialData, setInitialData] = useState<Record<string, any>>({});
   const [priorData, setPriorData] = useState<Record<string, any> | null>(null);
@@ -50,16 +50,20 @@ export function MaterialityTab({ engagementId }: Props) {
   const [loading, setLoading] = useState(true);
   const [materialityRange, setMaterialityRange] = useState<{ benchmark: string; low: number; high: number }[]>([]);
   const [firmRounding, setFirmRounding] = useState(3);
+  const [pmPresets, setPmPresets] = useState<{ low: number; medium: number; high: number }>({ low: 50, medium: 62.5, high: 75 });
   const [techApproval, setTechApproval] = useState<{ userName: string; date: string } | null>(null);
   const [sendingTechEmail, setSendingTechEmail] = useState(false);
 
+  const isRI = userRole === 'RI';
+
   const loadData = useCallback(async () => {
     try {
-      const [dataRes, rangeRes, tbRes, roundRes] = await Promise.all([
+      const [dataRes, rangeRes, tbRes, roundRes, pmRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/materiality`),
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_range'),
         fetch(`/api/engagements/${engagementId}/trial-balance`),
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_rounding'),
+        fetch('/api/methodology-admin/risk-tables?tableType=pm_presets'),
       ]);
 
       if (dataRes.ok) {
@@ -75,6 +79,10 @@ export function MaterialityTab({ engagementId }: Props) {
       if (roundRes.ok) {
         const json = await roundRes.json();
         if (json.table?.data?.rounding) setFirmRounding(json.table.data.rounding);
+      }
+      if (pmRes.ok) {
+        const json = await pmRes.json();
+        if (json.table?.data) setPmPresets(json.table.data);
       }
       // Build TB totals by FS Level for benchmark lookup
       if (tbRes.ok) {
@@ -135,37 +143,59 @@ export function MaterialityTab({ engagementId }: Props) {
   function get(key: string): any { return data[key]; }
   function getPy(key: string): any { return priorData?.[key]; }
 
-  // Derived values
+  // ─── Derived values ────────────────────────────────────────────
   const benchmark = get('materiality_benchmark') as string || '';
   const benchmarkAmount = tbTotals[benchmark] || 0;
-  const benchmarkPct = (get('benchmark_pct') as number) || 0;
   const rounding = firmRounding;
 
-  const materialityRaw = benchmarkAmount * (benchmarkPct / 100);
+  // (4) Auto-calculate OM benchmark % from weighted relevant OM factors
+  const rangeRow = materialityRange.find(r => r.benchmark.toLowerCase() === benchmark.toLowerCase());
+  const rangeLow = rangeRow?.low || 0;
+  const rangeHigh = rangeRow?.high || 0;
+  const rangeMid = (rangeLow + rangeHigh) / 2;
+
+  const omWeightMap: Record<string, number> = { Low: rangeLow, Medium: rangeMid, High: rangeHigh };
+  const relevantOmFactors = OM_FACTORS
+    .map((_, i) => ({ assessment: get(`om_factor_${i}`) as string || 'Medium', notRelevant: !!get(`om_nr_${i}`) }))
+    .filter(f => !f.notRelevant);
+  const calculatedBenchmarkPct = relevantOmFactors.length > 0 && rangeRow
+    ? relevantOmFactors.reduce((s, f) => s + (omWeightMap[f.assessment] || rangeMid), 0) / relevantOmFactors.length * 100
+    : 0;
+
+  // User override (RI only) or auto-calculated
+  const userBenchmarkPct = get('benchmark_pct') as number | null;
+  const effectiveBenchmarkPct = userBenchmarkPct != null ? userBenchmarkPct : calculatedBenchmarkPct;
+
+  const materialityRaw = benchmarkAmount * (effectiveBenchmarkPct / 100);
   const materiality = materialityRaw ? roundDown(Math.abs(materialityRaw), rounding) : 0;
 
-  // PM % from factor assessment
-  const pmAssessments = PM_FACTORS.map((_, i) => get(`pm_factor_${i}`) as string || 'Medium');
-  const pmPctMap: Record<string, number> = { Low: 50, Medium: 65, High: 75 };
-  const avgPmPct = pmAssessments.length > 0
-    ? pmAssessments.reduce((s, v) => s + (pmPctMap[v] || 65), 0) / pmAssessments.length
-    : 65;
-  const performanceMateriality = materiality ? roundDown(materiality * (avgPmPct / 100), rounding) : 0;
+  // (3) Auto-calculate PM from weighted relevant PM factors + snap to nearest preset
+  const pmWeightMap: Record<string, number> = { Low: pmPresets.low, Medium: pmPresets.medium, High: pmPresets.high };
+  const relevantPmFactors = PM_FACTORS
+    .map((_, i) => ({ assessment: get(`pm_factor_${i}`) as string || 'Medium', notRelevant: !!get(`pm_nr_${i}`) }))
+    .filter(f => !f.notRelevant);
+  const rawPmPct = relevantPmFactors.length > 0
+    ? relevantPmFactors.reduce((s, f) => s + (pmWeightMap[f.assessment] || pmPresets.medium), 0) / relevantPmFactors.length
+    : pmPresets.medium;
+
+  // Snap to nearest PM preset
+  const presetValues = [pmPresets.low, pmPresets.medium, pmPresets.high];
+  const snappedPmPct = presetValues.reduce((best, v) => Math.abs(v - rawPmPct) < Math.abs(best - rawPmPct) ? v : best, pmPresets.medium);
+
+  const performanceMateriality = materiality ? roundDown(materiality * (snappedPmPct / 100), rounding) : 0;
   const clearlyTrivial = materiality ? roundDown(materiality * 0.05, rounding) : 0;
 
   // Prior year derived
   const pyBenchmarkPct = (getPy('benchmark_pct') as number) || 0;
-  const pyMaterialityRaw = getPy('materiality_manual') as number;
-  const pyMateriality = pyMaterialityRaw || 0;
-  const pyPM = getPy('performance_materiality_manual') as number || 0;
-  const pyCT = getPy('clearly_trivial_manual') as number || 0;
+  const pyMateriality = (getPy('materiality_manual') as number) || 0;
+  const pyPM = (getPy('performance_materiality_manual') as number) || 0;
+  const pyCT = (getPy('clearly_trivial_manual') as number) || 0;
 
-  // Breach check
-  const rangeRow = materialityRange.find(r => r.benchmark.toLowerCase() === benchmark.toLowerCase());
-  const actualPct = benchmarkAmount ? materiality / Math.abs(benchmarkAmount) : 0;
-  const isBreach = !!(rangeRow && actualPct > 0 && (actualPct < rangeRow.low || actualPct > rangeRow.high));
+  // (5) Breach detection: if user benchmark % exceeds the calculated figure from (4)
+  const actualPct = effectiveBenchmarkPct / 100;
+  const isBreach = !!(userBenchmarkPct != null && calculatedBenchmarkPct > 0 && userBenchmarkPct > calculatedBenchmarkPct);
   const breachWarning = isBreach
-    ? `Materiality (${(actualPct * 100).toFixed(2)}%) is outside the range (${(rangeRow!.low * 100).toFixed(1)}%–${(rangeRow!.high * 100).toFixed(1)}%) for ${benchmark}`
+    ? `Benchmark % (${effectiveBenchmarkPct.toFixed(2)}%) exceeds the calculated figure (${calculatedBenchmarkPct.toFixed(2)}%) based on factor assessments`
     : null;
 
   // Load tech approval from saved data
@@ -326,14 +356,28 @@ export function MaterialityTab({ engagementId }: Props) {
               {benchmark && <span className="text-[10px] text-slate-400 ml-2">auto from TBCYvPY</span>}
             </div>
           </div>
-          {/* Benchmark % */}
+          {/* Benchmark % — read-only for all except RI */}
           <div className="flex">
             <div className={lc}>Benchmark %</div>
             <div className={pyc}>{pyBenchmarkPct ? `${pyBenchmarkPct}%` : '—'}</div>
             <div className={`${ic} flex items-center gap-2`}>
-              <input type="number" value={benchmarkPct || ''} onChange={e => set('benchmark_pct', e.target.value ? Number(e.target.value) : null)} className="w-20 text-xs border rounded px-2 py-1.5 text-right" step="0.1" placeholder="%" />
+              {isRI ? (
+                <input type="text" inputMode="decimal" value={userBenchmarkPct ?? ''} onChange={e => {
+                  const v = e.target.value.replace(/[^0-9.]/g, '');
+                  set('benchmark_pct', v === '' ? null : parseFloat(v) || null);
+                }} className={`w-20 text-xs border rounded px-2 py-1.5 text-right ${isBreach ? 'border-red-400 bg-red-50' : ''}`} placeholder="%" />
+              ) : (
+                <span className="text-xs font-semibold text-slate-800">{effectiveBenchmarkPct.toFixed(2)}%</span>
+              )}
               <span className="text-[10px] text-slate-400">%</span>
+              {/* Show calculated % in green if user has overridden */}
+              {calculatedBenchmarkPct > 0 && (
+                <span className="text-[10px] font-semibold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
+                  Calculated: {calculatedBenchmarkPct.toFixed(2)}%
+                </span>
+              )}
               {rangeRow && <span className="text-[10px] text-slate-400">Range: {(rangeRow.low * 100).toFixed(1)}%–{(rangeRow.high * 100).toFixed(1)}%</span>}
+              {!isRI && <span className="text-[10px] text-slate-400 italic">RI only</span>}
             </div>
           </div>
           {/* Rounding — read-only, set in Firm Wide Assumptions */}
@@ -393,9 +437,18 @@ export function MaterialityTab({ engagementId }: Props) {
           <h3 className="text-xs font-semibold text-blue-800">Overall Materiality Assessment</h3>
         </div>
         <div className="border border-t-0 rounded-b-lg divide-y">
-          {OM_FACTORS.map((f, i) => (
-            <div key={i} className="flex items-center">
-              <div className={lc}>{f}</div>
+          {OM_FACTORS.map((f, i) => {
+            const nr = !!get(`om_nr_${i}`);
+            return (
+            <div key={i} className={`flex items-center ${nr ? 'opacity-40' : ''}`}>
+              <div className={lc}>
+                <div className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-1 cursor-pointer" title="Not relevant">
+                    <input type="checkbox" checked={nr} onChange={e => set(`om_nr_${i}`, e.target.checked)} className="w-3 h-3 rounded" />
+                  </label>
+                  <span className={nr ? 'line-through' : ''}>{f}</span>
+                </div>
+              </div>
               <div className={`${pyc} flex justify-end`}>
                 {getPy(`om_factor_${i}`) && (
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
@@ -404,18 +457,20 @@ export function MaterialityTab({ engagementId }: Props) {
                 )}
               </div>
               <div className={`${ic} flex items-center gap-2`}>
-                {i === 0 ? (
+                {!nr && (i === 0 ? (
                   <div className="flex items-center gap-3">
                     <label className="flex items-center gap-1 text-xs"><input type="radio" name={`om_yn_${i}`} checked={get(`om_yn_${i}`) === 'Yes'} onChange={() => set(`om_yn_${i}`, 'Yes')} className="w-3 h-3" /> Yes</label>
                     <label className="flex items-center gap-1 text-xs"><input type="radio" name={`om_yn_${i}`} checked={get(`om_yn_${i}`) !== 'Yes'} onChange={() => set(`om_yn_${i}`, 'No')} className="w-3 h-3" /> No</label>
                   </div>
                 ) : (
                   <input type="text" value={get(`om_text_${i}`) || ''} onChange={e => set(`om_text_${i}`, e.target.value)} className="flex-1 text-xs border rounded px-2 py-1.5" />
-                )}
-                <LmhSelect value={get(`om_factor_${i}`) || 'Medium'} onChange={v => set(`om_factor_${i}`, v)} />
+                ))}
+                {!nr && <LmhSelect value={get(`om_factor_${i}`) || 'Medium'} onChange={v => set(`om_factor_${i}`, v)} />}
+                {nr && <span className="text-[10px] text-slate-400 italic">Not relevant</span>}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -423,12 +478,23 @@ export function MaterialityTab({ engagementId }: Props) {
       <div>
         <div className="bg-blue-50 px-3 py-1.5 rounded-t-lg border border-blue-100">
           <h3 className="text-xs font-semibold text-blue-800">Performance Materiality Factors</h3>
-          <p className="text-[10px] text-blue-600 mt-0.5">Average assessment: {avgPmPct.toFixed(0)}% → PM = {fmtCurrency(performanceMateriality)}</p>
+          <p className="text-[10px] text-blue-600 mt-0.5">
+            Weighted avg: {rawPmPct.toFixed(1)}% → snapped to {snappedPmPct}% (presets: {pmPresets.low}/{pmPresets.medium}/{pmPresets.high}) → PM = {fmtCurrency(performanceMateriality)}
+          </p>
         </div>
         <div className="border border-t-0 rounded-b-lg divide-y">
-          {PM_FACTORS.map((f, i) => (
-            <div key={i} className="flex items-center">
-              <div className={lc}>{f}</div>
+          {PM_FACTORS.map((f, i) => {
+            const nr = !!get(`pm_nr_${i}`);
+            return (
+            <div key={i} className={`flex items-center ${nr ? 'opacity-40' : ''}`}>
+              <div className={lc}>
+                <div className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-1 cursor-pointer" title="Not relevant">
+                    <input type="checkbox" checked={nr} onChange={e => set(`pm_nr_${i}`, e.target.checked)} className="w-3 h-3 rounded" />
+                  </label>
+                  <span className={nr ? 'line-through' : ''}>{f}</span>
+                </div>
+              </div>
               <div className={`${pyc} flex justify-end`}>
                 {getPy(`pm_factor_${i}`) && (
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
@@ -437,10 +503,11 @@ export function MaterialityTab({ engagementId }: Props) {
                 )}
               </div>
               <div className={`${ic} flex items-center justify-end`}>
-                <LmhSelect value={get(`pm_factor_${i}`) || 'Medium'} onChange={v => set(`pm_factor_${i}`, v)} />
+                {!nr ? <LmhSelect value={get(`pm_factor_${i}`) || 'Medium'} onChange={v => set(`pm_factor_${i}`, v)} /> : <span className="text-[10px] text-slate-400 italic">Not relevant</span>}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
