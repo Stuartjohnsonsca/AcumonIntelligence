@@ -301,17 +301,20 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
       const json = await res.json();
       const tbRows = json.rows || [];
       const existingLineItems = new Set(rows.map(r => r.lineItem.toLowerCase().trim()));
+      const addedInBatch = new Set<string>();
 
       const newRows: RMMRow[] = [];
       for (const tb of tbRows) {
         const lineItem = tb.description || tb.accountCode || '';
-        if (!lineItem || existingLineItems.has(lineItem.toLowerCase().trim())) continue;
+        const key = lineItem.toLowerCase().trim();
+        if (!lineItem || existingLineItems.has(key) || addedInBatch.has(key)) continue;
+        addedInBatch.add(key);
         newRows.push({
           ...makeEmptyRow(),
           lineItem,
           lineType: 'tb_account',
           category: tb.category || null,
-          amount: tb.periodEnd ?? tb.currentYear ?? null,
+          amount: tb.currentYear ?? null,
           sortOrder: rows.length + newRows.length,
         });
       }
