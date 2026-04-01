@@ -258,33 +258,69 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           )}
 
           {/* Start Audit button — only shown on Opening tab when engagement is pre_start */}
-          {isPreStart && activeTab === 'opening' && (
+          {isPreStart && activeTab === 'opening' && (() => {
+            // Validation checks
+            const hasRI = engagement.teamMembers.some(m => m.role === 'RI');
+            const hasEthicsSpecialist = (engagement.specialists || []).some(s => s.specialistType === 'EthicsPartner' || s.specialistType === 'Ethics');
+            const hasTechnicalSpecialist = (engagement.specialists || []).some(s => s.specialistType === 'TechnicalAdvisor' || s.specialistType === 'Technical');
+            const mainContactWithPortal = (engagement.contacts || []).some(c =>
+              c.isMainContact && c.email?.trim() && (c as any).portalAccess !== false
+            );
+            const checks = [
+              { ok: hasRI, label: 'RI assigned to team' },
+              { ok: hasEthicsSpecialist, label: 'Ethics Specialist assigned' },
+              { ok: hasTechnicalSpecialist, label: 'Technical Specialist assigned' },
+              { ok: mainContactWithPortal, label: 'Main contact with email and portal access' },
+            ];
+            const allPassed = checks.every(c => c.ok);
+            const failedChecks = checks.filter(c => !c.ok);
+
+            return (
             <div className="mt-6 pt-6 border-t border-slate-200 text-center">
-              <button
-                onClick={handleStartAudit}
-                disabled={starting}
-                className="inline-flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 text-sm font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
-              >
-                {starting ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                    Starting...
-                  </>
-                ) : (
-                  <>
-                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Start Audit
-                  </>
-                )}
-              </button>
+              {/* Validation checklist */}
+              {!allPassed && (
+                <div className="mb-4 inline-block text-left bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                  <p className="text-xs font-semibold text-amber-800 mb-2">Before starting the audit, please ensure:</p>
+                  <div className="space-y-1">
+                    {checks.map((c, ci) => (
+                      <div key={ci} className="flex items-center gap-2 text-xs">
+                        <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${c.ok ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                          {c.ok ? '✓' : '✗'}
+                        </span>
+                        <span className={c.ok ? 'text-green-700' : 'text-red-700'}>{c.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div>
+                <button
+                  onClick={handleStartAudit}
+                  disabled={starting || !allPassed}
+                  className="inline-flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 text-sm font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {starting ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Start Audit
+                    </>
+                  )}
+                </button>
+              </div>
               <p className="text-xs text-slate-400 mt-2">
                 Review the opening details above, then click to start the audit and unlock all tabs
               </p>
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     </div>
