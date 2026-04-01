@@ -143,21 +143,48 @@ export function ExplanationsTab({ clientId, token, engagementId, onCountChange }
       )}
 
       {activeItems.map(item => {
-        // Parse PAR metadata from the question if available
+        // Parse PAR data: line 1 = particulars, line 2 = CY: £x | PY: £x | Variance: £x (x%)
         const lines = item.question.split('\n');
-        const mainQuestion = lines[0];
-        const metadata = lines.slice(1).join('\n');
+        const particulars = lines[0];
+        const metaLine = lines[1] || '';
+        // Parse metadata
+        const cyMatch = metaLine.match(/CY:\s*(£?[\d,.()-]+|—)/);
+        const pyMatch = metaLine.match(/PY:\s*(£?[\d,.()-]+|—)/);
+        const varMatch = metaLine.match(/Variance:\s*(£?[\d,.()-]+|—)/);
+        const pctMatch = metaLine.match(/\(([\d.]+%)\)/);
 
         return (
           <div key={item.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-            {/* Header */}
-            <div className="px-5 py-3 border-b border-slate-100 bg-orange-50/50">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full font-semibold border border-orange-200">PAR Explanation</span>
-                <span className="text-[10px] text-slate-400">{formatDate(item.requestedAt)} by {item.requestedByName}</span>
-              </div>
-              <p className="text-sm text-slate-800 font-medium">{mainQuestion}</p>
-              {metadata && <p className="text-[10px] text-slate-500 mt-0.5 font-mono whitespace-pre-line">{metadata}</p>}
+            {/* Header — clear ask with prominent figures */}
+            <div className="px-5 py-4 border-b border-slate-100 bg-orange-50/30">
+              <p className="text-base font-semibold text-slate-900 mb-2">{particulars}</p>
+              <p className="text-sm text-orange-700 font-medium mb-3">
+                Please explain the movement in this balance between the current and prior year.
+              </p>
+
+              {/* Figures — large and clear */}
+              {metaLine && (
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="bg-white rounded-lg border border-slate-200 p-3 text-center">
+                    <p className="text-[10px] text-slate-500 uppercase font-medium mb-1">Current Year</p>
+                    <p className="text-lg font-bold text-slate-800">{cyMatch?.[1] || '—'}</p>
+                  </div>
+                  <div className="bg-white rounded-lg border border-slate-200 p-3 text-center">
+                    <p className="text-[10px] text-slate-500 uppercase font-medium mb-1">Prior Year</p>
+                    <p className="text-lg font-bold text-slate-800">{pyMatch?.[1] || '—'}</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg border border-orange-200 p-3 text-center">
+                    <p className="text-[10px] text-orange-600 uppercase font-medium mb-1">Variance</p>
+                    <p className="text-lg font-bold text-orange-700">{varMatch?.[1] || '—'}</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg border border-orange-200 p-3 text-center">
+                    <p className="text-[10px] text-orange-600 uppercase font-medium mb-1">Change</p>
+                    <p className="text-lg font-bold text-orange-700">{pctMatch?.[1] || '—'}</p>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-400 mt-2">Requested {formatDate(item.requestedAt)} by {item.requestedByName}</p>
             </div>
 
             {/* Response area */}
