@@ -100,7 +100,15 @@ export function AuditEngagementPage({ auditType }: Props) {
   }
 
   function handlePeriodChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    setSelectedPeriodId(e.target.value);
+    const pId = e.target.value;
+    setSelectedPeriodId(pId);
+    // If an engagement is already open and the period changes, load the new period's engagement
+    if (pId && clientId) {
+      handleOpenAuditFile(pId);
+    } else {
+      setEngagement(null);
+      setPeriodLabel('');
+    }
   }
 
   async function handleAddPeriod() {
@@ -137,10 +145,11 @@ export function AuditEngagementPage({ auditType }: Props) {
     setError('');
   }
 
-  // "Open Audit File" — creates engagement if needed, sets active
-  async function handleOpenAuditFile() {
-    if (!selectedPeriodId) return;
-    const period = periods.find(p => p.id === selectedPeriodId);
+  // "Open Audit File" — creates engagement if needed
+  async function handleOpenAuditFile(overridePeriodId?: string) {
+    const pId = overridePeriodId || selectedPeriodId;
+    if (!pId) return;
+    const period = periods.find(p => p.id === pId);
     const pLabel = period ? `${formatDate(period.startDate)} \u2013 ${formatDate(period.endDate)}` : '';
 
     setLoading(true);
@@ -148,7 +157,7 @@ export function AuditEngagementPage({ auditType }: Props) {
     setPeriodLabel(pLabel);
     try {
       // 1. Check if engagement exists
-      const checkRes = await fetch(`/api/engagements?clientId=${clientId}&periodId=${selectedPeriodId}&auditType=${auditType}`);
+      const checkRes = await fetch(`/api/engagements?clientId=${clientId}&periodId=${pId}&auditType=${auditType}`);
       let eng: EngagementData | null = null;
       if (checkRes.ok) {
         const checkData = await checkRes.json();
@@ -160,7 +169,7 @@ export function AuditEngagementPage({ auditType }: Props) {
         const createRes = await fetch('/api/engagements', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clientId, periodId: selectedPeriodId, auditType }),
+          body: JSON.stringify({ clientId, periodId: pId, auditType }),
         });
         if (!createRes.ok) {
           const body = await createRes.json().catch(() => ({}));
@@ -175,7 +184,7 @@ export function AuditEngagementPage({ auditType }: Props) {
       // 3. Keep as pre_start — user clicks "Start Audit" on Opening tab to activate
 
       // 4. Final reload to get complete data
-      const finalRes = await fetch(`/api/engagements?clientId=${clientId}&periodId=${selectedPeriodId}&auditType=${auditType}`);
+      const finalRes = await fetch(`/api/engagements?clientId=${clientId}&periodId=${pId}&auditType=${auditType}`);
       if (finalRes.ok) {
         const finalData = await finalRes.json();
         eng = finalData.engagement || eng;
