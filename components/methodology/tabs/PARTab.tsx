@@ -38,6 +38,7 @@ interface PARRow {
   auditorView: string | null;
   addedToRmm?: boolean;
   addedToRmmBy?: string | null;
+  addedToRmmSent?: boolean;
   accepted: AcceptedDots;
   sortOrder: number;
   fsStatement?: string; // P&L | Balance Sheet | Cashflow
@@ -407,6 +408,44 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
 
   const numCls = 'w-full border-0 bg-transparent text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5';
   const orangeCount = computedRows.filter(r => r.sendMgt?.checked && !r.sendMgt?.sentAt).length;
+  const rmmCount = computedRows.filter(r => r.addedToRmm && !r.addedToRmmSent).length;
+  const [sendingRmm, setSendingRmm] = useState(false);
+
+  async function sendToRMM() {
+    setSendingRmm(true);
+    try {
+      const itemsToSend = computedRows.filter(r => r.addedToRmm && !r.addedToRmmSent);
+      if (itemsToSend.length === 0) { setSendingRmm(false); return; }
+
+      const res = await fetch(`/api/engagements/${engagementId}/par/send-rmm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: itemsToSend.map(r => ({
+            particulars: r.particulars,
+            currentYear: r.currentYear,
+            priorYear: r.priorYear,
+            absVariance: r.absVariance,
+            absVariancePercent: r.absVariancePercent,
+            auditorView: r.auditorView,
+            reasons: r.reasons,
+            fsStatement: r.fsStatement,
+          })),
+        }),
+      });
+
+      if (res.ok) {
+        // Mark as sent
+        setRows(prev => prev.map(r => {
+          if (r.addedToRmm && !(r as any).addedToRmmSent) {
+            return { ...r, addedToRmmSent: true } as any;
+          }
+          return r;
+        }));
+      }
+    } catch (err) { console.error('Send to RMM failed:', err); }
+    setSendingRmm(false);
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -424,6 +463,12 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
             <button onClick={sendToManagement} disabled={sending}
               className="text-xs px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:opacity-50">
               {sending ? 'Sending...' : `Send to Management (${orangeCount})`}
+            </button>
+          )}
+          {rmmCount > 0 && (
+            <button onClick={sendToRMM} disabled={sendingRmm}
+              className="text-xs px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50">
+              {sendingRmm ? 'Sending...' : `Send to RMM (${rmmCount})`}
             </button>
           )}
           <button onClick={addRow} className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
