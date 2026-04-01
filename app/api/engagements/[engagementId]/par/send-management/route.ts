@@ -31,8 +31,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     // Build the question with PAR context
     const parts = [item.particulars || 'PAR Item'];
     if (item.currentYear != null || item.priorYear != null) {
-      const cy = item.currentYear != null ? `£${Number(item.currentYear).toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : '—';
-      const py = item.priorYear != null ? `£${Number(item.priorYear).toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : '—';
+      const fmtDrCr = (v: number) => {
+        const abs = Math.abs(v);
+        const s = '£' + abs.toLocaleString('en-GB', { minimumFractionDigits: 2 });
+        return v < 0 ? `${s} Cr` : `${s} Dr`;
+      };
+      const cy = item.currentYear != null ? fmtDrCr(Number(item.currentYear)) : '—';
+      const py = item.priorYear != null ? fmtDrCr(Number(item.priorYear)) : '—';
       const variance = item.absVariance != null ? `£${Number(item.absVariance).toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : '—';
       const pct = item.absVariancePercent != null ? `${Number(item.absVariancePercent).toFixed(1)}%` : '—';
       parts.push(`CY: ${cy} | PY: ${py} | Variance: ${variance} (${pct})`);
