@@ -49,7 +49,9 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const [tbTotals, setTbTotals] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [materialityRange, setMaterialityRange] = useState<{ benchmark: string; low: number; high: number }[]>([]);
-  const [firmRounding, setFirmRounding] = useState(3);
+  const [roundingM, setRoundingM] = useState(3);
+  const [roundingPM, setRoundingPM] = useState(3);
+  const [roundingCT, setRoundingCT] = useState(3);
   const [pmPresets, setPmPresets] = useState<{ low: number; medium: number; high: number }>({ low: 50, medium: 62.5, high: 75 });
   const [ctSettings, setCtSettings] = useState<{ basis: string; pct: number }>({ basis: 'Materiality', pct: 5 });
   const [techApproval, setTechApproval] = useState<{ userName: string; date: string } | null>(null);
@@ -80,7 +82,11 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
       }
       if (roundRes.ok) {
         const json = await roundRes.json();
-        if (json.table?.data?.rounding) setFirmRounding(json.table.data.rounding);
+        if (json.table?.data) {
+          setRoundingM(json.table.data.materiality ?? json.table.data.rounding ?? 3);
+          setRoundingPM(json.table.data.performanceMateriality ?? json.table.data.rounding ?? 3);
+          setRoundingCT(json.table.data.clearlyTrivial ?? json.table.data.rounding ?? 3);
+        }
       }
       if (pmRes.ok) {
         const json = await pmRes.json();
@@ -152,7 +158,6 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   // ─── Derived values ────────────────────────────────────────────
   const benchmark = get('materiality_benchmark') as string || '';
   const benchmarkAmount = tbTotals[benchmark] || 0;
-  const rounding = firmRounding;
 
   // (4) Auto-calculate OM benchmark % from weighted relevant OM indicators
   const rangeRow = materialityRange.find(r => r.benchmark.toLowerCase() === benchmark.toLowerCase());
@@ -173,7 +178,7 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const effectiveBenchmarkPct = userBenchmarkPct != null ? userBenchmarkPct : calculatedBenchmarkPct;
 
   const materialityRaw = benchmarkAmount * (effectiveBenchmarkPct / 100);
-  const materiality = materialityRaw ? roundDown(Math.abs(materialityRaw), rounding) : 0;
+  const materiality = materialityRaw ? roundDown(Math.abs(materialityRaw), roundingM) : 0;
 
   // (3) Auto-calculate PM from weighted relevant PM indicators + snap to nearest preset
   const pmWeightMap: Record<string, number> = { Low: pmPresets.low, Medium: pmPresets.medium, High: pmPresets.high };
@@ -188,9 +193,9 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const presetValues = [pmPresets.low, pmPresets.medium, pmPresets.high];
   const snappedPmPct = presetValues.reduce((best, v) => Math.abs(v - rawPmPct) < Math.abs(best - rawPmPct) ? v : best, pmPresets.medium);
 
-  const performanceMateriality = materiality ? roundDown(materiality * (snappedPmPct / 100), rounding) : 0;
+  const performanceMateriality = materiality ? roundDown(materiality * (snappedPmPct / 100), roundingPM) : 0;
   const ctBase = ctSettings.basis === 'Performance Materiality' ? performanceMateriality : materiality;
-  const clearlyTrivial = ctBase ? roundDown(ctBase * (ctSettings.pct / 100), rounding) : 0;
+  const clearlyTrivial = ctBase ? roundDown(ctBase * (ctSettings.pct / 100), roundingCT) : 0;
 
   // Prior year derived
   const pyBenchmarkPct = (getPy('benchmark_pct') as number) || 0;
@@ -389,10 +394,12 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
           </div>
           {/* Rounding — read-only, set in Firm Wide Assumptions */}
           <div className="flex">
-            <div className={lc}>Materiality Rounding</div>
+            <div className={lc}>Rounding (round down to nearest)</div>
             <div className={pyc}>—</div>
-            <div className={`${ic} flex items-center gap-2`}>
-              <span className="text-xs text-slate-600">10^{rounding} ({Math.pow(10, rounding).toLocaleString()})</span>
+            <div className={`${ic} flex items-center gap-3`}>
+              <span className="text-[10px] text-slate-600">M: {Math.pow(10, roundingM).toLocaleString()}</span>
+              <span className="text-[10px] text-slate-600">PM: {Math.pow(10, roundingPM).toLocaleString()}</span>
+              <span className="text-[10px] text-slate-600">CT: {Math.pow(10, roundingCT).toLocaleString()}</span>
               <span className="text-[10px] text-slate-400">Set in Firm Wide Assumptions</span>
             </div>
           </div>

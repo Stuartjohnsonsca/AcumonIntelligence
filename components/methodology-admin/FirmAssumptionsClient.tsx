@@ -471,7 +471,9 @@ const DEFAULT_RANGE = [
 function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [range, setRange] = useState<{ benchmark: string; low: number; high: number }[]>(DEFAULT_RANGE);
-  const [rounding, setRounding] = useState(3);
+  const [roundingM, setRoundingM] = useState(3);
+  const [roundingPM, setRoundingPM] = useState(3);
+  const [roundingCT, setRoundingCT] = useState(3);
   const [pmPresets, setPmPresets] = useState<{ low: number; medium: number; high: number }>({ low: 50, medium: 62.5, high: 75 });
   const [ctSettings, setCtSettings] = useState<{ basis: string; pct: number }>({ basis: 'Materiality', pct: 5 });
   const [saving, setSaving] = useState(false);
@@ -492,7 +494,11 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
       }
       if (roundRes.ok) {
         const d = await roundRes.json();
-        if (d.table?.data?.rounding) setRounding(d.table.data.rounding);
+        if (d.table?.data) {
+          setRoundingM(d.table.data.materiality ?? d.table.data.rounding ?? 3);
+          setRoundingPM(d.table.data.performanceMateriality ?? d.table.data.rounding ?? 3);
+          setRoundingCT(d.table.data.clearlyTrivial ?? d.table.data.rounding ?? 3);
+        }
       }
       if (pmRes.ok) {
         const d = await pmRes.json();
@@ -518,7 +524,7 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
         fetch('/api/methodology-admin/risk-tables', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tableType: 'materiality_rounding', data: { rounding } }),
+          body: JSON.stringify({ tableType: 'materiality_rounding', data: { materiality: roundingM, performanceMateriality: roundingPM, clearlyTrivial: roundingCT } }),
         }),
         fetch('/api/methodology-admin/risk-tables', {
           method: 'PUT',
@@ -548,12 +554,29 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
       </button>
       {expanded && (
         <div className="p-4 space-y-4">
-          {/* Rounding */}
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium text-slate-700">Materiality Rounding</label>
-            <select value={rounding} onChange={e => setRounding(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
-              {[1,2,3,4,5,6,7,8,9].map(r => <option key={r} value={r}>10^{r} ({Math.pow(10,r).toLocaleString()})</option>)}
-            </select>
+          {/* Rounding — separate for each measure */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Rounding (round down to nearest)</h3>
+            <div className="flex items-center gap-6">
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Materiality</label>
+                <select value={roundingM} onChange={e => setRoundingM(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
+                  {[1,2,3,4,5,6,7,8,9].map(r => <option key={r} value={r}>10^{r} ({Math.pow(10,r).toLocaleString()})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Performance Materiality</label>
+                <select value={roundingPM} onChange={e => setRoundingPM(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
+                  {[1,2,3,4,5,6,7,8,9].map(r => <option key={r} value={r}>10^{r} ({Math.pow(10,r).toLocaleString()})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Clearly Trivial</label>
+                <select value={roundingCT} onChange={e => setRoundingCT(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
+                  {[1,2,3,4,5,6,7,8,9].map(r => <option key={r} value={r}>10^{r} ({Math.pow(10,r).toLocaleString()})</option>)}
+                </select>
+              </div>
+            </div>
           </div>
           {/* Benchmark Range Table */}
           <div>
