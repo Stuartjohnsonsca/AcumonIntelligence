@@ -345,7 +345,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               <th className="w-8 px-1 py-2"></th>
               {showCategory && <th className="text-left px-2 py-2 text-slate-500 font-medium w-28">Category</th>}
               <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">{viewMode === 'fs_line' ? 'FS Line Item' : 'TB Account'}</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">Risk Identified</th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">Nature</th>
               <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">Amount</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-28">Assertions</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-14" title="Relevant?">Rel. <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span></th>
