@@ -56,9 +56,11 @@ const TYPE_COLORS = {
 };
 
 export function EngagementOutstandingTab({ engagementId, clientId, currentUserId, currentUserRole, teamMembers = [], specialists = [] }: Props) {
-  const [items, setItems] = useState<OutstandingItem[]>([]);
+  // Left panel: client responses waiting for team action
+  const [teamItems, setTeamItems] = useState<OutstandingItem[]>([]);
+  // Right panel: items sent to client, awaiting their response
+  const [clientPending, setClientPending] = useState<OutstandingItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'my' | 'team'>('my');
   const [chatOpen, setChatOpen] = useState<string | null>(null);
   const [chatText, setChatText] = useState('');
   const [chatFiles, setChatFiles] = useState<File[]>([]);
@@ -66,45 +68,46 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
   const [assignOpen, setAssignOpen] = useState<string | null>(null);
   const [assignNote, setAssignNote] = useState('');
 
+  // Keep backward compat — items = teamItems for action handlers
+  const items = teamItems;
+  const setItems = setTeamItems;
+
   useEffect(() => { loadItems(); }, [engagementId, clientId]);
 
   async function loadItems() {
     setLoading(true);
     try {
-      // Load responded portal requests (client responses)
-      const res = await fetch(`/api/portal/requests?clientId=${clientId}&status=responded`);
-      if (res.ok) {
-        const data = await res.json();
-        const clientItems: OutstandingItem[] = (data.requests || []).map((r: any) => ({
-          id: r.id,
-          type: 'client' as const,
-          question: r.question,
-          response: r.response,
-          status: r.status,
-          requestedByName: r.requestedByName,
-          requestedAt: r.requestedAt,
-          respondedByName: r.respondedByName,
-          respondedAt: r.respondedAt,
-          assignedTo: r.assignedTo,
-          engagementId: r.engagementId,
-          chatHistory: r.chatHistory || [],
-        }));
-        setItems(clientItems);
+      const [respondedRes, outstandingRes] = await Promise.all([
+        // Left: client responses waiting for team to verify
+        fetch(`/api/portal/requests?clientId=${clientId}&status=responded&engagementId=${engagementId}`),
+        // Right: items sent to client, still outstanding
+        fetch(`/api/portal/requests?clientId=${clientId}&status=outstanding&engagementId=${engagementId}`),
+      ]);
+
+      if (respondedRes.ok) {
+        const data = await respondedRes.json();
+        setTeamItems((data.requests || []).map((r: any) => ({
+          id: r.id, type: 'client' as const, question: r.question, response: r.response,
+          status: r.status, requestedByName: r.requestedByName, requestedAt: r.requestedAt,
+          respondedByName: r.respondedByName, respondedAt: r.respondedAt,
+          assignedTo: r.assignedTo, engagementId: r.engagementId, chatHistory: r.chatHistory || [],
+        })));
+      }
+
+      if (outstandingRes.ok) {
+        const data = await outstandingRes.json();
+        setClientPending((data.requests || []).map((r: any) => ({
+          id: r.id, type: 'client' as const, question: r.question, response: null,
+          status: r.status, requestedByName: r.requestedByName, requestedAt: r.requestedAt,
+          respondedByName: null, respondedAt: null,
+          assignedTo: null, engagementId: r.engagementId, chatHistory: r.chatHistory || [],
+        })));
       }
     } catch {}
     setLoading(false);
   }
 
-  // My Items = all team items (every team member sees everything) — "Team" is the same view
-  // The toggle filters to just items assigned/relevant to the current user
-  const myItems = items; // Every team item is a My Item
-  const filteredItems = view === 'team'
-    ? items // Team: show all
-    : items.filter(i =>
-        i.assignedTo === currentUserId ||
-        i.requestedByName === currentUserId ||
-        !i.assignedTo // Unassigned items visible to everyone
-      );
+  // All team items visible — no toggle needed with split view
 
   // Action: Commit — push response to the Communication tab
   async function handleCommit(item: OutstandingItem) {
@@ -200,28 +203,22 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
   }
 
   return (
-    <div className="space-y-3">
-      {/* Toggle: My Items / Team Items */}
-      <div className="flex items-center gap-2">
-        <div className="flex bg-slate-100 rounded-lg p-0.5">
-          <button onClick={() => setView('my')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${view === 'my' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-            My Items
-          </button>
-          <button onClick={() => setView('team')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${view === 'team' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-            Team Items
-          </button>
+    <div className="grid grid-cols-2 gap-4">
+      {/* LEFT: Team Action Required — client responses waiting for verification */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-sm font-semibold text-slate-800">Team Action Required</h3>
+          <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold ${
+            teamItems.length === 0 ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+          }`}>{teamItems.length}</span>
         </div>
-        <span className="text-xs text-slate-400">{filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''}</span>
-      </div>
 
-      {filteredItems.length === 0 && (
-        <div className="border rounded-lg p-8 text-center">
-          <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-400" />
-          <p className="text-sm text-slate-500">No outstanding items</p>
-        </div>
-      )}
-
-      {filteredItems.map(item => {
+        {teamItems.length === 0 ? (
+          <div className="border rounded-lg p-6 text-center">
+            <CheckCircle2 className="h-6 w-6 mx-auto mb-2 text-green-400" />
+            <p className="text-xs text-slate-500">No responses awaiting action</p>
+          </div>
+        ) : teamItems.map(item => {
         const typeColor = TYPE_COLORS[item.type] || TYPE_COLORS.team;
         return (
           <div key={item.id} className={`border rounded-lg bg-white overflow-hidden ${item.type === 'technical' ? 'border-red-200' : ''}`}>
@@ -414,6 +411,64 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
           </div>
         );
       })}
+      </div>
+
+      {/* RIGHT: Sent to Client — awaiting their response */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-sm font-semibold text-slate-800">Awaiting Client Response</h3>
+          <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold ${
+            clientPending.length === 0 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
+          }`}>{clientPending.length}</span>
+        </div>
+
+        {clientPending.length === 0 ? (
+          <div className="border rounded-lg p-6 text-center">
+            <CheckCircle2 className="h-6 w-6 mx-auto mb-2 text-green-400" />
+            <p className="text-xs text-slate-500">No items awaiting client response</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {clientPending.map(item => {
+              const { question, source } = cleanQuestion(item.question);
+              const chatMsgs = (item.chatHistory || []).filter((m: ChatMessage) => m.name !== 'System');
+              const daysSent = Math.floor((Date.now() - new Date(item.requestedAt).getTime()) / (1000 * 60 * 60 * 24));
+              return (
+                <div key={item.id} className="border rounded-lg bg-white p-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold border bg-orange-100 text-orange-700 border-orange-200">
+                          Pending
+                        </span>
+                        <span className="text-[10px] text-slate-400">{formatDate(item.requestedAt)}</span>
+                        <span className={`text-[10px] font-bold ${daysSent > 7 ? 'text-red-600' : daysSent > 3 ? 'text-amber-600' : 'text-slate-500'}`}>
+                          {daysSent}d ago
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-800 font-medium">{question}</p>
+                      {source && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded inline-block mt-0.5">{source}</span>}
+                      <p className="text-[10px] text-slate-400 mt-0.5">Sent by {item.requestedByName}</p>
+                    </div>
+                  </div>
+                  {/* Show chat history if any back-and-forth */}
+                  {chatMsgs.length > 0 && (
+                    <div className="mt-2 space-y-1 pl-2 border-l-2 border-slate-200 max-h-24 overflow-y-auto">
+                      {chatMsgs.map((msg, mi) => (
+                        <div key={mi} className={`px-2 py-0.5 rounded text-[10px] ${msg.from === 'firm' ? 'bg-blue-50' : 'bg-slate-50'}`}>
+                          <span className="font-semibold">{msg.name}</span>
+                          <span className="text-slate-400 ml-1 text-[9px]">{new Date(msg.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                          <p className="text-slate-700">{msg.message}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
