@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail } from 'lucide-react';
 
 const tiles = [
   {
@@ -51,6 +51,14 @@ const tiles = [
     icon: FileStack,
     color: 'bg-teal-50 border-teal-200 hover:bg-teal-100',
     iconColor: 'text-teal-600',
+  },
+  {
+    title: 'Internal Communication',
+    description: 'Email templates for internal audit team communications',
+    href: '/methodology-admin/internal-communication',
+    icon: Mail,
+    color: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100',
+    iconColor: 'text-indigo-600',
   },
 ];
 

@@ -49,13 +49,17 @@ export function MaterialityTab({ engagementId }: Props) {
   const [tbTotals, setTbTotals] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [materialityRange, setMaterialityRange] = useState<{ benchmark: string; low: number; high: number }[]>([]);
+  const [firmRounding, setFirmRounding] = useState(3);
+  const [techApproval, setTechApproval] = useState<{ userName: string; date: string } | null>(null);
+  const [sendingTechEmail, setSendingTechEmail] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      const [dataRes, rangeRes, tbRes] = await Promise.all([
+      const [dataRes, rangeRes, tbRes, roundRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/materiality`),
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_range'),
         fetch(`/api/engagements/${engagementId}/trial-balance`),
+        fetch('/api/methodology-admin/risk-tables?tableType=materiality_rounding'),
       ]);
 
       if (dataRes.ok) {
@@ -67,6 +71,10 @@ export function MaterialityTab({ engagementId }: Props) {
       if (rangeRes.ok) {
         const json = await rangeRes.json();
         if (json.table?.data) setMaterialityRange(json.table.data);
+      }
+      if (roundRes.ok) {
+        const json = await roundRes.json();
+        if (json.table?.data?.rounding) setFirmRounding(json.table.data.rounding);
       }
       // Build TB totals by FS Level for benchmark lookup
       if (tbRes.ok) {
@@ -131,7 +139,7 @@ export function MaterialityTab({ engagementId }: Props) {
   const benchmark = get('materiality_benchmark') as string || '';
   const benchmarkAmount = tbTotals[benchmark] || 0;
   const benchmarkPct = (get('benchmark_pct') as number) || 0;
-  const rounding = (get('materiality_rounding') as number) || 3;
+  const rounding = firmRounding;
 
   const materialityRaw = benchmarkAmount * (benchmarkPct / 100);
   const materiality = materialityRaw ? roundDown(Math.abs(materialityRaw), rounding) : 0;
@@ -155,9 +163,46 @@ export function MaterialityTab({ engagementId }: Props) {
   // Breach check
   const rangeRow = materialityRange.find(r => r.benchmark.toLowerCase() === benchmark.toLowerCase());
   const actualPct = benchmarkAmount ? materiality / Math.abs(benchmarkAmount) : 0;
-  const breachWarning = rangeRow && actualPct > 0 && (actualPct < rangeRow.low || actualPct > rangeRow.high)
-    ? `Materiality (${(actualPct * 100).toFixed(2)}%) is outside the range (${(rangeRow.low * 100).toFixed(1)}%–${(rangeRow.high * 100).toFixed(1)}%) for ${benchmark}`
+  const isBreach = !!(rangeRow && actualPct > 0 && (actualPct < rangeRow.low || actualPct > rangeRow.high));
+  const breachWarning = isBreach
+    ? `Materiality (${(actualPct * 100).toFixed(2)}%) is outside the range (${(rangeRow!.low * 100).toFixed(1)}%–${(rangeRow!.high * 100).toFixed(1)}%) for ${benchmark}`
     : null;
+
+  // Load tech approval from saved data
+  useEffect(() => {
+    const saved = data.tech_approval as { userName: string; date: string } | undefined;
+    if (saved) setTechApproval(saved);
+  }, [data.tech_approval]);
+
+  // When benchmark % changes and there was a tech approval, clear it
+  useEffect(() => {
+    if (techApproval && isBreach) {
+      // Approval stays — technical team approved the breach
+    } else if (!isBreach && techApproval) {
+      // No longer in breach — clear approval
+    }
+  }, [benchmarkPct]);
+
+  // Send technical breach email
+  async function sendTechBreachEmail() {
+    setSendingTechEmail(true);
+    try {
+      await fetch(`/api/engagements/${engagementId}/materiality-breach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ benchmark, actualPct, rangeRow, materiality }),
+      });
+    } catch {}
+    setSendingTechEmail(false);
+  }
+
+  // When breach detected and no approval, auto-send email once
+  useEffect(() => {
+    if (isBreach && !techApproval && !data._techEmailSent) {
+      sendTechBreachEmail();
+      set('_techEmailSent', true);
+    }
+  }, [isBreach]);
 
   const basisChanged = get('basis_changed') === true || get('basis_changed') === 'Yes';
 
@@ -238,11 +283,29 @@ export function MaterialityTab({ engagementId }: Props) {
       </div>
 
       {/* ═══ Overall Materiality ═══ */}
-      <div>
-        <div className="bg-blue-50 px-3 py-1.5 rounded-t-lg border border-blue-100">
-          <h3 className="text-xs font-semibold text-blue-800">Overall Materiality</h3>
+      <div className={isBreach && !techApproval ? 'ring-2 ring-red-500 rounded-lg' : ''}>
+        <div className={`px-3 py-1.5 rounded-t-lg border ${isBreach && !techApproval ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-100'}`}>
+          <div className="flex items-center justify-between">
+            <h3 className={`text-xs font-semibold ${isBreach && !techApproval ? 'text-red-800' : 'text-blue-800'}`}>Overall Materiality</h3>
+            {/* Technical dot */}
+            {isBreach && (
+              <div className="flex items-center gap-2">
+                {techApproval ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    Technical: {techApproval.userName} ({techApproval.date})
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-red-700 bg-red-100 px-2 py-0.5 rounded-full animate-pulse">
+                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                    Technical Approval Required
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="border border-t-0 rounded-b-lg divide-y">
+        <div className={`border border-t-0 rounded-b-lg divide-y ${isBreach && !techApproval ? 'border-red-200' : ''}`}>
           {/* Benchmark selector */}
           <div className="flex">
             <div className={lc}>Materiality Benchmark</div>
@@ -273,14 +336,13 @@ export function MaterialityTab({ engagementId }: Props) {
               {rangeRow && <span className="text-[10px] text-slate-400">Range: {(rangeRow.low * 100).toFixed(1)}%–{(rangeRow.high * 100).toFixed(1)}%</span>}
             </div>
           </div>
-          {/* Rounding */}
+          {/* Rounding — read-only, set in Firm Wide Assumptions */}
           <div className="flex">
             <div className={lc}>Materiality Rounding</div>
-            <div className={pyc}>{getPy('materiality_rounding') || '—'}</div>
+            <div className={pyc}>—</div>
             <div className={`${ic} flex items-center gap-2`}>
-              <select value={rounding} onChange={e => set('materiality_rounding', Number(e.target.value))} className="text-xs border rounded px-2 py-1.5">
-                {ROUNDING_OPTIONS.map(r => <option key={r} value={r}>10^{r} ({Math.pow(10, r).toLocaleString()})</option>)}
-              </select>
+              <span className="text-xs text-slate-600">10^{rounding} ({Math.pow(10, rounding).toLocaleString()})</span>
+              <span className="text-[10px] text-slate-400">Set in Firm Wide Assumptions</span>
             </div>
           </div>
         </div>

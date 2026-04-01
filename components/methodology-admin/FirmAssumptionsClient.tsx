@@ -21,6 +21,9 @@ interface Props {
   initialConfidenceLevel: number;
   initialConfidenceTable: any;
   initialSpecialistRoles?: string[];
+  initialMaterialityRange?: { benchmark: string; low: number; high: number }[];
+  initialMaterialityRounding?: number;
+  initialTechnicalTeam?: { email: string; members: { name: string; email: string; role: string }[] };
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -445,6 +448,230 @@ export function FirmAssumptionsClient({
           </div>
         )}
       </div>
+
+      {/* ═══ Materiality Settings ═══ */}
+      <MaterialitySettingsSection firmId={firmId} onSave={() => setSaved(true)} />
+
+      {/* ═══ Technical Team ═══ */}
+      <TechnicalTeamSection firmId={firmId} onSave={() => setSaved(true)} />
+    </div>
+  );
+}
+
+// ─── Materiality Range + Rounding ────────────────────────────────────
+function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [range, setRange] = useState<{ benchmark: string; low: number; high: number }[]>([]);
+  const [rounding, setRounding] = useState(3);
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    if (loaded) return;
+    try {
+      const [rangeRes, roundRes] = await Promise.all([
+        fetch('/api/methodology-admin/risk-tables?tableType=materiality_range'),
+        fetch('/api/methodology-admin/risk-tables?tableType=materiality_rounding'),
+      ]);
+      if (rangeRes.ok) {
+        const d = await rangeRes.json();
+        if (d.table?.data) setRange(d.table.data);
+      }
+      if (roundRes.ok) {
+        const d = await roundRes.json();
+        if (d.table?.data?.rounding) setRounding(d.table.data.rounding);
+      }
+    } catch {}
+    setLoaded(true);
+  }, [loaded]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await Promise.all([
+        fetch('/api/methodology-admin/risk-tables', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tableType: 'materiality_range', data: range }),
+        }),
+        fetch('/api/methodology-admin/risk-tables', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tableType: 'materiality_rounding', data: { rounding } }),
+        }),
+      ]);
+      onSave();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => { setExpanded(!expanded); if (!expanded) load(); }}
+        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+      >
+        <h2 className="text-sm font-semibold text-slate-800">Materiality Settings</h2>
+        {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+      {expanded && (
+        <div className="p-4 space-y-4">
+          {/* Rounding */}
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-slate-700">Materiality Rounding</label>
+            <select value={rounding} onChange={e => setRounding(Number(e.target.value))} className="border rounded px-2 py-1.5 text-sm">
+              {[1,2,3,4,5,6,7,8,9].map(r => <option key={r} value={r}>10^{r} ({Math.pow(10,r).toLocaleString()})</option>)}
+            </select>
+          </div>
+          {/* Benchmark Range Table */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Materiality Benchmark Ranges</h3>
+            <table className="w-full text-sm border rounded-lg overflow-hidden">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="text-left px-3 py-2 font-medium text-slate-600">Benchmark</th>
+                  <th className="text-right px-3 py-2 font-medium text-slate-600 w-28">Low %</th>
+                  <th className="text-right px-3 py-2 font-medium text-slate-600 w-28">High %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {range.map((r, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="px-3 py-2 text-slate-700">{r.benchmark}</td>
+                    <td className="px-3 py-1">
+                      <input type="number" step="0.1" value={(r.low * 100).toFixed(1)} onChange={e => {
+                        const updated = [...range];
+                        updated[i] = { ...r, low: Number(e.target.value) / 100 };
+                        setRange(updated);
+                      }} className="w-full text-right border rounded px-2 py-1 text-sm" />
+                    </td>
+                    <td className="px-3 py-1">
+                      <input type="number" step="0.1" value={(r.high * 100).toFixed(1)} onChange={e => {
+                        const updated = [...range];
+                        updated[i] = { ...r, high: Number(e.target.value) / 100 };
+                        setRange(updated);
+                      }} className="w-full text-right border rounded px-2 py-1 text-sm" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Button onClick={handleSave} size="sm" disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+            Save Materiality Settings
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Technical Team ──────────────────────────────────────────────────
+function TechnicalTeamSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [teamEmail, setTeamEmail] = useState('');
+  const [members, setMembers] = useState<{ name: string; email: string; role: string }[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newRole, setNewRole] = useState('Technical Reviewer');
+
+  const load = useCallback(async () => {
+    if (loaded) return;
+    try {
+      const res = await fetch('/api/methodology-admin/risk-tables?tableType=technical_team');
+      if (res.ok) {
+        const d = await res.json();
+        if (d.table?.data) {
+          setTeamEmail(d.table.data.email || '');
+          setMembers(d.table.data.members || []);
+        }
+      }
+    } catch {}
+    setLoaded(true);
+  }, [loaded]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await fetch('/api/methodology-admin/risk-tables', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tableType: 'technical_team', data: { email: teamEmail, members } }),
+      });
+      onSave();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function addMember() {
+    if (!newName.trim() || !newEmail.trim()) return;
+    setMembers([...members, { name: newName.trim(), email: newEmail.trim(), role: newRole }]);
+    setNewName(''); setNewEmail(''); setNewRole('Technical Reviewer');
+  }
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => { setExpanded(!expanded); if (!expanded) load(); }}
+        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+      >
+        <h2 className="text-sm font-semibold text-slate-800">Technical Team</h2>
+        {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+      {expanded && (
+        <div className="p-4 space-y-4">
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1">Team Email</label>
+            <input type="email" value={teamEmail} onChange={e => setTeamEmail(e.target.value)} placeholder="technical@firm.com" className="w-full max-w-md border rounded px-3 py-2 text-sm" />
+            <p className="text-[10px] text-slate-400 mt-0.5">Emails for technical breaches are sent to this address</p>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Team Members</h3>
+            {members.length > 0 && (
+              <div className="border rounded-lg divide-y mb-3">
+                {members.map((m, i) => (
+                  <div key={i} className="flex items-center gap-3 px-3 py-2">
+                    <span className="text-sm text-slate-800 flex-1">{m.name}</span>
+                    <span className="text-xs text-slate-500 flex-1">{m.email}</span>
+                    <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{m.role}</span>
+                    <button onClick={() => setMembers(members.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600"><X className="h-3.5 w-3.5" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Name</label>
+                <input type="text" value={newName} onChange={e => setNewName(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-40" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Email</label>
+                <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-48" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Role</label>
+                <select value={newRole} onChange={e => setNewRole(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+                  <option>Technical Reviewer</option>
+                  <option>Technical Partner</option>
+                  <option>Technical Manager</option>
+                </select>
+              </div>
+              <Button onClick={addMember} size="sm" variant="outline" disabled={!newName.trim() || !newEmail.trim()}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> Add
+              </Button>
+            </div>
+          </div>
+          <Button onClick={handleSave} size="sm" disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+            Save Technical Team
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
