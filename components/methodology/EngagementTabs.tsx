@@ -174,7 +174,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'materiality':
         return <MaterialityTab engagementId={engagement.id} currentUserId={currentUserId} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'par':
-        return <PARTab engagementId={engagement.id} />;
+        return <PARTab engagementId={engagement.id} userId={currentUserId} userName={teamMembers.find(m => m.userId === currentUserId)?.userName} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'rmm':
         return <RMMTab engagementId={engagement.id} auditType={auditType} teamMembers={teamMembers} showCategoryOption={tbShowCategory} />;
       case 'documents':

@@ -454,6 +454,12 @@ export function FirmAssumptionsClient({
 
       {/* ═══ Technical Team ═══ */}
       <TechnicalTeamSection firmId={firmId} onSave={() => setSaved(true)} />
+
+      {/* ═══ PAR Significant Change Criteria ═══ */}
+      <PARCriteriaSection firmId={firmId} onSave={() => setSaved(true)} />
+
+      {/* ═══ Revenue Recognition ═══ */}
+      <RevenueRecognitionSection firmId={firmId} onSave={() => setSaved(true)} />
     </div>
   );
 }
@@ -788,6 +794,166 @@ function TechnicalTeamSection({ firmId, onSave }: { firmId: string; onSave: () =
             {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
             Save Technical Team
           </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PAR Significant Change Criteria ─────────────────────────────
+function PARCriteriaSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [row1Basis, setRow1Basis] = useState('Performance Materiality');
+  const [row2Pct, setRow2Pct] = useState(10);
+  const [combinator, setCombinator] = useState('AND');
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    if (loaded) return;
+    try {
+      const res = await fetch('/api/methodology-admin/risk-tables?tableType=par_criteria');
+      if (res.ok) {
+        const d = await res.json();
+        if (d.table?.data) {
+          setRow1Basis(d.table.data.row1Basis || 'Performance Materiality');
+          setRow2Pct(d.table.data.row2Pct ?? 10);
+          setCombinator(d.table.data.combinator || 'AND');
+        }
+      }
+    } catch {}
+    setLoaded(true);
+  }, [loaded]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await fetch('/api/methodology-admin/risk-tables', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tableType: 'par_criteria', data: { row1Basis, row2Pct, combinator } }),
+      });
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => { setExpanded(!expanded); if (!expanded) load(); }}
+        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+      >
+        <h2 className="text-sm font-semibold text-slate-800">Preliminary Analytical Review — Significant Change Criteria</h2>
+        {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+      {expanded && (
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-slate-700 w-56">Absolute Variance greater than</span>
+            <select value={row1Basis} onChange={e => setRow1Basis(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+              <option value="Materiality">Materiality</option>
+              <option value="Performance Materiality">Performance Materiality</option>
+              <option value="Clearly Trivial">Clearly Trivial</option>
+            </select>
+          </div>
+          <div className="flex items-center justify-center">
+            <select value={combinator} onChange={e => setCombinator(e.target.value)} className="border rounded px-3 py-1.5 text-sm font-semibold text-blue-700 bg-blue-50 border-blue-200">
+              <option value="AND">AND</option>
+              <option value="OR">OR</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-slate-700 w-56">Absolute Variance % change greater than</span>
+            <div className="flex items-center gap-1">
+              <input type="text" inputMode="decimal" value={row2Pct} onChange={e => {
+                const n = parseFloat(e.target.value.replace(/[^0-9.]/g, ''));
+                setRow2Pct(isNaN(n) ? 0 : Math.max(0, n));
+              }} className="w-20 text-right border rounded px-2 py-1.5 text-sm" />
+              <span className="text-sm text-slate-500">%</span>
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-400">
+            A line is "Material" when: Absolute Variance &gt; {row1Basis} <span className="font-bold text-blue-600">{combinator}</span> Variance % &gt; {row2Pct}%
+          </p>
+          <Button onClick={handleSave} size="sm" disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+            Save PAR Criteria
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Revenue Recognition ─────────────────────────────────────────
+function RevenueRecognitionSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [items, setItems] = useState<{ label: string; value: string }[]>([{ label: 'Invoice', value: 'Document' }]);
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    if (loaded) return;
+    try {
+      const res = await fetch('/api/methodology-admin/risk-tables?tableType=revenue_recognition');
+      if (res.ok) {
+        const d = await res.json();
+        if (d.table?.data?.items && Array.isArray(d.table.data.items)) setItems(d.table.data.items);
+      }
+    } catch {}
+    setLoaded(true);
+  }, [loaded]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await fetch('/api/methodology-admin/risk-tables', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tableType: 'revenue_recognition', data: { items } }),
+      });
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  function addItem() { setItems([...items, { label: '', value: '' }]); }
+  function removeItem(idx: number) { setItems(items.filter((_, i) => i !== idx)); }
+  function updateItem(idx: number, field: 'label' | 'value', val: string) {
+    setItems(items.map((item, i) => i === idx ? { ...item, [field]: val } : item));
+  }
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => { setExpanded(!expanded); if (!expanded) load(); }}
+        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+      >
+        <h2 className="text-sm font-semibold text-slate-800">Revenue Recognition</h2>
+        {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+      {expanded && (
+        <div className="p-4 space-y-3">
+          <div className="border rounded-lg divide-y">
+            <div className="grid grid-cols-[1fr,1fr,40px] gap-2 px-3 py-2 bg-slate-50 text-xs font-semibold text-slate-600">
+              <span>Label</span>
+              <span>Value</span>
+              <span />
+            </div>
+            {items.map((item, i) => (
+              <div key={i} className="grid grid-cols-[1fr,1fr,40px] gap-2 px-3 py-1.5 items-center">
+                <input type="text" value={item.label} onChange={e => updateItem(i, 'label', e.target.value)} placeholder="Label" className="border rounded px-2 py-1 text-sm" />
+                <input type="text" value={item.value} onChange={e => updateItem(i, 'value', e.target.value)} placeholder="Value" className="border rounded px-2 py-1 text-sm" />
+                <button onClick={() => removeItem(i)} className="text-red-400 hover:text-red-600 text-center"><X className="h-3.5 w-3.5 mx-auto" /></button>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={addItem} className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ Add</button>
+            <Button onClick={handleSave} size="sm" disabled={saving}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+              Save
+            </Button>
+          </div>
         </div>
       )}
     </div>

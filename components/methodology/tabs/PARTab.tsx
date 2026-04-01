@@ -7,6 +7,7 @@ interface Props {
   engagementId: string;
   userId?: string;
   userName?: string;
+  userRole?: string;
 }
 
 interface SendMgtStatus {
@@ -65,12 +66,18 @@ function fmtTimestamp(iso: string | undefined): string {
   return `${formatDate(d)} ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-export function PARTab({ engagementId, userId, userName }: Props) {
+export function PARTab({ engagementId, userId, userName, userRole }: Props) {
   const [rows, setRows] = useState<PARRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialRows, setInitialRows] = useState<PARRow[]>([]);
   const [pmThreshold, setPmThreshold] = useState<number | null>(null);
   const [absVarThreshold, setAbsVarThreshold] = useState(10); // default 10%
+  const [parCriteria, setParCriteria] = useState<{
+    row1Basis: string; // Materiality | Performance Materiality | Clearly Trivial
+    row2Pct: number;
+    combinator: string; // AND | OR
+  }>({ row1Basis: 'Performance Materiality', row2Pct: 10, combinator: 'AND' });
+  const [materialityValues, setMaterialityValues] = useState<{ materiality: number; pm: number; ct: number }>({ materiality: 0, pm: 0, ct: 0 });
   const [periodEnd, setPeriodEnd] = useState<string>('');
   const [periodStartMinus1, setPeriodStartMinus1] = useState<string>('');
   const [sending, setSending] = useState(false);
@@ -152,12 +159,32 @@ export function PARTab({ engagementId, userId, userName }: Props) {
 
   const loadData = useCallback(async () => {
     try {
-      const [parRes, engRes, tbRes, fsLinesRes] = await Promise.all([
+      const [parRes, engRes, tbRes, fsLinesRes, parCriteriaRes, matRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/par`),
         fetch(`/api/engagements/${engagementId}`),
         fetch(`/api/engagements/${engagementId}/trial-balance`),
         fetch('/api/methodology-admin/fs-lines'),
+        fetch('/api/methodology-admin/risk-tables?tableType=par_criteria'),
+        fetch(`/api/engagements/${engagementId}/materiality`),
       ]);
+
+      // Load PAR significance criteria from Firm Wide Assumptions
+      if (parCriteriaRes.ok) {
+        const d = await parCriteriaRes.json();
+        if (d.table?.data) setParCriteria(d.table.data);
+      }
+
+      // Load materiality values for threshold comparison
+      if (matRes.ok) {
+        const d = await matRes.json();
+        const matData = d.data || {};
+        // These would be the calculated values — for now read from saved data
+        setMaterialityValues({
+          materiality: Number(matData.materiality_calculated) || 0,
+          pm: Number(matData.pm_calculated) || 0,
+          ct: Number(matData.ct_calculated) || 0,
+        });
+      }
 
       // Get FS line ordering from methodology admin
       let fsLineOrder: Record<string, number> = {};
@@ -268,12 +295,22 @@ export function PARTab({ engagementId, userId, userName }: Props) {
 
       let sigChange = '';
       if (cy != null || py != null) {
-        if (pmThreshold !== null) {
-          if (variance > pmThreshold && variancePct > absVarThreshold) {
-            sigChange = 'Material';
-          } else {
-            sigChange = 'Not Material';
-          }
+        // Get the threshold amount based on configured basis
+        const basisMap: Record<string, number> = {
+          'Materiality': materialityValues.materiality,
+          'Performance Materiality': materialityValues.pm || (pmThreshold ?? 0),
+          'Clearly Trivial': materialityValues.ct,
+        };
+        const thresholdAmount = basisMap[parCriteria.row1Basis] || (pmThreshold ?? 0);
+        const thresholdPct = parCriteria.row2Pct ?? absVarThreshold;
+
+        const test1 = variance > thresholdAmount; // Absolute variance > threshold
+        const test2 = variancePct > thresholdPct;  // Variance % > threshold %
+
+        const isMaterial = parCriteria.combinator === 'OR' ? (test1 || test2) : (test1 && test2);
+
+        if (thresholdAmount > 0 || thresholdPct > 0) {
+          sigChange = isMaterial ? 'Material' : 'Not Material';
         }
       }
 
@@ -305,7 +342,7 @@ export function PARTab({ engagementId, userId, userName }: Props) {
       // Mark as checked (orange)
       updateRow(index, 'sendMgt', {
         checked: true,
-        checkedBy: userName || 'User',
+        checkedBy: `${userName || 'Unknown'}${userRole ? ` (${userRole})` : ''}`,
         checkedAt: new Date().toISOString(),
       });
     } else if (!current.sentAt) {
