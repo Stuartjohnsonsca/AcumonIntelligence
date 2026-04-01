@@ -285,11 +285,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [editingCell, setEditingCell] = useState<string | null>(null);
 
   // Format number as GBP-style: 1,234.56 / (1,234.56) for negatives
-  function formatGBP(val: number | null): string {
-    if (val == null) return '';
-    const abs = Math.abs(val);
+  function formatGBP(val: number | null | undefined | string): string {
+    if (val == null || val === '') return '';
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    if (isNaN(num)) return '';
+    const abs = Math.abs(num);
     const formatted = abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return val < 0 ? `(${formatted})` : formatted;
+    return num < 0 ? `(${formatted})` : formatted;
   }
 
   // Parse a number string, treating (1,234.56) as -1234.56
@@ -404,7 +406,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           {/* Compact summary rows above the column header */}
           {(() => {
             const sum = (filter: (r: TBRow) => boolean, field: 'currentYear' | 'priorYear') =>
-              rows.filter(filter).reduce((s, r) => s + (r[field] || 0), 0);
+              rows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
             const cyRev = sum(r => r.fsLevel === 'Revenue', 'currentYear');
             const pyRev = sum(r => r.fsLevel === 'Revenue', 'priorYear');
             const cyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'currentYear');
@@ -416,8 +418,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             // Gross Assets = total of debit-side BS items (positive amounts on BS)
             const cyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0, 'currentYear');
             const pyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.priorYear || 0) > 0, 'priorYear');
-            const cyTotal = rows.reduce((s, r) => s + (r.currentYear || 0), 0);
-            const pyTotal = rows.reduce((s, r) => s + (r.priorYear || 0), 0);
+            const cyTotal = rows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
+            const pyTotal = rows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
             const cyBal = Math.abs(cyTotal) < 0.01;
             const pyBal = Math.abs(pyTotal) < 0.01;
             const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
@@ -514,7 +516,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   </div>
                   {/* Datalist for paste/type suggestions from FS Lines */}
                   <datalist id={`fs-notes-${i}`}>
-                    {fsNotes.map(n => <option key={n.id} value={n.name} />)}
+                    {fsNotes.map((n, ni) => <option key={n.id || `note-${ni}`} value={n.name} />)}
                   </datalist>
                   {/* AI lookup results dropdown */}
                   {aiLookupRow === i && aiLookupResults.length > 0 && (
