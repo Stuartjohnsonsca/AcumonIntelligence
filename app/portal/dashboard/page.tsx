@@ -66,6 +66,8 @@ function DashboardContent() {
           if (adminClient) {
             setIsAdmin(true);
             setSelectedClientId(adminClient.id);
+          } else if (data.clients.length > 0) {
+            setSelectedClientId(data.clients[0].id);
           }
         }
       })
@@ -141,7 +143,7 @@ function DashboardContent() {
           <button onClick={() => setActiveTab('services')} className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === 'services' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
             Services
           </button>
-          {isAdmin && (
+          {(
             <button onClick={() => setActiveTab('team')} className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 ${activeTab === 'team' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
               <Users className="h-3.5 w-3.5" /> Team Management
             </button>
@@ -252,11 +254,13 @@ function DashboardContent() {
                         )}
 
                         {/* Remove */}
+                        {isAdmin && (
                         <div className="flex justify-end pt-2 border-t">
                           <button onClick={() => handleRemove(user.email)} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
                             <Trash2 className="h-3 w-3" /> Remove team member
                           </button>
                         </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -270,7 +274,8 @@ function DashboardContent() {
                 </div>
               )}
 
-              {/* Add team member */}
+              {/* Add team member — admin only */}
+              {isAdmin && (
               <div className="bg-white rounded-xl border border-slate-200 p-5">
                 <p className="text-xs font-semibold text-slate-700 mb-3 flex items-center gap-1"><Plus className="h-3.5 w-3.5" /> Add Team Member</p>
                 <div className="flex gap-2 flex-wrap">
@@ -284,6 +289,7 @@ function DashboardContent() {
                 {msg && <p className="text-xs mt-2 text-green-600 flex items-center gap-1"><Check className="h-3 w-3" /> {msg}</p>}
                 <p className="text-[10px] text-slate-400 mt-2">New members will receive a welcome email with login credentials. You can then allocate them to services and periods.</p>
               </div>
+              )}
             </div>
           )}
         </div>

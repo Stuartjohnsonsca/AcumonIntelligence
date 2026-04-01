@@ -128,6 +128,7 @@ export function ClientContactsPanel({ engagementId, clientId, initialContacts }:
             clientId,
             email: contact.email,
             name: contact.name,
+            isClientAdmin: contact.isMainContact || false,
           }),
         });
         if (!res.ok) {

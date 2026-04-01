@@ -20,7 +20,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { clientId, email, name, password } = await req.json();
+    const { clientId, email, name, password, isClientAdmin, role } = await req.json();
 
     if (!clientId || !email || !name) {
       return NextResponse.json({ error: 'clientId, email, and name are required' }, { status: 400 });
@@ -76,6 +76,8 @@ export async function POST(req: Request) {
         email: email.toLowerCase(),
         name,
         passwordHash,
+        ...(isClientAdmin && { isClientAdmin: true }),
+        ...(role && { role }),
       },
     });
 
