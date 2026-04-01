@@ -10,8 +10,9 @@ const CATEGORY_TO_STATEMENT: Record<string, string> = {
   notes: 'Notes',
 };
 
+const apiKey = process.env.TOGETHER_API_KEY || process.env.TOGETHER_DOC_SUMMARY_KEY || '';
 const client = new OpenAI({
-  apiKey: process.env.TOGETHER_API_KEY || process.env.TOGETHER_DOC_SUMMARY_KEY || '',
+  apiKey,
   baseURL: 'https://api.together.xyz/v1',
 });
 
@@ -43,6 +44,10 @@ export async function POST(
 
   if (!engagement || (engagement.firmId !== firmId && !session.user.isSuperAdmin)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  if (!apiKey) {
+    return NextResponse.json({ error: 'AI service not configured (TOGETHER_API_KEY missing)' }, { status: 503 });
   }
 
   const { rows } = await req.json();
@@ -153,8 +158,9 @@ No other text.`;
     } catch {}
 
     return NextResponse.json({ classifications });
-  } catch (err) {
-    console.error('AI classification error:', err);
-    return NextResponse.json({ error: 'AI classification failed' }, { status: 500 });
+  } catch (err: any) {
+    console.error('AI classification error:', err?.message || err, err?.status, err?.response?.data);
+    const message = err?.message || 'AI classification failed';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -229,7 +229,6 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         const data = await res.json();
         const c = data.classifications?.[0];
         if (c) {
-          // Show result for confirmation
           setAiLookupResults([{
             name: `${c.fsNoteLevel} → ${c.fsLevel} → ${c.fsStatement}`,
             label: c.fsNoteLevel,
@@ -237,9 +236,14 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             fsStatement: c.fsStatement,
           }]);
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error('AI lookup failed:', res.status, errData);
+        setAiLookupResults([{ name: errData.error || `Error (${res.status})`, label: '', fsLevel: '', fsStatement: '' }]);
       }
     } catch (err) {
       console.error('AI lookup failed:', err);
+      setAiLookupResults([{ name: 'AI service unavailable', label: '', fsLevel: '', fsStatement: '' }]);
     } finally {
       setAiLookupLoading(false);
     }
@@ -289,6 +293,10 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               return updated;
             });
           }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          setAiAllProgress(`Error: ${errData.error || res.status}`);
+          break; // Stop processing batches on error
         }
       }
       setAiAllProgress('Done!');
