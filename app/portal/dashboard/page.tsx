@@ -235,10 +235,10 @@ function DashboardContent() {
                           </div>
                         </div>
 
-                        {/* Period allocation */}
-                        {periods.length > 0 && (
+                        {/* Period allocation — only for Audit service */}
+                        {periods.length > 0 && (user.allocatedServices || []).includes('audit') && (
                           <div>
-                            <span className="text-xs text-slate-500 font-medium block mb-1">Allocated Periods / Jobs</span>
+                            <span className="text-xs text-slate-500 font-medium block mb-1">Audit Periods / Jobs</span>
                             <div className="flex flex-wrap gap-1.5">
                               {periods.map(p => {
                                 const allocated = (user.allocatedPeriodIds || []).includes(p.id);

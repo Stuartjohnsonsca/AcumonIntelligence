@@ -27,10 +27,11 @@ export async function GET(req: Request) {
   const currentUser = portalUsers[0];
 
   // Get all clients this user has access to
+  // Auto-promote to admin if they're the only active user for a client
   const clients = portalUsers.map(pu => ({
     id: pu.client.id,
     clientName: pu.client.clientName,
-    isClientAdmin: pu.isClientAdmin,
+    isClientAdmin: pu.isClientAdmin || portalUsers.filter(p => p.clientId === pu.clientId && p.isActive).length === 1,
   }));
 
   // Deduplicate

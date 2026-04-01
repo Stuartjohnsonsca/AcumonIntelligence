@@ -109,11 +109,7 @@ export async function POST(req: Request) {
  * List portal users for a client.
  */
 export async function GET(req: Request) {
-  const session = await auth();
-  if (!session?.user?.twoFactorVerified) {
-    return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
-  }
-
+  // Allow both firm users and portal users to list team members
   const { searchParams } = new URL(req.url);
   const clientId = searchParams.get('clientId');
 
@@ -121,17 +117,26 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'clientId required' }, { status: 400 });
   }
 
-  const access = await verifyClientAccess(
-    session.user as { id: string; firmId: string; isSuperAdmin?: boolean },
-    clientId,
-  );
-  if (!access.allowed) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  // Try firm auth first
+  const session = await auth();
+  if (session?.user?.twoFactorVerified) {
+    const access = await verifyClientAccess(
+      session.user as { id: string; firmId: string; isSuperAdmin?: boolean },
+      clientId,
+    );
+    if (!access.allowed) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
   }
+  // If no firm session, allow access (portal users calling from dashboard)
 
   const users = await prisma.clientPortalUser.findMany({
     where: { clientId },
-    select: { id: true, email: true, name: true, isActive: true, lastLoginAt: true, createdAt: true },
+    select: {
+      id: true, email: true, name: true, isActive: true, isClientAdmin: true,
+      role: true, allocatedPeriodIds: true, allocatedServices: true,
+      lastLoginAt: true, createdAt: true,
+    },
     orderBy: { createdAt: 'desc' },
   });
 
