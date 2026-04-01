@@ -16,8 +16,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'clientId required' }, { status: 400 });
   }
 
+  const section = searchParams.get('section');
+
   const where: Record<string, unknown> = { clientId };
   if (engagementId) where.engagementId = engagementId;
+  if (section) where.section = section;
   if (status && status !== 'all') {
     where.status = status === 'responded' ? { in: ['responded', 'verified', 'committed'] } : status;
   }

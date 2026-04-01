@@ -360,7 +360,14 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
       const res = await fetch(`/api/engagements/${engagementId}/par/send-management`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: itemsToSend.map(r => ({ id: r.id, particulars: r.particulars })) }),
+        body: JSON.stringify({ items: itemsToSend.map(r => ({
+          id: r.id,
+          particulars: r.particulars,
+          currentYear: r.currentYear,
+          priorYear: r.priorYear,
+          absVariance: r.absVariance,
+          absVariancePercent: r.absVariancePercent,
+        })) }),
       });
 
       if (res.ok) {

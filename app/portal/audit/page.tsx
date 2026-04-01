@@ -7,6 +7,7 @@ import {
 import Link from 'next/link';
 import { OutstandingTab } from '@/components/portal/OutstandingTab';
 import { RespondedTab } from '@/components/portal/RespondedTab';
+import { ExplanationsTab } from '@/components/portal/ExplanationsTab';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ const CONFIRMATION_TYPES = new Set(['supplierConfirmation', 'debtorConfirmation'
 
 const AUDIT_SUB_TABS = [
   { key: 'outstanding', label: 'Outstanding' },
+  { key: 'explanations', label: 'Explanations' },
   { key: 'responded', label: 'Responded' },
   { key: 'evidence', label: 'Evidence' },
   { key: 'concerns', label: 'Concerns' },
@@ -102,6 +104,7 @@ export default function PortalAuditPage() {
   const [periodsLoading, setPeriodsLoading] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState('outstanding');
   const [outstandingCount, setOutstandingCount] = useState(0);
+  const [explanationsCount, setExplanationsCount] = useState(0);
   const [unacceptedCount, setUnacceptedCount] = useState(0);
   const [clientOutstandingCounts, setClientOutstandingCounts] = useState<Record<string, number>>({});
   const [periodOutstandingCounts, setPeriodOutstandingCounts] = useState<Record<string, number>>({});
@@ -383,6 +386,11 @@ export default function PortalAuditPage() {
                 {outstandingCount}
               </span>
             )}
+            {tab.key === 'explanations' && explanationsCount > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[9px] font-bold">
+                {explanationsCount}
+              </span>
+            )}
             {tab.key === 'responded' && unacceptedCount > 0 && (
               <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
                 {unacceptedCount}
@@ -467,6 +475,10 @@ export default function PortalAuditPage() {
 
       {activeSubTab === 'outstanding' && activeClientId && activePeriodId && (
         <OutstandingTab clientId={activeClientId} token={token} engagementId={activeEngagementId} onCountChange={setOutstandingCount} />
+      )}
+
+      {activeSubTab === 'explanations' && activeClientId && activePeriodId && (
+        <ExplanationsTab clientId={activeClientId} token={token} engagementId={activeEngagementId} />
       )}
 
       {activeSubTab === 'responded' && activeClientId && activePeriodId && (
