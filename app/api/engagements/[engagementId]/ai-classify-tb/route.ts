@@ -50,6 +50,8 @@ export async function POST(
     return NextResponse.json({ error: 'AI service not configured (TOGETHER_API_KEY missing)' }, { status: 503 });
   }
 
+  console.log(`[AI Classify] Using model: ${MODEL}, API key prefix: ${apiKey.slice(0, 8)}...`);
+
   const { rows } = await req.json();
   if (!rows || !Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: 'rows array required' }, { status: 400 });

@@ -239,11 +239,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       } else {
         const errData = await res.json().catch(() => ({}));
         console.error('AI lookup failed:', res.status, errData);
-        setAiLookupResults([{ name: errData.error || `Error (${res.status})`, label: '', fsLevel: '', fsStatement: '' }]);
+        setAiLookupResults([{ name: `❌ ${errData.error || `Error ${res.status}`}`, label: `Error: ${errData.error || res.status}`, fsLevel: '', fsStatement: '' }]);
       }
     } catch (err) {
       console.error('AI lookup failed:', err);
-      setAiLookupResults([{ name: 'AI service unavailable', label: '', fsLevel: '', fsStatement: '' }]);
+      setAiLookupResults([{ name: '❌ AI service unavailable', label: 'Error: service unavailable', fsLevel: '', fsStatement: '' }]);
     } finally {
       setAiLookupLoading(false);
     }
@@ -567,16 +567,22 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   {/* AI lookup results dropdown */}
                   {aiLookupRow === i && !aiLookupLoading && aiLookupResults.length > 0 && (
                     <div className="absolute left-0 top-full z-20 w-64 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-0.5">
-                      <div className="px-2 py-1 text-[9px] font-semibold text-slate-400 border-b bg-slate-50">XBRL Taxonomy Matches</div>
+                      <div className="px-2 py-1 text-[9px] font-semibold text-slate-400 border-b bg-slate-50">AI Classification</div>
                       {aiLookupResults.map((r, ri) => (
-                        <button
-                          key={ri}
-                          onClick={() => selectAiResult(i, r)}
-                          className="w-full text-left px-2 py-1.5 text-[10px] hover:bg-blue-50 border-b border-slate-50 last:border-0"
-                        >
-                          <span className="font-medium text-slate-800">{r.label}</span>
-                          <span className="block text-[8px] text-slate-400 truncate">{r.name}</span>
-                        </button>
+                        r.name.startsWith('❌') ? (
+                          <div key={ri} className="px-2 py-2 text-[10px] text-red-600 bg-red-50">
+                            {r.name}
+                          </div>
+                        ) : (
+                          <button
+                            key={ri}
+                            onClick={() => selectAiResult(i, r)}
+                            className="w-full text-left px-2 py-1.5 text-[10px] hover:bg-blue-50 border-b border-slate-50 last:border-0"
+                          >
+                            <span className="font-medium text-slate-800">{r.label}</span>
+                            <span className="block text-[8px] text-slate-400 truncate">{r.name}</span>
+                          </button>
+                        )
                       ))}
                     </div>
                   )}
