@@ -149,11 +149,14 @@ export function RespondedTab({ clientId, token, engagementId }: Props) {
                       )}
 
                       {/* Final response */}
-                      {item.response && (
-                        <div className="mt-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                          <p className="text-sm text-green-900">{item.response}</p>
-                        </div>
-                      )}
+                      {item.response && (() => {
+                        const isVerified = item.status === 'committed' || item.status === 'verified';
+                        return (
+                          <div className={`mt-2 rounded-lg px-3 py-2 border ${isVerified ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
+                            <p className={`text-sm ${isVerified ? 'text-green-900' : 'text-blue-900'}`}>{item.response}</p>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <div className="flex items-center gap-4 mt-2 text-[10px] text-slate-400">
                       <span>Requested: {formatDate(item.requestedAt)} by {item.requestedByName}</span>
@@ -163,6 +166,14 @@ export function RespondedTab({ clientId, token, engagementId }: Props) {
                           {formatDuration(duration)}
                         </span>
                       )}
+                      {(() => {
+                        const isVerified = item.status === 'committed' || item.status === 'verified';
+                        return (
+                          <span className={`font-semibold px-2 py-0.5 rounded-full ${isVerified ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                            {isVerified ? '✓ Verified' : '⏳ Awaiting Verification'}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                 );

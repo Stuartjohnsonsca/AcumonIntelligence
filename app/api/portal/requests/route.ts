@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const where: Record<string, unknown> = { clientId };
   if (engagementId) where.engagementId = engagementId;
   if (status && status !== 'all') {
-    where.status = status === 'responded' ? { in: ['responded', 'verified'] } : status;
+    where.status = status === 'responded' ? { in: ['responded', 'verified', 'committed'] } : status;
   }
 
   const requests = await prisma.portalRequest.findMany({
