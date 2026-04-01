@@ -3,6 +3,14 @@
 import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Loader2, Send, CheckCircle2 } from 'lucide-react';
 
+interface ChatMessage {
+  from: 'firm' | 'client';
+  name: string;
+  message: string;
+  timestamp: string;
+  attachments?: { name: string; url: string }[];
+}
+
 interface PortalRequestItem {
   id: string;
   section: string;
@@ -11,6 +19,7 @@ interface PortalRequestItem {
   status: string;
   requestedByName: string;
   requestedAt: string;
+  chatHistory?: ChatMessage[];
 }
 
 interface Props {
@@ -163,11 +172,36 @@ export function OutstandingTab({ clientId, token, onCountChange }: Props) {
                               </span>
                             </div>
                           </div>
+                          {/* Chat history — show conversation thread */}
+                          {item.chatHistory && item.chatHistory.length > 0 && (
+                            <div className="mb-2 space-y-1.5 max-h-40 overflow-y-auto">
+                              {item.chatHistory.map((msg, mi) => (
+                                <div key={mi} className={`flex ${msg.from === 'client' ? 'justify-end' : 'justify-start'}`}>
+                                  <div className={`max-w-[80%] px-3 py-1.5 rounded-lg text-xs ${
+                                    msg.from === 'client' ? 'bg-blue-100 text-blue-900' : 'bg-slate-100 text-slate-800'
+                                  }`}>
+                                    <div className="flex items-center gap-1.5 mb-0.5">
+                                      <span className="font-semibold text-[10px]">{msg.name}</span>
+                                      <span className="text-[9px] text-slate-400">{new Date(msg.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                    </div>
+                                    <p>{msg.message}</p>
+                                    {msg.attachments && msg.attachments.length > 0 && (
+                                      <div className="mt-1 flex flex-wrap gap-1">
+                                        {msg.attachments.map((a, ai) => (
+                                          <span key={ai} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white/50 rounded text-[9px] border">📎 {a.name}</span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           <div className="flex gap-2">
                             <textarea
                               value={responses[item.id] || ''}
                               onChange={e => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                              placeholder="Enter your response..."
+                              placeholder={item.chatHistory?.length ? "Continue the conversation..." : "Enter your response..."}
                               rows={2}
                               className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                             />

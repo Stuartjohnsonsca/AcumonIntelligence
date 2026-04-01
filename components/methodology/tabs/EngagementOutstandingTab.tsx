@@ -7,6 +7,14 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+interface ChatMessage {
+  from: 'firm' | 'client';
+  name: string;
+  message: string;
+  timestamp: string;
+  attachments?: { name: string; url: string; size?: number }[];
+}
+
 interface OutstandingItem {
   id: string;
   type: 'client' | 'team' | 'technical';
@@ -19,6 +27,7 @@ interface OutstandingItem {
   respondedAt?: string;
   assignedTo?: string;
   engagementId?: string;
+  chatHistory?: ChatMessage[];
 }
 
 interface Props {
@@ -46,6 +55,7 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
   const [view, setView] = useState<'my' | 'team'>('my');
   const [chatOpen, setChatOpen] = useState<string | null>(null);
   const [chatText, setChatText] = useState('');
+  const [chatFiles, setChatFiles] = useState<File[]>([]);
   const [sending, setSending] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState<string | null>(null);
   const [assignNote, setAssignNote] = useState('');
@@ -71,6 +81,7 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
           respondedAt: r.respondedAt,
           assignedTo: r.assignedTo,
           engagementId: r.engagementId,
+          chatHistory: r.chatHistory || [],
         }));
         setItems(clientItems);
       }
@@ -100,11 +111,14 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
     setSending(null);
   }
 
-  // Action: Chat — send reply back
+  // Action: Chat — send reply with optional files
   async function handleChatSend(item: OutstandingItem) {
-    if (!chatText.trim()) return;
+    if (!chatText.trim() && chatFiles.length === 0) return;
     setSending(item.id);
     try {
+      // Build attachment metadata (files would be uploaded separately in production)
+      const attachments = chatFiles.map(f => ({ name: f.name, url: '', size: f.size }));
+
       await fetch(`/api/portal/requests`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -113,11 +127,13 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
           action: 'chat',
           message: chatText.trim(),
           fromUserId: currentUserId,
+          fromUserName: currentUserRole || 'Audit Team',
           itemType: item.type,
+          attachments,
         }),
       });
       setChatText('');
-      setChatOpen(null);
+      setChatFiles([]);
       await loadItems();
     } catch {}
     setSending(null);
@@ -253,20 +269,70 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
               </div>
             </div>
 
-            {/* Chat panel */}
+            {/* Chat panel with history */}
             {chatOpen === item.id && (
               <div className="px-4 py-2 bg-slate-50 border-t">
+                {/* Chat history thread */}
+                {item.chatHistory && item.chatHistory.length > 0 && (
+                  <div className="mb-2 max-h-48 overflow-y-auto space-y-1.5">
+                    {item.chatHistory.map((msg, mi) => (
+                      <div key={mi} className={`flex ${msg.from === 'firm' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[75%] px-2.5 py-1.5 rounded-lg text-xs ${
+                          msg.from === 'firm' ? 'bg-blue-100 text-blue-900' : 'bg-white border text-slate-800'
+                        }`}>
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <span className="font-semibold text-[10px]">{msg.name}</span>
+                            <span className="text-[9px] text-slate-400">{new Date(msg.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          <p>{msg.message}</p>
+                          {msg.attachments && msg.attachments.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {msg.attachments.map((a, ai) => (
+                                <span key={ai} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white/50 rounded text-[9px] text-slate-600 border">
+                                  📎 {a.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* New message input + file attachment */}
                 <div className="flex gap-2">
-                  <textarea
-                    value={chatText}
-                    onChange={e => setChatText(e.target.value)}
-                    placeholder={item.type === 'client' ? 'Reply to client...' : 'Message to team member...'}
-                    rows={2}
-                    className="flex-1 px-3 py-1.5 text-xs border rounded-md resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
+                  <div className="flex-1">
+                    <textarea
+                      value={chatText}
+                      onChange={e => setChatText(e.target.value)}
+                      placeholder={item.type === 'client' ? 'Reply to client...' : 'Message to team member...'}
+                      rows={2}
+                      className="w-full px-3 py-1.5 text-xs border rounded-md resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                    {chatFiles.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {chatFiles.map((f, fi) => (
+                          <span key={fi} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-slate-200 rounded text-[9px]">
+                            📎 {f.name}
+                            <button onClick={() => setChatFiles(prev => prev.filter((_, i) => i !== fi))} className="text-red-400 hover:text-red-600">×</button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 mt-1">
+                      <label className="text-[10px] text-blue-600 hover:text-blue-800 cursor-pointer font-medium">
+                        + Attach file
+                        <input type="file" multiple className="hidden" onChange={e => {
+                          const files = Array.from(e.target.files || []);
+                          setChatFiles(prev => [...prev, ...files]);
+                          e.target.value = '';
+                        }} />
+                      </label>
+                    </div>
+                  </div>
                   <button
                     onClick={() => handleChatSend(item)}
-                    disabled={!chatText.trim() || sending === item.id}
+                    disabled={(!chatText.trim() && chatFiles.length === 0) || sending === item.id}
                     className="self-end px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-40"
                   >
                     <Send className="h-3 w-3" />

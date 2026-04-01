@@ -928,7 +928,7 @@ model PortalRequest {
   section       String    // questions | calculations | evidence | connections
   question      String    @db.Text
   response      String?   @db.Text
-  status        String    @default("outstanding") // outstanding | responded | verified | rejected
+  status        String    @default("outstanding") // outstanding | responded | verified | committed | chat_replied
   requestedById String    @map("requested_by_id") // Firm User who created the request
   requestedByName String  @map("requested_by_name")
   respondedById String?   @map("responded_by_id") // ClientPortalUser who responded
@@ -936,6 +936,7 @@ model PortalRequest {
   requestedAt   DateTime  @default(now()) @map("requested_at")
   respondedAt   DateTime? @map("responded_at")
   verifiedAt    DateTime? @map("verified_at")
+  chatHistory   Json?     @map("chat_history") // Array of { from, name, message, timestamp }
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 

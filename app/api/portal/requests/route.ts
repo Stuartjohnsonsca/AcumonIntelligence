@@ -126,31 +126,31 @@ export async function PUT(req: Request) {
       }
 
       case 'chat': {
-        // Send reply — if client type, send back to portal as new outstanding
-        // If team type, create a new request for the responder
+        // Append message to chat history thread on the same request
+        const history = (request.chatHistory as any[] || []);
+        const newMessage = {
+          from: itemType === 'client' ? 'firm' : 'firm',
+          name: body.fromUserName || 'Audit Team',
+          message,
+          timestamp: new Date().toISOString(),
+          attachments: body.attachments || [], // [{name, url, size}]
+        };
+        history.push(newMessage);
+
         if (itemType === 'client') {
-          // Mark current as chat_replied, create new outstanding for client
-          await prisma.portalRequest.update({ where: { id: requestId }, data: { status: 'chat_replied' } });
-          const newReq = await prisma.portalRequest.create({
-            data: {
-              clientId: request.clientId,
-              engagementId: request.engagementId,
-              section: request.section,
-              question: `Re: ${request.question}\n\n${message}`,
-              status: 'outstanding',
-              requestedById: fromUserId || request.requestedById,
-              requestedByName: 'Audit Team',
-            },
-          });
-          return NextResponse.json({ request: newReq });
-        } else {
-          // Team chat — update with message
+          // Keep on the same request — set status back to outstanding for client to see the reply
           await prisma.portalRequest.update({
             where: { id: requestId },
-            data: { status: 'outstanding', response: `${request.response || ''}\n\n[Reply]: ${message}` },
+            data: { chatHistory: history as any, status: 'outstanding' },
           });
-          return NextResponse.json({ success: true });
+        } else {
+          // Team chat — keep as responded, append to history
+          await prisma.portalRequest.update({
+            where: { id: requestId },
+            data: { chatHistory: history as any },
+          });
         }
+        return NextResponse.json({ success: true, chatHistory: history });
       }
 
       case 'elevate': {
