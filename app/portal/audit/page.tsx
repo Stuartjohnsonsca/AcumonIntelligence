@@ -316,14 +316,6 @@ export default function PortalAuditPage() {
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium text-slate-600">Client:</label>
-          {(() => {
-            const clientsWithOutstanding = Object.values(clientOutstandingCounts).filter(c => c > 0).length;
-            return clientsWithOutstanding > 0 ? (
-              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
-                {clientsWithOutstanding}
-              </span>
-            ) : null;
-          })()}
           <select
             value={activeClientId}
             onChange={(e) => setActiveClientId(e.target.value)}
@@ -338,6 +330,11 @@ export default function PortalAuditPage() {
         {activeClientId && (
           <div className="flex items-center gap-2">
             <label className="text-sm font-medium text-slate-600">Period:</label>
+            {outstandingCount > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold">
+                {outstandingCount}
+              </span>
+            )}
             <select
               value={activePeriodId}
               onChange={(e) => setActivePeriodId(e.target.value)}
