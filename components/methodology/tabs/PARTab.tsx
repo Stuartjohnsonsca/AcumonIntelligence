@@ -536,16 +536,50 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                       onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
                     />
                   </td>
-                  {/* Auditor View */}
+                  {/* Auditor View + attachment icon */}
                   <td className="px-2 py-0.5">
-                    <textarea
-                      value={row.auditorView || ''}
-                      onChange={e => updateRow(i, 'auditorView', e.target.value || null)}
-                      className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none"
-                      rows={1}
-                      placeholder="Auditor view..."
-                      onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
-                    />
+                    <div className="flex items-start gap-1">
+                      <textarea
+                        value={row.auditorView || ''}
+                        onChange={e => updateRow(i, 'auditorView', e.target.value || null)}
+                        className="flex-1 border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none"
+                        rows={1}
+                        placeholder="Auditor view..."
+                        onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
+                      />
+                      {/* Attachment icon — shown if reasons contain [Attachments: ...] */}
+                      {row.reasons?.includes('[Attachments:') && (() => {
+                        const match = row.reasons!.match(/\[Attachments:\s*(.+?)\]/);
+                        const fileNames = match ? match[1].split(',').map(s => s.trim()) : [];
+                        return fileNames.length > 0 ? (
+                          <div className="relative group flex-shrink-0 mt-0.5">
+                            <button className="w-5 h-5 rounded bg-blue-100 text-blue-600 hover:bg-blue-200 flex items-center justify-center text-[10px]" title={`${fileNames.length} attachment(s)`}>
+                              📎
+                            </button>
+                            <div className="absolute right-0 top-6 z-20 bg-white border border-slate-200 rounded-lg shadow-lg p-2 min-w-[160px] hidden group-hover:block">
+                              <p className="text-[9px] font-semibold text-slate-500 mb-1">Attachments</p>
+                              {fileNames.map((name, fi) => (
+                                <div key={fi} className="text-[10px] text-blue-600 hover:text-blue-800 py-0.5 cursor-pointer">
+                                  📎 {name}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
+                      {/* Chat history indicator — shown if sendMgt has respondedAt */}
+                      {mgt.respondedAt && (
+                        <div className="relative group flex-shrink-0 mt-0.5">
+                          <button className="w-5 h-5 rounded bg-green-100 text-green-600 hover:bg-green-200 flex items-center justify-center text-[10px]" title="Client response received">
+                            💬
+                          </button>
+                          <div className="absolute right-0 top-6 z-20 bg-white border border-slate-200 rounded-lg shadow-lg p-2 min-w-[220px] max-h-48 overflow-y-auto hidden group-hover:block">
+                            <p className="text-[9px] font-semibold text-slate-500 mb-1">Client Response</p>
+                            <p className="text-[10px] text-slate-700 whitespace-pre-line">{(mgt as any).clientExplanation || row.reasons || 'No response text'}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </td>
                   {/* Add to RMM checkbox — cannot be unchecked by junior */}
                   <td className="px-2 py-0.5 text-center">

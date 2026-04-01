@@ -123,7 +123,6 @@ export async function PUT(req: Request) {
     switch (action) {
       case 'commit': {
         // Move to committed status — appears in Communication tab, removed from Outstanding
-        // Append a closing message to chat history
         const commitHistory = (request.chatHistory as any[] || []);
         commitHistory.push({
           from: 'firm',
@@ -139,6 +138,51 @@ export async function PUT(req: Request) {
             verifiedAt: new Date(),
           },
         });
+
+        // If this came from PAR (section=explanations), paste back to the PAR row
+        if (request.section === 'explanations' && request.engagementId) {
+          try {
+            // Extract the particulars (first line of question)
+            const particulars = request.question.split('\n')[0];
+
+            // Build the full response text with chat history
+            const chatMsgs = commitHistory
+              .filter((m: any) => m.name !== 'System')
+              .map((m: any) => `[${m.name}, ${new Date(m.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}]: ${m.message}`)
+              .join('\n');
+            const responseText = [request.response, chatMsgs].filter(Boolean).join('\n\n');
+
+            // Find the matching PAR row
+            const parRow = await prisma.auditPARRow.findFirst({
+              where: { engagementId: request.engagementId, particulars },
+            });
+
+            if (parRow) {
+              // Extract attachment references from chat history
+              const attachments = commitHistory
+                .flatMap((m: any) => (m.attachments || []).map((a: any) => a.name))
+                .filter(Boolean);
+              const attachmentNote = attachments.length > 0 ? `\n[Attachments: ${attachments.join(', ')}]` : '';
+
+              await prisma.auditPARRow.update({
+                where: { id: parRow.id },
+                data: {
+                  reasons: responseText + attachmentNote,
+                  managementResponseStatus: 'responded',
+                  sentToManagement: true,
+                  sendMgtData: {
+                    ...(parRow.sendMgtData as any || {}),
+                    respondedAt: new Date().toISOString(),
+                    clientExplanation: responseText,
+                  },
+                },
+              });
+            }
+          } catch (err) {
+            console.error('[Commit] Failed to paste back to PAR:', err);
+          }
+        }
+
         return NextResponse.json({ request: updated });
       }
 
