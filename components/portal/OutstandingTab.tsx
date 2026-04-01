@@ -190,7 +190,7 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
                                 <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">{source}</span>
                               )}
                               <span className="text-[10px] text-slate-400">
-                                Requested by {item.requestedByName} &middot; {new Date(item.requestedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                Requested by {item.requestedByName} &middot; {new Date(item.requestedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                               </span>
                               {(item as any).assignedTo && (
                                 <span className="text-[9px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">
