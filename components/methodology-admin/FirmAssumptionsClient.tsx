@@ -549,17 +549,25 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
                   <tr key={i} className="border-t">
                     <td className="px-3 py-2 text-slate-700">{r.benchmark}</td>
                     <td className="px-3 py-1">
-                      <input type="number" step="0.1" value={(r.low * 100).toFixed(1)} onChange={e => {
-                        const updated = [...range];
-                        updated[i] = { ...r, low: Number(e.target.value) / 100 };
-                        setRange(updated);
+                      <input type="text" inputMode="decimal" value={r.low * 100} onChange={e => {
+                        const v = e.target.value.replace(/[^0-9.]/g, '');
+                        const n = parseFloat(v);
+                        if (v === '' || (n > 0)) {
+                          const updated = [...range];
+                          updated[i] = { ...r, low: v === '' ? 0 : n / 100 };
+                          setRange(updated);
+                        }
                       }} className="w-full text-right border rounded px-2 py-1 text-sm" />
                     </td>
                     <td className="px-3 py-1">
-                      <input type="number" step="0.1" value={(r.high * 100).toFixed(1)} onChange={e => {
-                        const updated = [...range];
-                        updated[i] = { ...r, high: Number(e.target.value) / 100 };
-                        setRange(updated);
+                      <input type="text" inputMode="decimal" value={r.high * 100} onChange={e => {
+                        const v = e.target.value.replace(/[^0-9.]/g, '');
+                        const n = parseFloat(v);
+                        if (v === '' || (n > 0)) {
+                          const updated = [...range];
+                          updated[i] = { ...r, high: v === '' ? 0 : n / 100 };
+                          setRange(updated);
+                        }
                       }} className="w-full text-right border rounded px-2 py-1 text-sm" />
                     </td>
                   </tr>
