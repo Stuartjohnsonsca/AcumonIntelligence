@@ -51,6 +51,7 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const [materialityRange, setMaterialityRange] = useState<{ benchmark: string; low: number; high: number }[]>([]);
   const [firmRounding, setFirmRounding] = useState(3);
   const [pmPresets, setPmPresets] = useState<{ low: number; medium: number; high: number }>({ low: 50, medium: 62.5, high: 75 });
+  const [ctSettings, setCtSettings] = useState<{ basis: string; pct: number }>({ basis: 'Materiality', pct: 5 });
   const [techApproval, setTechApproval] = useState<{ userName: string; date: string } | null>(null);
   const [sendingTechEmail, setSendingTechEmail] = useState(false);
 
@@ -58,12 +59,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
 
   const loadData = useCallback(async () => {
     try {
-      const [dataRes, rangeRes, tbRes, roundRes, pmRes] = await Promise.all([
+      const [dataRes, rangeRes, tbRes, roundRes, pmRes, ctRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/materiality`),
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_range'),
         fetch(`/api/engagements/${engagementId}/trial-balance`),
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_rounding'),
         fetch('/api/methodology-admin/risk-tables?tableType=pm_presets'),
+        fetch('/api/methodology-admin/risk-tables?tableType=clearly_trivial'),
       ]);
 
       if (dataRes.ok) {
@@ -83,6 +85,10 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
       if (pmRes.ok) {
         const json = await pmRes.json();
         if (json.table?.data) setPmPresets(json.table.data);
+      }
+      if (ctRes.ok) {
+        const json = await ctRes.json();
+        if (json.table?.data) setCtSettings(json.table.data);
       }
       // Build TB totals by FS Level for benchmark lookup
       if (tbRes.ok) {
@@ -183,7 +189,8 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const snappedPmPct = presetValues.reduce((best, v) => Math.abs(v - rawPmPct) < Math.abs(best - rawPmPct) ? v : best, pmPresets.medium);
 
   const performanceMateriality = materiality ? roundDown(materiality * (snappedPmPct / 100), rounding) : 0;
-  const clearlyTrivial = materiality ? roundDown(materiality * 0.05, rounding) : 0;
+  const ctBase = ctSettings.basis === 'Performance Materiality' ? performanceMateriality : materiality;
+  const clearlyTrivial = ctBase ? roundDown(ctBase * (ctSettings.pct / 100), rounding) : 0;
 
   // Prior year derived
   const pyBenchmarkPct = (getPy('benchmark_pct') as number) || 0;

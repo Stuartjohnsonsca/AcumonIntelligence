@@ -473,16 +473,18 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
   const [range, setRange] = useState<{ benchmark: string; low: number; high: number }[]>(DEFAULT_RANGE);
   const [rounding, setRounding] = useState(3);
   const [pmPresets, setPmPresets] = useState<{ low: number; medium: number; high: number }>({ low: 50, medium: 62.5, high: 75 });
+  const [ctSettings, setCtSettings] = useState<{ basis: string; pct: number }>({ basis: 'Materiality', pct: 5 });
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     if (loaded) return;
     try {
-      const [rangeRes, roundRes, pmRes] = await Promise.all([
+      const [rangeRes, roundRes, pmRes, ctRes] = await Promise.all([
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_range'),
         fetch('/api/methodology-admin/risk-tables?tableType=materiality_rounding'),
         fetch('/api/methodology-admin/risk-tables?tableType=pm_presets'),
+        fetch('/api/methodology-admin/risk-tables?tableType=clearly_trivial'),
       ]);
       if (rangeRes.ok) {
         const d = await rangeRes.json();
@@ -495,6 +497,10 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
       if (pmRes.ok) {
         const d = await pmRes.json();
         if (d.table?.data) setPmPresets(d.table.data);
+      }
+      if (ctRes.ok) {
+        const d = await ctRes.json();
+        if (d.table?.data) setCtSettings(d.table.data);
       }
     } catch {}
     setLoaded(true);
@@ -518,6 +524,11 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tableType: 'pm_presets', data: pmPresets }),
+        }),
+        fetch('/api/methodology-admin/risk-tables', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tableType: 'clearly_trivial', data: ctSettings }),
         }),
       ]);
       onSave();
@@ -614,7 +625,32 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
                 }} className="w-24 text-right border rounded px-2 py-1.5 text-sm" />
               </div>
             </div>
-            <p className="text-[10px] text-slate-400 mt-1">The weighted PM factor average is rounded to the nearest of these values</p>
+            <p className="text-[10px] text-slate-400 mt-1">The weighted PM indicator average is rounded to the nearest of these values</p>
+          </div>
+
+          {/* Clearly Trivial Settings */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Clearly Trivial</h3>
+            <div className="flex items-center gap-4">
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Based on</label>
+                <select value={ctSettings.basis} onChange={e => setCtSettings(p => ({ ...p, basis: e.target.value }))} className="border rounded px-2 py-1.5 text-sm">
+                  <option value="Materiality">Materiality</option>
+                  <option value="Performance Materiality">Performance Materiality</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-0.5">Percentage</label>
+                <div className="flex items-center gap-1">
+                  <input type="text" inputMode="decimal" value={ctSettings.pct} onChange={e => {
+                    const n = parseFloat(e.target.value.replace(/[^0-9.]/g, ''));
+                    setCtSettings(p => ({ ...p, pct: isNaN(n) ? 0 : Math.max(0, n) }));
+                  }} className="w-20 text-right border rounded px-2 py-1.5 text-sm" />
+                  <span className="text-sm text-slate-500">%</span>
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">Clearly Trivial = {ctSettings.basis} × {ctSettings.pct}%</p>
           </div>
 
           <Button onClick={handleSave} size="sm" disabled={saving || range.some(r => r.high < r.low)}>
