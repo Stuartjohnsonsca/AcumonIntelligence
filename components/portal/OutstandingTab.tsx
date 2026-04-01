@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Loader2, Send, CheckCircle2 } from 'lucide-react';
+import { PasteAwareTextarea } from './PasteAwareTextarea';
 
 interface ChatMessage {
   from: 'firm' | 'client';
@@ -210,12 +211,12 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange }:
                           )}
                           <div className="flex gap-2">
                             <div className="flex-1">
-                              <textarea
+                              <PasteAwareTextarea
                                 value={responses[item.id] || ''}
-                                onChange={e => setResponses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                                placeholder={item.chatHistory?.length ? "Continue the conversation..." : "Enter your response..."}
+                                onChange={text => setResponses(prev => ({ ...prev, [item.id]: text }))}
+                                onFilesAdded={newFiles => setResponseFiles(prev => ({ ...prev, [item.id]: [...(prev[item.id] || []), ...newFiles] }))}
+                                placeholder={item.chatHistory?.length ? "Continue the conversation... (paste supported)" : "Enter your response... (you can paste from Excel, Word, or screenshots)"}
                                 rows={2}
-                                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                               />
                               {(responseFiles[item.id]?.length || 0) > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-1">

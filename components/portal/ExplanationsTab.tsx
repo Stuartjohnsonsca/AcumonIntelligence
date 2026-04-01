@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Loader2, Send, Upload, UserPlus, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
+import { PasteAwareTextarea } from './PasteAwareTextarea';
 
 interface ExplanationItem {
   id: string;
@@ -236,14 +237,14 @@ export function ExplanationsTab({ clientId, token, engagementId, onCountChange }
                 )}
               </div>
 
-              {/* Multiline text response */}
+              {/* Multiline text response — supports paste from Excel/Word/screenshots */}
               <div>
-                <textarea
+                <PasteAwareTextarea
                   value={responses[item.id] || ''}
-                  onChange={e => handleTextChange(item.id, e.target.value)}
-                  placeholder="Enter your explanation..."
+                  onChange={text => handleTextChange(item.id, text)}
+                  onFilesAdded={newFiles => setFiles(prev => ({ ...prev, [item.id]: [...(prev[item.id] || []), ...newFiles] }))}
+                  placeholder="Enter your explanation... (you can paste from Excel, Word, or screenshots)"
                   rows={4}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
                 />
                 {lastEdited[item.id] && (
                   <p className="text-[9px] text-slate-400 mt-0.5">Last edited by {lastEdited[item.id].name} on {lastEdited[item.id].at}</p>
