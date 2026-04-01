@@ -10,10 +10,19 @@ interface Props {
   initialContacts: ContactData[];
 }
 
+interface PortalTeamMember {
+  id: string;
+  name: string;
+  email: string;
+  role: string | null;
+  isClientAdmin: boolean;
+}
+
 export function ClientContactsPanel({ engagementId, clientId, initialContacts }: Props) {
   const [contacts, setContacts] = useState<ContactData[]>(initialContacts);
   const [portalLoading, setPortalLoading] = useState<Record<number, boolean>>({});
   const [portalError, setPortalError] = useState('');
+  const [portalTeam, setPortalTeam] = useState<PortalTeamMember[]>([]);
 
   useEffect(() => { setContacts(initialContacts); }, [initialContacts]);
 
@@ -38,6 +47,26 @@ export function ClientContactsPanel({ engagementId, clientId, initialContacts }:
     }
     if (clientId) loadPortalUsers();
   }, [clientId, initialContacts]);
+
+  // Load portal team members (client-added) to show in blue
+  useEffect(() => {
+    if (!clientId) return;
+    fetch(`/api/portal/users?clientId=${clientId}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(users => {
+        const team = (Array.isArray(users) ? users : [])
+          .filter((u: any) => u.isActive)
+          .map((u: any) => ({
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            role: u.role || null,
+            isClientAdmin: u.isClientAdmin || false,
+          }));
+        setPortalTeam(team);
+      })
+      .catch(() => {});
+  }, [clientId]);
 
   // Strip portalAccess before saving — it's not a DB field on AuditClientContact
   const contactsForSave = contacts.map(({ portalAccess, ...rest }) => rest);
@@ -205,6 +234,34 @@ export function ClientContactsPanel({ engagementId, clientId, initialContacts }:
             </div>
           </div>
         ))}
+
+        {/* Portal team members (client-added) — shown in blue, read-only */}
+        {portalTeam.length > 0 && (
+          <>
+            <div className="mt-3 pt-2 border-t border-slate-200">
+              <p className="text-[10px] text-blue-500 font-semibold mb-1.5">Client Portal Team (added by client)</p>
+            </div>
+            {portalTeam
+              .filter(pt => !contacts.some(c => c.email?.toLowerCase() === pt.email.toLowerCase()))
+              .map(pt => (
+                <div key={pt.id} className="p-2 rounded border border-blue-100 bg-blue-50/20">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      {pt.isClientAdmin && (
+                        <span className="text-[8px] px-1 py-0.5 bg-purple-100 text-purple-600 rounded font-medium">Admin</span>
+                      )}
+                      {pt.role && (
+                        <span className="text-[9px] text-blue-400">{pt.role}</span>
+                      )}
+                    </div>
+                    <span className="text-[9px] text-blue-400 italic">Portal added</span>
+                  </div>
+                  <p className="text-xs font-medium text-blue-600">{pt.name}</p>
+                  <p className="text-[10px] text-blue-400">{pt.email}</p>
+                </div>
+              ))}
+          </>
+        )}
       </div>
     </div>
   );
