@@ -94,7 +94,7 @@ export function CommunicationTab({ engagementId, clientId }: Props) {
                         <span className="text-[9px] text-slate-400 ml-1">{new Date(msg.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                         <p className="text-slate-700 mt-0.5">{msg.message}</p>
                         {msg.attachments && msg.attachments.length > 0 && (
-                          <div className="flex gap-1 mt-0.5">{msg.attachments.map((a, ai) => <span key={ai} className="text-[9px] text-blue-600">📎 {a.name}</span>)}</div>
+                          <div className="flex gap-1 mt-0.5">{msg.attachments.map((a, ai) => <a key={ai} href={a.url || '#'} target="_blank" rel="noopener noreferrer" className="text-[9px] text-blue-600 hover:text-blue-800 hover:underline cursor-pointer">📎 {a.name}</a>)}</div>
                         )}
                       </div>
                     ))}

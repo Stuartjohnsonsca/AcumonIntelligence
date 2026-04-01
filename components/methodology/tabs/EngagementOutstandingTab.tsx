@@ -43,6 +43,12 @@ function formatDate(d: string) {
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function cleanQuestion(text: string): { question: string; source: string | null } {
+  const match = text.match(/^\[(.+?)\]\s*(.+)$/);
+  if (match) return { source: match[1], question: match[2] };
+  return { source: null, question: text };
+}
+
 const TYPE_COLORS = {
   client: 'bg-blue-100 text-blue-700 border-blue-200',
   team: 'bg-orange-100 text-orange-700 border-orange-200',
@@ -229,7 +235,10 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
                     </span>
                     <span className="text-[10px] text-slate-400">{formatDate(item.requestedAt)}</span>
                   </div>
-                  <p className="text-sm text-slate-800 font-medium">{item.question}</p>
+                  {(() => { const { question, source } = cleanQuestion(item.question); return (<>
+                    <p className="text-sm text-slate-800 font-medium">{question}</p>
+                    {source && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded inline-block mt-0.5">{source}</span>}
+                  </>); })()}
                   {item.response && (
                     <div className="mt-2 px-3 py-2 bg-blue-50 rounded-lg border border-blue-100">
                       <p className="text-[10px] text-blue-500 font-medium mb-0.5">
@@ -291,9 +300,9 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
                           {msg.attachments && msg.attachments.length > 0 && (
                             <div className="mt-1 flex flex-wrap gap-1">
                               {msg.attachments.map((a, ai) => (
-                                <span key={ai} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white/50 rounded text-[9px] text-slate-600 border">
+                                <a key={ai} href={a.url || '#'} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white/50 rounded text-[9px] text-blue-600 border hover:bg-blue-50 hover:border-blue-300 cursor-pointer">
                                   📎 {a.name}
-                                </span>
+                                </a>
                               ))}
                             </div>
                           )}
@@ -358,21 +367,41 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
 
             {/* Assign panel */}
             {assignOpen === item.id && (
-              <div className="px-4 py-2 bg-slate-50 border-t">
-                <p className="text-[10px] text-slate-500 font-medium mb-1.5">Assign to Specialist</p>
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {specialists.map((s, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleAssign(item, s.name)}
-                      disabled={sending === item.id}
-                      className="px-2.5 py-1 text-[10px] font-medium bg-white border border-purple-200 rounded-md hover:bg-purple-50 text-purple-700"
-                    >
-                      {s.name} <span className="text-purple-400">({s.specialistType})</span>
-                    </button>
-                  ))}
-                  {specialists.length === 0 && <span className="text-[10px] text-slate-400 italic">No specialists on this job</span>}
+              <div className="px-4 py-2 bg-slate-50 border-t space-y-2">
+                {specialists.length > 0 && (
+                  <div>
+                    <p className="text-[10px] text-slate-500 font-medium mb-1">Specialists</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {specialists.map((s, i) => (
+                        <button
+                          key={`s-${i}`}
+                          onClick={() => handleAssign(item, s.name)}
+                          disabled={sending === item.id}
+                          className="px-2.5 py-1 text-[10px] font-medium bg-white border border-purple-200 rounded-md hover:bg-purple-50 text-purple-700"
+                        >
+                          {s.name} <span className="text-purple-400">({s.specialistType})</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[10px] text-slate-500 font-medium mb-1">Team Members</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {teamMembers.filter(m => m.userId !== currentUserId).map((m, i) => (
+                      <button
+                        key={`t-${i}`}
+                        onClick={() => handleAssign(item, m.userName)}
+                        disabled={sending === item.id}
+                        className="px-2.5 py-1 text-[10px] font-medium bg-white border border-blue-200 rounded-md hover:bg-blue-50 text-blue-700"
+                      >
+                        {m.userName} <span className="text-blue-400">({m.role})</span>
+                      </button>
+                    ))}
+                    {teamMembers.filter(m => m.userId !== currentUserId).length === 0 && <span className="text-[10px] text-slate-400 italic">No other team members</span>}
+                  </div>
                 </div>
+                {specialists.length === 0 && teamMembers.length <= 1 && <span className="text-[10px] text-slate-400 italic">No specialists or team members to assign to</span>}
                 <input
                   type="text"
                   value={assignNote}
