@@ -557,8 +557,15 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   <datalist id={`fs-notes-${i}`}>
                     {fsNotes.map((n, ni) => <option key={n.id || `note-${ni}`} value={n.name} />)}
                   </datalist>
+                  {/* AI loading spinner */}
+                  {aiLookupRow === i && aiLookupLoading && (
+                    <div className="absolute left-0 top-full z-20 w-48 bg-white border border-slate-200 rounded-md shadow-lg mt-0.5 px-3 py-2 text-[10px] text-blue-500 flex items-center gap-1">
+                      <span className="animate-spin inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full"></span>
+                      Classifying...
+                    </div>
+                  )}
                   {/* AI lookup results dropdown */}
-                  {aiLookupRow === i && aiLookupResults.length > 0 && (
+                  {aiLookupRow === i && !aiLookupLoading && aiLookupResults.length > 0 && (
                     <div className="absolute left-0 top-full z-20 w-64 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-0.5">
                       <div className="px-2 py-1 text-[9px] font-semibold text-slate-400 border-b bg-slate-50">XBRL Taxonomy Matches</div>
                       {aiLookupResults.map((r, ri) => (
