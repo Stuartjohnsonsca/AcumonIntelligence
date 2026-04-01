@@ -459,9 +459,18 @@ export function FirmAssumptionsClient({
 }
 
 // ─── Materiality Range + Rounding ────────────────────────────────────
+const DEFAULT_RANGE = [
+  { benchmark: 'Profit before Tax', low: 0.05, high: 0.10 },
+  { benchmark: 'Gross Profit', low: 0.01, high: 0.04 },
+  { benchmark: 'Total Revenue', low: 0.005, high: 0.02 },
+  { benchmark: 'Total Expenses', low: 0.005, high: 0.02 },
+  { benchmark: 'Total Equity or Net Assets', low: 0.01, high: 0.05 },
+  { benchmark: 'Total Assets', low: 0.005, high: 0.02 },
+];
+
 function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [range, setRange] = useState<{ benchmark: string; low: number; high: number }[]>([]);
+  const [range, setRange] = useState<{ benchmark: string; low: number; high: number }[]>(DEFAULT_RANGE);
   const [rounding, setRounding] = useState(3);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -475,7 +484,7 @@ function MaterialitySettingsSection({ firmId, onSave }: { firmId: string; onSave
       ]);
       if (rangeRes.ok) {
         const d = await rangeRes.json();
-        if (d.table?.data) setRange(d.table.data);
+        if (d.table?.data && Array.isArray(d.table.data) && d.table.data.length > 0) setRange(d.table.data);
       }
       if (roundRes.ok) {
         const d = await roundRes.json();
