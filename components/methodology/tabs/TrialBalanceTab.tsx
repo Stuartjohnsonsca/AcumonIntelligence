@@ -151,30 +151,61 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
   // When FS Note is selected, auto-populate FS Level (from parent) and FS Statement
   function handleFsNoteChange(index: number, noteName: string) {
-    // Look up the note in the hierarchy — use parentName for FS Level
+    // 1. Look up from hierarchy API (parentName from FS Lines with parentFsLineId)
     const noteItem = fsNotes.find(n => n.name === noteName);
-    const parentName = (noteItem as any)?.parentName || null;
-    const statement = (noteItem as any)?.statement || null;
+    let parentName = (noteItem as any)?.parentName || null;
+    let statement = (noteItem as any)?.statement || null;
 
-    // If no parent mapping, try fallback from fsAllItems
-    const allItem = fsAllItems.find(i => i.name === noteName);
-    const fallbackStatement = allItem?.statement || statement;
+    // 2. Fallback: look up from fsAllItems
+    if (!parentName || !statement) {
+      const allItem = fsAllItems.find(i => i.name === noteName);
+      if (allItem) {
+        if (!statement) statement = allItem.statement || null;
+        if (!parentName) parentName = (allItem as any).parentName || null;
+      }
+    }
+
+    // 3. Fallback: look at other TB rows that have the same fsNoteLevel and already have fsLevel/fsStatement set
+    if (!parentName || !statement) {
+      const matchingRow = rows.find(r => r.fsNoteLevel === noteName && r.fsLevel);
+      if (matchingRow) {
+        if (!parentName) parentName = matchingRow.fsLevel;
+        if (!statement) statement = matchingRow.fsStatement;
+      }
+    }
+
+    // 4. Fallback: look at FS Levels list — if noteName matches a level name, it IS the level
+    if (!parentName) {
+      const levelMatch = fsLevels.find(l => l.name === noteName);
+      if (levelMatch) {
+        parentName = levelMatch.name;
+        if (!statement) statement = levelMatch.statement;
+      }
+    }
 
     setRows(prev => prev.map((r, i) => i === index ? {
       ...r,
       fsNoteLevel: noteName || null,
       fsLevel: parentName || r.fsLevel,
-      fsStatement: fallbackStatement || r.fsStatement,
+      fsStatement: statement || r.fsStatement,
     } : r));
   }
 
   // When FS Level is selected, auto-populate FS Statement
   function handleFsLevelChange(index: number, levelName: string) {
     const levelItem = fsLevels.find(l => l.name === levelName);
+    let statement = levelItem?.statement || null;
+
+    // Fallback: look at other TB rows with the same fsLevel
+    if (!statement) {
+      const matchingRow = rows.find(r => r.fsLevel === levelName && r.fsStatement);
+      if (matchingRow) statement = matchingRow.fsStatement;
+    }
+
     setRows(prev => prev.map((r, i) => i === index ? {
       ...r,
       fsLevel: levelName || null,
-      fsStatement: levelItem?.statement || r.fsStatement,
+      fsStatement: statement || r.fsStatement,
     } : r));
   }
 
