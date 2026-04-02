@@ -513,6 +513,51 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
           </div>
         );
       })()}
+
+      {/* TB Detail — Account Code, Description, FS Note, CY, PY, Assertions */}
+      {filteredRows.length > 0 && (
+        <div className="bg-white rounded border border-slate-200 overflow-hidden mt-2">
+          <div className="px-2 py-1 bg-slate-50 border-b border-slate-200">
+            <span className="text-[9px] font-semibold text-slate-500">Trial Balance Detail</span>
+          </div>
+          <table className="w-full text-[10px]">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Code</th>
+                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Description</th>
+                {isThreeLevel && <th className="px-1.5 py-1 text-left font-semibold text-slate-600">FS Note</th>}
+                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">{fmtDate(periodEndDate) || 'CY'}</th>
+                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">{dayBefore(periodStartDate) || 'PY'}</th>
+                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Assertions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {filteredRows.map(row => {
+                // Look up assertions from RMM for this row's FS Level
+                const rmmMatch = rmmItems.find(r => r.lineItem.toLowerCase() === (row.fsLevel || '').toLowerCase());
+                return (
+                  <tr key={row.id} className="hover:bg-slate-50">
+                    <td className="px-1.5 py-0.5 font-mono text-slate-500">{row.accountCode}</td>
+                    <td className="px-1.5 py-0.5 text-slate-700">{row.description}</td>
+                    {isThreeLevel && <td className="px-1.5 py-0.5 text-slate-400">{row.fsNoteLevel || ''}</td>}
+                    <td className="px-1.5 py-0.5 text-right">{fmtAmount(row.currentYear)}</td>
+                    <td className="px-1.5 py-0.5 text-right text-slate-500">{fmtAmount(row.priorYear)}</td>
+                    <td className="px-1.5 py-0.5">
+                      {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
+                        <div className="flex flex-wrap gap-0.5">
+                          {rmmMatch.assertions.map(a => (
+                            <span key={a} className="text-[8px] px-1 py-0 bg-blue-100 text-blue-600 rounded">{a.length > 10 ? a.split(' ').map(w => w[0]).join('') : a}</span>
+                          ))}
+                        </div>
+                      ) : <span className="text-slate-300">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
