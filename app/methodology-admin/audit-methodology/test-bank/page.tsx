@@ -39,7 +39,7 @@ export default async function TestBankPage() {
 
   const frameworkOptions = fwTemplate ? fwTemplate.items as string[] : [];
   const testActions = testActionsTable?.data && Array.isArray(testActionsTable.data) ? testActionsTable.data as any[] : [];
-  const canEditFlow = session.user.isSuperAdmin || session.user.isTestBuilder;
+  const canEditFlow = session.user.isSuperAdmin || session.user.isMethodologyAdmin || (session.user as any).isTestBuilder;
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-7xl">
