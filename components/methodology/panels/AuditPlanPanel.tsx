@@ -290,11 +290,15 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
           const testAss = test.assertion.toLowerCase();
           const matches = assertions.some(a => {
             const rowAss = a.toLowerCase();
-            // Handle abbreviated assertions: "Com" matches "Completeness", "Cut" matches "Cut-off", etc.
             return testAss.includes(rowAss) || rowAss.includes(testAss) ||
               testAss.startsWith(rowAss.slice(0, 3)) || rowAss.startsWith(testAss.slice(0, 3));
           });
           if (!matches) continue;
+        }
+        // Filter by categories if the test has them — only show if test applies to this category
+        if ((test as any).categories && Array.isArray((test as any).categories) && (test as any).categories.length > 0) {
+          const cats = (test as any).categories.map((c: string) => c.toLowerCase());
+          if (!searchTerms.some(term => cats.some((c: string) => c.includes(term) || term.includes(c)))) continue;
         }
         // Deduplicate
         if (seen.has(test.description)) continue;
