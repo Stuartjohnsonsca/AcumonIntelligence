@@ -92,10 +92,15 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
 
   const levels = useMemo(() => {
     if (!activeStatement) return [];
-    const set = new Set<string>();
-    for (const row of tbRows) { if (row.fsStatement === activeStatement && row.fsLevel) set.add(row.fsLevel); }
-    return Array.from(set).sort();
-  }, [tbRows, activeStatement]);
+    const levelAmounts: Record<string, number> = {};
+    for (const row of tbRows) {
+      if (row.fsStatement === activeStatement && row.fsLevel) {
+        levelAmounts[row.fsLevel] = (levelAmounts[row.fsLevel] || 0) + Math.abs(Number(row.currentYear) || 0);
+      }
+    }
+    // Only include levels with monetary value or significant risk
+    return Object.keys(levelAmounts).filter(l => levelAmounts[l] > 0 || significantRiskItems.has(l)).sort();
+  }, [tbRows, activeStatement, significantRiskItems]);
 
   // Notes — only for 3-level statements (Balance Sheet), filtered by value/risk
   const notes = useMemo(() => {
@@ -112,8 +117,12 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
   const filteredRows = useMemo(() => {
     return tbRows.filter(row => {
       if (row.fsStatement !== activeStatement) return false;
-      if (activeLevel && row.fsLevel !== activeLevel) return false;
-      if (activeNote && row.fsNoteLevel !== activeNote) return false;
+      if (activeLevel && row.fsLevel && row.fsLevel !== activeLevel) return false;
+      if (activeNote && row.fsNoteLevel && row.fsNoteLevel !== activeNote) return false;
+      // Must have monetary value (CY or PY non-zero)
+      const cy = Number(row.currentYear) || 0;
+      const py = Number(row.priorYear) || 0;
+      if (cy === 0 && py === 0) return false;
       return true;
     });
   }, [tbRows, activeStatement, activeLevel, activeNote]);
@@ -216,26 +225,26 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
         {filteredRows.length === 0 ? (
           <div className="p-4 text-center text-[10px] text-slate-400">No items for this selection.</div>
         ) : (
-          <table className="w-full text-[10px]">
+          <table className="text-[10px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-20">Code</th>
-                <th className="px-2 py-1.5 text-left font-semibold text-slate-600">Description</th>
-                {isThreeLevel && <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-28">FS Note</th>}
-                <th className="px-2 py-1.5 text-right font-semibold text-slate-600 w-24">CY</th>
-                <th className="px-2 py-1.5 text-right font-semibold text-slate-600 w-24">PY</th>
-                <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-24">Approach</th>
+                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Code</th>
+                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Description</th>
+                {isThreeLevel && <th className="px-1.5 py-1 text-left font-semibold text-slate-600">FS Note</th>}
+                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">CY</th>
+                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">PY</th>
+                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Approach</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredRows.map(row => (
                 <tr key={row.id} className="hover:bg-slate-50">
-                  <td className="px-2 py-1 font-mono text-slate-500">{row.accountCode}</td>
-                  <td className="px-2 py-1 text-slate-700">{row.description}</td>
-                  {isThreeLevel && <td className="px-2 py-1 text-slate-400">{row.fsNoteLevel || ''}</td>}
-                  <td className="px-2 py-1 text-right">{fmtAmount(row.currentYear)}</td>
-                  <td className="px-2 py-1 text-right text-slate-500">{fmtAmount(row.priorYear)}</td>
-                  <td className="px-2 py-1">
+                  <td className="px-1.5 py-0.5 font-mono text-slate-500">{row.accountCode}</td>
+                  <td className="px-1.5 py-0.5 text-slate-700">{row.description}</td>
+                  {isThreeLevel && <td className="px-1.5 py-0.5 text-slate-400">{row.fsNoteLevel || ''}</td>}
+                  <td className="px-1.5 py-0.5 text-right">{fmtAmount(row.currentYear)}</td>
+                  <td className="px-1.5 py-0.5 text-right text-slate-500">{fmtAmount(row.priorYear)}</td>
+                  <td className="px-1.5 py-0.5">
                     <span className="text-[9px] px-1 py-0.5 bg-blue-50 text-blue-600 rounded">Plan</span>
                   </td>
                 </tr>
