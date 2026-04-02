@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3, MessageSquareMore } from 'lucide-react';
+import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3, MessageSquareMore, ListChecks } from 'lucide-react';
 
 const tiles = [
   {
@@ -51,6 +51,14 @@ const tiles = [
     icon: Calendar,
     color: 'bg-amber-50 border-amber-200 hover:bg-amber-100',
     iconColor: 'text-amber-600',
+  },
+  {
+    title: 'Test Actions',
+    description: 'Define reusable test action steps that can be assigned to tests across the Test Bank',
+    href: '/methodology-admin/audit-methodology/test-actions',
+    icon: ListChecks,
+    color: 'bg-orange-50 border-orange-200 hover:bg-orange-100',
+    iconColor: 'text-orange-600',
   },
   {
     title: 'Questionnaire Actions',
