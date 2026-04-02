@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { Loader2, ArrowLeft, FileText } from 'lucide-react';
 
 interface TBRow {
@@ -430,134 +430,78 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
         </div>
       )}
 
-      {/* Content — RMM-driven with indented Test Bank procedures */}
-      {(() => {
-        // Get RMM items matching the active level
-        const levelRmm = rmmItems.filter(r => {
-          if (!activeLevel) return false;
-          return r.lineItem.toLowerCase() === activeLevel.toLowerCase();
-        });
-        // Also include significant risk items for the whole statement if no specific match
-        const stmtRmm = levelRmm.length > 0 ? levelRmm : rmmItems.filter(r => {
-          const lc = r.lineItem.toLowerCase();
-          return activeLevel && lc.includes(activeLevel.toLowerCase());
-        });
-        const displayRmm = stmtRmm.length > 0 ? stmtRmm : levelRmm;
-
-        return (
-          <div className="space-y-1">
-            {displayRmm.length === 0 ? (
-              <div className="bg-white rounded border border-slate-200 p-4 text-center text-[10px] text-slate-400">
-                No RMM items for {activeLevel || activeStatement}. Import data in Identifying &amp; Assessing RMM first.
-              </div>
-            ) : displayRmm.map((rmm, ri) => {
-              const rmmKey = `${rmm.lineItem}-${ri}`;
-              const isExpanded = expandedRmm.has(rmmKey) || expandedRmm.size === 0; // Auto-expand if none expanded
-              const tests = getTestsForRmm(rmm.lineItem, rmm.assertions);
-              const isSigRisk = rmm.overallRisk === 'High' || rmm.overallRisk === 'Very High';
-
-              return (
-                <div key={rmmKey} className={`bg-white rounded border overflow-hidden ${isSigRisk ? 'border-red-200' : 'border-slate-200'}`}>
-                  {/* RMM row header */}
-                  <button
-                    onClick={() => toggleRmmExpand(rmmKey)}
-                    className={`w-full flex items-center justify-between px-3 py-2 text-left hover:bg-slate-50 ${isSigRisk ? 'bg-red-50/30' : ''}`}
-                  >
-                    <div className="flex items-center gap-2 flex-1">
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${
-                        isSigRisk ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
-                      }`}>
-                        {rmm.overallRisk || '—'}
-                      </span>
-                      <span className="text-[11px] font-medium text-slate-800">{rmm.lineItem}</span>
-                      {rmm.riskIdentified && <span className="text-[9px] text-slate-400 truncate max-w-[200px]">{rmm.riskIdentified}</span>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[9px] text-slate-500">{fmtAmount(rmm.amount)}</span>
-                      {rmm.assertions && rmm.assertions.length > 0 && (
-                        <div className="flex gap-0.5">
-                          {rmm.assertions.slice(0, 3).map(a => (
-                            <span key={a} className="text-[8px] px-1 py-0 bg-blue-100 text-blue-600 rounded">{a.slice(0, 3)}</span>
-                          ))}
-                        </div>
-                      )}
-                      <span className="text-[9px] text-slate-400">{tests.length} test{tests.length !== 1 ? 's' : ''}</span>
-                      <span className="text-slate-400 text-[10px]">{isExpanded ? '▼' : '▶'}</span>
-                    </div>
-                  </button>
-
-                  {/* Indented tests from Test Bank */}
-                  {isExpanded && tests.length > 0 && (
-                    <div className="border-t border-slate-100">
-                      {tests.map((test, ti) => (
-                        <div key={ti} className={`flex items-start gap-2 px-3 py-1.5 ml-6 border-b border-slate-50 last:border-0 ${test.color} bg-opacity-30`}>
-                          <span className={`text-[8px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 mt-0.5 ${test.color}`}>
-                            {test.typeName}
-                          </span>
-                          <span className="text-[10px] text-slate-700 flex-1">{test.description}</span>
-                          {test.assertion && (
-                            <span className="text-[8px] px-1 py-0 bg-slate-100 text-slate-500 rounded flex-shrink-0">{test.assertion}</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {isExpanded && tests.length === 0 && (
-                    <div className="border-t border-slate-100 px-3 py-2 ml-6 text-[9px] text-slate-400 italic">
-                      No tests configured for this FS line in the Test Bank.
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })()}
-
-      {/* TB Detail — Account Code, Description, FS Note, CY, PY, Assertions */}
-      {filteredRows.length > 0 && (
-        <div className="bg-white rounded border border-slate-200 overflow-hidden mt-2">
-          <div className="px-2 py-1 bg-slate-50 border-b border-slate-200">
-            <span className="text-[9px] font-semibold text-slate-500">Trial Balance Detail</span>
-          </div>
+      {/* Integrated TB rows with expandable tests underneath each row */}
+      <div className="bg-white rounded border border-slate-200 overflow-hidden">
+        {filteredRows.length === 0 ? (
+          <div className="p-4 text-center text-[10px] text-slate-400">No items for this selection.</div>
+        ) : (
           <table className="w-full text-[10px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Code</th>
-                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Description</th>
-                {isThreeLevel && <th className="px-1.5 py-1 text-left font-semibold text-slate-600">FS Note</th>}
-                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">{fmtDate(periodEndDate) || 'CY'}</th>
-                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">{dayBefore(periodStartDate) || 'PY'}</th>
-                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Assertions</th>
+                <th className="w-5 px-0.5 py-1"></th>
+                <th className="px-1 py-1 text-left font-semibold text-slate-600">Code</th>
+                <th className="px-1 py-1 text-left font-semibold text-slate-600">Description</th>
+                {isThreeLevel && <th className="px-1 py-1 text-left font-semibold text-slate-600">FS Note</th>}
+                <th className="px-1 py-1 text-right font-semibold text-slate-600">{fmtDate(periodEndDate) || 'CY'}</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600">{dayBefore(periodStartDate) || 'PY'}</th>
+                <th className="px-1 py-1 text-left font-semibold text-slate-600">Assertions</th>
+                <th className="px-1 py-1 text-left font-semibold text-slate-600">Risk</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody>
               {filteredRows.map(row => {
-                // Look up assertions from RMM for this row's FS Level
-                const rmmMatch = rmmItems.find(r => r.lineItem.toLowerCase() === (row.fsLevel || '').toLowerCase());
+                const rmmMatch = rmmItems.find(r => r.lineItem.toLowerCase() === (row.fsLevel || row.fsNoteLevel || '').toLowerCase());
+                const tests = getTestsForRmm(row.fsLevel || row.fsNoteLevel || row.description, rmmMatch?.assertions || null);
+                const rowKey = row.id || row.accountCode;
+                const isExp = expandedRmm.has(rowKey);
+                const isSig = rmmMatch && (rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High');
                 return (
-                  <tr key={row.id} className="hover:bg-slate-50">
-                    <td className="px-1.5 py-0.5 font-mono text-slate-500">{row.accountCode}</td>
-                    <td className="px-1.5 py-0.5 text-slate-700">{row.description}</td>
-                    {isThreeLevel && <td className="px-1.5 py-0.5 text-slate-400">{row.fsNoteLevel || ''}</td>}
-                    <td className="px-1.5 py-0.5 text-right">{fmtAmount(row.currentYear)}</td>
-                    <td className="px-1.5 py-0.5 text-right text-slate-500">{fmtAmount(row.priorYear)}</td>
-                    <td className="px-1.5 py-0.5">
-                      {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
-                        <div className="flex flex-wrap gap-0.5">
-                          {rmmMatch.assertions.map(a => (
-                            <span key={a} className="text-[8px] px-1 py-0 bg-blue-100 text-blue-600 rounded">{a.length > 10 ? a.split(' ').map(w => w[0]).join('') : a}</span>
-                          ))}
-                        </div>
-                      ) : <span className="text-slate-300">—</span>}
-                    </td>
-                  </tr>
+                  <Fragment key={rowKey}>
+                    <tr className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${isSig ? 'bg-red-50/20' : ''}`} onClick={() => toggleRmmExpand(rowKey)}>
+                      <td className="px-0.5 py-0.5 text-center text-slate-400 text-[9px]">{tests.length > 0 ? (isExp ? '▼' : '▶') : ''}</td>
+                      <td className="px-1 py-0.5 font-mono text-slate-500">{row.accountCode}</td>
+                      <td className="px-1 py-0.5 text-slate-700">{row.description}</td>
+                      {isThreeLevel && <td className="px-1 py-0.5 text-slate-400">{row.fsNoteLevel || ''}</td>}
+                      <td className="px-1 py-0.5 text-right">{fmtAmount(row.currentYear)}</td>
+                      <td className="px-1 py-0.5 text-right text-slate-500">{fmtAmount(row.priorYear)}</td>
+                      <td className="px-1 py-0.5">
+                        {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
+                          <div className="flex flex-wrap gap-0.5">
+                            {rmmMatch.assertions.map(a => (
+                              <span key={a} className="text-[8px] px-1 py-0 bg-blue-100 text-blue-600 rounded">{a.length > 10 ? a.split(' ').map(w => w[0]).join('') : a}</span>
+                            ))}
+                          </div>
+                        ) : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-1 py-0.5">
+                        {rmmMatch?.overallRisk && (
+                          <span className={`text-[8px] px-1 py-0 rounded font-medium ${isSig ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {rmmMatch.overallRisk}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                    {/* Expandable tests — indented underneath the row */}
+                    {isExp && tests.map((test, ti) => (
+                      <tr key={`${rowKey}-t${ti}`} className={`border-b border-slate-50 ${test.color} bg-opacity-20`}>
+                        <td></td>
+                        <td className="px-1 py-0.5" colSpan={isThreeLevel ? 2 : 1}>
+                          <span className={`text-[8px] px-1 py-0.5 rounded border font-medium ${test.color}`}>{test.typeName}</span>
+                        </td>
+                        <td className="px-1 py-0.5 text-slate-700" colSpan={isThreeLevel ? 3 : 3}>{test.description}</td>
+                        <td className="px-1 py-0.5">
+                          {test.assertion && <span className="text-[8px] px-1 py-0 bg-slate-100 text-slate-500 rounded">{test.assertion}</span>}
+                        </td>
+                        <td></td>
+                      </tr>
+                    ))}
+                  </Fragment>
                 );
               })}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
