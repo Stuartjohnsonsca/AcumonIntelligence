@@ -22,8 +22,15 @@ interface Props {
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 
+interface RMMItem {
+  lineItem: string;
+  overallRisk: string | null;
+  amount: number | null;
+}
+
 export function AuditPlanPanel({ engagementId, onClose }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
+  const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeStatement, setActiveStatement] = useState('');
   const [activeLevel, setActiveLevel] = useState('');
@@ -32,18 +39,36 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(`/api/engagements/${engagementId}/trial-balance`);
-        if (res.ok) {
-          const data = await res.json();
+        const [tbRes, rmmRes] = await Promise.all([
+          fetch(`/api/engagements/${engagementId}/trial-balance`),
+          fetch(`/api/engagements/${engagementId}/rmm`),
+        ]);
+        if (tbRes.ok) {
+          const data = await tbRes.json();
           setTbRows(data.rows || []);
         }
+        if (rmmRes.ok) {
+          const data = await rmmRes.json();
+          setRmmItems((data.rows || []).map((r: any) => ({
+            lineItem: r.lineItem,
+            overallRisk: r.overallRisk || r.finalRiskAssessment,
+            amount: r.amount,
+          })));
+        }
       } catch (err) {
-        console.error('Failed to load TB for audit plan:', err);
+        console.error('Failed to load data for audit plan:', err);
       }
       setLoading(false);
     }
     load();
   }, [engagementId]);
+
+  // RMM significant risk items (High or Very High)
+  const significantRiskItems = useMemo(() => {
+    return new Set(rmmItems
+      .filter(r => r.overallRisk === 'High' || r.overallRisk === 'Very High')
+      .map(r => r.lineItem));
+  }, [rmmItems]);
 
   // Top level: FS Statements (Balance Sheet, P&L, etc.)
   const statements = useMemo(() => {
@@ -66,17 +91,21 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
     return Array.from(set).sort();
   }, [tbRows, activeStatement]);
 
-  // Bottom level: FS Note items for the active level (e.g. Trade Debtors, Prepayments)
+  // Bottom level: FS Note items — only where monetary value exists OR significant risk in RMM
   const notes = useMemo(() => {
     if (!activeLevel) return [];
-    const set = new Set<string>();
+    const noteAmounts: Record<string, number> = {};
     for (const row of tbRows) {
       if (row.fsStatement === activeStatement && row.fsLevel === activeLevel && row.fsNoteLevel) {
-        set.add(row.fsNoteLevel);
+        const cy = Number(row.currentYear) || 0;
+        noteAmounts[row.fsNoteLevel] = (noteAmounts[row.fsNoteLevel] || 0) + Math.abs(cy);
       }
     }
-    return Array.from(set).sort();
-  }, [tbRows, activeStatement, activeLevel]);
+    // Include note if it has a non-zero monetary value OR is flagged as significant risk in RMM
+    return Object.keys(noteAmounts)
+      .filter(note => noteAmounts[note] > 0 || significantRiskItems.has(note))
+      .sort();
+  }, [tbRows, activeStatement, activeLevel, significantRiskItems]);
 
   // Filtered rows
   const filteredRows = useMemo(() => {
@@ -176,16 +205,22 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
           >
             All
           </button>
-          {notes.map(note => (
+          {notes.map(note => {
+            const isSigRisk = significantRiskItems.has(note);
+            return (
             <button
               key={note}
               onClick={() => setActiveNote(note)}
               className={`px-2.5 py-1 text-[10px] font-medium rounded border transition-colors ${
-                activeNote === note ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'
+                activeNote === note ? 'bg-blue-100 text-blue-700 border-blue-300' :
+                isSigRisk ? 'bg-red-50 text-red-700 border-red-200 hover:border-red-300' :
+                'bg-white text-slate-500 border-slate-200 hover:border-blue-300'
               }`}
             >
-              {note}
+              {note}{isSigRisk && <span className="ml-1 text-red-500">⚠</span>}
             </button>
+            );
+          }
           ))}
         </div>
       )}
