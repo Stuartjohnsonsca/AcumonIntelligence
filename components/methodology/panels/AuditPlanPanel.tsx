@@ -246,8 +246,14 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
             amount: r.amount, assertions: r.assertions || [], notes: r.notes,
           })));
         }
-        if (tbankRes.ok) setTestBank((await tbankRes.json()).testBanks || []);
-        if (ttRes.ok) setTestTypes((await ttRes.json()).testTypes || []);
+        if (tbankRes.ok) {
+          const tbData = await tbankRes.json();
+          setTestBank(tbData.testBanks || tbData.entries || []);
+        }
+        if (ttRes.ok) {
+          const ttData = await ttRes.json();
+          setTestTypes(ttData.types || ttData.testTypes || []);
+        }
         if (engRes.ok) {
           const eng = (await engRes.json()).engagement;
           if (eng?.methodologyConfig?.config?.accountingFramework) {
@@ -472,8 +478,9 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
             </thead>
             <tbody>
               {filteredRows.map(row => {
-                const rmmMatch = rmmItems.find(r => r.lineItem.toLowerCase() === (row.fsLevel || row.fsNoteLevel || '').toLowerCase());
-                const tests = getTestsForRow(row.fsLevel, row.fsNoteLevel, row.description, rmmMatch?.assertions || null);
+                const rmmMatch = rmmItems.find(r => r.lineItem.toLowerCase() === (row.fsLevel || activeLevel || row.fsNoteLevel || '').toLowerCase());
+                // Use activeLevel (the sub-tab) as the primary lookup — this is the FS Level like "Revenue"
+                const tests = getTestsForRow(activeLevel || row.fsLevel, row.fsNoteLevel, row.description, rmmMatch?.assertions || null);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rmmMatch && (rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High');

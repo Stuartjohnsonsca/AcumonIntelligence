@@ -2,6 +2,19 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
+export async function GET() {
+  const session = await auth();
+  if (!session?.user?.twoFactorVerified) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const testBanks = await prisma.methodologyTestBank.findMany({
+    where: { firmId: session.user.firmId },
+  });
+
+  return NextResponse.json({ testBanks });
+}
+
 export async function PUT(req: Request) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin)) {

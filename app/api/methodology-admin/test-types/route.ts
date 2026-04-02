@@ -4,8 +4,8 @@ import { prisma } from '@/lib/db';
 
 export async function GET() {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!session?.user?.twoFactorVerified) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const types = await prisma.methodologyTestType.findMany({
