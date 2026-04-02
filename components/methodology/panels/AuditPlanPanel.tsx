@@ -228,6 +228,15 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
   const [activeNote, setActiveNote] = useState('');
   const [framework, setFramework] = useState('');
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
+  const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
+
+  function toggleTestApplicable(testKey: string) {
+    setExcludedTests(prev => {
+      const next = new Set(prev);
+      next.has(testKey) ? next.delete(testKey) : next.add(testKey);
+      return next;
+    });
+  }
 
   useEffect(() => {
     async function load() {
@@ -515,18 +524,25 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
                         )}
                       </td>
                     </tr>
-                    {isExp && tests.map((test, ti) => (
-                      <tr key={`${rowKey}-t${ti}`} className="border-b border-slate-50">
-                        <td></td>
+                    {isExp && tests.map((test, ti) => {
+                      const testKey = `${rowKey}::${test.description}`;
+                      const isApplicable = !excludedTests.has(testKey);
+                      return (
+                      <tr key={`${rowKey}-t${ti}`} className={`border-b border-slate-50 ${!isApplicable ? 'opacity-30' : ''}`}>
+                        <td className="text-center">
+                          <input type="checkbox" checked={isApplicable} onChange={() => toggleTestApplicable(testKey)}
+                            className="w-2.5 h-2.5 rounded border-slate-300 cursor-pointer" title={isApplicable ? 'Applicable — click to exclude' : 'Not applicable — click to include'} />
+                        </td>
                         <td colSpan={isThreeLevel ? 7 : 6} className="py-0.5 pl-4">
                           <div className="flex items-start gap-1.5">
                             <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
-                            <span className="text-[9px] text-slate-700">{test.description}</span>
+                            <span className={`text-[9px] ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}>{test.description}</span>
                             {test.assertion && <span className="text-[7px] px-0.5 py-0 bg-slate-100 text-slate-400 rounded flex-shrink-0">{test.assertion}</span>}
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </Fragment>
                 );
               })}
