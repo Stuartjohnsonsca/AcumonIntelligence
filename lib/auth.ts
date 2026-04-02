@@ -50,6 +50,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               isPortfolioOwner: user.isPortfolioOwner,
               isMethodologyAdmin: user.isMethodologyAdmin,
               isResourceAdmin: (user as any).isResourceAdmin ?? false,
+            isTestBuilder: (user as any).isTestBuilder ?? false,
               firmId: user.firmId,
               firmName: user.firm.name,
               displayId: user.displayId,
@@ -83,6 +84,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             isPortfolioOwner: user.isPortfolioOwner,
             isMethodologyAdmin: user.isMethodologyAdmin,
             isResourceAdmin: (user as any).isResourceAdmin ?? false,
+            isTestBuilder: (user as any).isTestBuilder ?? false,
             firmId: user.firmId,
             firmName: user.firm.name,
             displayId: user.displayId,
@@ -110,6 +112,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           isPortfolioOwner: user.isPortfolioOwner,
           isMethodologyAdmin: user.isMethodologyAdmin,
           isResourceAdmin: (user as any).isResourceAdmin ?? false,
+            isTestBuilder: (user as any).isTestBuilder ?? false,
           firmId: user.firmId,
           firmName: user.firm.name,
           displayId: user.displayId,
@@ -159,6 +162,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           isPortfolioOwner: user.isPortfolioOwner,
           isMethodologyAdmin: user.isMethodologyAdmin,
           isResourceAdmin: (user as any).isResourceAdmin ?? false,
+            isTestBuilder: (user as any).isTestBuilder ?? false,
           firmId: user.firmId,
           firmName: user.firm.name,
           displayId: user.displayId,
@@ -196,6 +200,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.isPortfolioOwner = false;
           token.isMethodologyAdmin = false;
           token.isResourceAdmin = false;
+          token.isTestBuilder = false;
           token.firmId = null;
           token.firmName = null;
           token.displayId = null;
@@ -226,6 +231,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.isPortfolioOwner = dbUser.isPortfolioOwner;
         token.isMethodologyAdmin = dbUser.isMethodologyAdmin;
         token.isResourceAdmin = (dbUser as any).isResourceAdmin ?? false;
+        token.isTestBuilder = (dbUser as any).isTestBuilder ?? false;
         token.firmId = dbUser.firmId;
         token.firmName = dbUser.firm.name;
         token.displayId = dbUser.displayId;
@@ -241,6 +247,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.isPortfolioOwner = (user as any).isPortfolioOwner;
         token.isMethodologyAdmin = (user as any).isMethodologyAdmin;
         token.isResourceAdmin = (user as any).isResourceAdmin;
+        token.isTestBuilder = (user as any).isTestBuilder;
         token.firmId = (user as any).firmId;
         token.firmName = (user as any).firmName;
         token.displayId = (user as any).displayId;
@@ -257,6 +264,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         session.user.isPortfolioOwner = token.isPortfolioOwner as boolean;
         session.user.isMethodologyAdmin = token.isMethodologyAdmin as boolean;
         session.user.isResourceAdmin = token.isResourceAdmin as boolean;
+        session.user.isTestBuilder = token.isTestBuilder as boolean;
         session.user.firmId = token.firmId as string;
         session.user.firmName = token.firmName as string;
         session.user.displayId = token.displayId as string;

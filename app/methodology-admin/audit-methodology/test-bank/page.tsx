@@ -17,7 +17,7 @@ export default async function TestBankPage() {
 
   const firmId = session.user.firmId;
 
-  const [industries, testTypes, testBanks, fwTemplate] = await Promise.all([
+  const [industries, testTypes, testBanks, fwTemplate, testActionsTable] = await Promise.all([
     prisma.methodologyIndustry.findMany({
       where: { firmId, isActive: true },
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
@@ -32,9 +32,14 @@ export default async function TestBankPage() {
     prisma.methodologyTemplate.findFirst({
       where: { firmId, templateType: 'audit_type_schedules', auditType: '__framework_options' },
     }),
+    prisma.methodologyRiskTable.findFirst({
+      where: { firmId, tableType: 'test_actions' },
+    }),
   ]);
 
   const frameworkOptions = fwTemplate ? fwTemplate.items as string[] : [];
+  const testActions = testActionsTable?.data && Array.isArray(testActionsTable.data) ? testActionsTable.data as any[] : [];
+  const canEditFlow = session.user.isSuperAdmin || session.user.isMethodologyAdmin || (session.user as any).isTestBuilder;
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-7xl">
@@ -49,6 +54,8 @@ export default async function TestBankPage() {
         initialTestTypes={testTypes}
         initialTestBanks={testBanks as any}
         initialFrameworkOptions={frameworkOptions}
+        initialTestActions={testActions}
+        canEditFlow={canEditFlow}
       />
     </div>
   );

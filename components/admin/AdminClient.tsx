@@ -5,16 +5,21 @@ import { ProductsAdmin } from './ProductsAdmin';
 import { FirmsAdmin } from './FirmsAdmin';
 import { AggregatorConnectorsTab } from '../my-account/AggregatorConnectorsTab';
 import { ActionTriggersAdmin } from './ActionTriggersAdmin';
+import { SuperAdminsAdmin } from './SuperAdminsAdmin';
 
 export function AdminClient() {
   return (
-    <Tabs defaultValue="products" className="w-full">
+    <Tabs defaultValue="super-admins" className="w-full">
       <TabsList className="mb-6">
+        <TabsTrigger value="super-admins">Super Admins</TabsTrigger>
         <TabsTrigger value="products">Products</TabsTrigger>
         <TabsTrigger value="firms">Firms</TabsTrigger>
         <TabsTrigger value="aggregator-connectors">Aggregator Connectors</TabsTrigger>
         <TabsTrigger value="action-triggers">Action Triggers</TabsTrigger>
       </TabsList>
+      <TabsContent value="super-admins">
+        <SuperAdminsAdmin />
+      </TabsContent>
       <TabsContent value="products">
         <ProductsAdmin />
       </TabsContent>

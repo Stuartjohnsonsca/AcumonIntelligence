@@ -21,6 +21,7 @@ interface User {
   department?: string | null;
   lastSyncedAt?: string | null;
   isAuditStaff: boolean;
+  isTestBuilder: boolean;
 }
 
 interface SyncAction {
@@ -51,7 +52,7 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', email: '', displayId: '', password: '',
-    isFirmAdmin: false, isPortfolioOwner: false,
+    isFirmAdmin: false, isPortfolioOwner: false, isTestBuilder: false,
   });
 
   // AD Sync state
@@ -80,7 +81,7 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, firmId }),
     });
-    setForm({ name: '', email: '', displayId: '', password: '', isFirmAdmin: false, isPortfolioOwner: false });
+    setForm({ name: '', email: '', displayId: '', password: '', isFirmAdmin: false, isPortfolioOwner: false, isTestBuilder: false });
     setShowForm(false);
     await loadUsers();
     setSaving(false);
@@ -100,6 +101,17 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
     });
     if (res.ok) {
       setUsers(prev => prev.map(u => u.id === user.id ? { ...u, isAuditStaff: !u.isAuditStaff } : u));
+    }
+  }
+
+  async function toggleTestBuilder(user: User) {
+    const res = await fetch(`/api/users/${user.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isTestBuilder: !user.isTestBuilder }),
+    });
+    if (res.ok) {
+      setUsers(prev => prev.map(u => u.id === user.id ? { ...u, isTestBuilder: !u.isTestBuilder } : u));
     }
   }
 
@@ -347,6 +359,10 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
                   <input type="checkbox" checked={form.isPortfolioOwner} onChange={e => setForm({ ...form, isPortfolioOwner: e.target.checked })} className="rounded" />
                   <span className="text-sm">Portfolio Owner</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.isTestBuilder} onChange={e => setForm({ ...form, isTestBuilder: e.target.checked })} className="rounded" />
+                  <span className="text-sm">Test Builder</span>
+                </label>
               </div>
               <div className="sm:col-span-2 flex gap-2">
                 <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
@@ -381,6 +397,7 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
                     {u.isPortfolioOwner && !u.isFirmAdmin && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Portfolio Owner</span>}
                     {!u.isActive && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Inactive</span>}
                     {u.isAuditStaff && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Audit</span>}
+                    {u.isTestBuilder && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">Test Builder</span>}
                   </div>
                   <div className="text-sm text-slate-500">
                     {u.email} · {u.displayId}
@@ -395,6 +412,11 @@ export function UsersTab({ firmId, isSuperAdmin, currentUserId }: Props) {
                   className={`text-xs px-2 py-1 rounded border transition-colors ${u.isAuditStaff ? 'bg-green-100 border-green-300 text-green-700 hover:bg-green-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
                   title={u.isAuditStaff ? 'Remove Audit flag' : 'Flag as Audit staff'}>
                   Audit
+                </button>
+                <button onClick={() => toggleTestBuilder(u)}
+                  className={`text-xs px-2 py-1 rounded border transition-colors ${u.isTestBuilder ? 'bg-orange-100 border-orange-300 text-orange-700 hover:bg-orange-200' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                  title={u.isTestBuilder ? 'Remove Test Builder access' : 'Grant Test Builder access'}>
+                  Test Builder
                 </button>
                 {u.id !== currentUserId && (
                   <Button variant="ghost" size="icon" onClick={() => handleDelete(u.id)} className="text-red-400 hover:text-red-600 hover:bg-red-50">

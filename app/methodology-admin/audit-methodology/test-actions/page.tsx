@@ -7,7 +7,7 @@ import { BackButton } from '@/components/methodology-admin/BackButton';
 export default async function TestActionsPage() {
   const session = await auth();
   if (!session?.user || !session.user.twoFactorVerified) redirect('/login');
-  if (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin) redirect('/access-denied');
+  if (!session.user.isSuperAdmin) redirect('/access-denied');
 
   let actions: any[] = [];
   try {
