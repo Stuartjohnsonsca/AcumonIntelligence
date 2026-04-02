@@ -80,8 +80,17 @@ const PLACEHOLDERS = [
 ];
 
 export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props) {
-  const [expanded, setExpanded] = useState(!!executionDef);
+  const [expanded, setExpanded] = useState(true);
   const [showPlaceholders, setShowPlaceholders] = useState(false);
+
+  // Auto-initialise on mount if no def exists
+  useState(() => {
+    if (!executionDef) {
+      if (actionType === 'ai_action') onChange({ promptTemplate: '', inputs: [], outputFormat: 'pass_fail', requiresReview: true });
+      else if (actionType === 'client_action') onChange({ requestTemplate: { subject: '', message: '' }, expectedResponse: 'file_upload' });
+      else onChange({ instructions: '', inputs: [], outputFormat: 'form_data' });
+    }
+  });
 
   // Initialise default def if none exists
   function ensureDef() {
