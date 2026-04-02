@@ -24,6 +24,8 @@ interface RMMItem {
 interface Props {
   engagementId: string;
   onClose: () => void;
+  periodEndDate?: string | null;
+  periodStartDate?: string | null;
 }
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
@@ -182,7 +184,19 @@ function fmtAmount(v: number | null | undefined): string {
   return `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${n < 0 ? ' Cr' : ' Dr'}`;
 }
 
-export function AuditPlanPanel({ engagementId, onClose }: Props) {
+function fmtDate(d: string | null | undefined): string {
+  if (!d) return '';
+  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function dayBefore(d: string | null | undefined): string {
+  if (!d) return '';
+  const dt = new Date(d);
+  dt.setDate(dt.getDate() - 1);
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodStartDate }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -377,8 +391,8 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
                 <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Code</th>
                 <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Description</th>
                 {isThreeLevel && <th className="px-1.5 py-1 text-left font-semibold text-slate-600">FS Note</th>}
-                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">CY</th>
-                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">PY</th>
+                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">{fmtDate(periodEndDate) || 'CY'}</th>
+                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">{dayBefore(periodStartDate) || 'PY'}</th>
                 <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Approach</th>
               </tr>
             </thead>
