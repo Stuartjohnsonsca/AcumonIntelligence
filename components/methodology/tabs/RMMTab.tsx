@@ -40,6 +40,7 @@ interface RMMRow {
   overallRisk: string | null;
   isHidden: boolean;
   isMandatory: boolean;
+  notes: string | null;
   sortOrder: number;
   rowSignOffs?: RowSignOffs;
   lastEditedAt?: string;
@@ -225,7 +226,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
       inherentRiskLevel: null, aiSummary: null, isAiEdited: false,
       likelihood: null, magnitude: null, finalRiskAssessment: null,
       controlRisk: isControlsBased(auditType) ? null : 'Not Tested',
-      overallRisk: null, isHidden: false, isMandatory: false, sortOrder: 0,
+      overallRisk: null, isHidden: false, isMandatory: false, notes: null, sortOrder: 0,
       rowSignOffs: {},
     };
   }
@@ -472,6 +473,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-24">Control Risk</th>
               <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Overall</th>
               <th className="text-center px-1 py-2 text-slate-500 font-medium w-14" title="Significant Risk">Sig.Risk <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span></th>
+              <th className="text-left px-2 py-2 text-slate-500 font-medium min-w-[150px]">Notes</th>
               <th className="text-center px-1 py-2 text-slate-500 font-medium w-28">
                 <div className="flex gap-2 justify-center">
                   <span className="text-[7px]">Reviewer</span>
@@ -616,6 +618,11 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                       {(row.overallRisk === 'High' || row.overallRisk === 'Very High') && (
                         <span className="text-red-500 text-sm" title="Significant Risk">✓</span>
                       )}
+                    </td>
+                    {/* Notes — free text */}
+                    <td className="px-2 py-1 align-top">
+                      <AutoTextarea value={(row as any).notes || ''} onChange={v => updateRow(i, 'notes' as any, v)}
+                        className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" placeholder="Notes..." />
                     </td>
                     {/* Row-level sign-off dots */}
                     <td className="px-1 py-1 align-top">

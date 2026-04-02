@@ -1843,6 +1843,7 @@ model AuditRMMRow {
   overallRisk          String? @map("overall_risk")
   isHidden             Boolean @default(false) @map("is_hidden")
   isMandatory          Boolean @default(false) @map("is_mandatory")
+  notes                String? @db.Text
   sortOrder            Int     @default(0) @map("sort_order")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
