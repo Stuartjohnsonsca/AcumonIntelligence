@@ -574,54 +574,19 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
               />
             </div>
 
-            {/* Quick-add common patterns */}
-            <div className="space-y-1.5">
-              <div className="text-[10px] font-semibold text-slate-500 uppercase">Common Steps</div>
-              <DraggableItem
-                label="Portal Request"
-                icon={<Globe className="h-3.5 w-3.5 text-sky-600" />}
-                color="border-sky-300 bg-sky-50"
-                nodeType="action"
-                data={{ label: 'Request from Client', description: 'Send request via Client Portal', assignee: 'ai', inputType: 'portal_request' }}
-              />
-              <DraggableItem
-                label="Client Upload"
-                icon={<Users className="h-3.5 w-3.5 text-blue-600" />}
-                color="border-blue-300 bg-blue-50"
-                nodeType="action"
-                data={{ label: 'Client Uploads Data', description: 'Client uploads requested evidence', assignee: 'client', inputType: 'portal_upload' }}
-              />
-              <DraggableItem
-                label="AI Check"
-                icon={<Bot className="h-3.5 w-3.5 text-purple-600" />}
-                color="border-purple-300 bg-purple-50"
-                nodeType="action"
-                data={{ label: 'AI Verification', description: 'AI checks and validates data', assignee: 'ai', inputType: 'ai_analysis' }}
-              />
-              <DraggableItem
-                label="Sample Selection"
-                icon={<Calculator className="h-3.5 w-3.5 text-orange-600" />}
-                color="border-orange-300 bg-orange-50"
-                nodeType="action"
-                data={{ label: 'Select Sample', description: 'Use sample calculator to select items', assignee: 'team', inputType: 'sample_calculator' }}
-              />
-              <DraggableItem
-                label="Team Input"
-                icon={<User className="h-3.5 w-3.5 text-green-600" />}
-                color="border-green-300 bg-green-50"
-                nodeType="action"
-                data={{ label: 'User Input', description: 'Team member reviews or enters data', assignee: 'team', inputType: 'data_entry' }}
-              />
-            </div>
-
             {/* Test Actions from library */}
+            {testActions.length === 0 && (
+              <div className="text-[10px] text-slate-400 italic px-1 py-2">
+                No Test Actions defined yet. Add them in Test Bank &rarr; Test Actions tab.
+              </div>
+            )}
             {Object.entries(groupedActions).map(([type, actions]) => {
               if (actions.length === 0) return null;
               const colors = ASSIGNEE_COLORS[type === 'human' ? 'team' : type === 'review' ? 'ai' : type];
               return (
                 <div key={type} className="space-y-1.5">
                   <div className="text-[10px] font-semibold uppercase" style={{ color: colors?.text || '#475569' }}>
-                    {type === 'human' ? 'Team' : type === 'review' ? 'Review' : type === 'ai' ? 'AI' : 'Client'} Library
+                    {type === 'human' ? 'Team Actions' : type === 'review' ? 'Review Actions' : type === 'ai' ? 'AI Actions' : 'Client Actions'}
                   </div>
                   {actions.map((action) => (
                     <DraggableItem
