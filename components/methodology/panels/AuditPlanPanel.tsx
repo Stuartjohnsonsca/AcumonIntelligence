@@ -47,14 +47,16 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
   const [activeLevel, setActiveLevel] = useState('');
   const [activeNote, setActiveNote] = useState('');
   const [framework, setFramework] = useState('');
+  const [fsLineOrder, setFsLineOrder] = useState<Record<string, number>>({});
 
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, engRes] = await Promise.all([
+        const [tbRes, rmmRes, engRes, fsRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}`),
+          fetch('/api/methodology-admin/fs-lines'),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
@@ -62,7 +64,12 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
             lineItem: r.lineItem, overallRisk: r.overallRisk || r.finalRiskAssessment, amount: r.amount,
           })));
         }
-        // Get accounting framework from engagement/permanent file
+        if (fsRes.ok) {
+          const fsData = await fsRes.json();
+          const order: Record<string, number> = {};
+          (fsData.fsLines || []).forEach((fl: any, idx: number) => { order[fl.name] = fl.sortOrder ?? idx; });
+          setFsLineOrder(order);
+        }
         if (engRes.ok) {
           const eng = (await engRes.json()).engagement;
           if (eng?.methodologyConfig?.config?.accountingFramework) {
@@ -98,9 +105,11 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
         levelAmounts[row.fsLevel] = (levelAmounts[row.fsLevel] || 0) + Math.abs(Number(row.currentYear) || 0);
       }
     }
-    // Only include levels with monetary value or significant risk
-    return Object.keys(levelAmounts).filter(l => levelAmounts[l] > 0 || significantRiskItems.has(l)).sort();
-  }, [tbRows, activeStatement, significantRiskItems]);
+    // Only include levels with monetary value or significant risk, sorted by FS Lines order
+    return Object.keys(levelAmounts)
+      .filter(l => levelAmounts[l] > 0 || significantRiskItems.has(l))
+      .sort((a, b) => (fsLineOrder[a] ?? 9999) - (fsLineOrder[b] ?? 9999));
+  }, [tbRows, activeStatement, significantRiskItems, fsLineOrder]);
 
   // Notes — only for 3-level statements (Balance Sheet), filtered by value/risk
   const notes = useMemo(() => {
@@ -111,8 +120,10 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
         noteAmounts[row.fsNoteLevel] = (noteAmounts[row.fsNoteLevel] || 0) + Math.abs(Number(row.currentYear) || 0);
       }
     }
-    return Object.keys(noteAmounts).filter(n => noteAmounts[n] > 0 || significantRiskItems.has(n)).sort();
-  }, [tbRows, activeStatement, activeLevel, significantRiskItems]);
+    return Object.keys(noteAmounts)
+      .filter(n => noteAmounts[n] > 0 || significantRiskItems.has(n))
+      .sort((a, b) => (fsLineOrder[a] ?? 9999) - (fsLineOrder[b] ?? 9999));
+  }, [tbRows, activeStatement, activeLevel, significantRiskItems, fsLineOrder]);
 
   const filteredRows = useMemo(() => {
     return tbRows.filter(row => {
