@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Plus, X, Copy, Loader2, Save, Download, Upload, Pencil, Trash2 } from 'lucide-react';
 import { MANDATORY_FS_LINES, ASSERTION_TYPES } from '@/types/methodology';
+import { TestBankGridView } from './TestBankGridView';
 
 // Map test type names → code snippet function names (read-only, reflects actual code)
 const CODE_SNIPPET_MAP: Record<string, string> = {
@@ -51,7 +52,7 @@ const DEFAULT_FS_LINES = [
 
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
-type TopTab = 'test-bank' | 'test-types';
+type TopTab = 'test-bank' | 'test-types' | 'grid-view';
 
 export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
@@ -292,6 +293,10 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         <button onClick={() => setTopTab('test-types')}
           className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-types' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Test Types
+        </button>
+        <button onClick={() => setTopTab('grid-view')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'grid-view' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          Grid View
         </button>
       </div>
 
@@ -685,6 +690,17 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
             </div>
           </div>
         </div>
+      )}
+
+      {/* ─── GRID VIEW TAB ─── */}
+      {topTab === 'grid-view' && (
+        <TestBankGridView
+          firmId={firmId}
+          testBanks={testBanks}
+          testTypes={testTypes}
+          fsLines={fsLines}
+          onSave={updated => setTestBanks(updated)}
+        />
       )}
     </div>
   );
