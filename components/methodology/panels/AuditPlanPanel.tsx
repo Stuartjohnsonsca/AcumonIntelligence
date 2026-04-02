@@ -17,9 +17,30 @@ interface TBRow {
 
 interface RMMItem {
   lineItem: string;
+  riskIdentified: string | null;
   overallRisk: string | null;
   amount: number | null;
+  assertions: string[] | null;
+  notes: string | null;
 }
+
+interface TestBankEntry {
+  fsLine: string;
+  tests: { description: string; testTypeCode: string; assertion?: string; framework?: string; significantRisk?: boolean }[];
+}
+
+interface TestType {
+  code: string;
+  name: string;
+  actionType: string;
+  color?: string;
+}
+
+const TEST_TYPE_COLORS: Record<string, string> = {
+  client_action: 'bg-blue-100 text-blue-700 border-blue-200',
+  ai_action: 'bg-purple-100 text-purple-700 border-purple-200',
+  human_action: 'bg-green-100 text-green-700 border-green-200',
+};
 
 interface Props {
   engagementId: string;
@@ -199,26 +220,34 @@ function dayBefore(d: string | null | undefined): string {
 export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodStartDate }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
+  const [testBank, setTestBank] = useState<TestBankEntry[]>([]);
+  const [testTypes, setTestTypes] = useState<TestType[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeStatement, setActiveStatement] = useState('');
   const [activeLevel, setActiveLevel] = useState('');
   const [activeNote, setActiveNote] = useState('');
   const [framework, setFramework] = useState('');
+  const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, engRes] = await Promise.all([
+        const [tbRes, rmmRes, engRes, tbankRes, ttRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}`),
+          fetch('/api/methodology-admin/test-bank'),
+          fetch('/api/methodology-admin/test-types'),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
           setRmmItems(((await rmmRes.json()).rows || []).map((r: any) => ({
-            lineItem: r.lineItem, overallRisk: r.overallRisk || r.finalRiskAssessment, amount: r.amount,
+            lineItem: r.lineItem, riskIdentified: r.riskIdentified, overallRisk: r.overallRisk || r.finalRiskAssessment,
+            amount: r.amount, assertions: r.assertions || [], notes: r.notes,
           })));
         }
+        if (tbankRes.ok) setTestBank((await tbankRes.json()).testBanks || []);
+        if (ttRes.ok) setTestTypes((await ttRes.json()).testTypes || []);
         if (engRes.ok) {
           const eng = (await engRes.json()).engagement;
           if (eng?.methodologyConfig?.config?.accountingFramework) {
@@ -230,6 +259,34 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
     }
     load();
   }, [engagementId]);
+
+  // Get tests from Test Bank for a given FS Line, filtered by assertions
+  function getTestsForRmm(fsLine: string, assertions: string[] | null): { description: string; testTypeCode: string; assertion?: string; color: string; typeName: string }[] {
+    const entries = testBank.filter(tb => tb.fsLine.toLowerCase() === fsLine.toLowerCase());
+    const allTests: { description: string; testTypeCode: string; assertion?: string; color: string; typeName: string }[] = [];
+    for (const entry of entries) {
+      for (const test of entry.tests || []) {
+        // Filter by assertion if the RMM row has assertions
+        if (assertions && assertions.length > 0 && test.assertion) {
+          if (!assertions.some(a => a.toLowerCase().includes(test.assertion!.toLowerCase()) || test.assertion!.toLowerCase().includes(a.toLowerCase()))) {
+            continue;
+          }
+        }
+        const tt = testTypes.find(t => t.code === test.testTypeCode);
+        const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
+        allTests.push({ ...test, color, typeName: tt?.name || test.testTypeCode });
+      }
+    }
+    return allTests;
+  }
+
+  function toggleRmmExpand(id: string) {
+    setExpandedRmm(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
 
   const significantRiskItems = useMemo(() => {
     return new Set(rmmItems.filter(r => r.overallRisk === 'High' || r.overallRisk === 'Very High').map(r => r.lineItem));
@@ -373,46 +430,89 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
         </div>
       )}
 
-      {/* Content */}
-      <div className="bg-white rounded border border-slate-200 overflow-hidden">
-        <div className="px-3 py-1.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <span className="text-[10px] font-semibold text-slate-700">
-            {activeStatement}{activeLevel && <span className="text-slate-400"> / {activeLevel}</span>}{activeNote && <span className="text-slate-300"> / {activeNote}</span>}
-          </span>
-          <span className="text-[9px] text-slate-400">{filteredRows.length} items</span>
-        </div>
+      {/* Content — RMM-driven with indented Test Bank procedures */}
+      {(() => {
+        // Get RMM items matching the active level
+        const levelRmm = rmmItems.filter(r => {
+          if (!activeLevel) return false;
+          return r.lineItem.toLowerCase() === activeLevel.toLowerCase();
+        });
+        // Also include significant risk items for the whole statement if no specific match
+        const stmtRmm = levelRmm.length > 0 ? levelRmm : rmmItems.filter(r => {
+          const lc = r.lineItem.toLowerCase();
+          return activeLevel && lc.includes(activeLevel.toLowerCase());
+        });
+        const displayRmm = stmtRmm.length > 0 ? stmtRmm : levelRmm;
 
-        {filteredRows.length === 0 ? (
-          <div className="p-4 text-center text-[10px] text-slate-400">No items for this selection.</div>
-        ) : (
-          <table className="text-[10px]">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Code</th>
-                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Description</th>
-                {isThreeLevel && <th className="px-1.5 py-1 text-left font-semibold text-slate-600">FS Note</th>}
-                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">{fmtDate(periodEndDate) || 'CY'}</th>
-                <th className="px-1.5 py-1 text-right font-semibold text-slate-600">{dayBefore(periodStartDate) || 'PY'}</th>
-                <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Approach</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredRows.map(row => (
-                <tr key={row.id} className="hover:bg-slate-50">
-                  <td className="px-1.5 py-0.5 font-mono text-slate-500">{row.accountCode}</td>
-                  <td className="px-1.5 py-0.5 text-slate-700">{row.description}</td>
-                  {isThreeLevel && <td className="px-1.5 py-0.5 text-slate-400">{row.fsNoteLevel || ''}</td>}
-                  <td className="px-1.5 py-0.5 text-right">{fmtAmount(row.currentYear)}</td>
-                  <td className="px-1.5 py-0.5 text-right text-slate-500">{fmtAmount(row.priorYear)}</td>
-                  <td className="px-1.5 py-0.5">
-                    <span className="text-[9px] px-1 py-0.5 bg-blue-50 text-blue-600 rounded">Plan</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+        return (
+          <div className="space-y-1">
+            {displayRmm.length === 0 ? (
+              <div className="bg-white rounded border border-slate-200 p-4 text-center text-[10px] text-slate-400">
+                No RMM items for {activeLevel || activeStatement}. Import data in Identifying &amp; Assessing RMM first.
+              </div>
+            ) : displayRmm.map((rmm, ri) => {
+              const rmmKey = `${rmm.lineItem}-${ri}`;
+              const isExpanded = expandedRmm.has(rmmKey) || expandedRmm.size === 0; // Auto-expand if none expanded
+              const tests = getTestsForRmm(rmm.lineItem, rmm.assertions);
+              const isSigRisk = rmm.overallRisk === 'High' || rmm.overallRisk === 'Very High';
+
+              return (
+                <div key={rmmKey} className={`bg-white rounded border overflow-hidden ${isSigRisk ? 'border-red-200' : 'border-slate-200'}`}>
+                  {/* RMM row header */}
+                  <button
+                    onClick={() => toggleRmmExpand(rmmKey)}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-left hover:bg-slate-50 ${isSigRisk ? 'bg-red-50/30' : ''}`}
+                  >
+                    <div className="flex items-center gap-2 flex-1">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${
+                        isSigRisk ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {rmm.overallRisk || '—'}
+                      </span>
+                      <span className="text-[11px] font-medium text-slate-800">{rmm.lineItem}</span>
+                      {rmm.riskIdentified && <span className="text-[9px] text-slate-400 truncate max-w-[200px]">{rmm.riskIdentified}</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-slate-500">{fmtAmount(rmm.amount)}</span>
+                      {rmm.assertions && rmm.assertions.length > 0 && (
+                        <div className="flex gap-0.5">
+                          {rmm.assertions.slice(0, 3).map(a => (
+                            <span key={a} className="text-[8px] px-1 py-0 bg-blue-100 text-blue-600 rounded">{a.slice(0, 3)}</span>
+                          ))}
+                        </div>
+                      )}
+                      <span className="text-[9px] text-slate-400">{tests.length} test{tests.length !== 1 ? 's' : ''}</span>
+                      <span className="text-slate-400 text-[10px]">{isExpanded ? '▼' : '▶'}</span>
+                    </div>
+                  </button>
+
+                  {/* Indented tests from Test Bank */}
+                  {isExpanded && tests.length > 0 && (
+                    <div className="border-t border-slate-100">
+                      {tests.map((test, ti) => (
+                        <div key={ti} className={`flex items-start gap-2 px-3 py-1.5 ml-6 border-b border-slate-50 last:border-0 ${test.color} bg-opacity-30`}>
+                          <span className={`text-[8px] px-1.5 py-0.5 rounded border font-medium flex-shrink-0 mt-0.5 ${test.color}`}>
+                            {test.typeName}
+                          </span>
+                          <span className="text-[10px] text-slate-700 flex-1">{test.description}</span>
+                          {test.assertion && (
+                            <span className="text-[8px] px-1 py-0 bg-slate-100 text-slate-500 rounded flex-shrink-0">{test.assertion}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {isExpanded && tests.length === 0 && (
+                    <div className="border-t border-slate-100 px-3 py-2 ml-6 text-[9px] text-slate-400 italic">
+                      No tests configured for this FS line in the Test Bank.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
     </div>
   );
 }
