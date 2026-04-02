@@ -231,36 +231,38 @@ export function AuditEngagementPage({ auditType }: Props) {
             {clientsLoading ? (
               <div className="animate-pulse text-sm text-slate-400">Loading clients...</div>
             ) : (
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-slate-600">Client:</label>
-                <select
-                  value={clientId}
-                  onChange={handleClientChange}
-                  className="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select client...</option>
-                  {clients.map(c => (
-                    <option key={c.id} value={c.id}>{c.clientName}</option>
-                  ))}
-                </select>
-              </div>
-              {clientId && periods.length > 0 && (
+              <>
                 <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium text-slate-600">Period:</label>
+                  <label className="text-sm font-medium text-slate-600">Client:</label>
                   <select
-                    value={selectedPeriodId}
-                    onChange={handlePeriodChange}
-                    className="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white min-w-[200px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={clientId}
+                    onChange={handleClientChange}
+                    className="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">Select period...</option>
-                    {periods.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {formatDate(p.startDate)} &ndash; {formatDate(p.endDate)}
-                      </option>
+                    <option value="">Select client...</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id}>{c.clientName}</option>
                     ))}
                   </select>
                 </div>
-              )}
+                {clientId && periods.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-slate-600">Period:</label>
+                    <select
+                      value={selectedPeriodId}
+                      onChange={handlePeriodChange}
+                      className="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white min-w-[200px] focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select period...</option>
+                      {periods.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {formatDate(p.startDate)} &ndash; {formatDate(p.endDate)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
