@@ -394,12 +394,16 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                           <td className="px-3 py-2 text-center">
                             <button
                               onClick={() => setExpandedActionId(expandedActionId === tt.id ? null : tt.id)}
-                              className={`p-1 rounded transition-colors ${
-                                tt.executionDef ? 'text-green-600 hover:bg-green-50' : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                              className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
+                                expandedActionId === tt.id
+                                  ? 'bg-blue-100 border-blue-300 text-blue-700'
+                                  : tt.executionDef
+                                  ? 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100'
+                                  : 'bg-orange-50 border-orange-300 text-orange-700 hover:bg-orange-100'
                               }`}
-                              title={tt.executionDef ? 'Execution configured — click to edit' : 'Configure execution definition'}
                             >
-                              <Settings2 className="h-4 w-4" />
+                              <Settings2 className="h-3 w-3" />
+                              {expandedActionId === tt.id ? 'Close' : tt.executionDef ? 'Edit' : 'Configure'}
                             </button>
                           </td>
                           <td className="px-3 py-2 text-right">
