@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useCallback, useRef, lazy, Suspense } from 'react';
+import React, { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Copy, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch } from 'lucide-react';
+import { Plus, X, Copy, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch, Settings2 } from 'lucide-react';
 const TestFlowEditor = lazy(() => import('./TestFlowEditor').then(m => ({ default: m.TestFlowEditor })));
+import { ExecutionDefEditor } from './ExecutionDefEditor';
 import { MANDATORY_FS_LINES, ASSERTION_TYPES } from '@/types/methodology';
 
 interface Industry {
@@ -19,6 +20,7 @@ interface TestType {
   code: string;
   actionType: string; // client_action | ai_action | human_action
   codeSection?: string | null;
+  executionDef?: any | null;
 }
 
 interface TestBankEntry {
@@ -56,7 +58,7 @@ const DEFAULT_FS_LINES = [
 
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
-type TopTab = 'test-bank' | 'test-types';
+type TopTab = 'test-bank' | 'test-actions';
 
 export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
@@ -97,6 +99,8 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   const [editTestTypeName, setEditTestTypeName] = useState('');
   const [editActionType, setEditActionType] = useState('human_action');
   const [editCodeSection, setEditCodeSection] = useState('');
+  const [expandedActionId, setExpandedActionId] = useState<string | null>(null);
+  const [savingExecDef, setSavingExecDef] = useState(false);
 
   const getTestCount = useCallback((industryId: string, fsLine: string) => {
     const entry = testBanks.find(tb => tb.industryId === industryId && tb.fsLine === fsLine);
@@ -283,6 +287,20 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     }
   }
 
+  async function saveExecutionDef(id: string, executionDef: any) {
+    setSavingExecDef(true);
+    try {
+      const res = await fetch('/api/methodology-admin/test-types', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, executionDef }),
+      });
+      if (res.ok) {
+        const { testType } = await res.json();
+        setTestTypes(prev => prev.map(t => t.id === testType.id ? testType : t));
+      }
+    } finally { setSavingExecDef(false); }
+  }
+
   async function deleteTestType(id: string) {
     const res = await fetch('/api/methodology-admin/test-types', {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' },
@@ -299,17 +317,17 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-bank' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Test Bank
         </button>
-        <button onClick={() => setTopTab('test-types')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-types' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-          Test Types
+        <button onClick={() => setTopTab('test-actions')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-actions' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          Test Actions
         </button>
       </div>
 
-      {/* ─── TEST TYPES TAB ─── */}
-      {topTab === 'test-types' && (
+      {/* ─── TEST ACTIONS TAB ─── */}
+      {topTab === 'test-actions' && (
         <div className="border rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-slate-800 mb-3">Test Types ({testTypes.length})</h3>
-          <p className="text-xs text-slate-500 mb-4">Define the types of audit actions. Each test in the Test Bank will be assigned one of these types.</p>
+          <h3 className="text-sm font-semibold text-slate-800 mb-3">Test Actions ({testTypes.length})</h3>
+          <p className="text-xs text-slate-500 mb-4">Define reusable audit actions with execution definitions. Each action specifies what the system should do when triggered in a test flow.</p>
 
           {/* Table */}
           <div className="border rounded-lg overflow-hidden">
@@ -319,65 +337,92 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                   <th className="text-left px-3 py-2 text-slate-600 font-semibold">Action</th>
                   <th className="text-left px-3 py-2 text-slate-600 font-semibold w-44">Type</th>
                   <th className="text-left px-3 py-2 text-slate-600 font-semibold w-48">Code Section</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-24">Execution</th>
                   <th className="w-20 px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {testTypes.map(tt => (
-                  <tr key={tt.id} className="border-b border-slate-50 hover:bg-slate-50/50 group">
-                    {editingTestType === tt.id ? (
-                      <>
-                        <td className="px-2 py-1.5">
-                          <input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') saveEditTestType(); if (e.key === 'Escape') setEditingTestType(null); }}
-                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm" autoFocus />
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <select value={editActionType} onChange={e => setEditActionType(e.target.value)}
-                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white">
-                            <option value="client_action">Client Action</option>
-                            <option value="ai_action">AI Action</option>
-                            <option value="human_action">Human Action</option>
-                          </select>
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <input value={editCodeSection} onChange={e => setEditCodeSection(e.target.value)}
-                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm" placeholder="Code section reference" />
-                        </td>
-                        <td className="px-2 py-1.5 text-right">
-                          <div className="flex items-center gap-1 justify-end">
-                            <button onClick={saveEditTestType} className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
-                            <button onClick={() => setEditingTestType(null)} className="text-xs px-2 py-1 border border-slate-300 rounded hover:bg-slate-100">Cancel</button>
-                          </div>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="px-3 py-2 text-slate-700 font-medium">{tt.name}</td>
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                            tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' :
-                            tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' :
-                            'bg-blue-100 text-blue-700'
-                          }`}>
-                            {tt.actionType === 'client_action' ? 'Client Action' :
-                             tt.actionType === 'ai_action' ? 'AI Action' : 'Human Action'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-slate-500 text-xs font-mono">{tt.codeSection || '—'}</td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => startEditTestType(tt)} className="p-1 hover:bg-slate-200 rounded" title="Amend">
-                              <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                  <React.Fragment key={tt.id}>
+                    <tr className="border-b border-slate-50 hover:bg-slate-50/50 group">
+                      {editingTestType === tt.id ? (
+                        <>
+                          <td className="px-2 py-1.5">
+                            <input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveEditTestType(); if (e.key === 'Escape') setEditingTestType(null); }}
+                              className="w-full border border-slate-300 rounded px-2 py-1 text-sm" autoFocus />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <select value={editActionType} onChange={e => setEditActionType(e.target.value)}
+                              className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white">
+                              <option value="client_action">Client Action</option>
+                              <option value="ai_action">AI Action</option>
+                              <option value="human_action">Human Action</option>
+                            </select>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input value={editCodeSection} onChange={e => setEditCodeSection(e.target.value)}
+                              className="w-full border border-slate-300 rounded px-2 py-1 text-sm" placeholder="Code section reference" />
+                          </td>
+                          <td></td>
+                          <td className="px-2 py-1.5 text-right">
+                            <div className="flex items-center gap-1 justify-end">
+                              <button onClick={saveEditTestType} className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
+                              <button onClick={() => setEditingTestType(null)} className="text-xs px-2 py-1 border border-slate-300 rounded hover:bg-slate-100">Cancel</button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-3 py-2 text-slate-700 font-medium">{tt.name}</td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                              tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' :
+                              tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' :
+                              'bg-blue-100 text-blue-700'
+                            }`}>
+                              {tt.actionType === 'client_action' ? 'Client Action' :
+                               tt.actionType === 'ai_action' ? 'AI Action' : 'Human Action'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-slate-500 text-xs font-mono">{tt.codeSection || '—'}</td>
+                          <td className="px-3 py-2 text-center">
+                            <button
+                              onClick={() => setExpandedActionId(expandedActionId === tt.id ? null : tt.id)}
+                              className={`p-1 rounded transition-colors ${
+                                tt.executionDef ? 'text-green-600 hover:bg-green-50' : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'
+                              }`}
+                              title={tt.executionDef ? 'Execution configured — click to edit' : 'Configure execution definition'}
+                            >
+                              <Settings2 className="h-4 w-4" />
                             </button>
-                            <button onClick={() => deleteTestType(tt.id)} className="p-1 hover:bg-red-100 rounded" title="Delete">
-                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                            </button>
-                          </div>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => startEditTestType(tt)} className="p-1 hover:bg-slate-200 rounded" title="Amend">
+                                <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                              </button>
+                              <button onClick={() => deleteTestType(tt.id)} className="p-1 hover:bg-red-100 rounded" title="Delete">
+                                <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                              </button>
+                            </div>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                    {/* Expanded execution definition row */}
+                    {expandedActionId === tt.id && (
+                      <tr>
+                        <td colSpan={5} className="px-3 pb-3 bg-slate-50/50">
+                          <ExecutionDefEditor
+                            actionType={tt.actionType}
+                            executionDef={tt.executionDef || null}
+                            onChange={(def) => saveExecutionDef(tt.id, def)}
+                          />
                         </td>
-                      </>
+                      </tr>
                     )}
-                  </tr>
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

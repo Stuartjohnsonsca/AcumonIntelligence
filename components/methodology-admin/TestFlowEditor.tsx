@@ -29,6 +29,7 @@ export interface TestAction {
   description: string;
   actionType: 'client' | 'ai' | 'human' | 'review';
   isReusable: boolean;
+  executionDef?: any;
 }
 
 export interface FlowData {
@@ -125,10 +126,12 @@ function ActionNode({ data, selected }: NodeProps) {
         {(data as any).description && (
           <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{(data as any).description}</div>
         )}
-        {/* Step number if present */}
-        {(data as any).stepNumber && (
-          <div className="absolute -top-2 -left-2 w-5 h-5 rounded-full bg-slate-700 text-white text-[10px] font-bold flex items-center justify-center">
-            {(data as any).stepNumber}
+        {/* Execution def indicator */}
+        {(data as any).executionDef && (
+          <div className="mt-1 flex items-center gap-1">
+            <span className="inline-flex items-center text-[8px] font-medium px-1 py-0.5 rounded bg-green-100 text-green-700">
+              Execution configured
+            </span>
           </div>
         )}
       </div>
@@ -442,6 +445,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                         assignee: action.actionType === 'human' ? 'team' : action.actionType === 'review' ? 'ai' : action.actionType,
                         inputType: 'none',
                         actionId: action.id,
+                        executionDef: action.executionDef || undefined,
                       }}
                     />
                   ))}
