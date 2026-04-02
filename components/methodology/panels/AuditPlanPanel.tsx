@@ -27,8 +27,151 @@ interface Props {
 }
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
-// Statements that use 3-level hierarchy (Statement > Level > Note)
 const THREE_LEVEL_STATEMENTS = new Set(['Balance Sheet']);
+
+// Statutory format order by framework
+// Each framework may have different terminology and ordering
+const FRAMEWORK_ORDERS: Record<string, Record<string, string[]>> = {
+  // FRS102 / UK Companies Act format
+  FRS102: {
+    'Profit & Loss': [
+      'Revenue', 'Turnover', 'Sales', 'Income', 'Fees',
+      'Cost of Sales', 'Cost of Goods Sold',
+      'Gross Profit',
+      'Distribution Costs',
+      'Administrative Expenses', 'Admin Expenses', 'Overheads',
+      'Staff Costs', 'Employee Costs',
+      'Depreciation', 'Amortisation',
+      'Other Operating Income', 'Other Income',
+      'Operating Profit',
+      'Interest Receivable', 'Interest Income',
+      'Interest Payable', 'Interest', 'Finance Costs',
+      'Profit Before Tax', 'Profit on Ordinary Activities',
+      'Taxation', 'Tax', 'Corporation Tax',
+      'Profit After Tax', 'Net Profit',
+      'Dividends',
+      'Retained Profit', 'Retained Earnings',
+    ],
+    'Balance Sheet': [
+      'Intangible Fixed Assets', 'Intangible Assets', 'Goodwill',
+      'Tangible Fixed Assets', 'Fixed Assets', 'Property Plant and Equipment',
+      'Investments', 'Fixed Asset Investments',
+      'Stock', 'Inventories',
+      'Debtors', 'Trade Debtors', 'Trade and Other Receivables', 'Receivables',
+      'Cash at Bank', 'Cash', 'Cash and Cash Equivalents', 'Bank',
+      'Creditors Due Within One Year', 'Current Liabilities',
+      'Creditors', 'Trade Creditors', 'Trade and Other Payables', 'Payables',
+      'Net Current Assets',
+      'Creditors Due After One Year', 'Long Term Liabilities',
+      'Loans & Borrowings', 'Loans', 'Bank Loans',
+      'Provisions', 'Provisions for Liabilities',
+      'Net Assets',
+      'Capital & Reserves', 'Share Capital', 'Called Up Share Capital',
+      'Share Premium', 'Revaluation Reserve',
+      'Profit and Loss Account', 'Retained Earnings', 'Reserves',
+    ],
+    'Cash Flow Statement': [
+      'Operating Activities', 'Cash from Operations',
+      'Investing Activities', 'Cash from Investing',
+      'Financing Activities', 'Cash from Financing',
+      'Net Change in Cash',
+    ],
+  },
+  // IFRS format — uses different terminology
+  IFRS: {
+    'Profit & Loss': [
+      'Revenue',
+      'Cost of Sales',
+      'Gross Profit',
+      'Other Income',
+      'Distribution Costs',
+      'Administrative Expenses', 'General and Administrative',
+      'Employee Benefits', 'Staff Costs',
+      'Depreciation and Amortisation', 'Depreciation', 'Amortisation',
+      'Impairment Losses',
+      'Other Expenses',
+      'Operating Profit', 'Results from Operating Activities',
+      'Finance Income', 'Interest Income',
+      'Finance Costs', 'Interest Expense',
+      'Share of Profit of Associates',
+      'Profit Before Tax',
+      'Income Tax Expense', 'Taxation',
+      'Profit for the Year', 'Net Profit',
+      'Other Comprehensive Income',
+      'Total Comprehensive Income',
+    ],
+    'Balance Sheet': [
+      'Goodwill', 'Intangible Assets',
+      'Property Plant and Equipment', 'Right of Use Assets',
+      'Investment Property',
+      'Investments in Associates',
+      'Deferred Tax Assets',
+      'Inventories', 'Stock',
+      'Trade and Other Receivables', 'Debtors', 'Receivables',
+      'Contract Assets',
+      'Cash and Cash Equivalents', 'Cash',
+      'Assets Held for Sale',
+      'Trade and Other Payables', 'Creditors', 'Payables',
+      'Contract Liabilities',
+      'Current Tax Liabilities',
+      'Borrowings', 'Loans',
+      'Lease Liabilities',
+      'Deferred Tax Liabilities',
+      'Provisions',
+      'Net Assets',
+      'Share Capital', 'Issued Capital',
+      'Share Premium',
+      'Retained Earnings', 'Reserves',
+      'Non-controlling Interests',
+    ],
+    'Cash Flow Statement': [
+      'Cash from Operating Activities', 'Operating Activities',
+      'Cash from Investing Activities', 'Investing Activities',
+      'Cash from Financing Activities', 'Financing Activities',
+      'Net Increase in Cash',
+    ],
+  },
+  // FRS105 — micro-entity, simplified
+  FRS105: {
+    'Profit & Loss': [
+      'Turnover', 'Revenue', 'Sales',
+      'Cost of Sales',
+      'Gross Profit',
+      'Administrative Expenses', 'Overheads',
+      'Staff Costs',
+      'Depreciation',
+      'Other Charges',
+      'Tax',
+      'Profit After Tax',
+    ],
+    'Balance Sheet': [
+      'Fixed Assets',
+      'Current Assets',
+      'Cash at Bank', 'Cash',
+      'Debtors',
+      'Creditors Due Within One Year',
+      'Net Current Assets',
+      'Creditors Due After One Year',
+      'Net Assets',
+      'Capital and Reserves',
+    ],
+  },
+};
+
+// FRS101 uses IFRS presentation with UK Companies Act disclosure
+FRAMEWORK_ORDERS['FRS101'] = FRAMEWORK_ORDERS['IFRS'];
+
+function getStatutoryPosition(framework: string, statement: string, levelName: string): number {
+  // Try specific framework first, then FRS102 as default
+  const fwOrder = FRAMEWORK_ORDERS[framework] || FRAMEWORK_ORDERS['FRS102'];
+  const order = fwOrder?.[statement] || [];
+  const lc = levelName.toLowerCase();
+  for (let i = 0; i < order.length; i++) {
+    const item = order[i].toLowerCase();
+    if (item === lc || lc.includes(item) || item.includes(lc)) return i;
+  }
+  return 9999;
+}
 // Statements that use 2-level only (Statement > Level, notes listed inline)
 // P&L, Cash Flow, Notes all use 2-level
 
@@ -47,28 +190,20 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
   const [activeLevel, setActiveLevel] = useState('');
   const [activeNote, setActiveNote] = useState('');
   const [framework, setFramework] = useState('');
-  const [fsLineOrder, setFsLineOrder] = useState<Record<string, number>>({});
 
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, engRes, fsRes] = await Promise.all([
+        const [tbRes, rmmRes, engRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}`),
-          fetch('/api/methodology-admin/fs-lines'),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
           setRmmItems(((await rmmRes.json()).rows || []).map((r: any) => ({
             lineItem: r.lineItem, overallRisk: r.overallRisk || r.finalRiskAssessment, amount: r.amount,
           })));
-        }
-        if (fsRes.ok) {
-          const fsData = await fsRes.json();
-          const order: Record<string, number> = {};
-          (fsData.fsLines || []).forEach((fl: any, idx: number) => { order[fl.name] = fl.sortOrder ?? idx; });
-          setFsLineOrder(order);
         }
         if (engRes.ok) {
           const eng = (await engRes.json()).engagement;
@@ -105,11 +240,11 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
         levelAmounts[row.fsLevel] = (levelAmounts[row.fsLevel] || 0) + Math.abs(Number(row.currentYear) || 0);
       }
     }
-    // Only include levels with monetary value or significant risk, sorted by FS Lines order
+    // Only include levels with monetary value or significant risk, sorted by statutory order
     return Object.keys(levelAmounts)
       .filter(l => levelAmounts[l] > 0 || significantRiskItems.has(l))
-      .sort((a, b) => (fsLineOrder[a] ?? 9999) - (fsLineOrder[b] ?? 9999));
-  }, [tbRows, activeStatement, significantRiskItems, fsLineOrder]);
+      .sort((a, b) => getStatutoryPosition(framework || 'FRS102', activeStatement, a) - getStatutoryPosition(framework || 'FRS102', activeStatement, b));
+  }, [tbRows, activeStatement, significantRiskItems]);
 
   // Notes — only for 3-level statements (Balance Sheet), filtered by value/risk
   const notes = useMemo(() => {
@@ -122,8 +257,8 @@ export function AuditPlanPanel({ engagementId, onClose }: Props) {
     }
     return Object.keys(noteAmounts)
       .filter(n => noteAmounts[n] > 0 || significantRiskItems.has(n))
-      .sort((a, b) => (fsLineOrder[a] ?? 9999) - (fsLineOrder[b] ?? 9999));
-  }, [tbRows, activeStatement, activeLevel, significantRiskItems, fsLineOrder]);
+      .sort((a, b) => getStatutoryPosition(framework || 'FRS102', activeStatement, a) - getStatutoryPosition(framework || 'FRS102', activeStatement, b));
+  }, [tbRows, activeStatement, activeLevel, significantRiskItems, framework]);
 
   const filteredRows = useMemo(() => {
     return tbRows.filter(row => {
