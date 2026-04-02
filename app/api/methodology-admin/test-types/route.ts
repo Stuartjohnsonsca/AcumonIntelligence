@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { name, code, actionType, codeSection } = await req.json();
+  const { name, code, actionType, codeSection, executionDef } = await req.json();
   const firmId = session.user.firmId;
 
   if (!name?.trim()) {
@@ -46,6 +46,7 @@ export async function POST(req: Request) {
       code: finalCode,
       actionType: actionType || 'human_action',
       codeSection: codeSection || null,
+      executionDef: executionDef || null,
       isActive: true,
     },
   });
@@ -59,12 +60,13 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { id, name, actionType, codeSection, isActive } = await req.json();
+  const { id, name, actionType, codeSection, isActive, executionDef } = await req.json();
   const data: Record<string, any> = {};
   if (name !== undefined) data.name = name;
   if (actionType !== undefined) data.actionType = actionType;
   if (codeSection !== undefined) data.codeSection = codeSection;
   if (isActive !== undefined) data.isActive = isActive;
+  if (executionDef !== undefined) data.executionDef = executionDef;
 
   const testType = await prisma.methodologyTestType.update({
     where: { id },

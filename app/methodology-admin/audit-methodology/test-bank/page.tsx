@@ -17,7 +17,7 @@ export default async function TestBankPage() {
 
   const firmId = session.user.firmId;
 
-  const [industries, testTypes, testBanks, fwTemplate, testActionsTable] = await Promise.all([
+  const [industries, testTypes, testBanks, fwTemplate] = await Promise.all([
     prisma.methodologyIndustry.findMany({
       where: { firmId, isActive: true },
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
@@ -32,13 +32,18 @@ export default async function TestBankPage() {
     prisma.methodologyTemplate.findFirst({
       where: { firmId, templateType: 'audit_type_schedules', auditType: '__framework_options' },
     }),
-    prisma.methodologyRiskTable.findFirst({
-      where: { firmId, tableType: 'test_actions' },
-    }),
   ]);
 
   const frameworkOptions = fwTemplate ? fwTemplate.items as string[] : [];
-  const testActions = testActionsTable?.data && Array.isArray(testActionsTable.data) ? testActionsTable.data as any[] : [];
+  // Derive flow builder actions from Test Types (now called Test Actions)
+  const testActions = testTypes.map(tt => ({
+    id: tt.id,
+    name: tt.name,
+    description: tt.codeSection || '',
+    actionType: (tt.actionType === 'client_action' ? 'client' : tt.actionType === 'ai_action' ? 'ai' : 'human') as 'client' | 'ai' | 'human' | 'review',
+    isReusable: true,
+    executionDef: (tt as any).executionDef || undefined,
+  }));
   const canEditFlow = session.user.isSuperAdmin || session.user.isMethodologyAdmin || (session.user as any).isTestBuilder;
 
   return (
