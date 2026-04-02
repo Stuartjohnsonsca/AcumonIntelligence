@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Copy, Loader2, Save, Download, Upload, Pencil, Trash2 } from 'lucide-react';
+import { Plus, X, Copy, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch } from 'lucide-react';
+const TestFlowEditor = lazy(() => import('./TestFlowEditor').then(m => ({ default: m.TestFlowEditor })));
 import { MANDATORY_FS_LINES, ASSERTION_TYPES } from '@/types/methodology';
 
 interface Industry {
@@ -29,12 +30,22 @@ interface TestBankEntry {
   assertions: string[] | null;
 }
 
+interface TestActionItem {
+  id: string;
+  name: string;
+  description: string;
+  actionType: 'client' | 'ai' | 'human' | 'review';
+  isReusable: boolean;
+}
+
 interface Props {
   firmId: string;
   initialIndustries: Industry[];
   initialTestTypes: TestType[];
   initialTestBanks: TestBankEntry[];
   initialFrameworkOptions?: string[];
+  initialTestActions?: TestActionItem[];
+  canEditFlow?: boolean; // true if user has isTestBuilder or isSuperAdmin
 }
 
 const DEFAULT_FS_LINES = [
@@ -47,7 +58,7 @@ const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
 type TopTab = 'test-bank' | 'test-types';
 
-export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions }: Props) {
+export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
   const [topTab, setTopTab] = useState<TopTab>('test-bank');
   const [industries, setIndustries] = useState(initialIndustries);
@@ -72,6 +83,11 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedIndustry, setSelectedIndustry] = useState<string>(industries[0]?.id || '');
+
+  // Flow editor state
+  const [flowEditorOpen, setFlowEditorOpen] = useState(false);
+  const [flowTestIndex, setFlowTestIndex] = useState<number>(-1);
+  const testActionsLib = initialTestActions || [];
 
   // Test Types state
   const [newTestTypeName, setNewTestTypeName] = useState('');
@@ -581,6 +597,24 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         </div>
       )}
 
+      {/* ─── FLOW EDITOR ─── */}
+      {flowEditorOpen && flowTestIndex >= 0 && popupTests[flowTestIndex] && (
+        <Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-white" /></div>}>
+          <TestFlowEditor
+            testDescription={popupTests[flowTestIndex].description || 'Untitled Test'}
+            initialFlow={(popupTests[flowTestIndex] as any).flow || null}
+            testActions={testActionsLib}
+            onSave={async (flow) => {
+              const updated = [...popupTests];
+              (updated[flowTestIndex] as any) = { ...updated[flowTestIndex], flow };
+              setPopupTests(updated);
+              setFlowEditorOpen(false);
+            }}
+            onClose={() => setFlowEditorOpen(false)}
+          />
+        </Suspense>
+      )}
+
       {/* ─── POPUP for editing tests (now called "Framework") ─── */}
       {popupOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
@@ -605,6 +639,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                   <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-44">Assertion</th>
                   <th className="text-left text-sm font-medium text-slate-600 p-2 border-b w-28">Framework</th>
                   <th className="text-center text-sm font-medium text-slate-600 p-2 border-b w-16" title="Significant Risk">Sig. Risk</th>
+                  {canEditFlow && <th className="text-center text-sm font-medium text-slate-600 p-2 border-b w-16">Flow</th>}
                   <th className="w-8"></th>
                 </tr>
               </thead>
@@ -645,6 +680,17 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                         onChange={e => { const u = [...popupTests]; u[i] = { ...u[i], significantRisk: e.target.checked }; setPopupTests(u); }}
                         className="w-4 h-4 rounded border-slate-300 text-red-500" />
                     </td>
+                    {canEditFlow && (
+                      <td className="p-2 border-b text-center">
+                        <button
+                          onClick={() => { setFlowTestIndex(i); setFlowEditorOpen(true); }}
+                          title="Edit test flow"
+                          className={`p-1.5 rounded hover:bg-blue-50 transition-colors ${(test as any).flow?.nodes?.length > 0 ? 'text-blue-600' : 'text-slate-300 hover:text-slate-500'}`}
+                        >
+                          <GitBranch className="h-4 w-4" />
+                        </button>
+                      </td>
+                    )}
                     <td className="p-2 border-b text-center">
                       <button onClick={() => setPopupTests(prev => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
                         <X className="h-4 w-4" />
