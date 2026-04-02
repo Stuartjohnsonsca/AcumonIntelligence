@@ -29,6 +29,8 @@ interface Props {
   currentUserId: string;
 }
 
+const PRE_PLAN_KEYS = new Set(['opening', 'prior-period', 'permanent-file', 'ethics', 'continuance', 'tb', 'materiality', 'par', 'rmm']);
+
 const TABS = [
   { key: 'opening', label: 'Opening' },
   { key: 'prior-period', label: 'Prior Period' },
@@ -213,31 +215,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
   return (
     <div>
-      {/* Tab Bar */}
-      <div className="border-b border-slate-200 bg-white rounded-t-lg overflow-x-auto">
-        <nav className="flex -mb-px" aria-label="Engagement tabs">
-          {visibleTabs.map(tab => {
-            const isActive = activeTab === tab.key;
-            const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
-            return (
-              <button
-                key={tab.key}
-                onClick={() => switchTab(tab.key)}
-                className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors ${
-                  isActive
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </nav>
-      </div>
-
       {/* Persistent action buttons */}
-      <div className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 border-x border-slate-200">
+      <div className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-t-lg">
         <button className="px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition-colors">
           Review Point
         </button>
@@ -252,13 +231,61 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         </button>
       </div>
 
-      {/* Tab Content */}
-      <div className="bg-white rounded-b-lg border border-t-0 border-slate-200 min-h-[500px]">
-        <div className="p-4">
-          {/* Audit Plan overlay — shown when Create Plan is clicked from RMM */}
-          {showAuditPlan ? (
+      {/* When Audit Plan is open: split layout with vertical sidebar */}
+      {showAuditPlan ? (
+        <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px]">
+          {/* Left sidebar: pre-plan tabs as vertical list */}
+          <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
+            {visibleTabs.filter(t => PRE_PLAN_KEYS.has(t.key)).map(tab => {
+              const isActive = activeTab === tab.key;
+              const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => { switchTab(tab.key); setShowAuditPlan(false); }}
+                  className={`w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors ${
+                    isActive ? 'bg-blue-50 text-blue-700 border-l-2 border-l-blue-500' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {/* Main area: Audit Plan */}
+          <div className="flex-1 p-4 overflow-auto">
             <AuditPlanPanel engagementId={engagement.id} onClose={() => setShowAuditPlan(false)} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />
-          ) : hasSignOff ? (
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Normal horizontal tab bar */}
+          <div className="border-x border-slate-200 bg-white overflow-x-auto">
+            <nav className="flex -mb-px" aria-label="Engagement tabs">
+              {visibleTabs.map(tab => {
+                const isActive = activeTab === tab.key;
+                const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => switchTab(tab.key)}
+                    className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors ${
+                      isActive
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* Tab Content */}
+          <div className="bg-white rounded-b-lg border border-t-0 border-slate-200 min-h-[500px]">
+            <div className="p-4">
+              {hasSignOff ? (
             <SignOffHeader
               engagementId={engagement.id}
               endpoint={signOffEndpoint}
@@ -358,6 +385,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           })()}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
