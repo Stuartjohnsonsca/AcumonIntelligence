@@ -30,14 +30,109 @@ const TOOLS = [
   { value: 'data_entry_form', label: 'Data Entry Form' },
 ];
 
+// ─── Known input sources ───
+const KNOWN_INPUTS: { group: string; items: { key: string; label: string }[] }[] = [
+  {
+    group: 'From Upstream Flow Nodes',
+    items: [
+      { key: 'uploaded_file', label: 'Client Uploaded File' },
+      { key: 'request_description', label: 'Request Message Sent to Client' },
+      { key: 'client_response', label: 'Client Text Response' },
+      { key: 'ai_result', label: 'AI Analysis Result' },
+      { key: 'ai_pass_fail', label: 'AI Pass/Fail Decision' },
+      { key: 'sample_selection', label: 'Selected Sample Items' },
+      { key: 'team_output', label: 'Team Member Output/Notes' },
+      { key: 'previous_step_output', label: 'Previous Step Output (generic)' },
+    ],
+  },
+  {
+    group: 'Trial Balance',
+    items: [
+      { key: 'tb_balance', label: 'TB Current Year Balance' },
+      { key: 'tb_prior_year', label: 'TB Prior Year Balance' },
+      { key: 'tb_variance', label: 'TB Variance (CY vs PY)' },
+      { key: 'tb_variance_pct', label: 'TB Variance %' },
+      { key: 'tb_account_code', label: 'TB Account Code' },
+      { key: 'tb_description', label: 'TB Account Description' },
+      { key: 'tb_fs_note', label: 'TB FS Note' },
+      { key: 'tb_fs_level', label: 'TB FS Level' },
+      { key: 'tb_fs_statement', label: 'TB FS Statement' },
+    ],
+  },
+  {
+    group: 'Materiality',
+    items: [
+      { key: 'materiality', label: 'Overall Materiality' },
+      { key: 'performance_materiality', label: 'Performance Materiality' },
+      { key: 'clearly_trivial', label: 'Clearly Trivial Threshold' },
+    ],
+  },
+  {
+    group: 'Risk Assessment (RMM)',
+    items: [
+      { key: 'rmm_risk_level', label: 'Inherent Risk Level' },
+      { key: 'rmm_assertions', label: 'Assertions for Line Item' },
+      { key: 'rmm_final_assessment', label: 'Final Risk Assessment' },
+      { key: 'rmm_control_risk', label: 'Control Risk Level' },
+      { key: 'rmm_nature', label: 'Nature / Risk Identified' },
+    ],
+  },
+  {
+    group: 'PAR (Preliminary Analytical Review)',
+    items: [
+      { key: 'par_current_year', label: 'PAR Current Year Amount' },
+      { key: 'par_prior_year', label: 'PAR Prior Year Amount' },
+      { key: 'par_variance', label: 'PAR Absolute Variance' },
+      { key: 'par_variance_pct', label: 'PAR Variance %' },
+      { key: 'par_is_significant', label: 'PAR Significant Change (Y/N)' },
+      { key: 'par_management_response', label: 'PAR Management Response' },
+    ],
+  },
+  {
+    group: 'Engagement Context',
+    items: [
+      { key: 'client_name', label: 'Client Name' },
+      { key: 'period_start', label: 'Period Start Date' },
+      { key: 'period_end', label: 'Period End Date' },
+      { key: 'audit_type', label: 'Audit Type (SME/PIE)' },
+      { key: 'hard_close_date', label: 'Hard Close Date' },
+      { key: 'framework', label: 'Accounting Framework (IFRS/FRS102)' },
+    ],
+  },
+  {
+    group: 'Sampling',
+    items: [
+      { key: 'sample_size', label: 'Sample Size' },
+      { key: 'sample_method', label: 'Sampling Method' },
+      { key: 'sample_items', label: 'Sample Items (list)' },
+      { key: 'population_total', label: 'Population Total' },
+      { key: 'population_count', label: 'Population Record Count' },
+    ],
+  },
+  {
+    group: 'Evidence & Documents',
+    items: [
+      { key: 'evidence_file', label: 'Evidence File (uploaded)' },
+      { key: 'evidence_type', label: 'Evidence Type' },
+      { key: 'document_name', label: 'Document Name' },
+      { key: 'document_file', label: 'Document File' },
+    ],
+  },
+];
+
 const PLACEHOLDERS = [
-  { code: '{{input.<key>}}', desc: 'Output from upstream node' },
+  { code: '{{input.<key>}}', desc: 'Value from an input defined above' },
   { code: '{{test.description}}', desc: 'Test description' },
   { code: '{{test.fsLine}}', desc: 'FS line (e.g. Revenue)' },
   { code: '{{test.assertion}}', desc: 'Assertion being tested' },
   { code: '{{engagement.clientName}}', desc: 'Client name' },
   { code: '{{engagement.periodEnd}}', desc: 'Period end date' },
   { code: '{{engagement.materiality}}', desc: 'Materiality figure' },
+  { code: '{{engagement.performanceMateriality}}', desc: 'Performance materiality' },
+  { code: '{{engagement.clearlyTrivial}}', desc: 'Clearly trivial threshold' },
+  { code: '{{engagement.framework}}', desc: 'Accounting framework' },
+  { code: '{{loop.currentItem}}', desc: 'Current item in a For-Each loop' },
+  { code: '{{loop.index}}', desc: 'Current iteration index (0-based)' },
 ];
 
 function getDefaultDef(actionType: string) {
@@ -53,6 +148,61 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
   const [showPlaceholders, setShowPlaceholders] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showInputPicker, setShowInputPicker] = useState(false);
+  const [inputPickerSearch, setInputPickerSearch] = useState('');
+  const [showAssistant, setShowAssistant] = useState(false);
+  const [assistantPrompt, setAssistantPrompt] = useState('');
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantResult, setAssistantResult] = useState<{ inputs: { key: string; label: string }[]; systemInstruction: string; promptTemplate: string } | null>(null);
+
+  function addInputFromPicker(key: string, label: string) {
+    const existing = def.inputs || [];
+    if (existing.some((inp: InputDef) => inp.key === key)) return;
+    setDef((prev: any) => ({ ...prev, inputs: [...existing, { key, label, description: '' }] }));
+    setDirty(true);
+    setShowInputPicker(false);
+    setInputPickerSearch('');
+  }
+
+  async function runAssistant() {
+    if (!assistantPrompt.trim()) return;
+    setAssistantLoading(true);
+    setAssistantResult(null);
+    try {
+      const res = await fetch('/api/methodology-admin/test-action-assist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actionType,
+          description: assistantPrompt,
+          knownInputs: KNOWN_INPUTS.flatMap(g => g.items.map(i => `${i.key}: ${i.label}`)),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAssistantResult(data);
+      }
+    } finally {
+      setAssistantLoading(false);
+    }
+  }
+
+  function applyAssistantResult() {
+    if (!assistantResult) return;
+    const patch: any = {};
+    if (assistantResult.inputs?.length > 0) {
+      patch.inputs = assistantResult.inputs.map(i => ({ key: i.key, label: i.label, description: '' }));
+    }
+    if (assistantResult.systemInstruction) patch.systemInstruction = assistantResult.systemInstruction;
+    if (assistantResult.promptTemplate) patch.promptTemplate = assistantResult.promptTemplate;
+    // For client/human actions
+    if (assistantResult.systemInstruction && actionType === 'human_action') patch.instructions = assistantResult.systemInstruction;
+    setDef((prev: any) => ({ ...prev, ...patch }));
+    setDirty(true);
+    setShowAssistant(false);
+    setAssistantResult(null);
+    setAssistantPrompt('');
+  }
 
   function update(patch: Record<string, any>) {
     setDef((prev: any) => ({ ...prev, ...patch }));
@@ -90,46 +240,156 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
 
       {expanded && (
         <div className="p-3 space-y-3 border-t">
+          {/* ─── AI ASSISTANT POPUP ─── */}
+          {showAssistant && (
+            <div className="fixed inset-0 z-[80] bg-black/30 flex items-center justify-center">
+              <div className="bg-white rounded-xl shadow-2xl w-[560px] max-h-[80vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-5 py-3 border-b bg-slate-50">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 bg-purple-100 rounded-lg flex items-center justify-center">
+                      <span className="text-purple-700 text-xs font-bold">AI</span>
+                    </div>
+                    <span className="text-sm font-bold text-slate-800">Test Action Assistant</span>
+                  </div>
+                  <button onClick={() => { setShowAssistant(false); setAssistantResult(null); }} className="text-slate-400 hover:text-slate-600">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="p-5 space-y-4">
+                  <p className="text-sm text-slate-600">
+                    Describe what this test action should do and I will suggest the inputs, system instruction, and prompt template.
+                  </p>
+                  <textarea
+                    value={assistantPrompt}
+                    onChange={e => setAssistantPrompt(e.target.value)}
+                    placeholder="e.g. Take the file the client uploads and check if the list total agrees to the Trial Balance figure. Remember credit notes are negative. Add VAT separately."
+                    className="w-full text-sm border rounded-lg px-3 py-2.5 leading-relaxed"
+                    rows={4}
+                    autoFocus
+                  />
+                  <Button onClick={runAssistant} disabled={assistantLoading || !assistantPrompt.trim()} className="w-full">
+                    {assistantLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    {assistantLoading ? 'Thinking...' : 'Suggest Configuration'}
+                  </Button>
+
+                  {assistantResult && (
+                    <div className="border rounded-lg p-4 space-y-3 bg-purple-50/50">
+                      <div className="text-xs font-semibold text-purple-700 uppercase">Suggested Configuration</div>
+
+                      {assistantResult.inputs?.length > 0 && (
+                        <div>
+                          <div className="text-[10px] font-semibold text-slate-500 mb-1">INPUTS</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {assistantResult.inputs.map((inp, i) => (
+                              <span key={i} className="text-xs bg-white border rounded px-2 py-1 font-mono text-slate-700">
+                                {inp.key} <span className="text-slate-400">({inp.label})</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {assistantResult.systemInstruction && (
+                        <div>
+                          <div className="text-[10px] font-semibold text-slate-500 mb-1">SYSTEM INSTRUCTION</div>
+                          <div className="text-xs text-slate-700 bg-white border rounded p-2 whitespace-pre-wrap">{assistantResult.systemInstruction}</div>
+                        </div>
+                      )}
+
+                      {assistantResult.promptTemplate && (
+                        <div>
+                          <div className="text-[10px] font-semibold text-slate-500 mb-1">PROMPT TEMPLATE</div>
+                          <div className="text-xs text-slate-700 bg-white border rounded p-2 font-mono whitespace-pre-wrap">{assistantResult.promptTemplate}</div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2 pt-2">
+                        <Button onClick={applyAssistantResult} size="sm" className="flex-1 bg-purple-600 hover:bg-purple-700">
+                          Apply Suggestions
+                        </Button>
+                        <Button onClick={() => setAssistantResult(null)} size="sm" variant="outline" className="flex-1">
+                          Try Again
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ─── AI ACTION ─── */}
           {actionType === 'ai_action' && (
             <>
+              {/* AI Assistant button */}
+              <button
+                onClick={() => setShowAssistant(true)}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border-2 border-dashed border-purple-300 bg-purple-50 text-purple-700 text-sm font-medium hover:bg-purple-100 hover:border-purple-400 transition-colors mb-1"
+              >
+                <span className="text-base">&#x2728;</span> AI Assistant — describe what this action should do
+              </button>
+
               {/* Inputs */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-[10px] font-semibold text-slate-500 uppercase">Inputs (from upstream nodes)</label>
-                  <button
-                    onClick={() => update({ inputs: [...(def.inputs || []), { key: '', label: '', description: '' }] })}
-                    className="text-[10px] text-blue-600 hover:text-blue-800"
-                  >+ Add Input</button>
+                  <label className="text-[10px] font-semibold text-slate-500 uppercase">Inputs</label>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setShowInputPicker(!showInputPicker)} className="text-[10px] text-blue-600 hover:text-blue-800">
+                      {showInputPicker ? 'Close Picker' : '+ Pick Input'}
+                    </button>
+                  </div>
                 </div>
+                {/* Existing inputs */}
                 {(def.inputs || []).map((inp: InputDef, i: number) => (
-                  <div key={i} className="flex gap-1 mb-1.5">
-                    <input
-                      value={inp.key}
-                      onChange={e => {
-                        const inputs = [...(def.inputs || [])];
-                        inputs[i] = { ...inputs[i], key: e.target.value };
-                        update({ inputs });
-                      }}
-                      placeholder="key"
-                      className="w-24 text-sm border rounded px-2 py-1.5 font-mono"
-                    />
-                    <input
-                      value={inp.label}
-                      onChange={e => {
-                        const inputs = [...(def.inputs || [])];
-                        inputs[i] = { ...inputs[i], label: e.target.value };
-                        update({ inputs });
-                      }}
-                      placeholder="Label"
-                      className="flex-1 text-sm border rounded px-2 py-1.5"
-                    />
+                  <div key={i} className="flex gap-1 mb-1.5 items-center">
+                    <span className="text-xs font-mono bg-slate-100 border rounded px-2 py-1.5 text-slate-700 min-w-[100px]">{inp.key}</span>
+                    <span className="text-xs text-slate-500 flex-1">{inp.label}</span>
                     <button
-                      onClick={() => update({ inputs: (def.inputs || []).filter((_: any, j: number) => j !== i) })}
+                      onClick={() => {
+                        setDef((prev: any) => ({ ...prev, inputs: (prev.inputs || []).filter((_: any, j: number) => j !== i) }));
+                        setDirty(true);
+                      }}
                       className="text-red-400 hover:text-red-600 px-1"
                     ><X className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}
+                {/* Input picker dropdown */}
+                {showInputPicker && (
+                  <div className="border rounded-lg mt-1 mb-2 bg-white shadow-lg max-h-[280px] overflow-y-auto">
+                    <div className="sticky top-0 bg-white p-2 border-b">
+                      <input
+                        value={inputPickerSearch}
+                        onChange={e => setInputPickerSearch(e.target.value)}
+                        placeholder="Search inputs..."
+                        className="w-full text-sm border rounded px-2 py-1.5"
+                        autoFocus
+                      />
+                    </div>
+                    {KNOWN_INPUTS.map(group => {
+                      const filtered = group.items.filter(i =>
+                        !inputPickerSearch || i.key.includes(inputPickerSearch.toLowerCase()) || i.label.toLowerCase().includes(inputPickerSearch.toLowerCase())
+                      );
+                      if (filtered.length === 0) return null;
+                      const existingKeys = new Set((def.inputs || []).map((inp: InputDef) => inp.key));
+                      return (
+                        <div key={group.group}>
+                          <div className="text-[9px] font-bold text-slate-400 uppercase px-3 py-1.5 bg-slate-50 sticky">{group.group}</div>
+                          {filtered.map(item => (
+                            <button
+                              key={item.key}
+                              onClick={() => addInputFromPicker(item.key, item.label)}
+                              disabled={existingKeys.has(item.key)}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 flex items-center justify-between ${existingKeys.has(item.key) ? 'opacity-40' : ''}`}
+                            >
+                              <span className="font-mono text-slate-700">{item.key}</span>
+                              <span className="text-slate-400 ml-2">{item.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* System instruction */}
@@ -184,6 +444,8 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                   <option value="classification">Classification (categories)</option>
                   <option value="numeric">Numeric Value</option>
                   <option value="freeform">Freeform Text</option>
+                  <option value="file_output">File Output</option>
+                  <option value="data_table">Data Table / List</option>
                 </select>
               </div>
 

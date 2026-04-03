@@ -237,12 +237,115 @@ function EndNode({ data }: NodeProps) {
   );
 }
 
+// ─── Custom Node: For-Each Loop ───
+function ForEachNode({ data, selected }: NodeProps) {
+  const hasError = (data as any)._hasError;
+  return (
+    <div
+      className="rounded-lg shadow-md border-2 min-w-[200px] max-w-[240px] relative"
+      style={{
+        background: '#f0fdfa',
+        borderColor: hasError ? '#ef4444' : selected ? '#2563eb' : '#14b8a6',
+        boxShadow: hasError ? '0 0 0 3px #fecaca' : selected ? '0 0 0 2px #93c5fd' : undefined,
+      }}
+    >
+      {hasError && (
+        <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500 flex items-center justify-center z-10">
+          <AlertTriangle className="h-3 w-3 text-white" />
+        </div>
+      )}
+      <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-teal-400 !border-teal-300" />
+      <div className="px-3 py-2">
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-teal-100 text-teal-700">For Each</span>
+        </div>
+        <div className="text-sm font-semibold text-slate-800 leading-tight">{(data as any).label || 'For Each Item'}</div>
+        {(data as any).collection && (
+          <div className="text-[11px] text-teal-600 mt-0.5">over: {(data as any).collection}</div>
+        )}
+      </div>
+      {/* Loop body exit */}
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="body"
+        className="!w-3 !h-3 !bg-teal-500 !border-teal-400"
+        style={{ left: '35%', bottom: -6 }}
+      />
+      {/* Done exit */}
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="done"
+        className="!w-3 !h-3 !bg-slate-400 !border-slate-300"
+        style={{ left: '65%', bottom: -6 }}
+      />
+      <span className="absolute text-[9px] font-bold text-teal-600" style={{ left: '20%', bottom: -18 }}>Each</span>
+      <span className="absolute text-[9px] font-bold text-slate-500" style={{ left: '56%', bottom: -18 }}>Done</span>
+    </div>
+  );
+}
+
+// ─── Custom Node: Loop Until ───
+function LoopUntilNode({ data, selected }: NodeProps) {
+  const hasError = (data as any)._hasError;
+  return (
+    <div
+      className="rounded-lg shadow-md border-2 min-w-[200px] max-w-[240px] relative"
+      style={{
+        background: '#fefce8',
+        borderColor: hasError ? '#ef4444' : selected ? '#2563eb' : '#eab308',
+        boxShadow: hasError ? '0 0 0 3px #fecaca' : selected ? '0 0 0 2px #93c5fd' : undefined,
+      }}
+    >
+      {hasError && (
+        <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500 flex items-center justify-center z-10">
+          <AlertTriangle className="h-3 w-3 text-white" />
+        </div>
+      )}
+      <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-yellow-400 !border-yellow-300" />
+      <div className="px-3 py-2">
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700">Loop Until</span>
+        </div>
+        <div className="text-sm font-semibold text-slate-800 leading-tight">{(data as any).label || 'Repeat Until'}</div>
+        {(data as any).condition && (
+          <div className="text-[11px] text-yellow-700 mt-0.5">until: {(data as any).condition}</div>
+        )}
+        {(data as any).maxIterations && (
+          <div className="text-[10px] text-yellow-600 mt-0.5">max: {(data as any).maxIterations} iterations</div>
+        )}
+      </div>
+      {/* Loop body (repeat) */}
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="repeat"
+        className="!w-3 !h-3 !bg-yellow-500 !border-yellow-400"
+        style={{ left: '35%', bottom: -6 }}
+      />
+      {/* Condition met exit */}
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="done"
+        className="!w-3 !h-3 !bg-slate-400 !border-slate-300"
+        style={{ left: '65%', bottom: -6 }}
+      />
+      <span className="absolute text-[9px] font-bold text-yellow-600" style={{ left: '18%', bottom: -18 }}>Repeat</span>
+      <span className="absolute text-[9px] font-bold text-slate-500" style={{ left: '56%', bottom: -18 }}>Done</span>
+    </div>
+  );
+}
+
 // ─── Node types registry ───
 const nodeTypes: NodeTypes = {
   action: ActionNode,
   decision: DecisionNode,
   start: StartNode,
   end: EndNode,
+  forEach: ForEachNode,
+  loopUntil: LoopUntilNode,
 };
 
 // ─── Default edge style ───
@@ -362,7 +465,34 @@ function validateFlow(nodes: Node[], edges: Edge[]): FlowIssue[] {
     }
   }
 
-  // 7. Orphan detection — nodes with no edges at all (except start if it's the only node)
+  // 7. For-Each nodes
+  const forEachNodes = nodes.filter(n => n.type === 'forEach');
+  for (const fe of forEachNodes) {
+    const incoming = edges.filter(e => e.target === fe.id);
+    const bodyEdges = edges.filter(e => e.source === fe.id && e.sourceHandle === 'body');
+    const doneEdges = edges.filter(e => e.source === fe.id && e.sourceHandle === 'done');
+    const lbl = label(fe);
+
+    if (incoming.length === 0) issues.push({ nodeId: fe.id, nodeLabel: lbl, severity: 'error', message: `For-Each "${lbl}" has no incoming connection` });
+    if (bodyEdges.length === 0) issues.push({ nodeId: fe.id, nodeLabel: lbl, severity: 'error', message: `For-Each "${lbl}" is missing an "Each" branch (loop body)` });
+    if (doneEdges.length === 0) issues.push({ nodeId: fe.id, nodeLabel: lbl, severity: 'error', message: `For-Each "${lbl}" is missing a "Done" branch (exit)` });
+  }
+
+  // 8. Loop-Until nodes
+  const loopUntilNodes = nodes.filter(n => n.type === 'loopUntil');
+  for (const lu of loopUntilNodes) {
+    const incoming = edges.filter(e => e.target === lu.id);
+    const repeatEdges = edges.filter(e => e.source === lu.id && e.sourceHandle === 'repeat');
+    const doneEdges = edges.filter(e => e.source === lu.id && e.sourceHandle === 'done');
+    const lbl = label(lu);
+
+    if (incoming.length === 0) issues.push({ nodeId: lu.id, nodeLabel: lbl, severity: 'error', message: `Loop-Until "${lbl}" has no incoming connection` });
+    if (repeatEdges.length === 0) issues.push({ nodeId: lu.id, nodeLabel: lbl, severity: 'error', message: `Loop-Until "${lbl}" is missing a "Repeat" branch (loop body)` });
+    if (doneEdges.length === 0) issues.push({ nodeId: lu.id, nodeLabel: lbl, severity: 'error', message: `Loop-Until "${lbl}" is missing a "Done" branch (exit)` });
+    if (!(lu.data as any).condition?.trim()) issues.push({ nodeId: lu.id, nodeLabel: lbl, severity: 'warning', message: `Loop-Until "${lbl}" has no stop condition defined` });
+  }
+
+  // 9. Orphan detection — nodes with no edges at all (except start if it's the only node)
   for (const node of nodes) {
     if (node.type === 'start') continue;
     const hasEdge = edges.some(e => e.source === node.id || e.target === node.id);
@@ -397,6 +527,9 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
   const [editAssignee, setEditAssignee] = useState('team');
   const [editInputType, setEditInputType] = useState('none');
   const [editQuestion, setEditQuestion] = useState('');
+  const [editCollection, setEditCollection] = useState('');
+  const [editCondition, setEditCondition] = useState('');
+  const [editMaxIterations, setEditMaxIterations] = useState(3);
 
   // Clear stale validation when flow changes
   const onNodesChangeWrapped = useCallback((changes: any) => {
@@ -410,12 +543,12 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
   }, [onEdgesChange, issues.length]);
 
   const onConnect = useCallback((params: Connection) => {
-    const label = params.sourceHandle === 'yes' ? 'Yes' : params.sourceHandle === 'no' ? 'No' : undefined;
-    const style = params.sourceHandle === 'yes'
-      ? { stroke: '#22c55e', strokeWidth: 2 }
-      : params.sourceHandle === 'no'
-      ? { stroke: '#ef4444', strokeWidth: 2 }
-      : undefined;
+    const handleLabels: Record<string, string> = { yes: 'Yes', no: 'No', body: 'Each', repeat: 'Repeat', done: 'Done' };
+    const handleColors: Record<string, string> = { yes: '#22c55e', no: '#ef4444', body: '#14b8a6', repeat: '#eab308', done: '#94a3b8' };
+    const handle = params.sourceHandle || '';
+    const label = handleLabels[handle];
+    const color = handleColors[handle];
+    const style = color ? { stroke: color, strokeWidth: 2 } : undefined;
     setEdges((eds) => addEdge({ ...params, label, style, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 } }, eds));
   }, [setEdges]);
 
@@ -442,6 +575,9 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
     setEditAssignee((node.data as any).assignee || 'team');
     setEditInputType((node.data as any).inputType || 'none');
     setEditQuestion((node.data as any).question || '');
+    setEditCollection((node.data as any).collection || '');
+    setEditCondition((node.data as any).condition || '');
+    setEditMaxIterations((node.data as any).maxIterations || 3);
   }, []);
 
   const saveNodeEdit = useCallback(() => {
@@ -453,6 +589,12 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
       }
       if (n.type === 'end') {
         return { ...n, data: { ...n.data, label: editLabel } };
+      }
+      if (n.type === 'forEach') {
+        return { ...n, data: { ...n.data, label: editLabel, collection: editCollection } };
+      }
+      if (n.type === 'loopUntil') {
+        return { ...n, data: { ...n.data, label: editLabel, condition: editCondition, maxIterations: editMaxIterations } };
       }
       // action node
       return {
@@ -564,6 +706,20 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                 color="border-amber-300 bg-amber-50"
                 nodeType="decision"
                 data={{ label: 'Agrees?', question: 'Does value match expected?' }}
+              />
+              <DraggableItem
+                label="For Each"
+                icon={<span className="text-teal-600 text-xs font-bold">&#x21BB;</span>}
+                color="border-teal-300 bg-teal-50"
+                nodeType="forEach"
+                data={{ label: 'For Each Item', collection: 'sample_items' }}
+              />
+              <DraggableItem
+                label="Loop Until"
+                icon={<span className="text-yellow-600 text-xs font-bold">&#x27F3;</span>}
+                color="border-yellow-300 bg-yellow-50"
+                nodeType="loopUntil"
+                data={{ label: 'Repeat Until Resolved', condition: 'All items satisfied', maxIterations: 3 }}
               />
               <DraggableItem
                 label="End / Conclude"
@@ -784,6 +940,52 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                           <option key={t.value} value={t.value}>{t.label}</option>
                         ))}
                       </select>
+                    </div>
+                  </>
+                )}
+
+                {editingNodeObj.type === 'forEach' && (
+                  <div>
+                    <label className="text-[10px] font-medium text-slate-500 uppercase">Iterate Over (collection)</label>
+                    <select
+                      value={editCollection}
+                      onChange={(e) => setEditCollection(e.target.value)}
+                      className="w-full border rounded-md px-2.5 py-1.5 text-sm mt-0.5 bg-white"
+                    >
+                      <option value="sample_items">Sample Items</option>
+                      <option value="evidence_files">Evidence Files</option>
+                      <option value="tb_rows">Trial Balance Rows</option>
+                      <option value="par_rows">PAR Rows</option>
+                      <option value="rmm_rows">RMM Rows</option>
+                      <option value="uploaded_files">Uploaded Files</option>
+                      <option value="client_responses">Client Responses</option>
+                    </select>
+                    <p className="text-[10px] text-slate-400 mt-1">Each iteration provides <code className="bg-slate-100 px-1 rounded">{'{{loop.currentItem}}'}</code> and <code className="bg-slate-100 px-1 rounded">{'{{loop.index}}'}</code></p>
+                  </div>
+                )}
+
+                {editingNodeObj.type === 'loopUntil' && (
+                  <>
+                    <div>
+                      <label className="text-[10px] font-medium text-slate-500 uppercase">Condition (stop when true)</label>
+                      <input
+                        value={editCondition}
+                        onChange={(e) => setEditCondition(e.target.value)}
+                        className="w-full border rounded-md px-2.5 py-1.5 text-sm mt-0.5"
+                        placeholder="e.g. All items satisfied, Client response accepted"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-medium text-slate-500 uppercase">Max Iterations (safety limit)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={editMaxIterations}
+                        onChange={(e) => setEditMaxIterations(parseInt(e.target.value) || 3)}
+                        className="w-full border rounded-md px-2.5 py-1.5 text-sm mt-0.5"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">Prevents infinite loops — escalates to team if exceeded</p>
                     </div>
                   </>
                 )}
