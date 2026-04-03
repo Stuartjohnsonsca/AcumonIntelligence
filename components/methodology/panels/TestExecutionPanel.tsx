@@ -304,7 +304,13 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     periodId={periodId || ''}
                     fsLine={fsLine}
                     testDescription={testDescription}
-                    populationData={pausedStep?.output?.populationData || []}
+                    populationData={
+                      // Search all completed flow steps for population data (e.g., from Wait for Evidence or portal response)
+                      pausedStep?.output?.populationData ||
+                      flowSteps.find(s => s.output?.populationData?.length > 0)?.output?.populationData ||
+                      flowSteps.find(s => s.output?.data?.populationData?.length > 0)?.output?.data?.populationData ||
+                      []
+                    }
                     materialityData={{ performanceMateriality: tolerableMisstatement, clearlyTrivial, tolerableMisstatement }}
                     onComplete={(results) => {
                       handleSamplingDone();

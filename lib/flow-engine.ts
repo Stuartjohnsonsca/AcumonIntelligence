@@ -8,6 +8,7 @@
 
 import { prisma } from '@/lib/db';
 import { resolveTemplate, resolveInputs, type ExecutionContext } from './flow-template';
+import { parsePortalResponseFiles } from './flow-file-parser';
 import OpenAI from 'openai';
 
 // ─── Types ───
@@ -415,16 +416,34 @@ async function handleWait(
       take: 1,
     });
     if (respondedRequests.length > 0) {
+      // Try to parse any uploaded files from this portal request
+      let populationData: any[] = [];
+      let parsedColumns: string[] = [];
+      let parsedFileName = '';
+      try {
+        const parsedFiles = await parsePortalResponseFiles(respondedRequests[0].id);
+        if (parsedFiles.length > 0) {
+          populationData = parsedFiles[0].rows;
+          parsedColumns = parsedFiles[0].columns;
+          parsedFileName = parsedFiles[0].fileName;
+          console.log(`[FlowEngine] Wait node parsed ${parsedFiles[0].rowCount} rows from ${parsedFileName}`);
+        }
+      } catch {}
+
       return {
         action: 'continue',
         nextNodeId: getNextNodeId(flow, node.id),
         output: {
           waitingFor: waitFor,
           satisfied: true,
+          populationData,
+          columns: parsedColumns,
+          fileName: parsedFileName,
           data: {
             response: respondedRequests[0].response,
             portalRequestId: respondedRequests[0].id,
             respondedAt: respondedRequests[0].respondedAt?.toISOString(),
+            populationData,
           },
         },
       };
@@ -646,6 +665,22 @@ export async function resumeExecution(executionId: string, externalData?: any): 
 
   // Store external data as the paused node's output
   if (execution.currentNodeId && externalData) {
+    // If this is a portal response, parse any uploaded files
+    if (externalData.portalRequestId && execution.pauseReason === 'portal_response') {
+      try {
+        const parsedFiles = await parsePortalResponseFiles(externalData.portalRequestId);
+        if (parsedFiles.length > 0) {
+          externalData.parsedFiles = parsedFiles;
+          externalData.populationData = parsedFiles[0].rows; // First file's rows as population data
+          externalData.columns = parsedFiles[0].columns;
+          externalData.fileName = parsedFiles[0].fileName;
+          console.log(`[FlowEngine] Parsed ${parsedFiles.length} file(s) from portal response: ${parsedFiles.map(f => `${f.fileName} (${f.rowCount} rows)`).join(', ')}`);
+        }
+      } catch (err) {
+        console.error('[FlowEngine] Failed to parse portal response files:', err);
+      }
+    }
+
     const updatedContext = { ...ctx, nodes: { ...ctx.nodes, [execution.currentNodeId]: { ...ctx.nodes[execution.currentNodeId], ...externalData } } };
 
     // Mark the paused node run as completed
