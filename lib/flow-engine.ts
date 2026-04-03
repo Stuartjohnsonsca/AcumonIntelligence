@@ -248,6 +248,7 @@ async function handleActionAI(
         flowNodeType: 'action',
       },
     });
+    parsedOutput.outstandingItemId = item.id;
     return { action: 'pause', pauseReason: 'sampling', pauseRefId: item.id, output: parsedOutput };
   }
 

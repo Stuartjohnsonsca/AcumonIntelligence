@@ -178,10 +178,15 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   }
 
   async function handleSamplingDone() {
-    if (!pauseItemId) return;
     setCompleting(true);
     try {
-      await fetch(`/api/engagements/${engagementId}/outstanding`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: pauseItemId, responseData: { completed: true } }) });
+      if (pauseItemId) {
+        // Mark the outstanding item as complete — this triggers resumeExecution via the outstanding API
+        await fetch(`/api/engagements/${engagementId}/outstanding`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: pauseItemId, responseData: { completed: true } }) });
+      } else if (executionId) {
+        // Fallback: resume the execution directly
+        await fetch(`/api/engagements/${engagementId}/test-execution/${executionId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resume', responseData: { completed: true, samplingDone: true } }) });
+      }
       setExecutionStatus('running'); if (executionId) startPolling(executionId);
     } catch {} finally { setCompleting(false); }
   }
