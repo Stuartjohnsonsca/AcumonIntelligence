@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { fireTrigger } from '@/lib/trigger-engine';
+import { resumeExecution } from '@/lib/flow-engine';
 
 /**
  * GET /api/portal/requests?clientId=X&status=outstanding|responded
@@ -104,6 +105,33 @@ export async function POST(req: Request) {
           firmId: eng.firmId,
           userId: respondedById || '',
         }).catch(err => console.error('[Trigger] On Portal Response failed:', err));
+      }
+
+      // Update any linked OutstandingItem to show client has responded
+      try {
+        await prisma.outstandingItem.updateMany({
+          where: { portalRequestId: requestId, status: { in: ['pending', 'awaiting_client'] } },
+          data: { status: 'awaiting_team', responseData: { response: updated.response, respondedByName: updated.respondedByName, respondedAt: updated.respondedAt?.toISOString() } as any },
+        });
+      } catch {}
+
+      // Resume any paused test execution waiting on this portal request
+      try {
+        const pausedExecution = await prisma.testExecution.findFirst({
+          where: { pauseRefId: requestId, status: 'paused', pauseReason: 'portal_response' },
+        });
+        if (pausedExecution) {
+          console.log(`[FlowEngine] Resuming execution ${pausedExecution.id} — portal response received for request ${requestId}`);
+          await resumeExecution(pausedExecution.id, {
+            response: updated.response,
+            respondedByName: updated.respondedByName,
+            respondedAt: updated.respondedAt?.toISOString(),
+            chatHistory: updated.chatHistory,
+            portalRequestId: requestId,
+          });
+        }
+      } catch (err) {
+        console.error('[FlowEngine] Failed to resume paused execution:', err);
       }
     }
 
