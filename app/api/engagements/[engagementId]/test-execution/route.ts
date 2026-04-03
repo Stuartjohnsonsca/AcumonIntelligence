@@ -19,11 +19,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     // If flowData is provided, use it directly. Otherwise look up from test bank.
     let flow = flowData;
 
+    const diagnostics: string[] = [];
+
+    if (!flow) {
+      diagnostics.push('No flow data passed from the test entry (build a flow via the Flow Builder icon in the Test Bank popup)');
+    }
+
     if (!flow && testTypeCode) {
       const testType = await prisma.methodologyTestType.findFirst({
         where: { code: testTypeCode, firmId: session.user.firmId },
       });
-      if (testType?.executionDef) {
+      if (!testType) {
+        diagnostics.push(`Test Action with code "${testTypeCode}" not found in your firm's Test Actions`);
+      } else if (!testType.executionDef) {
+        diagnostics.push(`Test Action "${testType.name}" (${testTypeCode}) exists but has no execution definition — click Configure in the Test Actions tab`);
+      } else {
         // Wrap single execution def in a simple flow: start → action → end
         flow = {
           nodes: [
@@ -36,11 +46,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
             { id: 'e2', source: 'action_auto', target: 'end_auto' },
           ],
         };
+        diagnostics.length = 0; // Clear diagnostics — we found a valid flow
       }
     }
 
     if (!flow) {
-      return NextResponse.json({ error: 'No flow data or test type found — configure a flow in the Flow Builder first' }, { status: 400 });
+      if (!testTypeCode) diagnostics.push('No Test Action type assigned to this test');
+      return NextResponse.json({
+        error: 'Cannot execute — no flow or execution definition found',
+        diagnostics,
+        help: 'Either: (1) Build a flow in Test Bank → click industry dot → Flow icon on the test, OR (2) Assign a Test Action with a configured execution definition',
+      }, { status: 400 });
     }
 
     const executionId = await startExecution(engagementId, fsLine, testDescription, testTypeCode || null, flow, session.user.id);

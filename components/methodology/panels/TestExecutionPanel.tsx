@@ -92,6 +92,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [executionStatus, setExecutionStatus] = useState<string>('not_started');
   const [executionError, setExecutionError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<string[]>([]);
+  const [helpText, setHelpText] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -149,6 +151,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
       } else {
         const data = await res.json();
         setExecutionError(data.error || 'Failed to start execution');
+        if (data.diagnostics) setDiagnostics(data.diagnostics);
+        if (data.help) setHelpText(data.help);
       }
     } catch (err: any) {
       setExecutionError(err.message || 'Failed to start');
@@ -344,11 +348,21 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </div>
                 )}
 
-                {/* Error display */}
+                {/* Error display with diagnostics */}
                 {executionError && executionStatus !== 'failed' && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4 text-xs text-red-700 flex items-start gap-2">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                    {executionError}
+                  <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-4">
+                    <div className="flex items-start gap-2 text-xs text-red-700 font-medium mb-1">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                      {executionError}
+                    </div>
+                    {diagnostics.length > 0 && (
+                      <ul className="text-[11px] text-red-600 ml-5 mt-2 space-y-1 list-disc">
+                        {diagnostics.map((d, i) => <li key={i}>{d}</li>)}
+                      </ul>
+                    )}
+                    {helpText && (
+                      <p className="text-[11px] text-red-500 mt-2 ml-5 italic">{helpText}</p>
+                    )}
                   </div>
                 )}
 
