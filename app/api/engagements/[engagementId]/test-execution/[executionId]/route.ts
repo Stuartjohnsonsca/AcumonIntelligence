@@ -19,7 +19,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
 
   if (!execution) return NextResponse.json({ error: 'Execution not found' }, { status: 404 });
 
-  // Build flow steps for the progress bar
+  // Build flow steps sorted by execution order (completed first, then pending)
   const flow = execution.flowSnapshot as any;
   const flowSteps = (flow.nodes || [])
     .filter((n: any) => n.type !== 'start')
@@ -36,6 +36,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
         startedAt: nodeRun?.startedAt,
         completedAt: nodeRun?.completedAt,
       };
+    })
+    .sort((a: any, b: any) => {
+      // Executed nodes first (by startedAt), then pending nodes in original order
+      if (a.startedAt && !b.startedAt) return -1;
+      if (!a.startedAt && b.startedAt) return 1;
+      if (a.startedAt && b.startedAt) return new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime();
+      return 0;
     });
 
   return NextResponse.json({

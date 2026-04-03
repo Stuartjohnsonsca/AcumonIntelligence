@@ -392,6 +392,14 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                             <span className={`font-medium ${step.status === 'failed' ? 'text-red-700' : step.status === 'completed' ? 'text-green-700' : step.status === 'running' ? 'text-blue-700' : 'text-slate-600'}`}>
                               {step.label}
                             </span>
+                            {step.status === 'paused' && (
+                              <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">
+                                {step.output?.portalRequestId ? 'Waiting for client response' :
+                                 step.output?.outstandingItemId ? 'Waiting for team action' :
+                                 step.output?.waitingFor ? `Waiting: ${step.output.waitingFor.replace(/_/g, ' ')}` :
+                                 'Paused'}
+                              </span>
+                            )}
                             {step.errorMessage && (
                               <p className="text-[10px] text-red-500 mt-0.5">{step.errorMessage}</p>
                             )}
