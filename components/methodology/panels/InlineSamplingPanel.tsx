@@ -1,52 +1,58 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { CheckCircle2, Loader2, Download, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { CheckCircle2, Loader2, Download, ChevronDown, ChevronRight, AlertTriangle, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface Props {
-  engagementId: string;
+  engagementId: string;    // AuditEngagement ID
+  clientId: string;
+  periodId: string;
   fsLine: string;
   testDescription: string;
-  populationData: any[]; // from client evidence/portal response
+  populationData: any[];   // From flow context (client upload parsed)
   materialityData: { performanceMateriality: number; clearlyTrivial: number; tolerableMisstatement: number };
   onComplete: (results: { runId: string; selectedIndices: number[]; sampleSize: number; coverage: number }) => void;
 }
 
-const SIMPLE_METHODS = [
-  { key: 'random', label: 'Random (SRSWOR)', desc: 'Simple random sampling without replacement' },
-  { key: 'systematic', label: 'Systematic', desc: 'Fixed interval selection from ordered population' },
-  { key: 'mus', label: 'Monetary Unit (MUS)', desc: 'Probability proportional to size' },
-  { key: 'composite', label: 'Composite', desc: 'High-value items 100% + residual sample' },
-  { key: 'judgemental', label: 'Judgemental', desc: 'Manual selection with documented rationale' },
-];
-
-const STRATIFIED_METHODS = [
-  { key: 'stratified', label: 'AI Risk Stratification', desc: 'K-means clustering + Z-score outlier detection' },
+const METHODS = [
+  { key: 'random', label: 'Random', desc: 'Simple random (SRSWOR)' },
+  { key: 'systematic', label: 'Systematic', desc: 'Fixed interval selection' },
+  { key: 'mus', label: 'MUS', desc: 'Monetary Unit Sampling' },
+  { key: 'composite', label: 'Composite', desc: 'High-value + residual' },
+  { key: 'judgemental', label: 'Judgemental', desc: 'Manual with rationale' },
+  { key: 'stratified', label: 'AI Stratified', desc: 'K-means + Z-score' },
 ];
 
 const ERROR_METRICS = [
-  { value: 'net_signed', label: 'Net Signed Error' },
+  { value: 'net_signed', label: 'Net Signed' },
   { value: 'overstatement_only', label: 'Overstatement Only' },
-  { value: 'absolute_error', label: 'Absolute Error' },
+  { value: 'absolute_error', label: 'Absolute' },
 ];
 
-const RISK_LEVELS = ['Low', 'Medium', 'High'];
-
-function fmt(n: number | null | undefined, currency = 'GBP'): string {
+function fmt(n: number | null | undefined): string {
   if (n == null) return '—';
   return `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function InlineSamplingPanel({ engagementId, fsLine, testDescription, populationData, materialityData, onComplete }: Props) {
-  const [mode, setMode] = useState<'simple' | 'stratified'>('simple');
+export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, testDescription, populationData, materialityData, onComplete }: Props) {
+  // Sampling engagement
+  const [samplingEngId, setSamplingEngId] = useState<string | null>(null);
+  const [creatingEng, setCreatingEng] = useState(false);
+
+  // Config
   const [method, setMethod] = useState('random');
-  const [sampleSizeMode, setSampleSizeMode] = useState<'calculator' | 'fixed'>('fixed');
+  const [sampleSizeMode, setSampleSizeMode] = useState<'fixed' | 'calculator'>('fixed');
   const [fixedSampleSize, setFixedSampleSize] = useState(25);
   const [confidence, setConfidence] = useState(0.95);
   const [errorMetric, setErrorMetric] = useState('net_signed');
-  const [inherentRisk, setInherentRisk] = useState('Medium');
-  const [specificRisk, setSpecificRisk] = useState('Medium');
+
+  // Column mapping
+  const [showMapping, setShowMapping] = useState(false);
+  const [idColumn, setIdColumn] = useState('');
+  const [amountColumn, setAmountColumn] = useState('');
+
+  // Results
   const [running, setRunning] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
@@ -54,32 +60,94 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
   const [coverage, setCoverage] = useState<number | null>(null);
   const [rationale, setRationale] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showPopulation, setShowPopulation] = useState(false);
+
+  // Population display
+  const [showPopulation, setShowPopulation] = useState(true);
+
+  // Auto-detect columns
+  const columns = populationData.length > 0 ? Object.keys(populationData[0]) : [];
+  useEffect(() => {
+    if (columns.length === 0) return;
+    // Auto-detect amount column
+    if (!amountColumn) {
+      const amtCol = columns.find(c => /amount|gross|net|value|total|balance/i.test(c));
+      if (amtCol) setAmountColumn(amtCol);
+    }
+    // Auto-detect ID column
+    if (!idColumn) {
+      const idCol = columns.find(c => /id|ref|reference|number|invoice|transaction/i.test(c));
+      if (idCol) setIdColumn(idCol);
+      else if (columns[0]) setIdColumn(columns[0]);
+    }
+  }, [columns.join(',')]);
 
   const populationCount = populationData.length;
-  const columns = populationCount > 0 ? Object.keys(populationData[0]).slice(0, 6) : [];
   const populationTotal = populationData.reduce((s, row) => {
-    const amt = parseFloat(row.amount || row.Amount || row.gross || row.Gross || row.net || row.Net || 0);
-    return s + (isNaN(amt) ? 0 : amt);
+    const val = amountColumn ? parseFloat(String(row[amountColumn] || 0)) : 0;
+    return s + (isNaN(val) ? 0 : Math.abs(val));
   }, 0);
 
+  // Create sampling engagement if needed
+  async function ensureSamplingEngagement(): Promise<string> {
+    if (samplingEngId) return samplingEngId;
+    setCreatingEng(true);
+    try {
+      const res = await fetch('/api/sampling/engagement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId,
+          periodId,
+          auditArea: fsLine,
+          testingType: 'test_of_details',
+          auditData: {
+            performanceMateriality: materialityData.performanceMateriality,
+            clearlyTrivial: materialityData.clearlyTrivial,
+            tolerableMisstatement: materialityData.tolerableMisstatement,
+            functionalCurrency: 'GBP',
+            dataType: fsLine,
+            testType: 'one_tail',
+          },
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to create sampling engagement');
+      }
+      const data = await res.json();
+      const id = data.engagement?.id || data.id;
+      setSamplingEngId(id);
+      return id;
+    } finally {
+      setCreatingEng(false);
+    }
+  }
+
   async function handleRun() {
+    if (populationCount === 0) { setError('No population data available'); return; }
+    if (!amountColumn) { setError('Please select the Amount column'); setShowMapping(true); return; }
+
     setRunning(true); setError(null);
     try {
+      const engId = await ensureSamplingEngagement();
+
       const res = await fetch('/api/sampling/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          engagementId,
+          engagementId: engId,
           populationData,
-          method: mode === 'stratified' ? 'stratified' : method,
-          stratification: mode,
+          columnMapping: {
+            transactionId: idColumn || columns[0] || 'id',
+            amount: amountColumn,
+          },
+          method: method === 'stratified' ? 'random' : method,
+          stratification: method === 'stratified' ? 'stratified' : 'simple',
           sampleSizeStrategy: sampleSizeMode,
           fixedSampleSize: sampleSizeMode === 'fixed' ? fixedSampleSize : undefined,
           confidence,
           tolerableMisstatement: materialityData.tolerableMisstatement,
           errorMetric,
-          ...(mode === 'stratified' ? { inherentRisk, specificRisk } : {}),
         }),
       });
       if (res.ok) {
@@ -89,7 +157,6 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
         setSampleTotal(data.sampleTotal);
         setCoverage(data.coverage);
         setRationale(data.planningRationale);
-        setShowPopulation(true);
       } else {
         const data = await res.json();
         setError(data.error || 'Sampling run failed');
@@ -101,136 +168,136 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
     }
   }
 
-  function handleConfirmSample() {
+  function handleConfirm() {
     if (!runId) return;
-    onComplete({
-      runId,
-      selectedIndices: Array.from(selectedIndices),
-      sampleSize: selectedIndices.size,
-      coverage: coverage || 0,
-    });
+    onComplete({ runId, selectedIndices: Array.from(selectedIndices), sampleSize: selectedIndices.size, coverage: coverage || 0 });
+  }
+
+  function exportCSV() {
+    if (selectedIndices.size === 0) return;
+    const headers = columns.join(',');
+    const rows = populationData.filter((_, i) => selectedIndices.has(i)).map(row => columns.map(col => `"${String(row[col] || '')}"`).join(','));
+    const csv = [headers, ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `sample_${fsLine}.csv`; a.click(); URL.revokeObjectURL(url);
   }
 
   return (
     <div className="space-y-3">
-      {/* Top row: method + config */}
+      {/* Config row: method + size + materiality */}
       <div className="grid grid-cols-12 gap-3">
-        {/* Method selector */}
-        <div className="col-span-4">
-          {/* Mode A / B toggle */}
-          <div className="flex gap-1 mb-2 bg-slate-100 rounded p-0.5">
-            <button onClick={() => { setMode('simple'); setMethod('random'); }} className={`flex-1 px-2 py-1 text-[10px] font-medium rounded ${mode === 'simple' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-              Mode A: Simple
-            </button>
-            <button onClick={() => { setMode('stratified'); setMethod('stratified'); }} className={`flex-1 px-2 py-1 text-[10px] font-medium rounded ${mode === 'stratified' ? 'bg-white text-purple-700 shadow-sm' : 'text-slate-500'}`}>
-              Mode B: AI Stratified
-            </button>
+        {/* Method */}
+        <div className="col-span-3">
+          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Method</label>
+          <div className="space-y-0.5">
+            {METHODS.map(m => (
+              <button key={m.key} onClick={() => setMethod(m.key)}
+                className={`w-full text-left px-2 py-1 rounded text-[11px] transition-colors ${method === m.key ? 'bg-blue-50 border border-blue-200 text-blue-800 font-medium' : 'border border-slate-100 hover:bg-slate-50 text-slate-600'}`}>
+                {m.label}
+              </button>
+            ))}
           </div>
-
-          {mode === 'simple' && (
-            <div className="space-y-1">
-              {SIMPLE_METHODS.map(m => (
-                <button key={m.key} onClick={() => setMethod(m.key)}
-                  className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-colors ${method === m.key ? 'bg-blue-50 border border-blue-200 text-blue-800 font-medium' : 'border border-slate-100 hover:bg-slate-50 text-slate-600'}`}>
-                  <span className="font-medium">{m.label}</span>
-                  <span className="text-[9px] text-slate-400 block">{m.desc}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {mode === 'stratified' && (
-            <div className="space-y-2">
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-2.5">
-                <span className="text-[10px] font-bold text-purple-700 uppercase">AI Risk Stratification</span>
-                <p className="text-[10px] text-purple-600 mt-0.5">K-means clustering with Z-score outlier detection. AI analyses the population and creates risk-based strata.</p>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-slate-500">Inherent Risk</label>
-                <select value={inherentRisk} onChange={e => setInherentRisk(e.target.value)} className="w-full border rounded px-2 py-1 text-xs bg-white mt-0.5">
-                  {RISK_LEVELS.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-slate-500">Specific Risk</label>
-                <select value={specificRisk} onChange={e => setSpecificRisk(e.target.value)} className="w-full border rounded px-2 py-1 text-xs bg-white mt-0.5">
-                  {RISK_LEVELS.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Config + Stats */}
-        <div className="col-span-4 space-y-3">
+        {/* Size + Error Metric + Confidence */}
+        <div className="col-span-3 space-y-2">
           <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Sample Size</label>
-            <div className="flex gap-1 mb-2 bg-slate-100 rounded p-0.5">
-              <button onClick={() => setSampleSizeMode('fixed')} className={`flex-1 px-2 py-1 text-[10px] font-medium rounded ${sampleSizeMode === 'fixed' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Fixed</button>
-              <button onClick={() => setSampleSizeMode('calculator')} className={`flex-1 px-2 py-1 text-[10px] font-medium rounded ${sampleSizeMode === 'calculator' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Calculate</button>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Sample Size</label>
+            <div className="flex gap-0.5 mb-1.5 bg-slate-100 rounded p-0.5">
+              <button onClick={() => setSampleSizeMode('fixed')} className={`flex-1 px-1.5 py-0.5 text-[9px] font-medium rounded ${sampleSizeMode === 'fixed' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Fixed</button>
+              <button onClick={() => setSampleSizeMode('calculator')} className={`flex-1 px-1.5 py-0.5 text-[9px] font-medium rounded ${sampleSizeMode === 'calculator' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Auto</button>
             </div>
             {sampleSizeMode === 'fixed' && (
-              <input type="number" min={1} max={populationCount} value={fixedSampleSize} onChange={e => setFixedSampleSize(parseInt(e.target.value) || 1)}
-                className="w-full border rounded px-2.5 py-1.5 text-sm" />
-            )}
-            {sampleSizeMode === 'calculator' && (
-              <div className="text-[10px] text-slate-500 bg-slate-50 rounded p-2">
-                Auto-calculated from risk assessment and materiality
-              </div>
+              <input type="number" min={1} max={populationCount || 999} value={fixedSampleSize} onChange={e => setFixedSampleSize(parseInt(e.target.value) || 1)}
+                className="w-full border rounded px-2 py-1 text-sm" />
             )}
           </div>
-
           <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Confidence Level</label>
-            <select value={confidence} onChange={e => setConfidence(parseFloat(e.target.value))} className="w-full border rounded px-2 py-1.5 text-sm bg-white">
-              <option value={0.90}>90%</option>
-              <option value={0.95}>95%</option>
-              <option value={0.99}>99%</option>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Confidence</label>
+            <select value={confidence} onChange={e => setConfidence(parseFloat(e.target.value))} className="w-full border rounded px-1.5 py-1 text-xs bg-white">
+              <option value={0.90}>90%</option><option value={0.95}>95%</option><option value={0.99}>99%</option>
             </select>
           </div>
-
           <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Error Metric</label>
-            <select value={errorMetric} onChange={e => setErrorMetric(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm bg-white">
+            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Error Metric</label>
+            <select value={errorMetric} onChange={e => setErrorMetric(e.target.value)} className="w-full border rounded px-1.5 py-1 text-xs bg-white">
               {ERROR_METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
         </div>
 
-        {/* Summary stats */}
-        <div className="col-span-4 space-y-2">
-          <div className="bg-slate-50 rounded-lg p-2.5">
-            <span className="text-[9px] text-slate-400 uppercase block">Population</span>
-            <span className="text-base font-bold text-slate-800">{populationCount.toLocaleString()} items</span>
-            <span className="text-xs text-slate-500 block">{fmt(populationTotal)}</span>
+        {/* Column mapping */}
+        <div className="col-span-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Column Mapping</label>
+            <button onClick={() => setShowMapping(!showMapping)} className="text-[9px] text-blue-600 hover:text-blue-800">
+              <Settings2 className="h-3 w-3 inline" /> {showMapping ? 'Hide' : 'Show'}
+            </button>
           </div>
-          {selectedIndices.size > 0 && (
-            <div className="bg-green-50 rounded-lg p-2.5 border border-green-200">
-              <span className="text-[9px] text-green-600 uppercase block">Sample Selected</span>
-              <span className="text-base font-bold text-green-800">{selectedIndices.size} items</span>
-              <span className="text-xs text-green-600 block">{fmt(sampleTotal)} ({coverage?.toFixed(1)}% coverage)</span>
+          {(showMapping || !amountColumn) && columns.length > 0 && (
+            <div className="space-y-1.5">
+              <div>
+                <label className="text-[9px] text-slate-400">ID / Reference Column</label>
+                <select value={idColumn} onChange={e => setIdColumn(e.target.value)} className="w-full border rounded px-1.5 py-1 text-xs bg-white">
+                  {columns.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-400">Amount Column</label>
+                <select value={amountColumn} onChange={e => setAmountColumn(e.target.value)} className="w-full border rounded px-1.5 py-1 text-xs bg-white">
+                  <option value="">Select...</option>
+                  {columns.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
             </div>
           )}
-          <div className="bg-slate-50 rounded-lg p-2.5 text-[10px]">
-            <div className="flex justify-between"><span className="text-slate-400">PM</span><span className="font-mono text-slate-700">{fmt(materialityData.performanceMateriality)}</span></div>
-            <div className="flex justify-between"><span className="text-slate-400">CT</span><span className="font-mono text-slate-700">{fmt(materialityData.clearlyTrivial)}</span></div>
-            <div className="flex justify-between"><span className="text-slate-400">TM</span><span className="font-mono text-slate-700">{fmt(materialityData.tolerableMisstatement)}</span></div>
+          {!showMapping && amountColumn && (
+            <div className="text-[10px] text-slate-500">
+              ID: <span className="font-mono text-slate-700">{idColumn || '(auto)'}</span><br/>
+              Amount: <span className="font-mono text-slate-700">{amountColumn}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Stats */}
+        <div className="col-span-3 space-y-1.5">
+          <div className="bg-slate-50 rounded p-2">
+            <span className="text-[9px] text-slate-400 uppercase block">Population</span>
+            <span className="text-sm font-bold text-slate-800">{populationCount.toLocaleString()} items</span>
+            <span className="text-[10px] text-slate-500 block">{fmt(populationTotal)}</span>
+          </div>
+          {selectedIndices.size > 0 && (
+            <div className="bg-green-50 rounded p-2 border border-green-200">
+              <span className="text-[9px] text-green-600 uppercase block">Selected</span>
+              <span className="text-sm font-bold text-green-800">{selectedIndices.size} items</span>
+              <span className="text-[10px] text-green-600 block">{fmt(sampleTotal)} ({coverage?.toFixed(1)}%)</span>
+            </div>
+          )}
+          <div className="text-[9px] space-y-0.5">
+            <div className="flex justify-between"><span className="text-slate-400">PM</span><span className="font-mono text-slate-600">{fmt(materialityData.performanceMateriality)}</span></div>
+            <div className="flex justify-between"><span className="text-slate-400">CT</span><span className="font-mono text-slate-600">{fmt(materialityData.clearlyTrivial)}</span></div>
+            <div className="flex justify-between"><span className="text-slate-400">TM</span><span className="font-mono text-slate-600">{fmt(materialityData.tolerableMisstatement)}</span></div>
           </div>
         </div>
       </div>
 
-      {/* Run button */}
-      <div className="flex items-center gap-3">
-        <Button onClick={handleRun} disabled={running || populationCount === 0} className="bg-green-600 hover:bg-green-700">
-          {running ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-          {running ? 'Running...' : selectedIndices.size > 0 ? 'Re-run Sample' : 'Run Sample'}
+      {/* Action buttons */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button onClick={handleRun} disabled={running || creatingEng || populationCount === 0} className="bg-green-600 hover:bg-green-700">
+          {running || creatingEng ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />}
+          {running ? 'Running...' : creatingEng ? 'Creating...' : selectedIndices.size > 0 ? 'Re-run Sample' : 'Run Sample'}
         </Button>
         {selectedIndices.size > 0 && (
-          <Button onClick={handleConfirmSample} className="bg-blue-600 hover:bg-blue-700">
-            Confirm Sample — Continue Flow
-          </Button>
+          <>
+            <Button onClick={handleConfirm} className="bg-blue-600 hover:bg-blue-700">
+              Confirm Sample — Continue Flow
+            </Button>
+            <button onClick={exportCSV} className="text-[10px] text-slate-500 hover:text-slate-700 flex items-center gap-1">
+              <Download className="h-3 w-3" /> Export CSV
+            </button>
+          </>
         )}
-        {error && <span className="text-xs text-red-500">{error}</span>}
+        {error && <span className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {error}</span>}
       </div>
 
       {/* Rationale */}
@@ -240,7 +307,7 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
         </div>
       )}
 
-      {/* Population table with selected items highlighted */}
+      {/* Population table */}
       {populationCount > 0 && (
         <div>
           <button onClick={() => setShowPopulation(!showPopulation)} className="flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-800 mb-1">
@@ -248,14 +315,18 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
             Population Data ({populationCount} items{selectedIndices.size > 0 ? `, ${selectedIndices.size} selected` : ''})
           </button>
           {showPopulation && (
-            <div className="border rounded-lg overflow-auto max-h-[300px]">
+            <div className="border rounded-lg overflow-auto max-h-[350px]">
               <table className="w-full text-xs border-collapse">
                 <thead className="sticky top-0 z-10 bg-slate-100">
                   <tr>
                     <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-8">#</th>
                     {selectedIndices.size > 0 && <th className="px-2 py-1.5 text-center font-semibold text-slate-600 w-8">Sel</th>}
-                    {columns.map(col => (
-                      <th key={col} className="px-2 py-1.5 text-left font-semibold text-slate-600 truncate max-w-[120px]">{col}</th>
+                    {columns.slice(0, 8).map(col => (
+                      <th key={col} className={`px-2 py-1.5 text-left font-semibold truncate max-w-[120px] ${col === amountColumn ? 'text-blue-600' : col === idColumn ? 'text-green-600' : 'text-slate-600'}`}>
+                        {col}
+                        {col === amountColumn && <span className="text-[7px] ml-0.5 text-blue-400">(amt)</span>}
+                        {col === idColumn && <span className="text-[7px] ml-0.5 text-green-400">(id)</span>}
+                      </th>
                     ))}
                   </tr>
                 </thead>
@@ -266,11 +337,9 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
                       <tr key={i} className={isSelected ? 'bg-green-50' : i % 2 ? 'bg-slate-50/30' : ''}>
                         <td className="px-2 py-1 text-slate-400 font-mono">{i + 1}</td>
                         {selectedIndices.size > 0 && (
-                          <td className="px-2 py-1 text-center">
-                            {isSelected && <span className="inline-block w-3 h-3 rounded-full bg-green-500" />}
-                          </td>
+                          <td className="px-2 py-1 text-center">{isSelected && <span className="inline-block w-3 h-3 rounded-full bg-green-500" />}</td>
                         )}
-                        {columns.map(col => (
+                        {columns.slice(0, 8).map(col => (
                           <td key={col} className={`px-2 py-1 truncate max-w-[120px] ${isSelected ? 'text-green-800 font-medium' : 'text-slate-500'}`}>
                             {String(row[col] ?? '')}
                           </td>
@@ -285,16 +354,12 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
         </div>
       )}
 
-      {/* Export buttons */}
-      {runId && selectedIndices.size > 0 && (
-        <div className="flex items-center gap-3 text-xs">
-          <button onClick={() => {
-            const headers = columns.join(',');
-            const rows = populationData.filter((_, i) => selectedIndices.has(i)).map(row => columns.map(col => `"${String(row[col] || '')}"`).join(','));
-            const csv = [headers, ...rows].join('\n');
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `sample_${fsLine}.csv`; a.click(); URL.revokeObjectURL(url);
-          }} className="text-slate-500 hover:text-slate-700 flex items-center gap-1"><Download className="h-3 w-3" /> Export CSV</button>
+      {/* No data message */}
+      {populationCount === 0 && (
+        <div className="border rounded-lg p-4 bg-amber-50/50 text-center">
+          <AlertTriangle className="h-5 w-5 text-amber-400 mx-auto mb-2" />
+          <p className="text-xs text-amber-700 font-medium">No population data available</p>
+          <p className="text-[10px] text-amber-600 mt-1">The client data from the portal response will be loaded here when the flow engine passes it through.</p>
         </div>
       )}
     </div>

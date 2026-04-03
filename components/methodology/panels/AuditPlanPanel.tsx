@@ -45,6 +45,8 @@ const TEST_TYPE_COLORS: Record<string, string> = {
 
 interface Props {
   engagementId: string;
+  clientId?: string;
+  periodId?: string;
   onClose: () => void;
   periodEndDate?: string | null;
   periodStartDate?: string | null;
@@ -218,7 +220,7 @@ function dayBefore(d: string | null | undefined): string {
   return dt.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodStartDate }: Props) {
+export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [testBank, setTestBank] = useState<TestBankEntry[]>([]);
@@ -579,6 +581,8 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
                                 testDescription={test.description}
                                 testType={test.testTypeCode}
                                 engagementId={engagementId}
+                                clientId={clientId}
+                                periodId={periodId}
                                 fsLine={activeLevel || activeStatement}
                                 flowData={(test as any).flow || null}
                                 executionDef={(test as any).executionDef || null}

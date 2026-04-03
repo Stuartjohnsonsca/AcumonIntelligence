@@ -13,6 +13,7 @@ interface VerificationResult { itemId: string; amountMatch: string; dateMatch: s
 interface FlowStep { id: string; label: string; status: string; output?: any; errorMessage?: string; duration?: number; }
 interface Props {
   testId: string; testDescription: string; testType: string; engagementId: string; fsLine: string;
+  clientId?: string; periodId?: string;
   sessionId?: string; flowData?: any; executionDef?: any;
   onClose: () => void;
   onConclusionChange?: (conclusion: 'green' | 'orange' | 'red' | 'pending') => void;
@@ -31,7 +32,7 @@ function ResultIcon({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, flowData, executionDef, onClose, onConclusionChange }: Props) {
+export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, clientId, periodId, flowData, executionDef, onClose, onConclusionChange }: Props) {
   // Data state
   const [sampleItems, setSampleItems] = useState<SampleItem[]>([]);
   const [evidence, setEvidence] = useState<ClientEvidence[]>([]);
@@ -299,9 +300,11 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                 {isSamplingPause && (
                   <InlineSamplingPanel
                     engagementId={engagementId}
+                    clientId={clientId || ''}
+                    periodId={periodId || ''}
                     fsLine={fsLine}
                     testDescription={testDescription}
-                    populationData={[]} // Will be populated from flow context when engine passes data
+                    populationData={pausedStep?.output?.populationData || []}
                     materialityData={{ performanceMateriality: tolerableMisstatement, clearlyTrivial, tolerableMisstatement }}
                     onComplete={(results) => {
                       handleSamplingDone();
