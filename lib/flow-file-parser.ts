@@ -12,9 +12,11 @@ import * as XLSX from 'xlsx';
 interface ParsedFile {
   fileName: string;
   mimeType: string;
-  rows: Record<string, any>[];
+  rows: Record<string, any>[];          // Raw line items
+  aggregatedRows: Record<string, any>[]; // Aggregated by invoice/document number
   columns: string[];
   rowCount: number;
+  aggregatedCount: number;
 }
 
 /**
@@ -65,12 +67,15 @@ export async function parsePortalResponseFiles(portalRequestId: string): Promise
       }
 
       if (rows.length > 0) {
+        const aggregated = aggregateByInvoice(rows, columns);
         parsedFiles.push({
           fileName: name,
           mimeType: mime,
           rows,
+          aggregatedRows: aggregated.rows,
           columns,
           rowCount: rows.length,
+          aggregatedCount: aggregated.rows.length,
         });
       }
     } catch (err) {
@@ -127,4 +132,76 @@ function parseCsvLine(line: string): string[] {
   }
   result.push(current.trim());
   return result;
+}
+
+/**
+ * Aggregate line items by invoice/document number.
+ * Detects the grouping column automatically, then sums amounts
+ * and takes first values for non-numeric fields.
+ */
+function aggregateByInvoice(rows: Record<string, any>[], columns: string[]): { rows: Record<string, any>[]; groupColumn: string } {
+  // Find the grouping column — invoice number, reference, etc.
+  const groupCandidates = [
+    'InvoiceNumber', 'Invoice', 'InvoiceNo', 'Invoice Number', 'Invoice No',
+    'Reference', 'Ref', 'DocumentNumber', 'Doc No', 'DocRef',
+    'TransactionId', 'Transaction ID', 'Number', 'ID',
+  ];
+  let groupColumn = '';
+  for (const candidate of groupCandidates) {
+    const found = columns.find(c => c.toLowerCase() === candidate.toLowerCase());
+    if (found) {
+      // Check it actually groups — must have fewer unique values than rows
+      const unique = new Set(rows.map(r => r[found])).size;
+      if (unique < rows.length && unique > 0) {
+        groupColumn = found;
+        break;
+      }
+    }
+  }
+
+  // If no grouping column found, or all values are unique (already at invoice level), return as-is
+  if (!groupColumn) return { rows, groupColumn: '' };
+
+  // Amount columns to sum
+  const amountColumns = columns.filter(c =>
+    /amount|total|gross|net|tax|lineamount|unitamount|subtotal|invoiceamountdue|invoiceamountpaid|taxtotal|taxamount/i.test(c)
+  );
+  // Quantity column
+  const qtyColumns = columns.filter(c => /quantity|qty/i.test(c));
+
+  // Group by the grouping column
+  const groups = new Map<string, Record<string, any>[]>();
+  for (const row of rows) {
+    const key = String(row[groupColumn] || '');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(row);
+  }
+
+  // Aggregate each group
+  const aggregated: Record<string, any>[] = [];
+  for (const [key, groupRows] of groups) {
+    const agg: Record<string, any> = {};
+    // Take first row's values for non-numeric fields
+    for (const col of columns) {
+      agg[col] = groupRows[0][col];
+    }
+    // Sum amount columns across all rows in the group
+    for (const col of amountColumns) {
+      agg[col] = groupRows.reduce((sum, r) => sum + (parseFloat(String(r[col] || 0)) || 0), 0);
+    }
+    // Sum quantities
+    for (const col of qtyColumns) {
+      agg[col] = groupRows.reduce((sum, r) => sum + (parseFloat(String(r[col] || 0)) || 0), 0);
+    }
+    // Add line count
+    agg._lineItemCount = groupRows.length;
+    // Build description from all line descriptions
+    const descs = groupRows.map(r => r.Description || r.Desc || '').filter(Boolean);
+    if (descs.length > 1) {
+      agg._allDescriptions = descs.join('; ');
+    }
+    aggregated.push(agg);
+  }
+
+  return { rows: aggregated, groupColumn };
 }

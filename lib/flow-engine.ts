@@ -435,7 +435,7 @@ async function handleWait(
       try {
         const parsedFiles = await parsePortalResponseFiles(respondedRequests[0].id);
         if (parsedFiles.length > 0) {
-          populationData = parsedFiles[0].rows;
+          populationData = parsedFiles[0].aggregatedRows.length > 0 ? parsedFiles[0].aggregatedRows : parsedFiles[0].rows;
           parsedColumns = parsedFiles[0].columns;
           parsedFileName = parsedFiles[0].fileName;
           console.log(`[FlowEngine] Wait node parsed ${parsedFiles[0].rowCount} rows from ${parsedFileName}`);
@@ -841,7 +841,8 @@ export async function resumeExecution(executionId: string, externalData?: any): 
         const parsedFiles = await parsePortalResponseFiles(externalData.portalRequestId);
         if (parsedFiles.length > 0) {
           externalData.parsedFiles = parsedFiles;
-          externalData.populationData = parsedFiles[0].rows; // First file's rows as population data
+          externalData.populationData = parsedFiles[0].aggregatedRows.length > 0 ? parsedFiles[0].aggregatedRows : parsedFiles[0].rows;
+          externalData.rawLineItems = parsedFiles[0].rows; // Keep raw line items for reference
           externalData.columns = parsedFiles[0].columns;
           externalData.fileName = parsedFiles[0].fileName;
           console.log(`[FlowEngine] Parsed ${parsedFiles.length} file(s) from portal response: ${parsedFiles.map(f => `${f.fileName} (${f.rowCount} rows)`).join(', ')}`);
