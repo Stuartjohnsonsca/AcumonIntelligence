@@ -263,25 +263,25 @@ function ForEachNode({ data, selected }: NodeProps) {
         {(data as any).collection && (
           <div className="text-[11px] text-teal-600 mt-0.5">over: {(data as any).collection}</div>
         )}
+        <div className="text-[9px] text-slate-400 mt-1 italic">Each branch runs per item, then Done continues</div>
       </div>
-      {/* Loop body exit */}
+      {/* Loop body exit — left side */}
       <Handle
         type="source"
-        position={Position.Bottom}
+        position={Position.Left}
         id="body"
-        className="!w-3 !h-3 !bg-teal-500 !border-teal-400"
-        style={{ left: '35%', bottom: -6 }}
+        className="!w-4 !h-4 !bg-teal-500 !border-teal-400"
+        style={{ top: '50%' }}
       />
-      {/* Done exit */}
+      {/* Done exit — bottom */}
       <Handle
         type="source"
         position={Position.Bottom}
         id="done"
-        className="!w-3 !h-3 !bg-slate-400 !border-slate-300"
-        style={{ left: '65%', bottom: -6 }}
+        className="!w-4 !h-4 !bg-slate-500 !border-slate-400"
       />
-      <span className="absolute text-[9px] font-bold text-teal-600" style={{ left: '20%', bottom: -18 }}>Each</span>
-      <span className="absolute text-[9px] font-bold text-slate-500" style={{ left: '56%', bottom: -18 }}>Done</span>
+      <span className="absolute text-[9px] font-bold text-teal-600" style={{ left: -30, top: '45%' }}>Each</span>
+      <span className="absolute text-[9px] font-bold text-slate-500" style={{ left: '38%', bottom: -16 }}>Done</span>
     </div>
   );
 }
@@ -315,25 +315,25 @@ function LoopUntilNode({ data, selected }: NodeProps) {
         {(data as any).maxIterations && (
           <div className="text-[10px] text-yellow-600 mt-0.5">max: {(data as any).maxIterations} iterations</div>
         )}
+        <div className="text-[9px] text-slate-400 mt-1 italic">Repeat branch loops back, Done exits when condition met</div>
       </div>
-      {/* Loop body (repeat) */}
+      {/* Loop body (repeat) — left side */}
       <Handle
         type="source"
-        position={Position.Bottom}
+        position={Position.Left}
         id="repeat"
-        className="!w-3 !h-3 !bg-yellow-500 !border-yellow-400"
-        style={{ left: '35%', bottom: -6 }}
+        className="!w-4 !h-4 !bg-yellow-500 !border-yellow-400"
+        style={{ top: '50%' }}
       />
-      {/* Condition met exit */}
+      {/* Condition met exit — bottom */}
       <Handle
         type="source"
         position={Position.Bottom}
         id="done"
-        className="!w-3 !h-3 !bg-slate-400 !border-slate-300"
-        style={{ left: '65%', bottom: -6 }}
+        className="!w-4 !h-4 !bg-slate-500 !border-slate-400"
       />
-      <span className="absolute text-[9px] font-bold text-yellow-600" style={{ left: '18%', bottom: -18 }}>Repeat</span>
-      <span className="absolute text-[9px] font-bold text-slate-500" style={{ left: '56%', bottom: -18 }}>Done</span>
+      <span className="absolute text-[9px] font-bold text-yellow-600" style={{ left: -38, top: '45%' }}>Repeat</span>
+      <span className="absolute text-[9px] font-bold text-slate-500" style={{ left: '38%', bottom: -16 }}>Done</span>
     </div>
   );
 }
@@ -404,6 +404,29 @@ function createDefaultFlow(): FlowData {
   };
 }
 
+// ─── Helper: check if node is inside a loop body ───
+function isReachableFromLoopHandle(nodeId: string, allNodes: Node[], allEdges: Edge[]): boolean {
+  // Walk backward from nodeId — if we reach a forEach "body" or loopUntil "repeat" source handle, it's in a loop
+  const visited = new Set<string>();
+  const queue = [nodeId];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    // Find edges that point TO this node
+    const incomingEdges = allEdges.filter(e => e.target === id);
+    for (const edge of incomingEdges) {
+      const sourceNode = allNodes.find(n => n.id === edge.source);
+      if (!sourceNode) continue;
+      // If the source is a loop node and the handle is the body/repeat handle, we're in a loop
+      if (sourceNode.type === 'forEach' && edge.sourceHandle === 'body') return true;
+      if (sourceNode.type === 'loopUntil' && edge.sourceHandle === 'repeat') return true;
+      queue.push(edge.source);
+    }
+  }
+  return false;
+}
+
 // ─── Validation ───
 interface FlowIssue {
   nodeId: string;
@@ -463,9 +486,13 @@ function validateFlow(nodes: Node[], edges: Edge[]): FlowIssue[] {
       issues.push({ nodeId: action.id, nodeLabel: lbl, severity: 'error', message: `"${lbl}" has no incoming connection — it will never be reached` });
     }
 
-    // Must have outgoing (not a dead end)
+    // Must have outgoing (not a dead end) — UNLESS it's the last node in a loop body
     if (outgoing.length === 0) {
-      issues.push({ nodeId: action.id, nodeLabel: lbl, severity: 'error', message: `"${lbl}" has no outgoing connection — flow stops here` });
+      // Check if this node is reachable from a forEach "body" or loopUntil "repeat" handle
+      const isInLoopBody = isReachableFromLoopHandle(action.id, nodes, edges);
+      if (!isInLoopBody) {
+        issues.push({ nodeId: action.id, nodeLabel: lbl, severity: 'error', message: `"${lbl}" has no outgoing connection — flow stops here` });
+      }
     }
 
     // Warn if no execution def
