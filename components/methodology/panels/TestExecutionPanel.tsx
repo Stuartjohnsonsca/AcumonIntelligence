@@ -183,11 +183,20 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         {/* LEFT: Verification Grid (75%) */}
         <div className="flex-1 overflow-auto border-r">
           {sampleItems.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-sm text-slate-400 p-8">
-              <div className="text-center">
-                <FileText className="h-10 w-10 text-slate-200 mx-auto mb-3" />
-                <p className="font-medium">No sample items yet</p>
-                <p className="text-xs mt-1">Sample items will appear here when the sampling run is complete</p>
+            <div className="flex items-center justify-center h-full p-8">
+              <div className="text-center max-w-md">
+                <FileText className="h-10 w-10 text-blue-200 mx-auto mb-3" />
+                <p className="text-sm font-semibold text-slate-700 mb-2">Test Execution Workspace</p>
+                <p className="text-xs text-slate-500 mb-4">This test needs a configured flow to run. When the execution engine triggers this test, the flow steps will execute automatically:</p>
+                <div className="text-left bg-slate-50 rounded-lg p-3 space-y-1.5 text-xs text-slate-600 mb-4">
+                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">1.</span> AI sends a request to the client portal for supporting data</div>
+                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">2.</span> Client uploads evidence via the portal</div>
+                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">3.</span> AI verifies the uploaded data against the test criteria</div>
+                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">4.</span> Sampling calculator is populated (user reviews and runs)</div>
+                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">5.</span> Per-item evidence is requested, verified, and assessed</div>
+                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">6.</span> Results appear here in the verification grid</div>
+                </div>
+                <p className="text-[10px] text-slate-400">To configure the flow for this test, go to <strong>Test Bank &rarr; Test Actions</strong> and set up the execution definitions, then build the flow in the <strong>Flow Builder</strong>.</p>
               </div>
             </div>
           ) : (

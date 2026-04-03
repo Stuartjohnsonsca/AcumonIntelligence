@@ -538,10 +538,9 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
                               className="w-2.5 h-2.5 rounded border-slate-300 cursor-pointer" title={isApplicable ? 'Applicable — click to exclude' : 'Not applicable — click to include'} />
                           </td>
                           <td colSpan={isThreeLevel ? 7 : 6} className="py-0.5 pl-4">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-start gap-1.5 flex-wrap">
                               <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
-                              <span className={`text-[9px] flex-1 ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}>{test.description}</span>
-                              {test.assertion && <span className="text-[7px] px-0.5 py-0 bg-slate-100 text-slate-400 rounded flex-shrink-0">{test.assertion}</span>}
+                              <span className={`text-[9px] ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}>{test.description}</span>
                               {isApplicable && (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); setActiveExecution(isExecutionOpen ? null : testKey); }}
@@ -556,6 +555,7 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
                                   {isExecutionOpen ? 'Close' : 'Execute'}
                                 </button>
                               )}
+                              {test.assertion && <span className="text-[7px] px-0.5 py-0 bg-slate-100 text-slate-400 rounded flex-shrink-0">{test.assertion}</span>}
                             </div>
                           </td>
                         </tr>
