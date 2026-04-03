@@ -216,14 +216,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
     if (saved) setTechApproval(saved);
   }, [data.tech_approval]);
 
-  // When benchmark % changes and there was a tech approval, clear it
+  // When benchmark % changes and breach clears, remove the tech approval flag
   useEffect(() => {
-    if (techApproval && isBreach) {
-      // Approval stays — technical team approved the breach
-    } else if (!isBreach && techApproval) {
-      // No longer in breach — clear approval
+    if (!isBreach && techApproval) {
+      setTechApproval(null);
+      set('tech_approval', null);
     }
-  }, [benchmarkPct]);
+  }, [isBreach]);
 
   // Send technical breach email
   async function sendTechBreachEmail() {
