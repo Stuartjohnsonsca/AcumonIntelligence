@@ -52,10 +52,18 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [completing, setCompleting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Section collapse state
-  const [progressOpen, setProgressOpen] = useState(true);
+  // Section collapse state — progress collapses when sampling/portal is active
+  const [progressOpen, setProgressOpen] = useState(false);
   const [samplingOpen, setSamplingOpen] = useState(true);
   const [findingsOpen, setFindingsOpen] = useState(false);
+
+  // Auto-collapse progress when we detect a sampling pause
+  useEffect(() => {
+    if (isSamplingPause || isPortalPause) {
+      setProgressOpen(false);
+      setSamplingOpen(true);
+    }
+  }, [isSamplingPause, isPortalPause]);
 
   // ─── Computed values ───
   const sampleTotal = sampleItems.length;
