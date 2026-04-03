@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Component, type ReactNode } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -90,6 +90,24 @@ const TAB_TO_SCHEDULE: Record<string, string> = {
 };
 
 type TabKey = typeof TABS[number]['key'];
+
+// Error boundary to catch tab-level crashes without taking down the whole page
+class TabErrorBoundary extends Component<{ tabName: string; children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-6 text-center">
+          <div className="text-red-500 font-semibold mb-2">Error loading {this.props.tabName}</div>
+          <pre className="text-xs text-red-400 bg-red-50 rounded p-3 max-h-[200px] overflow-auto text-left whitespace-pre-wrap">{this.state.error.message}{'\n'}{this.state.error.stack?.split('\n').slice(0, 5).join('\n')}</pre>
+          <button onClick={() => this.setState({ error: null })} className="mt-3 text-xs text-blue-600 hover:text-blue-800 underline">Try Again</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export function EngagementTabs({ engagement, auditType, clientName, periodEndDate, periodStartDate, currentUserId }: Props) {
   const searchParams = useSearchParams();
@@ -333,10 +351,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 </button>
               ) : undefined}
             >
-              {renderTabContent()}
+              <TabErrorBoundary tabName={signOffTitle}>{renderTabContent()}</TabErrorBoundary>
             </SignOffHeader>
           ) : (
-            renderTabContent()
+            <TabErrorBoundary tabName={activeTab}>{renderTabContent()}</TabErrorBoundary>
           )}
 
           {/* Start Audit button — only shown on Opening tab when engagement is pre_start */}
