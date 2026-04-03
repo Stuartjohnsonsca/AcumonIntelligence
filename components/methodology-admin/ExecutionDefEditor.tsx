@@ -470,15 +470,177 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                   onChange={e => update({ outputFormat: e.target.value })}
                   className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
                 >
-                  <option value="pass_fail">Pass / Fail</option>
-                  <option value="extracted_data">Extracted Data (fields)</option>
-                  <option value="classification">Classification (categories)</option>
-                  <option value="numeric">Numeric Value</option>
-                  <option value="freeform">Freeform Text</option>
-                  <option value="file_output">File Output</option>
-                  <option value="data_table">Data Table / List</option>
+                  <optgroup label="Data Outputs">
+                    <option value="pass_fail">Pass / Fail</option>
+                    <option value="extracted_data">Extracted Data (fields)</option>
+                    <option value="classification">Classification (categories)</option>
+                    <option value="numeric">Numeric Value</option>
+                    <option value="freeform">Freeform Text</option>
+                    <option value="file_output">File Output</option>
+                    <option value="data_table">Data Table / List</option>
+                  </optgroup>
+                  <optgroup label="System Triggers">
+                    <option value="trigger_sampling">Create Sampling Engagement</option>
+                    <option value="trigger_portal_request">Send Portal Request</option>
+                    <option value="trigger_evidence_request">Create Evidence Request</option>
+                    <option value="trigger_review_point">Raise Review Point</option>
+                    <option value="trigger_representation">Add to Representation Letter</option>
+                  </optgroup>
                 </select>
               </div>
+
+              {/* Trigger config sections */}
+              {def.outputFormat === 'trigger_sampling' && (
+                <div className="border rounded-lg p-3 bg-teal-50/50 space-y-2">
+                  <div className="text-[10px] font-bold text-teal-700 uppercase">Sampling Trigger Config</div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Default Sampling Method</label>
+                    <select
+                      value={def.triggerConfig?.samplingMethod || 'random'}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, samplingMethod: e.target.value } })}
+                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
+                    >
+                      <option value="random">Random (SRSWOR)</option>
+                      <option value="systematic">Systematic</option>
+                      <option value="mus">Monetary Unit Sampling (MUS)</option>
+                      <option value="composite">Composite (threshold + residual)</option>
+                      <option value="stratified">AI Risk Stratification</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Population Data Source</label>
+                    <select
+                      value={def.triggerConfig?.populationSource || 'uploaded_file'}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, populationSource: e.target.value } })}
+                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
+                    >
+                      <option value="uploaded_file">From client uploaded file</option>
+                      <option value="tb_rows">From Trial Balance rows</option>
+                      <option value="previous_step">From previous step output</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Materiality Source</label>
+                    <select
+                      value={def.triggerConfig?.materialitySource || 'engagement'}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, materialitySource: e.target.value } })}
+                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
+                    >
+                      <option value="engagement">From engagement materiality</option>
+                      <option value="custom">Custom (specify in prompt)</option>
+                    </select>
+                  </div>
+                  <p className="text-[10px] text-teal-600">At runtime: creates a SamplingEngagement, populates the population data, and pre-configures the calculator for the user to review and run.</p>
+                </div>
+              )}
+
+              {def.outputFormat === 'trigger_portal_request' && (
+                <div className="border rounded-lg p-3 bg-sky-50/50 space-y-2">
+                  <div className="text-[10px] font-bold text-sky-700 uppercase">Portal Request Config</div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={def.triggerConfig?.autoCompose ?? true}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, autoCompose: e.target.checked } })}
+                      className="rounded text-sky-600"
+                    />
+                    <span className="text-sm text-slate-700">AI composes the request message from context</span>
+                  </label>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Portal Section</label>
+                    <select
+                      value={def.triggerConfig?.portalSection || 'outstanding'}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, portalSection: e.target.value } })}
+                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
+                    >
+                      <option value="outstanding">Outstanding (general requests)</option>
+                      <option value="explanations">Explanations (PAR items)</option>
+                    </select>
+                  </div>
+                  <p className="text-[10px] text-sky-600">At runtime: creates a PortalRequest visible in the client portal, and pauses the flow until the client responds.</p>
+                </div>
+              )}
+
+              {def.outputFormat === 'trigger_evidence_request' && (
+                <div className="border rounded-lg p-3 bg-blue-50/50 space-y-2">
+                  <div className="text-[10px] font-bold text-blue-700 uppercase">Evidence Request Config</div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Request Mode</label>
+                    <select
+                      value={def.triggerConfig?.requestMode || 'per_item'}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, requestMode: e.target.value } })}
+                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
+                    >
+                      <option value="per_item">One request per sample item</option>
+                      <option value="bulk">Single bulk request for all items</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Evidence Types Required</label>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {EVIDENCE_TYPES.map(et => (
+                        <label key={et} className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={(def.triggerConfig?.evidenceTypes || []).includes(et)}
+                            onChange={e => {
+                              const current = def.triggerConfig?.evidenceTypes || [];
+                              update({ triggerConfig: { ...def.triggerConfig, evidenceTypes: e.target.checked ? [...current, et] : current.filter((t: string) => t !== et) } });
+                            }}
+                            className="rounded text-blue-600"
+                          />
+                          <span className="text-xs text-slate-600 capitalize">{et.replace(/_/g, ' ')}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-blue-600">At runtime: creates AuditEvidenceRequest records for each sample item, sends to client portal, pauses until evidence is uploaded.</p>
+                </div>
+              )}
+
+              {def.outputFormat === 'trigger_review_point' && (
+                <div className="border rounded-lg p-3 bg-amber-50/50 space-y-2">
+                  <div className="text-[10px] font-bold text-amber-700 uppercase">Review Point Config</div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Assign To</label>
+                    <select
+                      value={def.triggerConfig?.assignTo || 'ri'}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, assignTo: e.target.value } })}
+                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
+                    >
+                      <option value="ri">Responsible Individual (RI)</option>
+                      <option value="manager">Audit Manager</option>
+                      <option value="technical">Technical Team</option>
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={def.triggerConfig?.pauseUntilResolved ?? true}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, pauseUntilResolved: e.target.checked } })}
+                      className="rounded text-amber-600"
+                    />
+                    <span className="text-sm text-slate-700">Pause flow until review point is resolved</span>
+                  </label>
+                  <p className="text-[10px] text-amber-600">At runtime: creates a review point, notifies the assignee, optionally pauses the flow until resolved.</p>
+                </div>
+              )}
+
+              {def.outputFormat === 'trigger_representation' && (
+                <div className="border rounded-lg p-3 bg-purple-50/50 space-y-2">
+                  <div className="text-[10px] font-bold text-purple-700 uppercase">Representation Letter Config</div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={def.triggerConfig?.autoCompose ?? true}
+                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, autoCompose: e.target.checked } })}
+                      className="rounded text-purple-600"
+                    />
+                    <span className="text-sm text-slate-700">AI composes the representation wording from test context</span>
+                  </label>
+                  <p className="text-[10px] text-purple-600">At runtime: adds a paragraph to the management representation letter based on the test findings.</p>
+                </div>
+              )}
 
               {/* Confidence + Review */}
               <div className="flex gap-3">
@@ -711,10 +873,16 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                   onChange={e => update({ outputFormat: e.target.value })}
                   className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
                 >
-                  <option value="form_data">Form Data</option>
-                  <option value="file">File Output</option>
-                  <option value="approval">Approval / Sign-off</option>
-                  <option value="sample_selection">Sample Selection</option>
+                  <optgroup label="Data Outputs">
+                    <option value="form_data">Form Data</option>
+                    <option value="file">File Output</option>
+                    <option value="approval">Approval / Sign-off</option>
+                    <option value="sample_selection">Sample Selection</option>
+                  </optgroup>
+                  <optgroup label="System Triggers">
+                    <option value="trigger_sampling">Open Sampling Calculator</option>
+                    <option value="trigger_review_point">Raise Review Point</option>
+                  </optgroup>
                 </select>
               </div>
 
