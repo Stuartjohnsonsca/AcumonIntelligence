@@ -203,6 +203,29 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
     }
   }
 
+  async function handleReset() {
+    if (!confirm('This will cancel the current execution and start fresh. Any progress will be lost. Continue?')) return;
+    // Cancel existing
+    if (executionId) {
+      await fetch(`/api/engagements/${engagementId}/test-execution/${executionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel' }),
+      });
+    }
+    if (pollRef.current) clearInterval(pollRef.current);
+    // Reset all state
+    setExecutionId(null);
+    setExecutionStatus('not_started');
+    setExecutionError(null);
+    setDiagnostics([]);
+    setHelpText(null);
+    setFlowSteps([]);
+    setSampleItems([]);
+    setEvidence([]);
+    setResults([]);
+  }
+
   // Merge evidence and results with sample items for display
   const rows = sampleItems.map(item => ({
     item,
@@ -270,9 +293,31 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
              'Not Started'}
           </span>
         </div>
-        <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded">
-          <X className="h-4 w-4 text-slate-400" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {/* Stop button — visible when running or paused */}
+          {(executionStatus === 'running' || executionStatus === 'paused') && (
+            <button
+              onClick={handleCancel}
+              className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50"
+              title="Stop the current execution"
+            >
+              <Ban className="h-3 w-3" /> Stop
+            </button>
+          )}
+          {/* Reset button — visible when any execution exists */}
+          {executionId && executionStatus !== 'not_started' && (
+            <button
+              onClick={handleReset}
+              className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100"
+              title="Cancel and start fresh"
+            >
+              <RotateCcw className="h-3 w-3" /> Reset
+            </button>
+          )}
+          <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded">
+            <X className="h-4 w-4 text-slate-400" />
+          </button>
+        </div>
       </div>
 
       {/* Main content: 3/4 + 1/4 split */}
@@ -318,7 +363,6 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     <Loader2 className="h-8 w-8 text-blue-500 mx-auto mb-2 animate-spin" />
                     <p className="text-sm font-semibold text-blue-700">Executing...</p>
                     <p className="text-xs text-slate-500 mb-3">The flow engine is processing steps. This updates automatically.</p>
-                    <button onClick={handleCancel} className="text-xs text-red-500 hover:text-red-700">Cancel Execution</button>
                   </div>
                 )}
 
