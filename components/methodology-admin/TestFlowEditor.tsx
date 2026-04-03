@@ -828,22 +828,23 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
               Copy Flow
             </button>
             <button
-              onClick={async () => {
+              onClick={() => {
+                const text = prompt('Paste the copied flow JSON here:');
+                if (!text) return;
                 try {
-                  const text = await navigator.clipboard.readText();
                   const parsed = JSON.parse(text);
                   if (parsed.nodes && parsed.edges) {
-                    if (confirm(`Paste flow with ${parsed.nodes.length} nodes? This will replace the current flow.`)) {
+                    if (confirm(`Import flow with ${parsed.nodes.length} nodes? This will replace the current flow.`)) {
                       setNodes(parsed.nodes);
                       setEdges(parsed.edges);
                     }
                   } else {
-                    alert('Clipboard does not contain a valid flow.');
+                    alert('Invalid flow data — must contain nodes and edges.');
                   }
-                } catch { alert('Could not read clipboard. Copy a flow first.'); }
+                } catch { alert('Invalid JSON. Copy a flow first, then paste the JSON here.'); }
               }}
               className="text-xs px-3 py-1.5 border border-slate-200 text-slate-600 rounded-md hover:bg-slate-50"
-              title="Paste a copied flow from clipboard"
+              title="Import a copied flow from clipboard"
             >
               Paste Flow
             </button>
