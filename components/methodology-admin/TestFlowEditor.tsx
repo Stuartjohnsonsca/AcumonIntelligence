@@ -700,12 +700,8 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
   }
 
   async function handleSave() {
-    const result = runValidation();
-    const errors = result.filter(i => i.severity === 'error');
-    if (errors.length > 0) {
-      // Don't save — show validation panel
-      return;
-    }
+    runValidation();
+    // Always save — validation shows issues but doesn't block
     setSaving(true);
     try { await onSave({ nodes, edges }); } finally { setSaving(false); }
   }
