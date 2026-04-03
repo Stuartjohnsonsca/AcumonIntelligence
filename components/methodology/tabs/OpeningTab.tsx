@@ -104,6 +104,31 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
     }
   }
 
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  async function handleDisconnect() {
+    if (!confirm('Are you sure you want to disconnect the Xero connection for this client? This will revoke access and remove stored tokens.')) return;
+    setDisconnecting(true);
+    try {
+      const res = await fetch('/api/accounting/xero/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: engagement.clientId }),
+      });
+      if (res.ok) {
+        setConnection({ connected: false });
+        setTestResult({ ok: true, message: 'Xero connection disconnected successfully' });
+      } else {
+        const data = await res.json();
+        setTestResult({ ok: false, message: data.error || 'Failed to disconnect' });
+      }
+    } catch {
+      setTestResult({ ok: false, message: 'Disconnect request failed' });
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
   function handleRenewConnection() {
     setShowConnectorModal(true);
   }
@@ -386,6 +411,13 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
                 className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 font-medium"
               >
                 Renew Connection
+              </button>
+              <button
+                onClick={handleDisconnect}
+                disabled={disconnecting}
+                className="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-100 font-medium disabled:opacity-50"
+              >
+                {disconnecting ? 'Disconnecting...' : 'Disconnect'}
               </button>
             </div>
             {testResult && (
