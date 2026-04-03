@@ -338,6 +338,38 @@ function LoopUntilNode({ data, selected }: NodeProps) {
   );
 }
 
+// ─── Custom Node: Wait for Event ───
+function WaitNode({ data, selected }: NodeProps) {
+  const hasError = (data as any)._hasError;
+  return (
+    <div
+      className="rounded-lg shadow-md border-2 min-w-[200px] max-w-[240px] relative"
+      style={{
+        background: '#fdf4ff',
+        borderColor: hasError ? '#ef4444' : selected ? '#2563eb' : '#c084fc',
+        boxShadow: hasError ? '0 0 0 3px #fecaca' : selected ? '0 0 0 2px #93c5fd' : undefined,
+      }}
+    >
+      {hasError && (
+        <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500 flex items-center justify-center z-10">
+          <AlertTriangle className="h-3 w-3 text-white" />
+        </div>
+      )}
+      <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-purple-400 !border-purple-300" />
+      <div className="px-3 py-2">
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Wait</span>
+        </div>
+        <div className="text-sm font-semibold text-slate-800 leading-tight">{(data as any).label || 'Wait for Event'}</div>
+        {(data as any).waitFor && (
+          <div className="text-[11px] text-purple-600 mt-0.5">{(data as any).waitFor}</div>
+        )}
+      </div>
+      <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-purple-400 !border-purple-300" />
+    </div>
+  );
+}
+
 // ─── Node types registry ───
 const nodeTypes: NodeTypes = {
   action: ActionNode,
@@ -346,6 +378,7 @@ const nodeTypes: NodeTypes = {
   end: EndNode,
   forEach: ForEachNode,
   loopUntil: LoopUntilNode,
+  wait: WaitNode,
 };
 
 // ─── Default edge style ───
@@ -492,7 +525,18 @@ function validateFlow(nodes: Node[], edges: Edge[]): FlowIssue[] {
     if (!(lu.data as any).condition?.trim()) issues.push({ nodeId: lu.id, nodeLabel: lbl, severity: 'warning', message: `Loop-Until "${lbl}" has no stop condition defined` });
   }
 
-  // 9. Orphan detection — nodes with no edges at all (except start if it's the only node)
+  // 9. Wait nodes
+  const waitNodes = nodes.filter(n => n.type === 'wait');
+  for (const w of waitNodes) {
+    const incoming = edges.filter(e => e.target === w.id);
+    const outgoing = edges.filter(e => e.source === w.id);
+    const lbl = label(w);
+    if (incoming.length === 0) issues.push({ nodeId: w.id, nodeLabel: lbl, severity: 'error', message: `Wait "${lbl}" has no incoming connection` });
+    if (outgoing.length === 0) issues.push({ nodeId: w.id, nodeLabel: lbl, severity: 'error', message: `Wait "${lbl}" has no outgoing connection — nothing happens after the event` });
+    if (!(w.data as any).waitFor) issues.push({ nodeId: w.id, nodeLabel: lbl, severity: 'warning', message: `Wait "${lbl}" has no event type selected` });
+  }
+
+  // 10. Orphan detection — nodes with no edges at all (except start if it's the only node)
   for (const node of nodes) {
     if (node.type === 'start') continue;
     const hasEdge = edges.some(e => e.source === node.id || e.target === node.id);
@@ -530,6 +574,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
   const [editCollection, setEditCollection] = useState('');
   const [editCondition, setEditCondition] = useState('');
   const [editMaxIterations, setEditMaxIterations] = useState(3);
+  const [editWaitFor, setEditWaitFor] = useState('');
 
   // Clear stale validation when flow changes
   const onNodesChangeWrapped = useCallback((changes: any) => {
@@ -578,6 +623,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
     setEditCollection((node.data as any).collection || '');
     setEditCondition((node.data as any).condition || '');
     setEditMaxIterations((node.data as any).maxIterations || 3);
+    setEditWaitFor((node.data as any).waitFor || '');
   }, []);
 
   const saveNodeEdit = useCallback(() => {
@@ -595,6 +641,9 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
       }
       if (n.type === 'loopUntil') {
         return { ...n, data: { ...n.data, label: editLabel, condition: editCondition, maxIterations: editMaxIterations } };
+      }
+      if (n.type === 'wait') {
+        return { ...n, data: { ...n.data, label: editLabel, waitFor: editWaitFor } };
       }
       // action node
       return {
@@ -720,6 +769,13 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                 color="border-yellow-300 bg-yellow-50"
                 nodeType="loopUntil"
                 data={{ label: 'Repeat Until Resolved', condition: 'All items satisfied', maxIterations: 3 }}
+              />
+              <DraggableItem
+                label="Wait for Event"
+                icon={<span className="text-purple-600 text-xs font-bold">&#x23F8;</span>}
+                color="border-purple-300 bg-purple-50"
+                nodeType="wait"
+                data={{ label: 'Wait for Evidence', waitFor: 'evidence_received' }}
               />
               <DraggableItem
                 label="End / Conclude"
@@ -942,6 +998,34 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                       </select>
                     </div>
                   </>
+                )}
+
+                {editingNodeObj.type === 'wait' && (
+                  <div>
+                    <label className="text-[10px] font-medium text-slate-500 uppercase">Wait For</label>
+                    <select
+                      value={editWaitFor}
+                      onChange={(e) => setEditWaitFor(e.target.value)}
+                      className="w-full border rounded-md px-2.5 py-1.5 text-sm mt-0.5 bg-white"
+                    >
+                      <optgroup label="Client Actions">
+                        <option value="evidence_received">All evidence uploaded by client</option>
+                        <option value="portal_response">Client portal response received</option>
+                        <option value="client_confirmation">Client confirmation received</option>
+                      </optgroup>
+                      <optgroup label="Team Actions">
+                        <option value="sampling_complete">Sampling run completed by user</option>
+                        <option value="review_resolved">Review point resolved</option>
+                        <option value="team_task_complete">Team task marked complete</option>
+                        <option value="manager_approval">Manager approval received</option>
+                      </optgroup>
+                      <optgroup label="System Events">
+                        <option value="document_uploaded">Document uploaded to audit file</option>
+                        <option value="ai_processing_complete">AI processing complete</option>
+                      </optgroup>
+                    </select>
+                    <p className="text-[10px] text-purple-500 mt-1">Flow pauses here until the selected event occurs. The event data then flows to the next node.</p>
+                  </div>
                 )}
 
                 {editingNodeObj.type === 'forEach' && (
