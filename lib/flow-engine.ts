@@ -319,6 +319,16 @@ async function handleActionClient(
     },
   });
 
+  // If inside a forEach loop, don't pause — fire the request and continue to next iteration
+  // The flow designer should have a separate Wait node AFTER the loop for collecting all responses
+  const isInsideLoop = await prisma.testExecution.findUnique({
+    where: { id: executionId },
+    select: { loopState: true },
+  });
+  if (isInsideLoop?.loopState) {
+    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { portalRequestId: portalRequest.id, subject, fireAndForget: true } };
+  }
+
   return { action: 'pause', pauseReason: 'portal_response', pauseRefId: portalRequest.id, output: { portalRequestId: portalRequest.id, subject } };
 }
 
@@ -521,71 +531,6 @@ async function handleForEach(
       return { action: 'continue', nextNodeId: doneNodeId, output: { loopCompleted: true, itemCount: 0, results: [] } };
     }
 
-    // Check if the loop body starts with a client action — if so, batch into one request
-    const bodyNodeId = getNextNodeId(flow, node.id, 'body');
-    const bodyNode = bodyNodeId ? findNode(flow, bodyNodeId) : null;
-    if (bodyNode?.type === 'action' && bodyNode.data?.assignee === 'client') {
-      // BATCH MODE: send one portal request for all items instead of iterating
-      const execDef = bodyNode.data.executionDef;
-
-      // Build a batch message listing all items
-      const itemSummaries = items.map((item, i) => {
-        if (typeof item !== 'object') return `${i + 1}. ${item}`;
-        const name = item.ContactName || item.Customer || item.Name || '';
-        const ref = item.Reference || item.Ref || item.InvoiceNumber || '';
-        const amt = item.Total || item.Gross || item.Amount || item.LineAmount || '';
-        const desc = item.Description || item.Desc || '';
-        return `${i + 1}. ${name}${ref ? ` (Ref: ${ref})` : ''}${desc ? ` — ${desc}` : ''}${amt ? `, £${Number(amt).toLocaleString('en-GB', {minimumFractionDigits: 2})}` : ''}`;
-      }).join('\n');
-
-      const subject = `Evidence requested for ${items.length} sampled items — ${ctx.test.fsLine}`;
-      const message = `As part of our audit of ${ctx.test.fsLine} for ${ctx.engagement.clientName} (period ending ${ctx.engagement.periodEnd}), we have selected the following ${items.length} items for testing.\n\nPlease provide the supporting invoices/documents for each:\n\n${itemSummaries}\n\nPlease upload all documents together.`;
-
-      const eng = await prisma.auditEngagement.findUnique({ where: { id: execution.engagementId }, select: { clientId: true } });
-      const portalRequest = await prisma.portalRequest.create({
-        data: {
-          clientId: eng!.clientId,
-          engagementId: execution.engagementId,
-          section: 'questions',
-          question: `${subject}\n\n${message}`,
-          status: 'outstanding',
-          requestedById: 'system',
-          requestedByName: 'Audit System',
-        },
-      });
-
-      await prisma.outstandingItem.create({
-        data: {
-          engagementId: execution.engagementId,
-          executionId: execution.id,
-          nodeId: node.id,
-          type: 'portal_request',
-          title: subject,
-          description: `Batch request for ${items.length} sampled items`,
-          source: 'flow',
-          status: 'awaiting_client',
-          fsLine: ctx.test.fsLine,
-          testName: ctx.test.description,
-          flowNodeType: 'forEach',
-          portalRequestId: portalRequest.id,
-        },
-      });
-
-      // Store items for later iteration (after evidence arrives)
-      loopState = { nodeId: node.id, items, index: 0, results: [] };
-      await prisma.testExecution.update({
-        where: { id: execution.id },
-        data: { loopState: loopState as any },
-      });
-
-      return {
-        action: 'pause',
-        pauseReason: 'portal_response',
-        pauseRefId: portalRequest.id,
-        output: { batchRequest: true, itemCount: items.length, portalRequestId: portalRequest.id, populationData: items },
-      };
-    }
-
     loopState = { nodeId: node.id, items, index: 0, results: [] };
 
     // Save loop state and set context for first iteration
@@ -618,24 +563,6 @@ async function handleForEach(
     return { action: 'continue', nextNodeId: doneNodeId, output: { loopCompleted: true, itemCount: loopState.items.length, skipped: true } };
   }
 
-  // If batch request was already sent (previous output has batchRequest), skip client action and wait nodes
-  const prevForEachOutput = ctx.nodes[node.id];
-  if (prevForEachOutput?.batchRequest) {
-    let skipNode = findNode(flow, bodyNodeId);
-    while (skipNode) {
-      if (skipNode.type === 'action' && skipNode.data?.assignee === 'client') {
-        const nextAfterClient = getNextNodeId(flow, skipNode.id);
-        bodyNodeId = nextAfterClient || bodyNodeId;
-        skipNode = nextAfterClient ? findNode(flow, nextAfterClient) || undefined : undefined;
-      } else if (skipNode.type === 'wait') {
-        const nextAfterWait = getNextNodeId(flow, skipNode.id);
-        bodyNodeId = nextAfterWait || bodyNodeId;
-        skipNode = nextAfterWait ? findNode(flow, nextAfterWait) || undefined : undefined;
-      } else {
-        break;
-      }
-    }
-  }
 
   // Increment index for next iteration (saved to DB)
   loopState.index++;
@@ -735,7 +662,7 @@ export async function startExecution(
 export async function processNextNode(executionId: string): Promise<void> {
   const startTime = Date.now();
   const MAX_DURATION = 45_000; // 45s budget
-  const MAX_STEPS = 15;
+  const MAX_STEPS = 100; // High budget for loops that fire many requests
   let steps = 0;
 
   while (steps < MAX_STEPS && (Date.now() - startTime) < MAX_DURATION) {
