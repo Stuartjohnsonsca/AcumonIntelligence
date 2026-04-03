@@ -660,8 +660,8 @@ export async function startExecution(
 }
 
 export async function processNextNode(executionId: string): Promise<void> {
-  const startTime = Date.now();
-  const MAX_DURATION = 45_000; // 45s budget
+  let startTime = Date.now();
+  const MAX_DURATION = 55_000; // 55s budget (Vercel allows 60s)
   const MAX_STEPS = 100; // High budget for loops that fire many requests
   let steps = 0;
 
