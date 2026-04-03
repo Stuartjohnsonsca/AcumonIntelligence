@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -16,6 +16,7 @@ import { DocumentRepositoryTab } from './tabs/DocumentRepositoryTab';
 import { ClientPortalTab } from './tabs/ClientPortalTab';
 import { OpeningTab } from './tabs/OpeningTab';
 import { PriorPeriodTab } from './tabs/PriorPeriodTab';
+import { EngagementOutstandingTab } from './tabs/EngagementOutstandingTab';
 
 interface Props {
   engagement: EngagementData;
@@ -36,6 +37,7 @@ const TABS = [
   { key: 'materiality', label: 'Materiality' },
   { key: 'par', label: 'PAR' },
   { key: 'rmm', label: 'Identifying & Assessing RMM' },
+  { key: 'outstanding', label: 'Outstanding' },
   { key: 'documents', label: 'Documents' },
   { key: 'portal', label: 'Portal' },
 ] as const;
@@ -77,6 +79,7 @@ const TAB_TO_SCHEDULE: Record<string, string> = {
   'materiality': 'materiality_questions',
   'par': 'par',
   'rmm': 'rmm',
+  'outstanding': 'outstanding',
   'documents': 'documents',
   'portal': 'portal',
 };
@@ -90,6 +93,13 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [tbShowCategory, setTbShowCategory] = useState(true);
   const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
+  const [outstandingTeamCount, setOutstandingTeamCount] = useState(0);
+  const [outstandingClientCount, setOutstandingClientCount] = useState(0);
+
+  const handleOutstandingCounts = useCallback((team: number, client: number) => {
+    setOutstandingTeamCount(team);
+    setOutstandingClientCount(client);
+  }, []);
 
   // Fetch audit type → schedule mapping
   useEffect(() => {
@@ -148,6 +158,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         return <PARTab engagementId={engagement.id} />;
       case 'rmm':
         return <RMMTab engagementId={engagement.id} auditType={auditType} teamMembers={teamMembers} showCategoryOption={tbShowCategory} />;
+      case 'outstanding':
+        return <EngagementOutstandingTab engagementId={engagement.id} onCountsChange={handleOutstandingCounts} />;
       case 'documents':
         return <DocumentRepositoryTab engagementId={engagement.id} />;
       case 'portal':
@@ -174,13 +186,24 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               <button
                 key={tab.key}
                 onClick={() => switchTab(tab.key)}
-                className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors ${
+                className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors flex items-center gap-1.5 ${
                   isActive
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
                 }`}
               >
                 {label}
+                {/* Outstanding tab dot counts */}
+                {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
+                  <span className="inline-flex items-center justify-center w-4.5 h-4.5 min-w-[18px] px-1 rounded-full bg-teal-500 text-white text-[9px] font-bold leading-none">
+                    {outstandingTeamCount}
+                  </span>
+                )}
+                {tab.key === 'outstanding' && outstandingClientCount > 0 && (
+                  <span className="inline-flex items-center justify-center w-4.5 h-4.5 min-w-[18px] px-1 rounded-full bg-orange-500 text-white text-[9px] font-bold leading-none">
+                    {outstandingClientCount}
+                  </span>
+                )}
               </button>
             );
           })}
