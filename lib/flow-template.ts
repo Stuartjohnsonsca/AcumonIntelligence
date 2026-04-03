@@ -23,6 +23,16 @@ export interface ExecutionContext {
   };
   nodes: Record<string, any>;    // outputs keyed by nodeId
   vars: Record<string, any>;     // flow-level variables — persist across nodes and sub-flows
+  tb?: {
+    currentYear: number;
+    priorYear: number;
+    variance: number;
+    variancePct: number;
+    accountCount: number;
+    accountCode: string;
+    description: string;
+    accounts: { code: string; description: string; currentYear: number; priorYear: number }[];
+  };
   loop?: {
     currentItem: any;
     index: number;
@@ -56,6 +66,17 @@ export function resolveTemplate(template: string, ctx: ExecutionContext, inputBi
     // {{test.xxx}}
     if (parts[0] === 'test' && parts.length >= 2) {
       const val = (ctx.test as any)?.[parts[1]];
+      return val != null ? String(val) : match;
+    }
+
+    // {{tb.xxx}} — trial balance data for the FS line
+    if (parts[0] === 'tb' && parts.length >= 2) {
+      const field = parts[1];
+      if (field === 'balance' || field === 'currentYear') return ctx.tb?.currentYear != null ? Number(ctx.tb.currentYear).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : match;
+      if (field === 'priorYear') return ctx.tb?.priorYear != null ? Number(ctx.tb.priorYear).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : match;
+      if (field === 'variance') return ctx.tb?.variance != null ? Number(ctx.tb.variance).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : match;
+      if (field === 'variancePct') return ctx.tb?.variancePct != null ? ctx.tb.variancePct.toFixed(1) + '%' : match;
+      const val = (ctx.tb as any)?.[field];
       return val != null ? String(val) : match;
     }
 

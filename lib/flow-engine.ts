@@ -120,7 +120,20 @@ async function buildContext(engagementId: string, fsLine: string, testDescriptio
   if (!engagement) throw new Error(`Engagement ${engagementId} not found`);
 
   const matData = engagement.materiality?.data as any || {};
-  const tbRow = engagement.tbRows[0];
+  const tbRows = engagement.tbRows;
+
+  // Calculate TB totals for this FS line
+  const tbCurrentYear = tbRows.reduce((s, r) => s + (r.currentYear || 0), 0);
+  const tbPriorYear = tbRows.reduce((s, r) => s + (r.priorYear || 0), 0);
+  const tbVariance = tbCurrentYear - tbPriorYear;
+
+  // Get all unique account codes and descriptions
+  const tbAccounts = tbRows.map(r => ({
+    code: r.accountCode,
+    description: r.description,
+    currentYear: r.currentYear || 0,
+    priorYear: r.priorYear || 0,
+  }));
 
   return {
     engagement: {
@@ -138,8 +151,23 @@ async function buildContext(engagementId: string, fsLine: string, testDescriptio
       fsLine,
       assertion: '',
     },
+    tb: {
+      currentYear: tbCurrentYear,
+      priorYear: tbPriorYear,
+      variance: tbVariance,
+      variancePct: tbPriorYear !== 0 ? ((tbVariance / Math.abs(tbPriorYear)) * 100) : 0,
+      accountCount: tbRows.length,
+      accounts: tbAccounts,
+      // First account (for single-account FS lines)
+      accountCode: tbRows[0]?.accountCode || '',
+      description: tbRows[0]?.description || '',
+    },
     nodes: {},
-    vars: {},
+    vars: {
+      tbBalance: tbCurrentYear,
+      tbPriorYear,
+      tbVariance,
+    },
   };
 }
 

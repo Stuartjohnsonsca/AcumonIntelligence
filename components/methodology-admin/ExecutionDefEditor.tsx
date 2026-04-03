@@ -142,7 +142,16 @@ const PLACEHOLDERS = [
   { code: '{{engagement.framework}}', desc: 'Accounting framework' },
   { code: '{{loop.currentItem}}', desc: 'Current item in a For-Each loop' },
   { code: '{{loop.index}}', desc: 'Current iteration index (0-based)' },
+  { code: '{{tb.balance}}', desc: 'TB current year total for FS line' },
+  { code: '{{tb.priorYear}}', desc: 'TB prior year total' },
+  { code: '{{tb.variance}}', desc: 'TB variance (CY - PY)' },
+  { code: '{{tb.variancePct}}', desc: 'TB variance %' },
+  { code: '{{tb.accountCode}}', desc: 'TB account code' },
+  { code: '{{tb.description}}', desc: 'TB account description' },
+  { code: '{{tb.accountCount}}', desc: 'Number of TB accounts in FS line' },
   { code: '{{vars.<key>}}', desc: 'Flow variable — persists across nodes and sub-flows' },
+  { code: '{{loop.position}}', desc: 'Current item number (1-based)' },
+  { code: '{{loop.total}}', desc: 'Total items in loop' },
 ];
 
 function getDefaultDef(actionType: string) {
