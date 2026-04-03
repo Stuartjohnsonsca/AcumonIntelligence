@@ -175,7 +175,12 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
     if (!amountColumn) { setError('Please select the Amount column'); setShowMapping(true); return; }
 
     setRunning(true); setError(null);
+    // Clear previous results
+    setSelectedIndices(new Set()); setSampleTotal(null); setCoverage(null); setRationale(null); setRunId(null);
+
     try {
+      // Force new engagement each run for fresh seed
+      setSamplingEngId(null);
       const engId = await ensureSamplingEngagement();
 
       const res = await fetch('/api/sampling/run', {
