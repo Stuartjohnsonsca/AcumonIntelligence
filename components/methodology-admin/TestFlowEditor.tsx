@@ -370,6 +370,41 @@ function WaitNode({ data, selected }: NodeProps) {
   );
 }
 
+// ─── Custom Node: Sub-Flow ───
+function SubFlowNode({ data, selected }: NodeProps) {
+  const hasError = (data as any)._hasError;
+  return (
+    <div
+      className="rounded-lg shadow-md border-2 min-w-[200px] max-w-[240px] relative"
+      style={{
+        background: '#eef2ff',
+        borderColor: hasError ? '#ef4444' : selected ? '#2563eb' : '#6366f1',
+        boxShadow: hasError ? '0 0 0 3px #fecaca' : selected ? '0 0 0 2px #93c5fd' : undefined,
+      }}
+    >
+      {hasError && (
+        <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500 flex items-center justify-center z-10">
+          <AlertTriangle className="h-3 w-3 text-white" />
+        </div>
+      )}
+      <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-indigo-400 !border-indigo-300" />
+      <div className="px-3 py-2">
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">Sub-Flow</span>
+        </div>
+        <div className="text-sm font-semibold text-slate-800 leading-tight">{(data as any).label || 'Call Sub-Flow'}</div>
+        {(data as any).subFlowName && (
+          <div className="text-[11px] text-indigo-600 mt-0.5">calls: {(data as any).subFlowName}</div>
+        )}
+        {(data as any).subFlowId && (
+          <div className="text-[9px] text-indigo-400 mt-0.5 font-mono truncate">{(data as any).subFlowId}</div>
+        )}
+      </div>
+      <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-indigo-400 !border-indigo-300" />
+    </div>
+  );
+}
+
 // ─── Node types registry ───
 const nodeTypes: NodeTypes = {
   action: ActionNode,
@@ -379,6 +414,7 @@ const nodeTypes: NodeTypes = {
   forEach: ForEachNode,
   loopUntil: LoopUntilNode,
   wait: WaitNode,
+  subFlow: SubFlowNode,
 };
 
 // ─── Default edge style ───
@@ -602,6 +638,9 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
   const [editCondition, setEditCondition] = useState('');
   const [editMaxIterations, setEditMaxIterations] = useState(3);
   const [editWaitFor, setEditWaitFor] = useState('');
+  const [editSubFlowId, setEditSubFlowId] = useState('');
+  const [editSubFlowName, setEditSubFlowName] = useState('');
+  const [availableFlows, setAvailableFlows] = useState<{ id: string; fsLine: string; description: string; hasFlow: boolean }[]>([]);
 
   // Clear stale validation when flow changes
   const onNodesChangeWrapped = useCallback((changes: any) => {
@@ -651,6 +690,25 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
     setEditCondition((node.data as any).condition || '');
     setEditMaxIterations((node.data as any).maxIterations || 3);
     setEditWaitFor((node.data as any).waitFor || '');
+    setEditSubFlowId((node.data as any).subFlowId || '');
+    setEditSubFlowName((node.data as any).subFlowName || '');
+    // Load available flows for sub-flow picker
+    if (node.type === 'subFlow') {
+      fetch('/api/methodology-admin/test-bank')
+        .then(r => r.ok ? r.json() : { entries: [] })
+        .then(data => {
+          const flows: { id: string; fsLine: string; description: string; hasFlow: boolean }[] = [];
+          for (const entry of data.entries || []) {
+            for (const test of entry.tests || []) {
+              if ((test as any).flow?.nodes?.length > 0) {
+                flows.push({ id: `${entry.id}::${test.description}`, fsLine: entry.fsLine, description: test.description, hasFlow: true });
+              }
+            }
+          }
+          setAvailableFlows(flows);
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const saveNodeEdit = useCallback(() => {
@@ -672,6 +730,9 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
       if (n.type === 'wait') {
         return { ...n, data: { ...n.data, label: editLabel, waitFor: editWaitFor } };
       }
+      if (n.type === 'subFlow') {
+        return { ...n, data: { ...n.data, label: editLabel, subFlowId: editSubFlowId, subFlowName: editSubFlowName } };
+      }
       // action node
       return {
         ...n,
@@ -685,7 +746,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
       };
     }));
     setEditingNode(null);
-  }, [editingNode, editLabel, editDescription, editAssignee, editInputType, editQuestion, editCollection, editCondition, editMaxIterations, editWaitFor, setNodes]);
+  }, [editingNode, editLabel, editDescription, editAssignee, editInputType, editQuestion, editCollection, editCondition, editMaxIterations, editWaitFor, editSubFlowId, editSubFlowName, setNodes]);
 
   const deleteSelected = useCallback(() => {
     setNodes((nds) => nds.filter((n) => !n.selected || n.type === 'start'));
@@ -753,6 +814,36 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
               {errorCount > 0 && <span className="bg-red-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">{errorCount}</span>}
               {errorCount === 0 && warningCount > 0 && <span className="bg-amber-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">{warningCount}</span>}
             </button>
+            <button
+              onClick={() => {
+                const json = JSON.stringify({ nodes, edges }, null, 2);
+                navigator.clipboard.writeText(json).then(() => alert('Flow copied to clipboard. Paste it in another test\'s Flow Builder.'));
+              }}
+              className="text-xs px-3 py-1.5 border border-slate-200 text-slate-600 rounded-md hover:bg-slate-50"
+              title="Copy this flow to clipboard"
+            >
+              Copy Flow
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  const text = await navigator.clipboard.readText();
+                  const parsed = JSON.parse(text);
+                  if (parsed.nodes && parsed.edges) {
+                    if (confirm(`Paste flow with ${parsed.nodes.length} nodes? This will replace the current flow.`)) {
+                      setNodes(parsed.nodes);
+                      setEdges(parsed.edges);
+                    }
+                  } else {
+                    alert('Clipboard does not contain a valid flow.');
+                  }
+                } catch { alert('Could not read clipboard. Copy a flow first.'); }
+              }}
+              className="text-xs px-3 py-1.5 border border-slate-200 text-slate-600 rounded-md hover:bg-slate-50"
+              title="Paste a copied flow from clipboard"
+            >
+              Paste Flow
+            </button>
             <Button onClick={handleSave} size="sm" disabled={saving}>
               {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
               Save Flow
@@ -799,6 +890,13 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                 color="border-purple-300 bg-purple-50"
                 nodeType="wait"
                 data={{ label: 'Wait for Evidence', waitFor: 'evidence_received' }}
+              />
+              <DraggableItem
+                label="Sub-Flow"
+                icon={<span className="text-indigo-600 text-xs font-bold">&#x2B8C;</span>}
+                color="border-indigo-300 bg-indigo-50"
+                nodeType="subFlow"
+                data={{ label: 'Call Sub-Flow', subFlowId: '', subFlowName: '' }}
               />
               <DraggableItem
                 label="End / Conclude"
@@ -1048,6 +1146,33 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                       </optgroup>
                     </select>
                     <p className="text-[10px] text-purple-500 mt-1">Flow pauses here until the selected event occurs. The event data then flows to the next node.</p>
+                  </div>
+                )}
+
+                {editingNodeObj.type === 'subFlow' && (
+                  <div>
+                    <label className="text-[10px] font-medium text-slate-500 uppercase">Select Flow to Call</label>
+                    {availableFlows.length > 0 ? (
+                      <select
+                        value={editSubFlowId}
+                        onChange={(e) => {
+                          setEditSubFlowId(e.target.value);
+                          const sel = availableFlows.find(f => f.id === e.target.value);
+                          setEditSubFlowName(sel ? `${sel.fsLine}: ${sel.description}` : '');
+                        }}
+                        className="w-full border rounded-md px-2.5 py-1.5 text-sm mt-0.5 bg-white"
+                      >
+                        <option value="">Select a flow...</option>
+                        {availableFlows.map(f => (
+                          <option key={f.id} value={f.id}>{f.fsLine} — {f.description}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-xs text-slate-400 mt-1">No flows with saved flow data found. Build flows in the Test Bank first.</p>
+                    )}
+                    {editSubFlowId && (
+                      <p className="text-[10px] text-indigo-500 mt-1">When executed, the parent flow pauses here and runs the selected sub-flow. Context (engagement, materiality, loop item) is passed through.</p>
+                    )}
                   </div>
                 )}
 

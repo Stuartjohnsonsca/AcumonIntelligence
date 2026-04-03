@@ -687,6 +687,92 @@ async function handleLoopUntil(
   return { action: 'continue', nextNodeId: repeatNodeId, output: { repeating: true, iteration: loopState.iteration } };
 }
 
+// ─── Sub-Flow Handler ───
+
+async function handleSubFlow(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  execution: any,
+  executionId: string,
+): Promise<NodeResult> {
+  const subFlowId = node.data.subFlowId;
+  if (!subFlowId) {
+    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { skipped: true, reason: 'No sub-flow selected' } };
+  }
+
+  // Parse subFlowId format: "testBankEntryId::testDescription"
+  const [entryId, testDesc] = subFlowId.split('::');
+
+  // Look up the test bank entry and find the test with a flow
+  const entry = await prisma.methodologyTestBank.findUnique({ where: { id: entryId } });
+  if (!entry) {
+    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { skipped: true, reason: `Sub-flow entry ${entryId} not found` } };
+  }
+
+  const tests = (entry.tests as any[]) || [];
+  const test = tests.find(t => t.description === testDesc && t.flow?.nodes?.length > 0);
+  if (!test?.flow) {
+    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { skipped: true, reason: `Sub-flow "${testDesc}" has no flow data` } };
+  }
+
+  const subFlow = test.flow as FlowData;
+
+  // Push current flow state onto a stack (stored in execution context)
+  const flowStack = (ctx as any)._flowStack || [];
+  flowStack.push({
+    flowSnapshot: flow,
+    currentNodeId: node.id,
+    returnToNodeId: getNextNodeId(flow, node.id), // Where to go when sub-flow ends
+    loopState: execution.loopState,
+  });
+
+  // Switch execution to the sub-flow
+  const startNode = subFlow.nodes.find(n => n.type === 'start');
+  const firstNodeId = startNode ? getNextNodeId(subFlow, startNode.id) : null;
+
+  await prisma.testExecution.update({
+    where: { id: executionId },
+    data: {
+      flowSnapshot: subFlow as any,
+      currentNodeId: firstNodeId,
+      context: { ...ctx, _flowStack: flowStack } as any,
+      loopState: Prisma.DbNull, // Clear loop state for sub-flow
+    },
+  });
+
+  return {
+    action: 'continue',
+    nextNodeId: firstNodeId || undefined,
+    output: { subFlowStarted: true, subFlowName: node.data.subFlowName || testDesc, entryId },
+  };
+}
+
+// Handle returning from a sub-flow when it hits an End node
+async function handleSubFlowReturn(
+  ctx: ExecutionContext,
+  executionId: string,
+  endOutput: any,
+): Promise<{ restored: boolean; nextNodeId?: string }> {
+  const flowStack = (ctx as any)._flowStack;
+  if (!flowStack || flowStack.length === 0) return { restored: false };
+
+  // Pop the parent flow state
+  const frame = flowStack.pop();
+
+  await prisma.testExecution.update({
+    where: { id: executionId },
+    data: {
+      flowSnapshot: frame.flowSnapshot as any,
+      currentNodeId: frame.returnToNodeId,
+      context: { ...ctx, _flowStack: flowStack } as any,
+      loopState: frame.loopState || Prisma.DbNull,
+    },
+  });
+
+  return { restored: true, nextNodeId: frame.returnToNodeId };
+}
+
 // ─── Main Engine ───
 
 export async function startExecution(
@@ -801,9 +887,23 @@ export async function processNextNode(executionId: string): Promise<void> {
         case 'start':
           result = await handleStart(flow, currentNode);
           break;
-        case 'end':
-          result = await handleEnd();
+        case 'end': {
+          // Check if we're in a sub-flow — if so, return to parent
+          const subReturn = await handleSubFlowReturn(ctx, executionId, { completed: true });
+          if (subReturn.restored) {
+            // Reload execution state after restoring parent flow
+            const refreshed = await prisma.testExecution.findUnique({ where: { id: executionId } });
+            if (refreshed) {
+              execution = refreshed as any;
+              flow = refreshed.flowSnapshot as unknown as FlowData;
+              ctx = refreshed.context as unknown as ExecutionContext;
+            }
+            result = { action: 'continue', nextNodeId: subReturn.nextNodeId, output: { subFlowCompleted: true } };
+          } else {
+            result = await handleEnd();
+          }
           break;
+        }
         case 'decision':
           result = await handleDecision(flow, currentNode, ctx);
           break;
@@ -815,6 +915,9 @@ export async function processNextNode(executionId: string): Promise<void> {
           break;
         case 'loopUntil':
           result = await handleLoopUntil(flow, currentNode, ctx, execution);
+          break;
+        case 'subFlow':
+          result = await handleSubFlow(flow, currentNode, ctx, execution, executionId);
           break;
         case 'action':
         default:
