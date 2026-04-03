@@ -16,7 +16,8 @@ import { DocumentRepositoryTab } from './tabs/DocumentRepositoryTab';
 import { ClientPortalTab } from './tabs/ClientPortalTab';
 import { OpeningTab } from './tabs/OpeningTab';
 import { PriorPeriodTab } from './tabs/PriorPeriodTab';
-import { AuditPlanPanel } from './panels/AuditPlanPanel';
+import dynamic from 'next/dynamic';
+const AuditPlanPanel = dynamic(() => import('./panels/AuditPlanPanel').then(m => m.AuditPlanPanel), { ssr: false });
 import { EngagementOutstandingTab } from './tabs/EngagementOutstandingTab';
 import { CommunicationTab } from './tabs/CommunicationTab';
 
