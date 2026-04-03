@@ -815,6 +815,11 @@ export async function processNextNode(executionId: string): Promise<void> {
             data: { currentNodeId: nextId, context: ctx as any },
           });
         }
+        // Refresh loopState from DB if it might have changed (forEach/loopUntil handlers write directly)
+        if (currentNode.type === 'forEach' || currentNode.type === 'loopUntil' || (execution.loopState && !nextId)) {
+          const refreshed = await prisma.testExecution.findUnique({ where: { id: executionId }, select: { loopState: true } });
+          if (refreshed) execution = { ...execution, loopState: refreshed.loopState } as any;
+        }
         // Update in-memory execution state
         execution = { ...execution, currentNodeId: nextId, context: ctx as any } as any;
         continue; // Process next node in loop
