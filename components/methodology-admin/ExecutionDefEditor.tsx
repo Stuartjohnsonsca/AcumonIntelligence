@@ -511,181 +511,92 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
 
               {/* Trigger config sections */}
               {def.outputFormat === 'trigger_sampling' && (
-                <div className="border rounded-lg p-3 bg-teal-50/50 space-y-2">
-                  <div className="text-[10px] font-bold text-teal-700 uppercase">Sampling Trigger Config</div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Default Sampling Method</label>
-                    <select
-                      value={def.triggerConfig?.samplingMethod || 'random'}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, samplingMethod: e.target.value } })}
-                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
-                    >
-                      <option value="random">Random (SRSWOR)</option>
-                      <option value="systematic">Systematic</option>
-                      <option value="mus">Monetary Unit Sampling (MUS)</option>
-                      <option value="composite">Composite (threshold + residual)</option>
-                      <option value="stratified">AI Risk Stratification</option>
-                    </select>
+                <div className="border rounded-lg p-3 bg-teal-50/50 space-y-3">
+                  <div className="text-[10px] font-bold text-teal-700 uppercase">Create Sampling Engagement</div>
+                  <div className="text-sm text-slate-700 space-y-1.5">
+                    <div className="flex items-start gap-2">
+                      <span className="text-teal-600 font-bold mt-0.5">1.</span>
+                      <span>AI parses the input data and creates a Sampling Engagement</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-teal-600 font-bold mt-0.5">2.</span>
+                      <span>Population data auto-populated from previous node output</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-teal-600 font-bold mt-0.5">3.</span>
+                      <span>Materiality figures pulled from engagement automatically</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-teal-600 font-bold mt-0.5">4.</span>
+                      <span>Flow <strong>pauses</strong> — user is notified to review and run the Sampling Calculator</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-teal-600 font-bold mt-0.5">5.</span>
+                      <span>When user completes the run, sample results <strong>flow to the next node</strong></span>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Population Data Source</label>
-                    <select
-                      value={def.triggerConfig?.populationSource || 'uploaded_file'}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, populationSource: e.target.value } })}
-                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
-                    >
-                      <option value="uploaded_file">From client uploaded file</option>
-                      <option value="tb_rows">From Trial Balance rows</option>
-                      <option value="previous_step">From previous step output</option>
-                    </select>
+                  <div className="bg-teal-100/50 rounded p-2 text-[10px] text-teal-700">
+                    <strong>Output to next node:</strong> selected sample items, sample size, population total, coverage %
                   </div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Materiality Source</label>
-                    <select
-                      value={def.triggerConfig?.materialitySource || 'engagement'}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, materialitySource: e.target.value } })}
-                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
-                    >
-                      <option value="engagement">From engagement materiality</option>
-                      <option value="custom">Custom (specify in prompt)</option>
-                    </select>
-                  </div>
-                  <div className="border-t border-teal-200 pt-2 mt-2 space-y-2">
-                    <div className="text-[10px] font-bold text-teal-700 uppercase">After Creation</div>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={def.triggerConfig?.pauseForHuman ?? true}
-                        onChange={e => update({ triggerConfig: { ...def.triggerConfig, pauseForHuman: e.target.checked } })}
-                        className="rounded text-teal-600"
-                      />
-                      <div>
-                        <span className="text-sm text-slate-700 font-medium">Pause for user to run calculator</span>
-                        <p className="text-[10px] text-slate-400">Flow pauses and notifies team member. Resumes when sampling run is complete.</p>
-                      </div>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={def.triggerConfig?.forwardResults ?? true}
-                        onChange={e => update({ triggerConfig: { ...def.triggerConfig, forwardResults: e.target.checked } })}
-                        className="rounded text-teal-600"
-                      />
-                      <div>
-                        <span className="text-sm text-slate-700 font-medium">Forward sample results to next node</span>
-                        <p className="text-[10px] text-slate-400">Selected sample items, sample size, and coverage stats are passed downstream.</p>
-                      </div>
-                    </label>
-                  </div>
-                  <p className="text-[10px] text-teal-600 mt-1">At runtime: AI creates the engagement and populates data &rarr; user reviews and runs the calculator &rarr; results flow to the next node.</p>
                 </div>
               )}
 
               {def.outputFormat === 'trigger_portal_request' && (
                 <div className="border rounded-lg p-3 bg-sky-50/50 space-y-2">
-                  <div className="text-[10px] font-bold text-sky-700 uppercase">Portal Request Config</div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={def.triggerConfig?.autoCompose ?? true}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, autoCompose: e.target.checked } })}
-                      className="rounded text-sky-600"
-                    />
-                    <span className="text-sm text-slate-700">AI composes the request message from context</span>
-                  </label>
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Portal Section</label>
-                    <select
-                      value={def.triggerConfig?.portalSection || 'outstanding'}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, portalSection: e.target.value } })}
-                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
-                    >
-                      <option value="outstanding">Outstanding (general requests)</option>
-                      <option value="explanations">Explanations (PAR items)</option>
-                    </select>
+                  <div className="text-[10px] font-bold text-sky-700 uppercase">Send Portal Request</div>
+                  <div className="text-sm text-slate-700 space-y-1.5">
+                    <div className="flex items-start gap-2"><span className="text-sky-600 font-bold mt-0.5">1.</span><span>AI composes the request message using the prompt template and context</span></div>
+                    <div className="flex items-start gap-2"><span className="text-sky-600 font-bold mt-0.5">2.</span><span>Portal request created and visible to client in their portal</span></div>
+                    <div className="flex items-start gap-2"><span className="text-sky-600 font-bold mt-0.5">3.</span><span>Flow <strong>pauses</strong> until client responds</span></div>
+                    <div className="flex items-start gap-2"><span className="text-sky-600 font-bold mt-0.5">4.</span><span>Client response (text + files) <strong>flows to next node</strong></span></div>
                   </div>
-                  <p className="text-[10px] text-sky-600">At runtime: creates a PortalRequest visible in the client portal, and pauses the flow until the client responds.</p>
+                  <div className="bg-sky-100/50 rounded p-2 text-[10px] text-sky-700">
+                    <strong>Output to next node:</strong> client response text, uploaded file(s), response timestamp
+                  </div>
                 </div>
               )}
 
               {def.outputFormat === 'trigger_evidence_request' && (
                 <div className="border rounded-lg p-3 bg-blue-50/50 space-y-2">
-                  <div className="text-[10px] font-bold text-blue-700 uppercase">Evidence Request Config</div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Request Mode</label>
-                    <select
-                      value={def.triggerConfig?.requestMode || 'per_item'}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, requestMode: e.target.value } })}
-                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
-                    >
-                      <option value="per_item">One request per sample item</option>
-                      <option value="bulk">Single bulk request for all items</option>
-                    </select>
+                  <div className="text-[10px] font-bold text-blue-700 uppercase">Create Evidence Request</div>
+                  <div className="text-sm text-slate-700 space-y-1.5">
+                    <div className="flex items-start gap-2"><span className="text-blue-600 font-bold mt-0.5">1.</span><span>Creates evidence request(s) for each sample item from previous node</span></div>
+                    <div className="flex items-start gap-2"><span className="text-blue-600 font-bold mt-0.5">2.</span><span>Sent to client portal — client uploads supporting evidence</span></div>
+                    <div className="flex items-start gap-2"><span className="text-blue-600 font-bold mt-0.5">3.</span><span>Flow <strong>pauses</strong> until all evidence is uploaded</span></div>
+                    <div className="flex items-start gap-2"><span className="text-blue-600 font-bold mt-0.5">4.</span><span>Uploaded evidence <strong>flows to next node</strong> for verification</span></div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Evidence Types Required</label>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {EVIDENCE_TYPES.map(et => (
-                        <label key={et} className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={(def.triggerConfig?.evidenceTypes || []).includes(et)}
-                            onChange={e => {
-                              const current = def.triggerConfig?.evidenceTypes || [];
-                              update({ triggerConfig: { ...def.triggerConfig, evidenceTypes: e.target.checked ? [...current, et] : current.filter((t: string) => t !== et) } });
-                            }}
-                            className="rounded text-blue-600"
-                          />
-                          <span className="text-xs text-slate-600 capitalize">{et.replace(/_/g, ' ')}</span>
-                        </label>
-                      ))}
-                    </div>
+                  <div className="bg-blue-100/50 rounded p-2 text-[10px] text-blue-700">
+                    <strong>Output to next node:</strong> evidence files per item, upload status, any client notes
                   </div>
-                  <p className="text-[10px] text-blue-600">At runtime: creates AuditEvidenceRequest records for each sample item, sends to client portal, pauses until evidence is uploaded.</p>
                 </div>
               )}
 
               {def.outputFormat === 'trigger_review_point' && (
                 <div className="border rounded-lg p-3 bg-amber-50/50 space-y-2">
-                  <div className="text-[10px] font-bold text-amber-700 uppercase">Review Point Config</div>
-                  <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Assign To</label>
-                    <select
-                      value={def.triggerConfig?.assignTo || 'ri'}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, assignTo: e.target.value } })}
-                      className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
-                    >
-                      <option value="ri">Responsible Individual (RI)</option>
-                      <option value="manager">Audit Manager</option>
-                      <option value="technical">Technical Team</option>
-                    </select>
+                  <div className="text-[10px] font-bold text-amber-700 uppercase">Raise Review Point</div>
+                  <div className="text-sm text-slate-700 space-y-1.5">
+                    <div className="flex items-start gap-2"><span className="text-amber-600 font-bold mt-0.5">1.</span><span>Creates a review point with findings from this action</span></div>
+                    <div className="flex items-start gap-2"><span className="text-amber-600 font-bold mt-0.5">2.</span><span>Assigned to the RI or Manager on the engagement</span></div>
+                    <div className="flex items-start gap-2"><span className="text-amber-600 font-bold mt-0.5">3.</span><span>Flow <strong>pauses</strong> until the review point is resolved</span></div>
+                    <div className="flex items-start gap-2"><span className="text-amber-600 font-bold mt-0.5">4.</span><span>Resolution decision <strong>flows to next node</strong></span></div>
                   </div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={def.triggerConfig?.pauseUntilResolved ?? true}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, pauseUntilResolved: e.target.checked } })}
-                      className="rounded text-amber-600"
-                    />
-                    <span className="text-sm text-slate-700">Pause flow until review point is resolved</span>
-                  </label>
-                  <p className="text-[10px] text-amber-600">At runtime: creates a review point, notifies the assignee, optionally pauses the flow until resolved.</p>
+                  <div className="bg-amber-100/50 rounded p-2 text-[10px] text-amber-700">
+                    <strong>Output to next node:</strong> resolution decision, reviewer notes, any revised figures
+                  </div>
                 </div>
               )}
 
               {def.outputFormat === 'trigger_representation' && (
                 <div className="border rounded-lg p-3 bg-purple-50/50 space-y-2">
-                  <div className="text-[10px] font-bold text-purple-700 uppercase">Representation Letter Config</div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={def.triggerConfig?.autoCompose ?? true}
-                      onChange={e => update({ triggerConfig: { ...def.triggerConfig, autoCompose: e.target.checked } })}
-                      className="rounded text-purple-600"
-                    />
-                    <span className="text-sm text-slate-700">AI composes the representation wording from test context</span>
-                  </label>
-                  <p className="text-[10px] text-purple-600">At runtime: adds a paragraph to the management representation letter based on the test findings.</p>
+                  <div className="text-[10px] font-bold text-purple-700 uppercase">Add to Representation Letter</div>
+                  <div className="text-sm text-slate-700 space-y-1.5">
+                    <div className="flex items-start gap-2"><span className="text-purple-600 font-bold mt-0.5">1.</span><span>AI composes a representation paragraph from the test findings</span></div>
+                    <div className="flex items-start gap-2"><span className="text-purple-600 font-bold mt-0.5">2.</span><span>Added to the management representation letter for this engagement</span></div>
+                    <div className="flex items-start gap-2"><span className="text-purple-600 font-bold mt-0.5">3.</span><span>Flow <strong>continues</strong> immediately (no pause)</span></div>
+                  </div>
+                  <div className="bg-purple-100/50 rounded p-2 text-[10px] text-purple-700">
+                    <strong>Output to next node:</strong> confirmation that representation was added
+                  </div>
                 </div>
               )}
 
