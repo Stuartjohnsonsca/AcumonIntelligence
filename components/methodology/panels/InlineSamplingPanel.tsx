@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { CheckCircle2, Loader2, Download, ChevronDown, ChevronRight, AlertTriangle, Settings2 } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { CheckCircle2, Loader2, Download, ChevronDown, ChevronRight, AlertTriangle, Settings2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import * as XLSX from 'xlsx';
 
 interface Props {
   engagementId: string;    // AuditEngagement ID
@@ -35,7 +36,16 @@ function fmt(n: number | null | undefined): string {
   return `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, testDescription, populationData, materialityData, onComplete }: Props) {
+export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, testDescription, populationData: initialPopulationData, materialityData, onComplete }: Props) {
+  // Local population data — can be loaded from props OR from local file upload
+  const [localPopulationData, setLocalPopulationData] = useState<any[]>(initialPopulationData || []);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync from props when they change
+  useEffect(() => {
+    if (initialPopulationData && initialPopulationData.length > 0) setLocalPopulationData(initialPopulationData);
+  }, [initialPopulationData?.length]);
+
   // Sampling engagement
   const [samplingEngId, setSamplingEngId] = useState<string | null>(null);
   const [creatingEng, setCreatingEng] = useState(false);
@@ -63,6 +73,43 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
 
   // Population display
   const [showPopulation, setShowPopulation] = useState(true);
+
+  // File upload handler — parse CSV/XLSX client-side
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const buffer = await file.arrayBuffer();
+      if (file.name.endsWith('.csv')) {
+        const text = new TextDecoder().decode(buffer);
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) return;
+        const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+        const rows = lines.slice(1).map(line => {
+          const vals = line.split(',').map(v => v.replace(/^"|"$/g, '').trim());
+          const row: Record<string, any> = {};
+          headers.forEach((h, i) => {
+            const num = parseFloat(vals[i]?.replace(/[,£$€]/g, '') || '');
+            row[h] = !isNaN(num) && vals[i]?.trim() !== '' ? num : vals[i] || '';
+          });
+          return row;
+        });
+        setLocalPopulationData(rows);
+      } else {
+        const wb = XLSX.read(buffer, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        if (ws) {
+          const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as Record<string, any>[];
+          setLocalPopulationData(rows);
+        }
+      }
+    } catch (err) {
+      setError('Failed to parse file: ' + (err as Error).message);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  const populationData = localPopulationData;
 
   // Auto-detect columns
   const columns = populationData.length > 0 ? Object.keys(populationData[0]) : [];
@@ -297,6 +344,10 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
             </button>
           </>
         )}
+        <label className="inline-flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-700 cursor-pointer">
+          <Upload className="h-3 w-3" /> {populationCount > 0 ? 'Replace Data' : 'Upload Data'}
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} className="hidden" />
+        </label>
         {error && <span className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {error}</span>}
       </div>
 
@@ -354,14 +405,21 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
         </div>
       )}
 
-      {/* No data message */}
+      {/* No data / upload */}
       {populationCount === 0 && (
-        <div className="border rounded-lg p-4 bg-amber-50/50 text-center">
-          <AlertTriangle className="h-5 w-5 text-amber-400 mx-auto mb-2" />
-          <p className="text-xs text-amber-700 font-medium">No population data available</p>
-          <p className="text-[10px] text-amber-600 mt-1">The client data from the portal response will be loaded here when the flow engine passes it through.</p>
+        <div className="border-2 border-dashed border-amber-300 rounded-lg p-6 bg-amber-50/30 text-center">
+          <Upload className="h-8 w-8 text-amber-400 mx-auto mb-2" />
+          <p className="text-sm text-amber-700 font-medium mb-1">Load Population Data</p>
+          <p className="text-xs text-amber-600 mb-3">Upload the client's data file (CSV or XLSX) to populate the sampling calculator.</p>
+          <label className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 cursor-pointer transition-colors">
+            <Upload className="h-4 w-4" /> Upload CSV / XLSX
+            <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} className="hidden" />
+          </label>
         </div>
       )}
+
+      {/* Hidden file input for re-upload when data exists */}
+      <input ref={populationCount > 0 ? undefined : fileInputRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} className="hidden" />
     </div>
   );
 }
