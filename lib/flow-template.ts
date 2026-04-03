@@ -84,14 +84,36 @@ export function resolveTemplate(template: string, ctx: ExecutionContext, inputBi
         const val = ctx.loop?.currentItem;
         if (val == null) return match;
 
-        // {{loop.currentItem.FieldName}} — access specific field
+        // {{loop.currentItem.FieldName}} — access specific field with semantic fallbacks
         if (parts.length >= 3) {
           const field = parts[2];
-          const fieldVal = val[field];
-          if (fieldVal != null) return typeof fieldVal === 'object' ? JSON.stringify(fieldVal) : String(fieldVal);
-          // Try case-insensitive match
+          // Direct match
+          if (val[field] != null) return typeof val[field] === 'object' ? JSON.stringify(val[field]) : String(val[field]);
+          // Case-insensitive match
           const key = Object.keys(val).find(k => k.toLowerCase() === field.toLowerCase());
-          return key ? String(val[key] ?? '') : match;
+          if (key) return String(val[key] ?? '');
+          // Semantic fallbacks — common audit field aliases
+          const aliases: Record<string, string[]> = {
+            amount: ['Total', 'Gross', 'LineAmount', 'InvoiceAmountDue', 'Amount', 'Net', 'UnitAmount', 'SubTotal'],
+            customer: ['ContactName', 'Customer', 'ClientName', 'Name', 'Debtor', 'Supplier', 'Vendor'],
+            reference: ['Reference', 'Ref', 'InvoiceNumber', 'Invoice', 'TransactionId', 'ID', 'Number'],
+            description: ['Description', 'Desc', 'Narrative', 'Details', 'Memo'],
+            date: ['InvoiceDate', 'Date', 'TransactionDate', 'TxnDate', 'DueDate'],
+            net: ['LineAmount', 'Net', 'SubTotal', 'UnitAmount'],
+            tax: ['TaxTotal', 'TaxAmount', 'Tax', 'VAT'],
+            gross: ['Total', 'Gross', 'InvoiceAmountDue', 'Amount'],
+            type: ['Type', 'TransactionType', 'DocType'],
+            status: ['Status', 'State'],
+          };
+          const fieldLower = field.toLowerCase();
+          const aliasList = aliases[fieldLower];
+          if (aliasList) {
+            for (const alias of aliasList) {
+              const aliasKey = Object.keys(val).find(k => k.toLowerCase() === alias.toLowerCase());
+              if (aliasKey && val[aliasKey] != null) return String(val[aliasKey]);
+            }
+          }
+          return match; // Unresolved
         }
 
         // {{loop.currentItem}} alone — extract readable summary from object
