@@ -139,6 +139,7 @@ async function buildContext(engagementId: string, fsLine: string, testDescriptio
       assertion: '',
     },
     nodes: {},
+    vars: {},
   };
 }
 
@@ -948,11 +949,15 @@ export async function processNextNode(executionId: string): Promise<void> {
       });
     }
 
-    // Merge custom variables from the node's data into the output
+    // Merge custom variables from the node's data into both node output AND flow vars
     const customVars = currentNode.data?.customVars;
-    const nodeOutput = customVars?.length > 0
-      ? { ...result.output, ...Object.fromEntries(customVars.filter((v: any) => v.key).map((v: any) => [v.key, v.value])) }
-      : result.output;
+    let nodeOutput = result.output;
+    if (customVars?.length > 0) {
+      const varEntries = Object.fromEntries(customVars.filter((v: any) => v.key).map((v: any) => [v.key, v.value]));
+      nodeOutput = { ...nodeOutput, ...varEntries };
+      // Write to flow-level vars so they persist across nodes and sub-flows
+      ctx = { ...ctx, vars: { ...ctx.vars, ...varEntries } };
+    }
 
     // Update execution context in memory
     ctx = { ...ctx, nodes: { ...ctx.nodes, [currentNode.id]: nodeOutput } };

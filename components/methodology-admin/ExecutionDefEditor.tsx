@@ -142,6 +142,7 @@ const PLACEHOLDERS = [
   { code: '{{engagement.framework}}', desc: 'Accounting framework' },
   { code: '{{loop.currentItem}}', desc: 'Current item in a For-Each loop' },
   { code: '{{loop.index}}', desc: 'Current iteration index (0-based)' },
+  { code: '{{vars.<key>}}', desc: 'Flow variable — persists across nodes and sub-flows' },
 ];
 
 function getDefaultDef(actionType: string) {

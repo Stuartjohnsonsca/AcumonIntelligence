@@ -22,6 +22,7 @@ export interface ExecutionContext {
     assertion: string;
   };
   nodes: Record<string, any>;    // outputs keyed by nodeId
+  vars: Record<string, any>;     // flow-level variables — persist across nodes and sub-flows
   loop?: {
     currentItem: any;
     index: number;
@@ -66,6 +67,12 @@ export function resolveTemplate(template: string, ctx: ExecutionContext, inputBi
         return typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
       }
       return match;
+    }
+
+    // {{vars.<key>}} — flow-level variables
+    if (parts[0] === 'vars' && parts.length >= 2) {
+      const val = ctx.vars?.[parts[1]];
+      return val != null ? String(val) : match;
     }
 
     // {{nodes.<nodeId>}} or {{nodes.<nodeId>.<field>}}
