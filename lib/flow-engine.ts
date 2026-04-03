@@ -302,30 +302,31 @@ async function handleActionClient(
     },
   });
 
-  await prisma.outstandingItem.create({
-    data: {
-      engagementId,
-      executionId,
-      nodeId: node.id,
-      type: 'portal_request',
-      title: subject,
-      description: message.substring(0, 200),
-      source: 'flow',
-      status: 'awaiting_client',
-      fsLine: ctx.test.fsLine,
-      testName: ctx.test.description,
-      flowNodeType: 'action',
-      portalRequestId: portalRequest.id,
-    },
-  });
+  // Check if inside a forEach loop — use ctx.loop as indicator (no DB read needed)
+  const isInsideLoop = !!ctx.loop;
 
-  // If inside a forEach loop, don't pause — fire the request and continue to next iteration
-  // The flow designer should have a separate Wait node AFTER the loop for collecting all responses
-  const isInsideLoop = await prisma.testExecution.findUnique({
-    where: { id: executionId },
-    select: { loopState: true },
-  });
-  if (isInsideLoop?.loopState) {
+  if (!isInsideLoop) {
+    // Only create OutstandingItem for non-loop requests (reduces DB writes in loops)
+    await prisma.outstandingItem.create({
+      data: {
+        engagementId,
+        executionId,
+        nodeId: node.id,
+        type: 'portal_request',
+        title: subject,
+        description: message.substring(0, 200),
+        source: 'flow',
+        status: 'awaiting_client',
+        fsLine: ctx.test.fsLine,
+        testName: ctx.test.description,
+        flowNodeType: 'action',
+        portalRequestId: portalRequest.id,
+      },
+    });
+  }
+
+  if (isInsideLoop) {
+    // Fire and forget — don't pause, don't create outstanding item per iteration
     return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { portalRequestId: portalRequest.id, subject, fireAndForget: true } };
   }
 
@@ -676,14 +677,25 @@ export async function processNextNode(executionId: string): Promise<void> {
   const MAX_STEPS = 100; // High budget for loops that fire many requests
   let steps = 0;
 
+  // Load execution ONCE, cache and update in-memory
+  const initialExec = await prisma.testExecution.findUnique({ where: { id: executionId } });
+  if (!initialExec || initialExec.status !== 'running') return;
+
+  let execution: NonNullable<typeof initialExec> = initialExec;
+  let flow = execution.flowSnapshot as unknown as FlowData;
+  let ctx = execution.context as unknown as ExecutionContext;
+
   while (steps < MAX_STEPS && (Date.now() - startTime) < MAX_DURATION) {
     steps++;
 
-    const execution = await prisma.testExecution.findUnique({ where: { id: executionId } });
-    if (!execution || execution.status !== 'running') return;
-
-    const flow = execution.flowSnapshot as unknown as FlowData;
-    const ctx = execution.context as unknown as ExecutionContext;
+    // Reload from DB every 10 steps to pick up external changes
+    if (steps % 10 === 0) {
+      const refreshed = await prisma.testExecution.findUnique({ where: { id: executionId } });
+      if (!refreshed || refreshed.status !== 'running') return;
+      execution = refreshed;
+      flow = refreshed.flowSnapshot as unknown as FlowData;
+      ctx = refreshed.context as unknown as ExecutionContext;
+    }
 
     // Determine current node
     let currentNode: FlowNode | undefined;
@@ -714,17 +726,21 @@ export async function processNextNode(executionId: string): Promise<void> {
       return;
     }
 
-    // Create node run record
-    const nodeRun = await prisma.testExecutionNodeRun.create({
-      data: {
-        executionId,
-        nodeId: currentNode.id,
-        nodeType: currentNode.type || 'action',
-        assignee: currentNode.data?.assignee || null,
-        label: currentNode.data?.label || null,
-        status: 'running',
-      },
-    });
+    // Create node run record — skip for forEach iterations to reduce DB writes
+    const isLoopIteration = ctx.loop && (currentNode.type === 'forEach' || (execution.loopState && currentNode.type === 'action'));
+    let nodeRun: { id: string } | null = null;
+    if (!isLoopIteration) {
+      nodeRun = await prisma.testExecutionNodeRun.create({
+        data: {
+          executionId,
+          nodeId: currentNode.id,
+          nodeType: currentNode.type || 'action',
+          assignee: currentNode.data?.assignee || null,
+          label: currentNode.data?.label || null,
+          status: 'running',
+        },
+      });
+    }
 
     let result: NodeResult;
     try {
@@ -764,20 +780,22 @@ export async function processNextNode(executionId: string): Promise<void> {
       result = { action: 'error', errorMessage: err.message || 'Node execution failed' };
     }
 
-    // Update node run
-    await prisma.testExecutionNodeRun.update({
-      where: { id: nodeRun.id },
-      data: {
-        status: result.action === 'error' ? 'failed' : result.action === 'pause' ? 'paused' : 'completed',
-        output: result.output || null,
-        errorMessage: result.errorMessage || null,
-        completedAt: result.action === 'continue' || result.action === 'complete' ? new Date() : null,
-        duration: Date.now() - startTime,
-      },
-    });
+    // Update node run (if created)
+    if (nodeRun) {
+      await prisma.testExecutionNodeRun.update({
+        where: { id: nodeRun.id },
+        data: {
+          status: result.action === 'error' ? 'failed' : result.action === 'pause' ? 'paused' : 'completed',
+          output: result.output || null,
+          errorMessage: result.errorMessage || null,
+          completedAt: result.action === 'continue' || result.action === 'complete' ? new Date() : null,
+          duration: Date.now() - startTime,
+        },
+      });
+    }
 
-    // Update execution context with this node's output
-    const updatedContext = { ...ctx, nodes: { ...ctx.nodes, [currentNode.id]: result.output } };
+    // Update execution context in memory
+    ctx = { ...ctx, nodes: { ...ctx.nodes, [currentNode.id]: result.output } };
 
     switch (result.action) {
       case 'continue': {
@@ -786,13 +804,19 @@ export async function processNextNode(executionId: string): Promise<void> {
         // If we're at a dead end inside a loop body, return to the forEach/loopUntil node
         if (!nextId && execution.loopState) {
           const ls = execution.loopState as any;
-          if (ls.nodeId) nextId = ls.nodeId; // Loop back to the forEach/loopUntil node
+          if (ls.nodeId) nextId = ls.nodeId;
         }
 
-        await prisma.testExecution.update({
-          where: { id: executionId },
-          data: { currentNodeId: nextId, context: updatedContext as any },
-        });
+        // Update DB — but only every 5 steps in a loop to reduce writes
+        const shouldSaveNow = !ctx.loop || steps % 5 === 0;
+        if (shouldSaveNow) {
+          await prisma.testExecution.update({
+            where: { id: executionId },
+            data: { currentNodeId: nextId, context: ctx as any },
+          });
+        }
+        // Update in-memory execution state
+        execution = { ...execution, currentNodeId: nextId, context: ctx as any } as any;
         continue; // Process next node in loop
       }
 
@@ -804,7 +828,7 @@ export async function processNextNode(executionId: string): Promise<void> {
             currentNodeId: currentNode.id,
             pauseReason: result.pauseReason || null,
             pauseRefId: result.pauseRefId || null,
-            context: updatedContext as any,
+            context: ctx as any,
           },
         });
         return; // Exit — will resume via event
@@ -812,18 +836,24 @@ export async function processNextNode(executionId: string): Promise<void> {
       case 'complete':
         await prisma.testExecution.update({
           where: { id: executionId },
-          data: { status: 'completed', completedAt: new Date(), context: updatedContext as any },
+          data: { status: 'completed', completedAt: new Date(), context: ctx as any },
         });
         return;
 
       case 'error':
         await prisma.testExecution.update({
           where: { id: executionId },
-          data: { status: 'failed', errorMessage: result.errorMessage, context: updatedContext as any },
+          data: { status: 'failed', errorMessage: result.errorMessage, context: ctx as any },
         });
         return;
     }
   }
+
+  // Time/step budget exhausted — save final state so auto-continuation can pick up
+  await prisma.testExecution.update({
+    where: { id: executionId },
+    data: { context: ctx as any },
+  });
 }
 
 export async function resumeExecution(executionId: string, externalData?: any): Promise<void> {
@@ -864,7 +894,7 @@ export async function resumeExecution(executionId: string, externalData?: any): 
     const nextNodeId = getNextNodeId(flow, execution.currentNodeId);
     await prisma.testExecution.update({
       where: { id: executionId },
-      data: { status: 'running', currentNodeId: nextNodeId || null, pauseReason: null, pauseRefId: null, context: updatedContext as any },
+      data: { status: 'running', currentNodeId: nextNodeId || null, pauseReason: null, pauseRefId: null, context: ctx as any },
     });
   } else {
     // Resume without new data — just advance
