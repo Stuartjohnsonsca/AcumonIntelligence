@@ -334,6 +334,49 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </div>
                 )}
 
+                {/* Show sample items from flow context — per-item requests sent to client */}
+                {(() => {
+                  // Collect all per-item portal requests from flow steps
+                  const itemRequests = flowSteps.filter(s =>
+                    s.output?.iterating || s.output?.portalRequestId
+                  );
+                  // Collect population data from any step
+                  const popData = flowSteps.find(s => s.output?.populationData?.length > 0)?.output?.populationData ||
+                    flowSteps.find(s => s.output?.data?.populationData?.length > 0)?.output?.data?.populationData || [];
+                  // Collect selected indices from sampling step
+                  const samplingStep = flowSteps.find(s => s.output?.triggerType === 'sampling' || s.label?.toLowerCase().includes('sampl'));
+                  const forEachStep = flowSteps.find(s => s.output?.iterating || s.output?.loopCompleted);
+
+                  if (popData.length > 0 && !isSamplingPause) {
+                    // Show the sample items that are being processed
+                    const summarise = (item: any) => {
+                      if (typeof item !== 'object') return String(item);
+                      const name = item.ContactName || item.Customer || item.Name || '';
+                      const ref = item.Reference || item.Ref || item.InvoiceNumber || '';
+                      const amt = item.Total || item.Gross || item.Amount || item.LineAmount || '';
+                      return `${name}${ref ? ` (${ref})` : ''}${amt ? ` — £${Number(amt).toLocaleString('en-GB', {minimumFractionDigits: 2})}` : ''}`;
+                    };
+
+                    return (
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="bg-blue-50 px-3 py-1.5 border-b text-[10px] font-bold text-blue-700 uppercase">
+                          Sample Items ({popData.length} in population)
+                        </div>
+                        <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100">
+                          {popData.slice(0, 50).map((item: any, i: number) => (
+                            <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                              <span className="text-slate-400 font-mono w-6">{i + 1}</span>
+                              <span className="flex-1 text-slate-700">{summarise(item)}</span>
+                              <span className="text-[9px] text-slate-400">{item.Description || item.Desc || ''}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
                 {/* Sample items + evidence grid (when we have data) */}
                 {sampleItems.length > 0 ? (
                   <div className="border rounded-lg overflow-auto max-h-[400px]">
