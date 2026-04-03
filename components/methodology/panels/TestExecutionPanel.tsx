@@ -52,20 +52,12 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [completing, setCompleting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Section collapse state — progress collapses when sampling/portal is active
+  // Section collapse state
   const [progressOpen, setProgressOpen] = useState(false);
   const [samplingOpen, setSamplingOpen] = useState(true);
   const [findingsOpen, setFindingsOpen] = useState(false);
 
-  // Auto-collapse progress when we detect a sampling pause
-  useEffect(() => {
-    if (isSamplingPause || isPortalPause) {
-      setProgressOpen(false);
-      setSamplingOpen(true);
-    }
-  }, [isSamplingPause, isPortalPause]);
-
-  // ─── Computed values ───
+  // ─── Computed values (MUST be before any useEffect that references them) ───
   const sampleTotal = sampleItems.length;
   const passCount = results.filter(r => r.overallResult === 'pass').length;
   const failCount = results.filter(r => r.overallResult === 'fail').length;
@@ -85,13 +77,22 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
     failCount === 0 || extrapolatedError <= clearlyTrivial ? 'green' :
     extrapolatedError <= tolerableMisstatement ? 'orange' : 'red';
 
-  useEffect(() => { onConclusionChange?.(conclusion); }, [conclusion]);
-
   // Paused step detection
   const pausedStep = flowSteps.find(s => s.status === 'paused');
   const isSamplingPause = pausedStep?.output?.triggerType === 'sampling' || pausedStep?.label?.toLowerCase().includes('sampl');
   const isPortalPause = !!pausedStep?.output?.portalRequestId;
   const pauseItemId = pausedStep?.output?.outstandingItemId || pausedStep?.output?.portalRequestId;
+
+  // Auto-collapse progress when sampling/portal is active
+  useEffect(() => {
+    if (isSamplingPause || isPortalPause) {
+      setProgressOpen(false);
+      setSamplingOpen(true);
+    }
+  }, [isSamplingPause, isPortalPause]);
+
+  // Report conclusion to parent
+  useEffect(() => { onConclusionChange?.(conclusion); }, [conclusion]);
 
   // ─── Lifecycle ───
   useEffect(() => {
