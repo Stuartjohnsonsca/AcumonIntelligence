@@ -282,12 +282,12 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
   // 1. FS Line matching the row's fsLevel (e.g. "Revenue")
   // 2. Framework matching the engagement (e.g. "FRS102")
   // 3. Assertions matching the RMM row's assertions (e.g. "Com", "Cut")
-  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null): { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string }[] {
+  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null): { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
     // Try matching by fsLevel first, then fsNote, then description
     const searchTerms = [fsLevel, fsNote, desc].filter(Boolean).map(s => s!.toLowerCase());
     const matchingEntries = testBank.filter(tb => searchTerms.some(term => tb.fsLine.toLowerCase() === term || term.includes(tb.fsLine.toLowerCase()) || tb.fsLine.toLowerCase().includes(term)));
 
-    const allTests: { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string }[] = [];
+    const allTests: { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
     const seen = new Set<string>(); // Deduplicate by description
 
     for (const entry of matchingEntries) {
@@ -317,7 +317,7 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
 
         const tt = testTypes.find(t => t.code === test.testTypeCode);
         const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
-        allTests.push({ ...test, color, typeName: tt?.name || test.testTypeCode });
+        allTests.push({ ...test, color, typeName: tt?.name || test.testTypeCode, flow: (test as any).flow, executionDef: (tt as any)?.executionDef });
       }
     }
     return allTests;
@@ -566,9 +566,11 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
                               <TestExecutionPanel
                                 testId={testKey}
                                 testDescription={test.description}
-                                testType={test.typeName}
+                                testType={test.testTypeCode}
                                 engagementId={engagementId}
                                 fsLine={activeLevel || activeStatement}
+                                flowData={(test as any).flow || null}
+                                executionDef={(test as any).executionDef || null}
                                 onClose={() => setActiveExecution(null)}
                               />
                             </td>

@@ -53,7 +53,9 @@ interface Props {
   testType: string;
   engagementId: string;
   fsLine: string;
-  sessionId?: string; // each test gets its own extraction session
+  sessionId?: string;
+  flowData?: any;       // Flow definition from Test Bank (if configured via Flow Builder)
+  executionDef?: any;   // Execution definition from Test Action type
   onClose: () => void;
 }
 
@@ -72,7 +74,7 @@ function ResultIcon({ status }: { status: 'pass' | 'fail' | 'pending' }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, sessionId, onClose }: Props) {
+export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, sessionId, flowData, executionDef, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [sampleItems, setSampleItems] = useState<SampleItem[]>([]);
   const [evidence, setEvidence] = useState<ClientEvidence[]>([]);
@@ -137,7 +139,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
       const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fsLine, testDescription, testTypeCode: testType }),
+        body: JSON.stringify({ fsLine, testDescription, testTypeCode: testType, flowData }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -281,11 +283,29 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   <div className="text-center mb-4">
                     <FileText className="h-10 w-10 text-blue-200 mx-auto mb-3" />
                     <p className="text-sm font-semibold text-slate-700 mb-2">Ready to Execute</p>
-                    <p className="text-xs text-slate-500 mb-4">Click Start to run the test flow. The engine will execute each step, pausing for client responses and team actions.</p>
-                    <Button onClick={handleStartExecution} disabled={starting} className="bg-blue-600 hover:bg-blue-700">
-                      {starting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
-                      {starting ? 'Starting...' : 'Start Test Execution'}
-                    </Button>
+                    {!flowData && !executionDef ? (
+                      <>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 text-left">
+                          <p className="text-xs font-semibold text-amber-700 mb-1">No flow configured for this test</p>
+                          <p className="text-[11px] text-amber-600">To run this test, you need to build a flow:</p>
+                          <ol className="text-[11px] text-amber-600 list-decimal list-inside mt-1 space-y-0.5">
+                            <li>Go to <strong>Test Bank</strong> tab</li>
+                            <li>Click the industry dot to open the test popup</li>
+                            <li>Click the <strong>Flow</strong> icon (branch icon) on this test</li>
+                            <li>Build the flow with Test Actions from the sidebar</li>
+                            <li>Save and come back here</li>
+                          </ol>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs text-slate-500 mb-4">Click Start to run the test flow. The engine will execute each step, pausing for client responses and team actions.</p>
+                        <Button onClick={handleStartExecution} disabled={starting} className="bg-blue-600 hover:bg-blue-700">
+                          {starting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
+                          {starting ? 'Starting...' : 'Start Test Execution'}
+                        </Button>
+                      </>
+                    )}
                   </div>
                 )}
 
