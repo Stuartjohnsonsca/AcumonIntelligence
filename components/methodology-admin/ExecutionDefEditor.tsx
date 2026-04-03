@@ -408,10 +408,33 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
               <div>
                 <div className="flex items-center justify-between mb-0.5">
                   <label className="text-[10px] font-semibold text-slate-500 uppercase">Prompt Template</label>
-                  <button onClick={() => setShowPlaceholders(!showPlaceholders)} className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5">
-                    <Info className="h-3 w-3" /> Placeholders
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setShowPlaceholders(!showPlaceholders)} className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5">
+                      <Info className="h-3 w-3" /> Placeholders
+                    </button>
+                  </div>
                 </div>
+
+                {/* AI Compose toggle */}
+                <div className="flex items-center gap-2 mb-2 p-2 rounded-lg border bg-slate-50">
+                  <label className="flex items-center gap-2 cursor-pointer flex-1">
+                    <input
+                      type="checkbox"
+                      checked={def.aiCompose ?? false}
+                      onChange={e => update({ aiCompose: e.target.checked })}
+                      className="rounded text-purple-600"
+                    />
+                    <div>
+                      <span className="text-xs font-medium text-slate-700">AI Compose</span>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {def.aiCompose
+                          ? 'AI will interpret this prompt and compose a professional output using the context data'
+                          : 'Prompt is used as-is with literal placeholder replacement'}
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
                 {showPlaceholders && (
                   <div className="bg-blue-50 border border-blue-200 rounded p-2 mb-1.5 text-[11px] space-y-0.5">
                     {PLACEHOLDERS.map(p => (
@@ -425,10 +448,18 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                 <textarea
                   value={def.promptTemplate || ''}
                   onChange={e => update({ promptTemplate: e.target.value })}
-                  placeholder="Compare {{input.uploaded_file}} against {{input.request_description}}..."
-                  className="w-full text-sm border rounded px-3 py-2 font-mono leading-relaxed"
+                  placeholder={def.aiCompose
+                    ? "Compose a professional request to the client asking for the data needed to verify {{test.fsLine}}. Use the test description as context: {{input.test_description}}. The request should be clear, specific to the period {{engagement.periodEnd}}, and suitable for a UK statutory audit."
+                    : "Compare {{input.uploaded_file}} against {{input.request_description}}..."
+                  }
+                  className={`w-full text-sm border rounded px-3 py-2 leading-relaxed ${def.aiCompose ? '' : 'font-mono'}`}
                   rows={8}
                 />
+                {def.aiCompose && (
+                  <p className="text-[10px] text-purple-600 mt-1 flex items-center gap-1">
+                    <span>&#x2728;</span> At runtime, AI will use this as an instruction to generate the actual output — not send it literally
+                  </p>
+                )}
               </div>
 
               {/* Output format */}
@@ -495,6 +526,27 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                     <Info className="h-3 w-3" /> Placeholders
                   </button>
                 </div>
+
+                {/* AI Compose toggle for client requests */}
+                <div className="flex items-center gap-2 mb-2 p-2 rounded-lg border bg-slate-50">
+                  <label className="flex items-center gap-2 cursor-pointer flex-1">
+                    <input
+                      type="checkbox"
+                      checked={def.aiCompose ?? false}
+                      onChange={e => update({ aiCompose: e.target.checked })}
+                      className="rounded text-purple-600"
+                    />
+                    <div>
+                      <span className="text-xs font-medium text-slate-700">AI Compose</span>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {def.aiCompose
+                          ? 'AI will compose a professional client request from this instruction'
+                          : 'Message is sent to client as-is with placeholder values inserted'}
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
                 {showPlaceholders && (
                   <div className="bg-blue-50 border border-blue-200 rounded p-2 mb-1.5 text-[11px] space-y-0.5">
                     {PLACEHOLDERS.map(p => (
@@ -508,10 +560,18 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                 <textarea
                   value={def.requestTemplate?.message || ''}
                   onChange={e => update({ requestTemplate: { ...def.requestTemplate, message: e.target.value } })}
-                  placeholder="Please provide a breakdown of {{test.fsLine}} as at {{engagement.periodEnd}}..."
-                  className="w-full text-sm border rounded px-3 py-2 font-mono leading-relaxed"
+                  placeholder={def.aiCompose
+                    ? "Write a professional client request for the data needed to verify {{test.fsLine}}. The test requires: {{test.description}}. Request should be specific to period ending {{engagement.periodEnd}} and suitable for a UK statutory audit."
+                    : "Please provide a breakdown of {{test.fsLine}} as at {{engagement.periodEnd}}..."
+                  }
+                  className={`w-full text-sm border rounded px-3 py-2 leading-relaxed ${def.aiCompose ? '' : 'font-mono'}`}
                   rows={5}
                 />
+                {def.aiCompose && (
+                  <p className="text-[10px] text-purple-600 mt-1 flex items-center gap-1">
+                    <span>&#x2728;</span> At runtime, AI will compose the actual client request from this instruction
+                  </p>
+                )}
               </div>
 
               <div>
