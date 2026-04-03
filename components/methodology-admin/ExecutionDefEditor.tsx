@@ -550,7 +550,34 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                       <option value="custom">Custom (specify in prompt)</option>
                     </select>
                   </div>
-                  <p className="text-[10px] text-teal-600">At runtime: creates a SamplingEngagement, populates the population data, and pre-configures the calculator for the user to review and run.</p>
+                  <div className="border-t border-teal-200 pt-2 mt-2 space-y-2">
+                    <div className="text-[10px] font-bold text-teal-700 uppercase">After Creation</div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={def.triggerConfig?.pauseForHuman ?? true}
+                        onChange={e => update({ triggerConfig: { ...def.triggerConfig, pauseForHuman: e.target.checked } })}
+                        className="rounded text-teal-600"
+                      />
+                      <div>
+                        <span className="text-sm text-slate-700 font-medium">Pause for user to run calculator</span>
+                        <p className="text-[10px] text-slate-400">Flow pauses and notifies team member. Resumes when sampling run is complete.</p>
+                      </div>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={def.triggerConfig?.forwardResults ?? true}
+                        onChange={e => update({ triggerConfig: { ...def.triggerConfig, forwardResults: e.target.checked } })}
+                        className="rounded text-teal-600"
+                      />
+                      <div>
+                        <span className="text-sm text-slate-700 font-medium">Forward sample results to next node</span>
+                        <p className="text-[10px] text-slate-400">Selected sample items, sample size, and coverage stats are passed downstream.</p>
+                      </div>
+                    </label>
+                  </div>
+                  <p className="text-[10px] text-teal-600 mt-1">At runtime: AI creates the engagement and populates data &rarr; user reviews and runs the calculator &rarr; results flow to the next node.</p>
                 </div>
               )}
 
