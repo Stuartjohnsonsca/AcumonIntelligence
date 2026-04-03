@@ -496,7 +496,8 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                     <option value="classification">Classification (categories)</option>
                     <option value="numeric">Numeric Value</option>
                     <option value="freeform">Freeform Text</option>
-                    <option value="file_output">File Output</option>
+                    <option value="file_output">File Output (single)</option>
+                    <option value="file_output_multiple">File Output (multiple files)</option>
                     <option value="data_table">Data Table / List</option>
                   </optgroup>
                   <optgroup label="System Triggers">

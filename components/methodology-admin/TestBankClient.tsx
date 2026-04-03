@@ -714,12 +714,28 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
                       </select>
                     </td>
                     <td className="p-2 border-b">
-                      <select value={test.assertion || ''}
-                        onChange={e => { const u = [...popupTests]; u[i] = { ...u[i], assertion: e.target.value }; setPopupTests(u); }}
-                        className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white">
-                        <option value="">Select...</option>
-                        {ASSERTION_TYPES.map(a => <option key={a} value={a}>{a}</option>)}
-                      </select>
+                      <div className="flex flex-wrap gap-1">
+                        {ASSERTION_TYPES.map(a => {
+                          const currentAssertions: string[] = Array.isArray((test as any).assertions) ? (test as any).assertions : (test.assertion ? [test.assertion] : []);
+                          const isChecked = currentAssertions.includes(a);
+                          return (
+                            <label key={a} className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border cursor-pointer transition-colors ${
+                              isChecked ? 'bg-purple-100 border-purple-300 text-purple-700' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'
+                            }`}>
+                              <input type="checkbox" checked={isChecked} className="hidden"
+                                onChange={e => {
+                                  const u = [...popupTests];
+                                  const prev: string[] = Array.isArray((u[i] as any).assertions) ? (u[i] as any).assertions : (u[i].assertion ? [u[i].assertion] : []);
+                                  const next = e.target.checked ? [...prev, a] : prev.filter(x => x !== a);
+                                  (u[i] as any) = { ...u[i], assertions: next, assertion: next[0] || '' };
+                                  setPopupTests(u);
+                                }}
+                              />
+                              {a.length > 15 ? a.split(' ').map(w => w[0]).join('') : a}
+                            </label>
+                          );
+                        })}
+                      </div>
                     </td>
                     <td className="p-2 border-b">
                       <select value={test.framework || ''}
@@ -777,7 +793,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           testBanks={testBanks}
           testTypes={testTypes}
           fsLines={fsLines}
-          onSave={updated => setTestBanks(updated)}
+          onSave={updated => setTestBanks(updated as any)}
         />
       )}
     </div>

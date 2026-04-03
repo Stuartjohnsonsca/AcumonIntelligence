@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRight, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRight, ChevronDown, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ItemErrorDetailPanel } from './ItemErrorDetailPanel';
 
 // ─── Types ───
 interface SampleItem {
@@ -76,6 +77,11 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [flowSteps, setFlowSteps] = useState<FlowStep[]>([]);
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<'not_started' | 'in_progress' | 'awaiting_client' | 'verifying' | 'complete'>('not_started');
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  const [itemDetails, setItemDetails] = useState<Record<string, any>>({});
+  const [clearlyTrivial, setClearlyTrivial] = useState(0);
+  const [tolerableMisstatement, setTolerableMisstatement] = useState(0);
+  const [populationSize, setPopulationSize] = useState(0);
 
   useEffect(() => {
     loadSession();
@@ -108,13 +114,31 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   }));
 
   // Summary calculations
-  const populationValue = sampleItems.reduce((s, i) => s + (i.amount || 0), 0);
+  const sampleValueTotal = sampleItems.reduce((s, i) => s + (i.amount || 0), 0);
   const sampleTotal = sampleItems.length;
   const passCount = results.filter(r => r.overallResult === 'pass').length;
   const failCount = results.filter(r => r.overallResult === 'fail').length;
   const pendingCount = sampleTotal - passCount - failCount;
-  const errorTotal = results.filter(r => r.overallResult === 'fail').length;
-  const errorPct = sampleTotal > 0 ? ((errorTotal / sampleTotal) * 100).toFixed(1) : '0.0';
+
+  // Error amounts from item details
+  const errorAmountTotal = Object.values(itemDetails).reduce((sum: number, d: any) => {
+    if (!d) return sum;
+    const audited = d.overrideAuditedValue ?? d.auditedValue ?? d.bookValue;
+    const diff = Math.abs((d.bookValue || 0) - (audited || 0));
+    return sum + diff;
+  }, 0);
+  const errorPct = sampleValueTotal > 0 ? ((errorAmountTotal / sampleValueTotal) * 100).toFixed(1) : '0.0';
+  const extrapolatedError = sampleValueTotal > 0 && populationSize > 0
+    ? (errorAmountTotal / sampleValueTotal) * populationSize
+    : 0;
+
+  // Error breakdown by classification
+  const classificationCounts = Object.values(itemDetails).reduce((acc: Record<string, number>, d: any) => {
+    if (d?.errorClassification) acc[d.errorClassification] = (acc[d.errorClassification] || 0) + 1;
+    return acc;
+  }, {});
+  const belowCTCount = Object.values(itemDetails).filter((d: any) => d?.isClearlyTrivial).length;
+  const aboveCTCount = failCount - belowCTCount;
 
   if (loading) {
     return (
@@ -203,34 +227,83 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, i) => (
-                  <tr key={row.item.id} className={`border-b border-slate-100 hover:bg-blue-50/30 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
-                    {/* Blue: Sample Request */}
-                    <td className="px-2 py-1.5 text-slate-500 font-mono border-r border-slate-100">{row.item.ref || i + 1}</td>
-                    <td className="px-2 py-1.5 text-slate-700 border-r border-slate-100 max-w-[200px] truncate">{row.item.description}</td>
-                    <td className="px-2 py-1.5 text-right font-mono text-slate-800 border-r border-slate-100">{fmt(row.item.amount)}</td>
-                    <td className="px-2 py-1.5 text-slate-500 border-r-2 border-blue-100">{row.item.date || '—'}</td>
-                    {/* Green: Client Evidence */}
-                    <td className="px-2 py-1.5 text-slate-600 font-mono border-r border-slate-100">{row.evidence.docRef || '—'}</td>
-                    <td className="px-2 py-1.5 text-slate-600 border-r border-slate-100 max-w-[120px] truncate">{row.evidence.seller || '—'}</td>
-                    <td className="px-2 py-1.5 text-right font-mono text-slate-800 border-r border-slate-100">{fmt(row.evidence.gross)}</td>
-                    <td className="px-2 py-1.5 text-center border-r-2 border-green-100">
-                      {row.evidence.status === 'uploaded' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">Uploaded</span>}
-                      {row.evidence.status === 'pending' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-600">Pending</span>}
-                      {row.evidence.status === 'missing' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">Missing</span>}
-                    </td>
-                    {/* Amber: Audit Verification */}
-                    <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.amountMatch} /></td>
-                    <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.dateMatch} /></td>
-                    <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.periodCheck} /></td>
-                    <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.consistency} /></td>
-                    <td className="px-2 py-1.5 text-center">
-                      {row.result.overallResult === 'pass' && <span className="text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">PASS</span>}
-                      {row.result.overallResult === 'fail' && <span className="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">FAIL</span>}
-                      {row.result.overallResult === 'pending' && <span className="text-[9px] text-slate-400">—</span>}
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((row, i) => {
+                  const isItemExpanded = expandedItemId === row.item.id;
+                  return (
+                    <React.Fragment key={row.item.id}>
+                      <tr
+                        onClick={() => setExpandedItemId(isItemExpanded ? null : row.item.id)}
+                        className={`border-b border-slate-100 cursor-pointer transition-colors ${
+                          isItemExpanded ? 'bg-blue-50 border-l-2 border-l-blue-500' :
+                          i % 2 === 0 ? 'bg-white hover:bg-blue-50/30' : 'bg-slate-50/30 hover:bg-blue-50/30'
+                        }`}
+                      >
+                        {/* Blue: Sample Request */}
+                        <td className="px-2 py-1.5 text-slate-500 font-mono border-r border-slate-100">
+                          <div className="flex items-center gap-1">
+                            {isItemExpanded ? <ChevronDown className="h-3 w-3 text-blue-500" /> : <ChevronRight className="h-3 w-3 text-slate-300" />}
+                            {row.item.ref || i + 1}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1.5 text-slate-700 border-r border-slate-100 max-w-[200px] truncate">{row.item.description}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-slate-800 border-r border-slate-100">{fmt(row.item.amount)}</td>
+                        <td className="px-2 py-1.5 text-slate-500 border-r-2 border-blue-100">{row.item.date || '—'}</td>
+                        {/* Green: Client Evidence */}
+                        <td className="px-2 py-1.5 text-slate-600 font-mono border-r border-slate-100">{row.evidence.docRef || '—'}</td>
+                        <td className="px-2 py-1.5 text-slate-600 border-r border-slate-100 max-w-[120px] truncate">{row.evidence.seller || '—'}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-slate-800 border-r border-slate-100">{fmt(row.evidence.gross)}</td>
+                        <td className="px-2 py-1.5 text-center border-r-2 border-green-100">
+                          {row.evidence.status === 'uploaded' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">Uploaded</span>}
+                          {row.evidence.status === 'pending' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-600">Pending</span>}
+                          {row.evidence.status === 'missing' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">Missing</span>}
+                        </td>
+                        {/* Amber: Audit Verification */}
+                        <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.amountMatch} /></td>
+                        <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.dateMatch} /></td>
+                        <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.periodCheck} /></td>
+                        <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.consistency} /></td>
+                        <td className="px-2 py-1.5 text-center">
+                          {row.result.overallResult === 'pass' && <span className="text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">PASS</span>}
+                          {row.result.overallResult === 'fail' && <span className="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">FAIL</span>}
+                          {row.result.overallResult === 'pending' && <span className="text-[9px] text-slate-400">—</span>}
+                        </td>
+                      </tr>
+                      {/* Expandable detail panel */}
+                      {isItemExpanded && (
+                        <tr>
+                          <td colSpan={13} className="p-2 bg-slate-50/50">
+                            <ItemErrorDetailPanel
+                              detail={itemDetails[row.item.id] || {
+                                itemId: row.item.id,
+                                bookValue: row.item.amount || 0,
+                                auditedValue: row.evidence.gross ?? null,
+                                aiExtractedValue: row.evidence.gross ?? null,
+                                aiExtractedDate: null,
+                                aiSourceDocument: row.evidence.fileName || row.evidence.docRef || null,
+                                aiComparisonSteps: [],
+                                aiConfidence: null,
+                                overrideAuditedValue: null,
+                                overrideReason: '',
+                                errorClassification: null,
+                                isClearlyTrivial: null,
+                                wpReference: '',
+                                auditorNotes: '',
+                                testResult: null,
+                              }}
+                              clearlyTrivialThreshold={clearlyTrivial}
+                              onChange={(updated) => {
+                                setItemDetails(prev => ({
+                                  ...prev,
+                                  [row.item.id]: { ...prev[row.item.id], ...updated },
+                                }));
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -238,28 +311,76 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
 
         {/* RIGHT: Summary Panel (25%) */}
         <div className="w-64 shrink-0 p-3 overflow-y-auto bg-slate-50/50">
-          {/* Audit Summary */}
+          {/* Tier 1: Simple Summary */}
           <div className="mb-4">
             <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Audit Summary</div>
             <div className="space-y-1.5">
-              <SummaryRow label="Population Value" value={`£${fmt(populationValue)}`} />
+              <SummaryRow label="Population Value" value={`£${fmt(sampleValueTotal)}`} />
               <SummaryRow label="Sample Size" value={`${sampleTotal} items`} />
               <SummaryRow label="Verified" value={`${passCount} passed`} color="text-green-600" />
-              <SummaryRow label="Errors" value={`${failCount} failed`} color={failCount > 0 ? 'text-red-600' : 'text-slate-500'} />
+              <SummaryRow label="Exceptions" value={`${failCount} found`} color={failCount > 0 ? 'text-red-600' : 'text-slate-500'} />
               <SummaryRow label="Pending" value={`${pendingCount} remaining`} color="text-slate-400" />
               <div className="border-t border-slate-200 pt-1.5 mt-1.5">
-                <SummaryRow label="Error %" value={`${errorPct}%`} color={Number(errorPct) > 5 ? 'text-red-600 font-bold' : 'text-green-600 font-bold'} />
+                <SummaryRow label="Error Total" value={`£${fmt(errorAmountTotal)}`} color={errorAmountTotal > 0 ? 'text-red-600' : 'text-green-600'} />
+                <SummaryRow label="Error %" value={`${errorPct}%`} color={Number(errorPct) > 0 ? 'text-red-600 font-bold' : 'text-green-600 font-bold'} />
+                <SummaryRow label="Extrapolated" value={`£${fmt(extrapolatedError)}`} color={extrapolatedError > 0 ? 'text-red-600' : 'text-slate-500'} />
+                <SummaryRow label="Clearly Trivial" value={`£${fmt(clearlyTrivial)}`} />
               </div>
             </div>
-            {/* Conclusion */}
-            {status === 'complete' && (
-              <div className={`mt-3 px-3 py-2 rounded-lg text-center text-sm font-bold ${
-                failCount === 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-              }`}>
-                {failCount === 0 ? 'SATISFACTORY' : 'ERRORS IDENTIFIED'}
-              </div>
-            )}
           </div>
+
+          {/* Tier 2: Statistical Evaluation */}
+          {sampleTotal > 0 && failCount + passCount > 0 && (
+            <details className="mb-4">
+              <summary className="text-[9px] font-bold text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-600 mb-2">
+                Statistical Evaluation
+              </summary>
+              <div className="space-y-1 text-[10px] bg-slate-100 rounded-lg p-2">
+                <div className="flex justify-between"><span className="text-slate-500">Tolerable Misstatement</span><span className="font-mono text-slate-700">£{fmt(tolerableMisstatement)}</span></div>
+                <div className="text-[9px] text-slate-400 italic">Full UCL calculation available when all items are assessed</div>
+              </div>
+            </details>
+          )}
+
+          {/* Tier 3: Error Breakdown */}
+          {failCount > 0 && (
+            <div className="mb-4">
+              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Error Breakdown</div>
+              <div className="space-y-1">
+                {Object.entries(classificationCounts).map(([cls, count]) => (
+                  <div key={cls} className="flex justify-between text-[10px]">
+                    <span className="text-slate-600 capitalize">{cls}</span>
+                    <span className="font-mono text-slate-700">{count as number}</span>
+                  </div>
+                ))}
+                {belowCTCount > 0 && (
+                  <div className="flex justify-between text-[10px] text-slate-400">
+                    <span>Below CT (noted only)</span>
+                    <span className="font-mono">{belowCTCount}</span>
+                  </div>
+                )}
+                {aboveCTCount > 0 && (
+                  <div className="flex justify-between text-[10px] text-red-600 font-medium">
+                    <span>Above CT (material)</span>
+                    <span className="font-mono">{aboveCTCount}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Conclusion */}
+          {status === 'complete' && (
+            <div className={`mb-4 px-3 py-2 rounded-lg text-center text-sm font-bold ${
+              failCount === 0 ? 'bg-green-100 text-green-700' :
+              extrapolatedError <= tolerableMisstatement ? 'bg-amber-100 text-amber-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {failCount === 0 ? 'SATISFACTORY' :
+               extrapolatedError <= tolerableMisstatement ? 'ERRORS — WITHIN TM' :
+               'ERRORS — EXCEEDS TM'}
+            </div>
+          )}
 
           {/* Document Upload */}
           <div className="mb-4">
