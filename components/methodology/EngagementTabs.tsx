@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -107,6 +107,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       .catch(() => {});
   }, [engagement.id]);
   const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
+  const [outstandingTeamCount, setOutstandingTeamCount] = useState(0);
+  const [outstandingClientCount, setOutstandingClientCount] = useState(0);
+  const handleOutstandingCounts = useCallback((team: number, client: number) => {
+    setOutstandingTeamCount(team);
+    setOutstandingClientCount(client);
+  }, []);
   const [engStatus, setEngStatus] = useState(engagement.status);
   const [starting, setStarting] = useState(false);
 
@@ -198,6 +204,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           currentUserRole={teamMembers.find(m => m.userId === currentUserId)?.role}
           teamMembers={teamMembers}
           specialists={engagement.specialists?.map(s => ({ name: s.name || '', specialistType: s.specialistType })) || []}
+          onCountsChange={handleOutstandingCounts}
         />;
       case 'portal':
         return <ClientPortalTab engagementId={engagement.id} clientName={clientName} />;
@@ -243,11 +250,17 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 <button
                   key={tab.key}
                   onClick={() => { switchTab(tab.key); setShowAuditPlan(false); }}
-                  className={`w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors ${
+                  className={`w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors flex items-center gap-1 ${
                     isActive ? 'bg-blue-50 text-blue-700 border-l-2 border-l-blue-500' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
                   }`}
                 >
                   {label}
+                  {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[16px] px-1 h-4 rounded-full bg-teal-500 text-white text-[8px] font-bold">{outstandingTeamCount}</span>
+                  )}
+                  {tab.key === 'outstanding' && outstandingClientCount > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[16px] px-1 h-4 rounded-full bg-orange-500 text-white text-[8px] font-bold">{outstandingClientCount}</span>
+                  )}
                 </button>
               );
             })}
@@ -269,13 +282,19 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                   <button
                     key={tab.key}
                     onClick={() => switchTab(tab.key)}
-                    className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors ${
+                    className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors flex items-center gap-1.5 ${
                       isActive
                         ? 'border-blue-500 text-blue-600'
                         : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
                     }`}
                   >
                     {label}
+                    {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
+                      <span className="inline-flex items-center justify-center min-w-[18px] px-1 h-[18px] rounded-full bg-teal-500 text-white text-[9px] font-bold leading-none">{outstandingTeamCount}</span>
+                    )}
+                    {tab.key === 'outstanding' && outstandingClientCount > 0 && (
+                      <span className="inline-flex items-center justify-center min-w-[18px] px-1 h-[18px] rounded-full bg-orange-500 text-white text-[9px] font-bold leading-none">{outstandingClientCount}</span>
+                    )}
                   </button>
                 );
               })}
