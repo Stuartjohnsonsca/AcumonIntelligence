@@ -685,7 +685,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
       };
     }));
     setEditingNode(null);
-  }, [editingNode, editLabel, editDescription, editAssignee, editInputType, editQuestion, setNodes]);
+  }, [editingNode, editLabel, editDescription, editAssignee, editInputType, editQuestion, editCollection, editCondition, editMaxIterations, editWaitFor, setNodes]);
 
   const deleteSelected = useCallback(() => {
     setNodes((nds) => nds.filter((n) => !n.selected || n.type === 'start'));
