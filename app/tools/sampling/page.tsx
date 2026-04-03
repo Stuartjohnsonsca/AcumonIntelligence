@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { SamplingCalculatorClient } from '@/components/tools/SamplingCalculatorClient';
+import { ErrorBoundaryWrapper } from '@/components/ErrorBoundaryWrapper';
 
 export default async function SamplingPage() {
   const session = await auth();
@@ -37,6 +38,7 @@ export default async function SamplingPage() {
   });
 
   return (
+    <ErrorBoundaryWrapper pageName="Sampling Calculator">
     <Suspense fallback={null}>
       <SamplingCalculatorClient
         userId={session.user.id}
@@ -53,5 +55,6 @@ export default async function SamplingPage() {
         } : null}
       />
     </Suspense>
+    </ErrorBoundaryWrapper>
   );
 }
