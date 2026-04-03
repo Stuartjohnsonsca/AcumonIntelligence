@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRight, ChevronDown, ExternalLink, Play, RotateCcw, AlertTriangle, Ban, Calculator } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ItemErrorDetailPanel } from './ItemErrorDetailPanel';
+import { InlineSamplingPanel } from './InlineSamplingPanel';
 
 // ─── Types ───
 interface SampleItem { id: string; ref: string; description: string; amount: number; date?: string; reference?: string; }
@@ -285,27 +286,18 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             </button>
             {samplingOpen && (
               <div className="p-4 space-y-3">
-                {/* Sampling pause — show calculator controls */}
+                {/* Sampling pause — show inline calculator */}
                 {isSamplingPause && (
-                  <div className="border-2 border-teal-200 rounded-lg p-4 bg-teal-50/30 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Calculator className="h-5 w-5 text-teal-600" />
-                      <div>
-                        <p className="text-sm font-bold text-teal-800">Run Sampling Calculator</p>
-                        <p className="text-[11px] text-teal-600">{fsLine} — open the calculator, review the population, and run the sample.</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <a href="/tools/sampling" target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700">
-                        <Calculator className="h-4 w-4" /> Open Sampling Calculator <ExternalLink className="h-3 w-3" />
-                      </a>
-                      <Button onClick={handleSamplingDone} disabled={completing} className="bg-green-600 hover:bg-green-700">
-                        {completing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                        Sampling Done — Continue
-                      </Button>
-                    </div>
-                  </div>
+                  <InlineSamplingPanel
+                    engagementId={engagementId}
+                    fsLine={fsLine}
+                    testDescription={testDescription}
+                    populationData={[]} // Will be populated from flow context when engine passes data
+                    materialityData={{ performanceMateriality: tolerableMisstatement, clearlyTrivial, tolerableMisstatement }}
+                    onComplete={(results) => {
+                      handleSamplingDone();
+                    }}
+                  />
                 )}
 
                 {/* Portal pause */}
