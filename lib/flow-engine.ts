@@ -513,8 +513,19 @@ async function handleForEach(
     const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
 
     if (collection === 'sample_items') {
-      // From sampling results or previous node
-      items = prevOutput?.selectedIndices || prevOutput?.sampleItems || prevOutput?.populationData || [];
+      // From sampling results — resolve selectedIndices against populationData
+      const populationData = prevOutput?.populationData ||
+        Object.values(ctx.nodes).find((n: any) => n?.populationData?.length > 0)?.populationData || [];
+      const selectedIndices = prevOutput?.selectedIndices || [];
+
+      if (selectedIndices.length > 0 && populationData.length > 0) {
+        // Map indices to actual row objects
+        items = selectedIndices.map((idx: number) => populationData[idx]).filter(Boolean);
+      } else if (prevOutput?.sampleItems?.length > 0) {
+        items = prevOutput.sampleItems;
+      } else if (populationData.length > 0) {
+        items = populationData; // Fallback: use full population
+      }
     } else if (collection === 'evidence_files') {
       items = prevOutput?.parsedFiles || prevOutput?.files || [];
     } else {

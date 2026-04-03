@@ -91,6 +91,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
       await processNextNode(executionId);
       return NextResponse.json({ status: 'retrying' });
 
+    case 'continue':
+      // Continue a running execution that hit its time budget (used by auto-continuation polling)
+      if (execution.status !== 'running') return NextResponse.json({ error: 'Execution is not running' }, { status: 400 });
+      await processNextNode(executionId);
+      return NextResponse.json({ status: 'continuing' });
+
     default:
       return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   }

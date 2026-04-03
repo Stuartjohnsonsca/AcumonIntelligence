@@ -152,14 +152,14 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           if (pollRef.current) clearInterval(pollRef.current);
           setFindingsOpen(true);
         }
-        // Auto-continue: if execution is still 'running' but updatedAt is stale (>10s ago),
+        // Auto-continue: if execution is still 'running' but updatedAt is stale (>5s ago),
         // the engine hit its time budget mid-loop. Trigger continuation.
         if (data.execution.status === 'running') {
           const updated = new Date(data.execution.updatedAt).getTime();
-          if (Date.now() - updated > 10000) {
+          if (Date.now() - updated > 5000) {
             fetch(`/api/engagements/${engagementId}/test-execution/${execId}`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'retry' }),
+              body: JSON.stringify({ action: 'continue' }),
             }).catch(() => {});
           }
         }
