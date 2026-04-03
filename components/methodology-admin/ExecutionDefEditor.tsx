@@ -31,9 +31,19 @@ const TOOLS = [
 ];
 
 // ─── Known input sources ───
-const KNOWN_INPUTS: { group: string; items: { key: string; label: string }[] }[] = [
+const KNOWN_INPUTS: { group: string; items: { key: string; label: string; binding?: string }[] }[] = [
   {
-    group: 'From Upstream Flow Nodes',
+    group: 'Auto-Linked (from previous node)',
+    items: [
+      { key: 'previous_output', label: 'Previous Node Output (auto)', binding: 'auto' },
+      { key: 'portal_response_file', label: 'Client Portal Upload (auto from portal response)', binding: 'auto:portal_file' },
+      { key: 'portal_response_text', label: 'Client Portal Text Response (auto)', binding: 'auto:portal_text' },
+      { key: 'ai_previous_result', label: 'AI Result from Previous Step (auto)', binding: 'auto:ai_result' },
+      { key: 'verified_data', label: 'Verified/Passed Data from Previous Step (auto)', binding: 'auto:pass_through' },
+    ],
+  },
+  {
+    group: 'From Specific Upstream Node',
     items: [
       { key: 'uploaded_file', label: 'Client Uploaded File' },
       { key: 'request_description', label: 'Request Message Sent to Client' },
@@ -42,7 +52,6 @@ const KNOWN_INPUTS: { group: string; items: { key: string; label: string }[] }[]
       { key: 'ai_pass_fail', label: 'AI Pass/Fail Decision' },
       { key: 'sample_selection', label: 'Selected Sample Items' },
       { key: 'team_output', label: 'Team Member Output/Notes' },
-      { key: 'previous_step_output', label: 'Previous Step Output (generic)' },
     ],
   },
   {
@@ -155,10 +164,12 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantResult, setAssistantResult] = useState<{ inputs: { key: string; label: string }[]; systemInstruction: string; promptTemplate: string } | null>(null);
 
-  function addInputFromPicker(key: string, label: string) {
+  function addInputFromPicker(key: string, label: string, binding?: string) {
     const existing = def.inputs || [];
     if (existing.some((inp: InputDef) => inp.key === key)) return;
-    setDef((prev: any) => ({ ...prev, inputs: [...existing, { key, label, description: '' }] }));
+    const newInput: any = { key, label, description: '' };
+    if (binding) newInput.binding = binding;
+    setDef((prev: any) => ({ ...prev, inputs: [...existing, newInput] }));
     setDirty(true);
     setShowInputPicker(false);
     setInputPickerSearch('');
@@ -340,10 +351,13 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                   </div>
                 </div>
                 {/* Existing inputs */}
-                {(def.inputs || []).map((inp: InputDef, i: number) => (
+                {(def.inputs || []).map((inp: any, i: number) => (
                   <div key={i} className="flex gap-1 mb-1.5 items-center">
                     <span className="text-xs font-mono bg-slate-100 border rounded px-2 py-1.5 text-slate-700 min-w-[100px]">{inp.key}</span>
                     <span className="text-xs text-slate-500 flex-1">{inp.label}</span>
+                    {inp.binding?.startsWith('auto') && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium shrink-0">auto</span>
+                    )}
                     <button
                       onClick={() => {
                         setDef((prev: any) => ({ ...prev, inputs: (prev.inputs || []).filter((_: any, j: number) => j !== i) }));
@@ -377,12 +391,17 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                           {filtered.map(item => (
                             <button
                               key={item.key}
-                              onClick={() => addInputFromPicker(item.key, item.label)}
+                              onClick={() => addInputFromPicker(item.key, item.label, (item as any).binding)}
                               disabled={existingKeys.has(item.key)}
                               className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 flex items-center justify-between ${existingKeys.has(item.key) ? 'opacity-40' : ''}`}
                             >
-                              <span className="font-mono text-slate-700">{item.key}</span>
-                              <span className="text-slate-400 ml-2">{item.label}</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-slate-700">{item.key}</span>
+                                {(item as any).binding?.startsWith('auto') && (
+                                  <span className="text-[8px] px-1 py-0.5 rounded bg-teal-100 text-teal-600 font-medium">auto</span>
+                                )}
+                              </div>
+                              <span className="text-slate-400 ml-2 text-right">{item.label}</span>
                             </button>
                           ))}
                         </div>
@@ -472,6 +491,7 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                 >
                   <optgroup label="Data Outputs">
                     <option value="pass_fail">Pass / Fail</option>
+                    <option value="pass_fail_forward">Pass / Fail + Forward Data (if pass, verified data available to next node)</option>
                     <option value="extracted_data">Extracted Data (fields)</option>
                     <option value="classification">Classification (categories)</option>
                     <option value="numeric">Numeric Value</option>
