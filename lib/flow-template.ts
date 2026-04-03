@@ -132,6 +132,12 @@ export function resolveTemplate(template: string, ctx: ExecutionContext, inputBi
       if (parts[1] === 'index') {
         return String(ctx.loop?.index ?? 0);
       }
+      if (parts[1] === 'position') {
+        return String((ctx.loop?.index ?? 0) + 1);
+      }
+      if (parts[1] === 'total') {
+        return String(ctx.vars?.sampleCount || ctx.vars?.populationCount || '');
+      }
     }
 
     // Unresolved — leave as-is
