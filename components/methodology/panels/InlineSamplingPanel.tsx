@@ -13,7 +13,7 @@ interface Props {
   onComplete: (results: { runId: string; selectedIndices: number[]; sampleSize: number; coverage: number }) => void;
 }
 
-const METHODS = [
+const SIMPLE_METHODS = [
   { key: 'random', label: 'Random (SRSWOR)', desc: 'Simple random sampling without replacement' },
   { key: 'systematic', label: 'Systematic', desc: 'Fixed interval selection from ordered population' },
   { key: 'mus', label: 'Monetary Unit (MUS)', desc: 'Probability proportional to size' },
@@ -21,16 +21,32 @@ const METHODS = [
   { key: 'judgemental', label: 'Judgemental', desc: 'Manual selection with documented rationale' },
 ];
 
+const STRATIFIED_METHODS = [
+  { key: 'stratified', label: 'AI Risk Stratification', desc: 'K-means clustering + Z-score outlier detection' },
+];
+
+const ERROR_METRICS = [
+  { value: 'net_signed', label: 'Net Signed Error' },
+  { value: 'overstatement_only', label: 'Overstatement Only' },
+  { value: 'absolute_error', label: 'Absolute Error' },
+];
+
+const RISK_LEVELS = ['Low', 'Medium', 'High'];
+
 function fmt(n: number | null | undefined, currency = 'GBP'): string {
   if (n == null) return '—';
   return `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function InlineSamplingPanel({ engagementId, fsLine, testDescription, populationData, materialityData, onComplete }: Props) {
+  const [mode, setMode] = useState<'simple' | 'stratified'>('simple');
   const [method, setMethod] = useState('random');
   const [sampleSizeMode, setSampleSizeMode] = useState<'calculator' | 'fixed'>('fixed');
   const [fixedSampleSize, setFixedSampleSize] = useState(25);
   const [confidence, setConfidence] = useState(0.95);
+  const [errorMetric, setErrorMetric] = useState('net_signed');
+  const [inherentRisk, setInherentRisk] = useState('Medium');
+  const [specificRisk, setSpecificRisk] = useState('Medium');
   const [running, setRunning] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
@@ -56,13 +72,14 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
         body: JSON.stringify({
           engagementId,
           populationData,
-          method,
-          stratification: 'simple',
+          method: mode === 'stratified' ? 'stratified' : method,
+          stratification: mode,
           sampleSizeStrategy: sampleSizeMode,
           fixedSampleSize: sampleSizeMode === 'fixed' ? fixedSampleSize : undefined,
           confidence,
           tolerableMisstatement: materialityData.tolerableMisstatement,
-          errorMetric: 'net_signed',
+          errorMetric,
+          ...(mode === 'stratified' ? { inherentRisk, specificRisk } : {}),
         }),
       });
       if (res.ok) {
@@ -100,20 +117,48 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
       <div className="grid grid-cols-12 gap-3">
         {/* Method selector */}
         <div className="col-span-4">
-          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Sampling Method</label>
-          <div className="space-y-1">
-            {METHODS.map(m => (
-              <button
-                key={m.key}
-                onClick={() => setMethod(m.key)}
-                className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-colors ${
-                  method === m.key ? 'bg-blue-50 border border-blue-200 text-blue-800 font-medium' : 'border border-slate-100 hover:bg-slate-50 text-slate-600'
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
+          {/* Mode A / B toggle */}
+          <div className="flex gap-1 mb-2 bg-slate-100 rounded p-0.5">
+            <button onClick={() => { setMode('simple'); setMethod('random'); }} className={`flex-1 px-2 py-1 text-[10px] font-medium rounded ${mode === 'simple' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+              Mode A: Simple
+            </button>
+            <button onClick={() => { setMode('stratified'); setMethod('stratified'); }} className={`flex-1 px-2 py-1 text-[10px] font-medium rounded ${mode === 'stratified' ? 'bg-white text-purple-700 shadow-sm' : 'text-slate-500'}`}>
+              Mode B: AI Stratified
+            </button>
           </div>
+
+          {mode === 'simple' && (
+            <div className="space-y-1">
+              {SIMPLE_METHODS.map(m => (
+                <button key={m.key} onClick={() => setMethod(m.key)}
+                  className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-colors ${method === m.key ? 'bg-blue-50 border border-blue-200 text-blue-800 font-medium' : 'border border-slate-100 hover:bg-slate-50 text-slate-600'}`}>
+                  <span className="font-medium">{m.label}</span>
+                  <span className="text-[9px] text-slate-400 block">{m.desc}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {mode === 'stratified' && (
+            <div className="space-y-2">
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-2.5">
+                <span className="text-[10px] font-bold text-purple-700 uppercase">AI Risk Stratification</span>
+                <p className="text-[10px] text-purple-600 mt-0.5">K-means clustering with Z-score outlier detection. AI analyses the population and creates risk-based strata.</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-slate-500">Inherent Risk</label>
+                <select value={inherentRisk} onChange={e => setInherentRisk(e.target.value)} className="w-full border rounded px-2 py-1 text-xs bg-white mt-0.5">
+                  {RISK_LEVELS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-slate-500">Specific Risk</label>
+                <select value={specificRisk} onChange={e => setSpecificRisk(e.target.value)} className="w-full border rounded px-2 py-1 text-xs bg-white mt-0.5">
+                  {RISK_LEVELS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Config + Stats */}
@@ -141,6 +186,13 @@ export function InlineSamplingPanel({ engagementId, fsLine, testDescription, pop
               <option value={0.90}>90%</option>
               <option value={0.95}>95%</option>
               <option value={0.99}>99%</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Error Metric</label>
+            <select value={errorMetric} onChange={e => setErrorMetric(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm bg-white">
+              {ERROR_METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
         </div>
