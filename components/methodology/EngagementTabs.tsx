@@ -286,7 +286,9 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           </div>
           {/* Main area: Audit Plan */}
           <div className="flex-1 p-4 overflow-auto">
-            <AuditPlanPanel engagementId={engagement.id} onClose={() => setShowAuditPlan(false)} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />
+            <TabErrorBoundary tabName="Audit Plan">
+              <AuditPlanPanel engagementId={engagement.id} onClose={() => setShowAuditPlan(false)} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />
+            </TabErrorBoundary>
           </div>
         </div>
       ) : (
