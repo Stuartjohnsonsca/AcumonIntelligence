@@ -1627,6 +1627,8 @@ model AuditEngagement {
   rmmRows             AuditRMMRow[]
   documents           AuditDocument[]
   tbRows              AuditTBRow[]
+  testExecutions       TestExecution[]
+  outstandingItems     OutstandingItem[]
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -2229,5 +2231,92 @@ model ResourceOptimizerSettings {
   firm Firm @relation(fields: [firmId], references: [id])
 
   @@map("resource_optimizer_settings")
+}
+
+// ─── Test Execution Engine ─────────────────────────────────────────────────
+
+model TestExecution {
+  id              String    @id @default(uuid())
+  engagementId    String    @map("engagement_id")
+  firmId          String    @map("firm_id")
+  fsLine          String    @map("fs_line")
+  testDescription String    @map("test_description")
+  testTypeCode    String?   @map("test_type_code")
+  flowSnapshot    Json      @map("flow_snapshot")          // Frozen FlowData at execution start
+  status          String    @default("running")            // running | paused | completed | failed | cancelled
+  currentNodeId   String?   @map("current_node_id")        // ReactFlow node ID where paused/active
+  pauseReason     String?   @map("pause_reason")           // portal_response | team_task | evidence | sampling | review
+  pauseRefId      String?   @map("pause_ref_id")           // ID of external resource being waited on
+  context         Json      @default("{}") @map("context") // Accumulated outputs keyed by nodeId
+  loopState       Json?     @map("loop_state")             // Active forEach/loopUntil state
+  errorMessage    String?   @map("error_message") @db.Text
+  startedById     String    @map("started_by_id")
+  startedAt       DateTime  @default(now()) @map("started_at")
+  completedAt     DateTime? @map("completed_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  nodeRuns   TestExecutionNodeRun[]
+  outstandingItems OutstandingItem[]
+
+  @@index([engagementId])
+  @@index([status])
+  @@index([pauseRefId])
+  @@map("test_executions")
+}
+
+model TestExecutionNodeRun {
+  id            String    @id @default(uuid())
+  executionId   String    @map("execution_id")
+  nodeId        String    @map("node_id")
+  nodeType      String    @map("node_type")      // start | action | decision | forEach | loopUntil | wait | end
+  assignee      String?                           // ai | client | team
+  label         String?
+  status        String    @default("pending")     // pending | running | paused | completed | failed | skipped
+  input         Json?
+  output        Json?
+  errorMessage  String?   @map("error_message")
+  aiModel       String?   @map("ai_model")
+  aiTokensUsed  Int?      @map("ai_tokens_used")
+  duration      Int?                               // milliseconds
+  loopIndex     Int?      @map("loop_index")
+  startedAt     DateTime  @default(now()) @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+
+  execution TestExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@index([executionId])
+  @@index([executionId, nodeId])
+  @@map("test_execution_node_runs")
+}
+
+model OutstandingItem {
+  id            String    @id @default(uuid())
+  engagementId  String    @map("engagement_id")
+  executionId   String?   @map("execution_id")
+  nodeId        String?   @map("node_id")
+  type          String                              // flow_task | portal_request | evidence_request | review_point
+  title         String
+  description   String?   @db.Text
+  source        String    @default("manual")        // flow | manual
+  assignedTo    String?   @map("assigned_to")
+  status        String    @default("pending")        // pending | in_progress | awaiting_client | awaiting_team | complete
+  fsLine        String?   @map("fs_line")
+  testName      String?   @map("test_name")
+  flowNodeType  String?   @map("flow_node_type")
+  priority      String    @default("normal")         // normal | high | urgent
+  portalRequestId String? @map("portal_request_id")
+  responseData  Json?     @map("response_data")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  completedAt   DateTime? @map("completed_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  execution  TestExecution?  @relation(fields: [executionId], references: [id], onDelete: SetNull)
+
+  @@index([engagementId])
+  @@index([engagementId, status])
+  @@index([executionId])
+  @@map("outstanding_items")
 }
 

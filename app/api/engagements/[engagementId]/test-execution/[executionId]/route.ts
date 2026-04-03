@@ -1,0 +1,90 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@/lib/auth';
+import { prisma } from '@/lib/db';
+import { resumeExecution, processNextNode } from '@/lib/flow-engine';
+
+// GET: Full execution detail with node runs
+export async function GET(req: NextRequest, { params }: { params: Promise<{ engagementId: string; executionId: string }> }) {
+  const { executionId } = await params;
+  const session = await auth();
+  if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+
+  const execution = await prisma.testExecution.findUnique({
+    where: { id: executionId },
+    include: {
+      nodeRuns: { orderBy: { startedAt: 'asc' } },
+      outstandingItems: { orderBy: { createdAt: 'desc' } },
+    },
+  });
+
+  if (!execution) return NextResponse.json({ error: 'Execution not found' }, { status: 404 });
+
+  // Build flow steps for the progress bar
+  const flow = execution.flowSnapshot as any;
+  const flowSteps = (flow.nodes || [])
+    .filter((n: any) => n.type !== 'start')
+    .map((n: any) => {
+      const nodeRun = execution.nodeRuns.find(r => r.nodeId === n.id);
+      return {
+        id: n.id,
+        label: n.data?.label || n.type,
+        nodeType: n.type,
+        status: nodeRun?.status || 'pending',
+        output: nodeRun?.output,
+        errorMessage: nodeRun?.errorMessage,
+        duration: nodeRun?.duration,
+        startedAt: nodeRun?.startedAt,
+        completedAt: nodeRun?.completedAt,
+      };
+    });
+
+  return NextResponse.json({
+    execution: {
+      id: execution.id,
+      status: execution.status,
+      fsLine: execution.fsLine,
+      testDescription: execution.testDescription,
+      currentNodeId: execution.currentNodeId,
+      pauseReason: execution.pauseReason,
+      errorMessage: execution.errorMessage,
+      startedAt: execution.startedAt,
+      completedAt: execution.completedAt,
+      updatedAt: execution.updatedAt,
+    },
+    flowSteps,
+    nodeRuns: execution.nodeRuns,
+    outstandingItems: execution.outstandingItems,
+  });
+}
+
+// POST: Control execution (resume, cancel, retry)
+export async function POST(req: NextRequest, { params }: { params: Promise<{ engagementId: string; executionId: string }> }) {
+  const { executionId } = await params;
+  const session = await auth();
+  if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+
+  const { action, responseData } = await req.json();
+
+  const execution = await prisma.testExecution.findUnique({ where: { id: executionId } });
+  if (!execution) return NextResponse.json({ error: 'Execution not found' }, { status: 404 });
+
+  switch (action) {
+    case 'resume':
+      if (execution.status !== 'paused') return NextResponse.json({ error: 'Execution is not paused' }, { status: 400 });
+      await resumeExecution(executionId, responseData);
+      return NextResponse.json({ status: 'resumed' });
+
+    case 'cancel':
+      await prisma.testExecution.update({ where: { id: executionId }, data: { status: 'cancelled' } });
+      return NextResponse.json({ status: 'cancelled' });
+
+    case 'retry':
+      if (execution.status !== 'failed') return NextResponse.json({ error: 'Execution is not failed' }, { status: 400 });
+      await prisma.testExecution.update({ where: { id: executionId }, data: { status: 'running', errorMessage: null } });
+      await processNextNode(executionId);
+      return NextResponse.json({ status: 'retrying' });
+
+    default:
+      return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+  }
+}

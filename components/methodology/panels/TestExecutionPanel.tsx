@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRight, ChevronDown, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRight, ChevronDown, ExternalLink, Play, RotateCcw, AlertTriangle, Ban } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ItemErrorDetailPanel } from './ItemErrorDetailPanel';
 
@@ -41,7 +41,10 @@ interface VerificationResult {
 interface FlowStep {
   id: string;
   label: string;
-  status: 'complete' | 'active' | 'pending' | 'failed';
+  status: string; // pending | running | paused | completed | failed | skipped | complete | active
+  output?: any;
+  errorMessage?: string;
+  duration?: number;
 }
 
 interface Props {
@@ -83,26 +86,114 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [tolerableMisstatement, setTolerableMisstatement] = useState(0);
   const [populationSize, setPopulationSize] = useState(0);
 
+  // Execution engine state
+  const [executionId, setExecutionId] = useState<string | null>(null);
+  const [executionStatus, setExecutionStatus] = useState<string>('not_started');
+  const [executionError, setExecutionError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Check for existing execution on mount
   useEffect(() => {
-    loadSession();
+    loadExistingExecution();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [testId, engagementId]);
 
-  async function loadSession() {
+  async function loadExistingExecution() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/test-execution/${testId}`);
+      // Check for existing executions for this test
+      const res = await fetch(`/api/engagements/${engagementId}/test-execution?fsLine=${encodeURIComponent(fsLine)}`);
       if (res.ok) {
         const data = await res.json();
-        setSampleItems(data.sampleItems || []);
-        setEvidence(data.evidence || []);
-        setResults(data.results || []);
-        setFlowSteps(data.flowSteps || []);
-        setStatus(data.status || 'not_started');
+        const existing = (data.executions || []).find((e: any) => e.testDescription === testDescription && e.status !== 'cancelled');
+        if (existing) {
+          setExecutionId(existing.id);
+          setExecutionStatus(existing.status);
+          setFlowSteps(data.executions?.[0]?.nodeRuns?.map((r: any) => ({
+            id: r.nodeId,
+            label: r.label || r.nodeType,
+            status: r.status,
+            output: r.output,
+            errorMessage: r.errorMessage,
+          })) || []);
+          if (existing.status === 'running' || existing.status === 'paused') {
+            startPolling(existing.id);
+          }
+          if (existing.errorMessage) setExecutionError(existing.errorMessage);
+        }
       }
     } catch {
-      // API may not exist yet — show empty state
+      // No existing execution
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleStartExecution() {
+    setStarting(true);
+    setExecutionError(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fsLine, testDescription, testTypeCode: testType }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setExecutionId(data.executionId);
+        setExecutionStatus('running');
+        startPolling(data.executionId);
+      } else {
+        const data = await res.json();
+        setExecutionError(data.error || 'Failed to start execution');
+      }
+    } catch (err: any) {
+      setExecutionError(err.message || 'Failed to start');
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  function startPolling(execId: string) {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/test-execution/${execId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setExecutionStatus(data.execution.status);
+        setFlowSteps(data.flowSteps || []);
+        if (data.execution.errorMessage) setExecutionError(data.execution.errorMessage);
+        if (data.execution.status === 'completed' || data.execution.status === 'failed' || data.execution.status === 'cancelled') {
+          if (pollRef.current) clearInterval(pollRef.current);
+        }
+      } catch {}
+    }, 3000);
+  }
+
+  async function handleCancel() {
+    if (!executionId) return;
+    await fetch(`/api/engagements/${engagementId}/test-execution/${executionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'cancel' }),
+    });
+    setExecutionStatus('cancelled');
+    if (pollRef.current) clearInterval(pollRef.current);
+  }
+
+  async function handleRetry() {
+    if (!executionId) return;
+    setExecutionError(null);
+    const res = await fetch(`/api/engagements/${engagementId}/test-execution/${executionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'retry' }),
+    });
+    if (res.ok) {
+      setExecutionStatus('running');
+      startPolling(executionId);
     }
   }
 
@@ -183,20 +274,115 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         {/* LEFT: Verification Grid (75%) */}
         <div className="flex-1 overflow-auto border-r">
           {sampleItems.length === 0 ? (
-            <div className="flex items-center justify-center h-full p-8">
-              <div className="text-center max-w-md">
-                <FileText className="h-10 w-10 text-blue-200 mx-auto mb-3" />
-                <p className="text-sm font-semibold text-slate-700 mb-2">Test Execution Workspace</p>
-                <p className="text-xs text-slate-500 mb-4">This test needs a configured flow to run. When the execution engine triggers this test, the flow steps will execute automatically:</p>
-                <div className="text-left bg-slate-50 rounded-lg p-3 space-y-1.5 text-xs text-slate-600 mb-4">
-                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">1.</span> AI sends a request to the client portal for supporting data</div>
-                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">2.</span> Client uploads evidence via the portal</div>
-                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">3.</span> AI verifies the uploaded data against the test criteria</div>
-                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">4.</span> Sampling calculator is populated (user reviews and runs)</div>
-                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">5.</span> Per-item evidence is requested, verified, and assessed</div>
-                  <div className="flex items-start gap-2"><span className="text-blue-500 font-bold">6.</span> Results appear here in the verification grid</div>
-                </div>
-                <p className="text-[10px] text-slate-400">To configure the flow for this test, go to <strong>Test Bank &rarr; Test Actions</strong> and set up the execution definitions, then build the flow in the <strong>Flow Builder</strong>.</p>
+            <div className="flex items-center justify-center h-full p-6">
+              <div className="w-full max-w-lg">
+                {/* Start / Status */}
+                {executionStatus === 'not_started' && (
+                  <div className="text-center mb-4">
+                    <FileText className="h-10 w-10 text-blue-200 mx-auto mb-3" />
+                    <p className="text-sm font-semibold text-slate-700 mb-2">Ready to Execute</p>
+                    <p className="text-xs text-slate-500 mb-4">Click Start to run the test flow. The engine will execute each step, pausing for client responses and team actions.</p>
+                    <Button onClick={handleStartExecution} disabled={starting} className="bg-blue-600 hover:bg-blue-700">
+                      {starting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
+                      {starting ? 'Starting...' : 'Start Test Execution'}
+                    </Button>
+                  </div>
+                )}
+
+                {executionStatus === 'running' && (
+                  <div className="text-center mb-4">
+                    <Loader2 className="h-8 w-8 text-blue-500 mx-auto mb-2 animate-spin" />
+                    <p className="text-sm font-semibold text-blue-700">Executing...</p>
+                    <p className="text-xs text-slate-500 mb-3">The flow engine is processing steps. This updates automatically.</p>
+                    <button onClick={handleCancel} className="text-xs text-red-500 hover:text-red-700">Cancel Execution</button>
+                  </div>
+                )}
+
+                {executionStatus === 'paused' && (
+                  <div className="text-center mb-4">
+                    <Clock className="h-8 w-8 text-orange-500 mx-auto mb-2" />
+                    <p className="text-sm font-semibold text-orange-700">Paused — Waiting for Response</p>
+                    <p className="text-xs text-slate-500 mb-3">The flow is waiting for a client response or team action. It will resume automatically.</p>
+                  </div>
+                )}
+
+                {executionStatus === 'completed' && (
+                  <div className="text-center mb-4">
+                    <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
+                    <p className="text-sm font-semibold text-green-700">Execution Complete</p>
+                  </div>
+                )}
+
+                {executionStatus === 'failed' && (
+                  <div className="text-center mb-4">
+                    <XCircle className="h-8 w-8 text-red-500 mx-auto mb-2" />
+                    <p className="text-sm font-semibold text-red-700">Execution Failed</p>
+                    {executionError && <p className="text-xs text-red-500 bg-red-50 rounded px-3 py-2 mt-2 mb-3">{executionError}</p>}
+                    <Button onClick={handleRetry} size="sm" variant="outline" className="text-red-600 border-red-200">
+                      <RotateCcw className="h-3.5 w-3.5 mr-1" /> Retry
+                    </Button>
+                  </div>
+                )}
+
+                {/* Error display */}
+                {executionError && executionStatus !== 'failed' && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4 text-xs text-red-700 flex items-start gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    {executionError}
+                  </div>
+                )}
+
+                {/* Visual Flow Trace */}
+                {flowSteps.length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-slate-50 px-3 py-2 border-b">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Flow Execution Trace</span>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {flowSteps.map((step, i) => (
+                        <div key={step.id} className={`flex items-center gap-3 px-3 py-2 text-xs ${
+                          step.status === 'failed' ? 'bg-red-50' :
+                          step.status === 'running' ? 'bg-blue-50' :
+                          step.status === 'paused' ? 'bg-orange-50' :
+                          step.status === 'completed' ? 'bg-green-50/30' : ''
+                        }`}>
+                          <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0">
+                            {step.status === 'completed' && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                            {step.status === 'running' && <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />}
+                            {step.status === 'paused' && <Clock className="h-4 w-4 text-orange-500" />}
+                            {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500" />}
+                            {step.status === 'skipped' && <Ban className="h-4 w-4 text-slate-300" />}
+                            {step.status === 'pending' && <div className="w-3 h-3 rounded-full border-2 border-slate-300" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <span className={`font-medium ${step.status === 'failed' ? 'text-red-700' : step.status === 'completed' ? 'text-green-700' : step.status === 'running' ? 'text-blue-700' : 'text-slate-600'}`}>
+                              {step.label}
+                            </span>
+                            {step.errorMessage && (
+                              <p className="text-[10px] text-red-500 mt-0.5">{step.errorMessage}</p>
+                            )}
+                            {step.output?.result && (
+                              <span className={`ml-2 text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                                step.output.result === 'pass' ? 'bg-green-100 text-green-700' :
+                                step.output.result === 'fail' ? 'bg-red-100 text-red-700' :
+                                'bg-slate-100 text-slate-500'
+                              }`}>{step.output.result}</span>
+                            )}
+                            {step.output?.decision && (
+                              <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{step.output.decision}</span>
+                            )}
+                          </div>
+                          {step.duration && <span className="text-[9px] text-slate-400 shrink-0">{(step.duration / 1000).toFixed(1)}s</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* No flow configured hint */}
+                {flowSteps.length === 0 && executionStatus === 'not_started' && (
+                  <p className="text-[10px] text-slate-400 text-center mt-4">Configure the flow in <strong>Test Bank &rarr; Test Actions &rarr; Flow Builder</strong></p>
+                )}
               </div>
             </div>
           ) : (

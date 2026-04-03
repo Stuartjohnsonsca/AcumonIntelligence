@@ -1,0 +1,165 @@
+/**
+ * Flow Template Resolution
+ *
+ * Resolves {{placeholder}} tokens in prompt templates and request messages
+ * using the accumulated execution context.
+ */
+
+export interface ExecutionContext {
+  engagement: {
+    clientName: string;
+    periodStart: string;
+    periodEnd: string;
+    materiality: number;
+    performanceMateriality: number;
+    clearlyTrivial: number;
+    framework: string;
+    auditType: string;
+  };
+  test: {
+    description: string;
+    fsLine: string;
+    assertion: string;
+  };
+  nodes: Record<string, any>;    // outputs keyed by nodeId
+  loop?: {
+    currentItem: any;
+    index: number;
+  };
+}
+
+/**
+ * Resolve all {{path.to.value}} placeholders in a template string.
+ *
+ * Supports:
+ *   {{engagement.clientName}}
+ *   {{test.description}}
+ *   {{input.<key>}}         — resolved from executionDef.inputs via context
+ *   {{nodes.<nodeId>}}      — output from a specific node
+ *   {{loop.currentItem}}
+ *   {{loop.index}}
+ */
+export function resolveTemplate(template: string, ctx: ExecutionContext, inputBindings?: Record<string, any>): string {
+  if (!template) return '';
+
+  return template.replace(/\{\{([^}]+)\}\}/g, (match, path: string) => {
+    const trimmed = path.trim();
+    const parts = trimmed.split('.');
+
+    // {{engagement.xxx}}
+    if (parts[0] === 'engagement' && parts.length >= 2) {
+      const val = (ctx.engagement as any)?.[parts[1]];
+      return val != null ? String(val) : match;
+    }
+
+    // {{test.xxx}}
+    if (parts[0] === 'test' && parts.length >= 2) {
+      const val = (ctx.test as any)?.[parts[1]];
+      return val != null ? String(val) : match;
+    }
+
+    // {{input.xxx}} — resolved from input bindings
+    if (parts[0] === 'input' && parts.length >= 2) {
+      const key = parts[1];
+      if (inputBindings && key in inputBindings) {
+        const val = inputBindings[key];
+        return typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+      }
+      return match;
+    }
+
+    // {{nodes.<nodeId>}} or {{nodes.<nodeId>.<field>}}
+    if (parts[0] === 'nodes' && parts.length >= 2) {
+      const nodeOutput = ctx.nodes[parts[1]];
+      if (parts.length === 2) {
+        return typeof nodeOutput === 'object' ? JSON.stringify(nodeOutput) : String(nodeOutput ?? '');
+      }
+      const field = parts[2];
+      return nodeOutput?.[field] != null ? String(nodeOutput[field]) : match;
+    }
+
+    // {{loop.currentItem}} / {{loop.index}}
+    if (parts[0] === 'loop') {
+      if (parts[1] === 'currentItem') {
+        const val = ctx.loop?.currentItem;
+        return typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+      }
+      if (parts[1] === 'index') {
+        return String(ctx.loop?.index ?? 0);
+      }
+    }
+
+    // Unresolved — leave as-is
+    return match;
+  });
+}
+
+/**
+ * Resolve input bindings for a node.
+ *
+ * Each input in executionDef.inputs has a `key` and optionally a `binding`.
+ * Auto-bindings resolve from the previous node's output.
+ * Named keys resolve from engagement context or specific node outputs.
+ */
+export function resolveInputs(
+  inputs: { key: string; label: string; binding?: string }[] | undefined,
+  ctx: ExecutionContext,
+  previousNodeId?: string,
+): Record<string, any> {
+  if (!inputs || inputs.length === 0) return {};
+
+  const resolved: Record<string, any> = {};
+
+  for (const input of inputs) {
+    const { key, binding } = input;
+
+    // Auto bindings — grab from previous node
+    if (binding?.startsWith('auto')) {
+      if (previousNodeId && ctx.nodes[previousNodeId]) {
+        const prevOutput = ctx.nodes[previousNodeId];
+        if (binding === 'auto' || binding === 'auto:ai_result') {
+          resolved[key] = prevOutput;
+        } else if (binding === 'auto:portal_file') {
+          resolved[key] = prevOutput?.files || prevOutput?.uploadedFile || prevOutput;
+        } else if (binding === 'auto:portal_text') {
+          resolved[key] = prevOutput?.response || prevOutput?.text || prevOutput;
+        } else if (binding === 'auto:pass_through') {
+          resolved[key] = prevOutput?.verifiedData || prevOutput;
+        } else {
+          resolved[key] = prevOutput;
+        }
+      }
+      continue;
+    }
+
+    // TB bindings
+    if (key.startsWith('tb_')) {
+      const tbField = key.replace('tb_', '');
+      resolved[key] = (ctx.engagement as any)?.[tbField] || `[${key}]`;
+      continue;
+    }
+
+    // Materiality bindings
+    if (key === 'materiality') { resolved[key] = ctx.engagement.materiality; continue; }
+    if (key === 'performance_materiality') { resolved[key] = ctx.engagement.performanceMateriality; continue; }
+    if (key === 'clearly_trivial') { resolved[key] = ctx.engagement.clearlyTrivial; continue; }
+
+    // Engagement context
+    if (key === 'client_name') { resolved[key] = ctx.engagement.clientName; continue; }
+    if (key === 'period_start') { resolved[key] = ctx.engagement.periodStart; continue; }
+    if (key === 'period_end') { resolved[key] = ctx.engagement.periodEnd; continue; }
+    if (key === 'audit_type') { resolved[key] = ctx.engagement.auditType; continue; }
+    if (key === 'framework') { resolved[key] = ctx.engagement.framework; continue; }
+
+    // If the key matches a node ID in context, grab its output
+    if (ctx.nodes[key]) {
+      resolved[key] = ctx.nodes[key];
+      continue;
+    }
+
+    // Unresolved — mark as placeholder
+    resolved[key] = `[${key}]`;
+  }
+
+  return resolved;
+}
