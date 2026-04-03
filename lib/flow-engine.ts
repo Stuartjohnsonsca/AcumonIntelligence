@@ -47,6 +47,35 @@ interface NodeResult {
 
 let _aiClient: OpenAI | null = null;
 
+function summariseLoopItem(item: any): string {
+  if (typeof item !== 'object') return String(item);
+  const find = (...names: string[]): string => {
+    for (const n of names) {
+      const key = Object.keys(item).find(k => k.toLowerCase() === n.toLowerCase());
+      if (key && item[key] != null && String(item[key]).trim()) return String(item[key]);
+    }
+    return '';
+  };
+  const parts: string[] = [];
+  const customer = find('ContactName', 'Customer', 'ClientName', 'Name');
+  const ref = find('InvoiceNumber', 'Invoice', 'Reference', 'Ref');
+  const desc = find('Description', 'Desc', 'Narrative');
+  const date = find('InvoiceDate', 'Date');
+  const gross = find('Total', 'Gross', 'InvoiceAmountDue');
+  const net = find('LineAmount', 'Net', 'UnitAmount');
+  const tax = find('TaxTotal', 'TaxAmount', 'Tax');
+
+  if (customer) parts.push(`Customer: ${customer}`);
+  if (ref) parts.push(`Reference: ${ref}`);
+  if (date) parts.push(`Date: ${date}`);
+  if (desc) parts.push(`Description: ${desc}`);
+  if (net) parts.push(`Net: £${Number(net).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`);
+  if (tax && Number(tax) !== 0) parts.push(`VAT: £${Number(tax).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`);
+  if (gross) parts.push(`Gross: £${Number(gross).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`);
+
+  return parts.join('\n');
+}
+
 function getAIClient(): OpenAI {
   const key = process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY;
   if (!key) throw new Error('No Together AI key configured');
@@ -286,8 +315,30 @@ async function handleActionClient(
   const execDef = node.data.executionDef;
   const inputBindings = resolveInputs(execDef?.inputs, ctx, getPreviousNodeId(flow, node.id) || undefined);
 
-  const subject = resolveTemplate(execDef?.requestTemplate?.subject || node.data.label || 'Audit Request', ctx, inputBindings);
-  const message = resolveTemplate(execDef?.requestTemplate?.message || node.data.description || '', ctx, inputBindings);
+  // Build subject and message from execution def template, with flow context
+  let subject = resolveTemplate(execDef?.requestTemplate?.subject || '', ctx, inputBindings);
+  let message = resolveTemplate(execDef?.requestTemplate?.message || '', ctx, inputBindings);
+
+  // If no custom template, build a structured default with flow context
+  if (!subject && !message) {
+    const itemSummary = ctx.loop?.currentItem ? summariseLoopItem(ctx.loop.currentItem) : '';
+    subject = `${ctx.test.fsLine} — ${node.data.label || 'Document Request'}`;
+    message = [
+      `As part of our ${ctx.test.fsLine} audit for ${ctx.engagement.clientName} (period ending ${ctx.engagement.periodEnd}):`,
+      '',
+      `Test: ${ctx.test.description}`,
+      '',
+      itemSummary ? `Please provide the supporting document for:\n${itemSummary}` : (node.data.description || 'Please provide the requested information.'),
+    ].join('\n');
+  } else {
+    // Always prepend flow context if not already in the message
+    if (!message.includes(ctx.test.fsLine) && !subject.includes(ctx.test.fsLine)) {
+      subject = `${ctx.test.fsLine} — ${subject}`;
+    }
+    if (!message.includes(ctx.engagement.clientName)) {
+      message = `Audit: ${ctx.test.fsLine} for ${ctx.engagement.clientName} (period ending ${ctx.engagement.periodEnd})\n\n${message}`;
+    }
+  }
 
   const eng = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
   const portalRequest = await prisma.portalRequest.create({

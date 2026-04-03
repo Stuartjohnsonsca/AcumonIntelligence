@@ -653,9 +653,10 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                 <input
                   value={def.requestTemplate?.subject || ''}
                   onChange={e => update({ requestTemplate: { ...def.requestTemplate, subject: e.target.value } })}
-                  placeholder="Debtor balance breakdown for {{test.fsLine}}"
+                  placeholder="e.g. Supporting invoice for {{loop.currentItem.customer}}"
                   className="w-full text-sm border rounded px-3 py-2 mt-0.5"
                 />
+                <p className="text-[9px] text-slate-400 mt-0.5">The test name and FS line are automatically added as context. Use placeholders for item-specific details.</p>
               </div>
               <div>
                 <div className="flex items-center justify-between mb-0.5">
