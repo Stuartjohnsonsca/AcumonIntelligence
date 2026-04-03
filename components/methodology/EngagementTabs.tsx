@@ -259,9 +259,9 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       {/* When Audit Plan is open: split layout with vertical sidebar */}
       {showAuditPlan ? (
         <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px]">
-          {/* Left sidebar: pre-plan tabs as vertical list */}
+          {/* Left sidebar: all tabs as vertical list */}
           <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
-            {visibleTabs.filter(t => PRE_PLAN_KEYS.has(t.key)).map(tab => {
+            {visibleTabs.map(tab => {
               const isActive = activeTab === tab.key;
               const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
               return (

@@ -63,7 +63,7 @@ export async function PUT(
 
   try {
     const body = await req.json();
-    const { status, infoRequestType, hardCloseDate, isGroupAudit } = body;
+    const { status, infoRequestType, hardCloseDate, isGroupAudit, planCreated } = body;
 
     // Verify ownership
     const existing = await prisma.auditEngagement.findUnique({
@@ -91,6 +91,7 @@ export async function PUT(
     if (infoRequestType !== undefined) updateData.infoRequestType = infoRequestType;
     if (hardCloseDate !== undefined) updateData.hardCloseDate = hardCloseDate ? new Date(hardCloseDate) : null;
     if (isGroupAudit !== undefined) updateData.isGroupAudit = isGroupAudit;
+    if (planCreated !== undefined) updateData.planCreated = planCreated;
 
     const engagement = await prisma.auditEngagement.update({
       where: { id: engagementId },
