@@ -231,6 +231,7 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
   const [activeExecution, setActiveExecution] = useState<string | null>(null); // testKey of open execution panel
+  const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'pending'>>({}); // testKey → conclusion dot
 
   function toggleTestApplicable(testKey: string) {
     setExcludedTests(prev => {
@@ -555,6 +556,16 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
                                   {isExecutionOpen ? 'Close' : 'Execute'}
                                 </button>
                               )}
+                              {/* Conclusion dot */}
+                              {testConclusions[testKey] && testConclusions[testKey] !== 'pending' && (
+                                <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                                  testConclusions[testKey] === 'green' ? 'bg-green-500' :
+                                  testConclusions[testKey] === 'orange' ? 'bg-orange-500' : 'bg-red-500'
+                                }`} title={
+                                  testConclusions[testKey] === 'green' ? 'No material errors' :
+                                  testConclusions[testKey] === 'orange' ? 'Errors above CT, within PM' : 'Errors exceed PM'
+                                } />
+                              )}
                               {test.assertion && <span className="text-[7px] px-0.5 py-0 bg-slate-100 text-slate-400 rounded flex-shrink-0">{test.assertion}</span>}
                             </div>
                           </td>
@@ -572,6 +583,7 @@ export function AuditPlanPanel({ engagementId, onClose, periodEndDate, periodSta
                                 flowData={(test as any).flow || null}
                                 executionDef={(test as any).executionDef || null}
                                 onClose={() => setActiveExecution(null)}
+                                onConclusionChange={(c) => setTestConclusions(prev => ({ ...prev, [testKey]: c }))}
                               />
                             </td>
                           </tr>
