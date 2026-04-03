@@ -7,6 +7,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 import { resolveTemplate, resolveInputs, type ExecutionContext } from './flow-template';
 import { parsePortalResponseFiles } from './flow-file-parser';
 import OpenAI from 'openai';
@@ -481,6 +482,137 @@ async function handleWait(
   return { action: 'pause', pauseReason: waitFor, pauseRefId: item.id, output: { waitingFor: waitFor, outstandingItemId: item.id } };
 }
 
+// ─── Loop Handlers ───
+
+async function handleForEach(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  execution: any,
+): Promise<NodeResult> {
+  const collection = node.data.collection || 'sample_items';
+  let loopState = execution.loopState as { nodeId: string; items: any[]; index: number; results: any[] } | null;
+
+  // First entry — initialise the loop
+  if (!loopState || loopState.nodeId !== node.id) {
+    // Resolve the collection from context
+    let items: any[] = [];
+
+    // Look for data in previous nodes
+    const prevNodeId = getPreviousNodeId(flow, node.id);
+    const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
+
+    if (collection === 'sample_items') {
+      // From sampling results or previous node
+      items = prevOutput?.selectedIndices || prevOutput?.sampleItems || prevOutput?.populationData || [];
+    } else if (collection === 'evidence_files') {
+      items = prevOutput?.parsedFiles || prevOutput?.files || [];
+    } else {
+      // Generic: try to get array data from previous node
+      items = Array.isArray(prevOutput) ? prevOutput :
+              prevOutput?.items || prevOutput?.rows || prevOutput?.data || prevOutput?.populationData || [];
+    }
+
+    if (!Array.isArray(items)) items = [];
+
+    if (items.length === 0) {
+      // Empty collection — skip loop body, go to "done" exit
+      const doneNodeId = getNextNodeId(flow, node.id, 'done');
+      return { action: 'continue', nextNodeId: doneNodeId, output: { loopCompleted: true, itemCount: 0, results: [] } };
+    }
+
+    loopState = { nodeId: node.id, items, index: 0, results: [] };
+
+    // Save loop state and set context for first iteration
+    await prisma.testExecution.update({
+      where: { id: execution.id },
+      data: { loopState: loopState as any },
+    });
+  }
+
+  // Check if we've processed all items
+  if (loopState.index >= loopState.items.length) {
+    // Done — clear loop state and follow "done" exit
+    await prisma.testExecution.update({
+      where: { id: execution.id },
+      data: { loopState: Prisma.DbNull },
+    });
+    const doneNodeId = getNextNodeId(flow, node.id, 'done');
+    return { action: 'continue', nextNodeId: doneNodeId, output: { loopCompleted: true, itemCount: loopState.items.length, results: loopState.results } };
+  }
+
+  // Set loop context for this iteration
+  ctx.loop = { currentItem: loopState.items[loopState.index], index: loopState.index };
+
+  // Follow "body" exit for this iteration
+  const bodyNodeId = getNextNodeId(flow, node.id, 'body');
+  if (!bodyNodeId) {
+    // No body branch — skip all items
+    await prisma.testExecution.update({ where: { id: execution.id }, data: { loopState: Prisma.DbNull } });
+    const doneNodeId = getNextNodeId(flow, node.id, 'done');
+    return { action: 'continue', nextNodeId: doneNodeId, output: { loopCompleted: true, itemCount: loopState.items.length, skipped: true } };
+  }
+
+  // Increment index for next iteration (saved to DB)
+  loopState.index++;
+  await prisma.testExecution.update({
+    where: { id: execution.id },
+    data: { loopState: loopState as any, context: { ...ctx as any } },
+  });
+
+  return {
+    action: 'continue',
+    nextNodeId: bodyNodeId,
+    output: { iterating: true, index: loopState.index - 1, item: ctx.loop.currentItem, totalItems: loopState.items.length },
+  };
+}
+
+async function handleLoopUntil(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  execution: any,
+): Promise<NodeResult> {
+  const condition = node.data.condition || '';
+  const maxIterations = node.data.maxIterations || 3;
+  let loopState = execution.loopState as { nodeId: string; iteration: number } | null;
+
+  if (!loopState || loopState.nodeId !== node.id) {
+    loopState = { nodeId: node.id, iteration: 0 };
+  }
+
+  // Check if max iterations exceeded
+  if (loopState.iteration >= maxIterations) {
+    await prisma.testExecution.update({ where: { id: execution.id }, data: { loopState: Prisma.DbNull } });
+    const doneNodeId = getNextNodeId(flow, node.id, 'done');
+    return { action: 'continue', nextNodeId: doneNodeId, output: { loopCompleted: true, reason: 'max_iterations', iterations: loopState.iteration } };
+  }
+
+  // Check condition from previous node output
+  const prevNodeId = getPreviousNodeId(flow, node.id);
+  const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
+
+  if (prevOutput?.result === 'pass' || prevOutput?.satisfied || prevOutput?.completed) {
+    // Condition met — exit via "done"
+    await prisma.testExecution.update({ where: { id: execution.id }, data: { loopState: Prisma.DbNull } });
+    const doneNodeId = getNextNodeId(flow, node.id, 'done');
+    return { action: 'continue', nextNodeId: doneNodeId, output: { loopCompleted: true, reason: 'condition_met', iterations: loopState.iteration } };
+  }
+
+  // Condition not met — repeat via "repeat" branch
+  loopState.iteration++;
+  await prisma.testExecution.update({ where: { id: execution.id }, data: { loopState: loopState as any } });
+
+  const repeatNodeId = getNextNodeId(flow, node.id, 'repeat');
+  if (!repeatNodeId) {
+    await prisma.testExecution.update({ where: { id: execution.id }, data: { loopState: Prisma.DbNull } });
+    const doneNodeId = getNextNodeId(flow, node.id, 'done');
+    return { action: 'continue', nextNodeId: doneNodeId, output: { loopCompleted: true, reason: 'no_repeat_branch' } };
+  }
+
+  return { action: 'continue', nextNodeId: repeatNodeId, output: { repeating: true, iteration: loopState.iteration } };
+}
+
 // ─── Main Engine ───
 
 export async function startExecution(
@@ -589,6 +721,12 @@ export async function processNextNode(executionId: string): Promise<void> {
         case 'wait':
           result = await handleWait(flow, currentNode, ctx, executionId, execution.engagementId);
           break;
+        case 'forEach':
+          result = await handleForEach(flow, currentNode, ctx, execution);
+          break;
+        case 'loopUntil':
+          result = await handleLoopUntil(flow, currentNode, ctx, execution);
+          break;
         case 'action':
         default:
           if (assignee === 'ai') {
@@ -620,12 +758,21 @@ export async function processNextNode(executionId: string): Promise<void> {
     const updatedContext = { ...ctx, nodes: { ...ctx.nodes, [currentNode.id]: result.output } };
 
     switch (result.action) {
-      case 'continue':
+      case 'continue': {
+        let nextId = result.nextNodeId || null;
+
+        // If we're at a dead end inside a loop body, return to the forEach/loopUntil node
+        if (!nextId && execution.loopState) {
+          const ls = execution.loopState as any;
+          if (ls.nodeId) nextId = ls.nodeId; // Loop back to the forEach/loopUntil node
+        }
+
         await prisma.testExecution.update({
           where: { id: executionId },
-          data: { currentNodeId: result.nextNodeId || null, context: updatedContext as any },
+          data: { currentNodeId: nextId, context: updatedContext as any },
         });
         continue; // Process next node in loop
+      }
 
       case 'pause':
         await prisma.testExecution.update({
