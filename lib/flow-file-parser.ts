@@ -140,19 +140,28 @@ function parseCsvLine(line: string): string[] {
  * and takes first values for non-numeric fields.
  */
 function aggregateByInvoice(rows: Record<string, any>[], columns: string[]): { rows: Record<string, any>[]; groupColumn: string } {
-  // Find the grouping column — invoice number, reference, etc.
+  // Find the grouping column — invoice number first, then fallbacks
+  // Priority: specific invoice columns first, generic references last
   const groupCandidates = [
-    'InvoiceNumber', 'Invoice', 'InvoiceNo', 'Invoice Number', 'Invoice No',
-    'Reference', 'Ref', 'DocumentNumber', 'Doc No', 'DocRef',
-    'TransactionId', 'Transaction ID', 'Number', 'ID',
+    // High priority — specific invoice/document identifiers
+    'InvoiceNumber', 'Invoice Number', 'InvoiceNo', 'Invoice No', 'Invoice',
+    'DocumentNumber', 'Document Number', 'Doc No', 'DocRef', 'Doc Ref',
+    'TransactionId', 'Transaction ID', 'TxnId',
+    // Low priority — generic references (only used if specific ones not found)
+    'Number', 'ID', 'Reference', 'Ref',
   ];
   let groupColumn = '';
   for (const candidate of groupCandidates) {
     const found = columns.find(c => c.toLowerCase() === candidate.toLowerCase());
     if (found) {
-      // Check it actually groups — must have fewer unique values than rows
-      const unique = new Set(rows.map(r => r[found])).size;
-      if (unique < rows.length && unique > 0) {
+      const values = rows.map(r => r[found]);
+      const unique = new Set(values).size;
+      const nonEmpty = values.filter(v => v != null && String(v).trim() !== '').length;
+      // Must actually group: fewer unique values than rows, but not TOO few
+      // (e.g., 1-2 groups from 500 rows means it's a category, not an invoice number)
+      // Good grouping: unique count is between 10% and 90% of row count
+      const ratio = unique / rows.length;
+      if (unique < rows.length && unique > 1 && nonEmpty > rows.length * 0.5 && ratio > 0.1 && ratio < 0.95) {
         groupColumn = found;
         break;
       }
