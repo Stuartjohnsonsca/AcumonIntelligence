@@ -105,7 +105,20 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
     setErrors(prev => { const n = { ...prev }; delete n[item.id]; return n; });
 
     try {
-      const fileNames = files.map(f => f.name);
+      // Upload files to Azure Blob first
+      const uploadedFiles: { name: string; url: string; uploadId: string }[] = [];
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('requestId', item.id);
+        const uploadRes = await fetch('/api/portal/upload', { method: 'POST', body: formData });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          uploadedFiles.push({ name: file.name, url: uploadData.url || '', uploadId: uploadData.uploadId });
+        }
+      }
+
+      const fileNames = uploadedFiles.map(f => f.name);
       const fullResponse = fileNames.length > 0
         ? `${response || ''}${response ? '\n' : ''}[Attachments: ${fileNames.join(', ')}]`
         : (response || '');
@@ -117,6 +130,7 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
           requestId: item.id,
           response: fullResponse,
           respondedByName: 'Portal User',
+          attachments: uploadedFiles,
         }),
       });
       const data = await res.json();

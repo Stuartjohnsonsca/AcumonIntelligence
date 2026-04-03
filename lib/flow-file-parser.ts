@@ -22,9 +22,9 @@ interface ParsedFile {
  * Returns parsed row data from CSV/XLSX files.
  */
 export async function parsePortalResponseFiles(portalRequestId: string): Promise<ParsedFile[]> {
-  // Find evidence uploads linked to this portal request
-  const uploads = await prisma.evidenceUpload.findMany({
-    where: { requestId: portalRequestId },
+  // Find portal uploads linked to this portal request
+  const uploads = await prisma.portalUpload.findMany({
+    where: { portalRequestId },
     orderBy: { createdAt: 'desc' },
   });
 

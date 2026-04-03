@@ -1013,6 +1013,25 @@ model EvidenceUpload {
   @@map("evidence_uploads")
 }
 
+model PortalUpload {
+  id              String   @id @default(uuid())
+  portalRequestId String   @map("portal_request_id")
+  engagementId    String?  @map("engagement_id")
+  clientId        String?  @map("client_id")
+  uploadedBy      String   @map("uploaded_by")
+  originalName    String   @map("original_name")
+  storagePath     String   @map("storage_path")
+  containerName   String   @default("upload-inbox") @map("container_name")
+  fileSize        Int?     @map("file_size")
+  mimeType        String?  @map("mime_type")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([portalRequestId])
+  @@index([engagementId])
+  @@index([clientId])
+  @@map("portal_uploads")
+}
+
 // ─── Assurance Hub ──────────────────────────────────────────────────────────
 
 model AssuranceChat {
