@@ -1,0 +1,317 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRight, ExternalLink } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+
+// ─── Types ───
+interface SampleItem {
+  id: string;
+  ref: string;
+  description: string;
+  amount: number;
+  date?: string;
+  reference?: string;
+}
+
+interface ClientEvidence {
+  itemId: string; // matches SampleItem.id
+  docRef?: string;
+  fileName?: string;
+  date?: string;
+  seller?: string;
+  purchaser?: string;
+  net?: number;
+  tax?: number;
+  gross?: number;
+  status: 'uploaded' | 'pending' | 'missing';
+}
+
+interface VerificationResult {
+  itemId: string;
+  amountMatch: 'pass' | 'fail' | 'pending';
+  dateMatch: 'pass' | 'fail' | 'pending';
+  periodCheck: 'pass' | 'fail' | 'pending';
+  consistency: 'pass' | 'fail' | 'pending';
+  overallResult: 'pass' | 'fail' | 'pending';
+  notes?: string;
+}
+
+interface FlowStep {
+  id: string;
+  label: string;
+  status: 'complete' | 'active' | 'pending' | 'failed';
+}
+
+interface Props {
+  testId: string;
+  testDescription: string;
+  testType: string;
+  engagementId: string;
+  fsLine: string;
+  sessionId?: string; // each test gets its own extraction session
+  onClose: () => void;
+}
+
+// ─── Currency formatter ───
+function fmt(n: number | undefined | null): string {
+  if (n == null) return '—';
+  const abs = Math.abs(n);
+  const formatted = abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n < 0 ? `(${formatted})` : formatted;
+}
+
+// ─── Result icon ───
+function ResultIcon({ status }: { status: 'pass' | 'fail' | 'pending' }) {
+  if (status === 'pass') return <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />;
+  if (status === 'fail') return <XCircle className="h-3.5 w-3.5 text-red-500" />;
+  return <Clock className="h-3.5 w-3.5 text-slate-300" />;
+}
+
+export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, sessionId, onClose }: Props) {
+  const [loading, setLoading] = useState(true);
+  const [sampleItems, setSampleItems] = useState<SampleItem[]>([]);
+  const [evidence, setEvidence] = useState<ClientEvidence[]>([]);
+  const [results, setResults] = useState<VerificationResult[]>([]);
+  const [flowSteps, setFlowSteps] = useState<FlowStep[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [status, setStatus] = useState<'not_started' | 'in_progress' | 'awaiting_client' | 'verifying' | 'complete'>('not_started');
+
+  useEffect(() => {
+    loadSession();
+  }, [testId, engagementId]);
+
+  async function loadSession() {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/test-execution/${testId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSampleItems(data.sampleItems || []);
+        setEvidence(data.evidence || []);
+        setResults(data.results || []);
+        setFlowSteps(data.flowSteps || []);
+        setStatus(data.status || 'not_started');
+      }
+    } catch {
+      // API may not exist yet — show empty state
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Merge evidence and results with sample items for display
+  const rows = sampleItems.map(item => ({
+    item,
+    evidence: evidence.find(e => e.itemId === item.id) || { itemId: item.id, status: 'pending' as const },
+    result: results.find(r => r.itemId === item.id) || { itemId: item.id, amountMatch: 'pending' as const, dateMatch: 'pending' as const, periodCheck: 'pending' as const, consistency: 'pending' as const, overallResult: 'pending' as const },
+  }));
+
+  // Summary calculations
+  const populationValue = sampleItems.reduce((s, i) => s + (i.amount || 0), 0);
+  const sampleTotal = sampleItems.length;
+  const passCount = results.filter(r => r.overallResult === 'pass').length;
+  const failCount = results.filter(r => r.overallResult === 'fail').length;
+  const pendingCount = sampleTotal - passCount - failCount;
+  const errorTotal = results.filter(r => r.overallResult === 'fail').length;
+  const errorPct = sampleTotal > 0 ? ((errorTotal / sampleTotal) * 100).toFixed(1) : '0.0';
+
+  if (loading) {
+    return (
+      <div className="border rounded-lg bg-white p-8 flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-blue-500 mr-2" />
+        <span className="text-sm text-slate-500">Loading test execution...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b">
+        <div className="flex items-center gap-3 min-w-0">
+          <FileText className="h-4 w-4 text-blue-600 shrink-0" />
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-slate-800 truncate">{testDescription}</div>
+            <div className="text-[10px] text-slate-400">{fsLine} &middot; Session {sessionId || 'New'}</div>
+          </div>
+          <span className={`text-[9px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
+            status === 'complete' ? 'bg-green-100 text-green-700' :
+            status === 'verifying' ? 'bg-purple-100 text-purple-700' :
+            status === 'awaiting_client' ? 'bg-orange-100 text-orange-700' :
+            status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+            'bg-slate-100 text-slate-500'
+          }`}>
+            {status === 'complete' ? 'Complete' :
+             status === 'verifying' ? 'AI Verifying' :
+             status === 'awaiting_client' ? 'Awaiting Client' :
+             status === 'in_progress' ? 'In Progress' :
+             'Not Started'}
+          </span>
+        </div>
+        <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded">
+          <X className="h-4 w-4 text-slate-400" />
+        </button>
+      </div>
+
+      {/* Main content: 3/4 + 1/4 split */}
+      <div className="flex" style={{ minHeight: 320 }}>
+        {/* LEFT: Verification Grid (75%) */}
+        <div className="flex-1 overflow-auto border-r">
+          {sampleItems.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-sm text-slate-400 p-8">
+              <div className="text-center">
+                <FileText className="h-10 w-10 text-slate-200 mx-auto mb-3" />
+                <p className="font-medium">No sample items yet</p>
+                <p className="text-xs mt-1">Sample items will appear here when the sampling run is complete</p>
+              </div>
+            </div>
+          ) : (
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10">
+                <tr>
+                  {/* Blue section: Sample Request */}
+                  <th colSpan={4} className="bg-blue-600 text-white text-[10px] font-semibold px-3 py-1.5 text-left border-r-2 border-white">
+                    Sample Request
+                  </th>
+                  {/* Green section: Client Evidence */}
+                  <th colSpan={4} className="bg-green-600 text-white text-[10px] font-semibold px-3 py-1.5 text-left border-r-2 border-white">
+                    Client Evidence
+                  </th>
+                  {/* Amber section: Audit Verification */}
+                  <th colSpan={5} className="bg-amber-600 text-white text-[10px] font-semibold px-3 py-1.5 text-left">
+                    Audit Verification
+                  </th>
+                </tr>
+                <tr className="bg-slate-100 border-b">
+                  {/* Blue sub-headers */}
+                  <th className="text-left px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200 w-12">#</th>
+                  <th className="text-left px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200">Description</th>
+                  <th className="text-right px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200 w-24">Amount</th>
+                  <th className="text-left px-2 py-1.5 text-slate-600 font-semibold border-r-2 border-blue-200 w-20">Date</th>
+                  {/* Green sub-headers */}
+                  <th className="text-left px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200 w-20">Doc Ref</th>
+                  <th className="text-left px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200">Seller</th>
+                  <th className="text-right px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200 w-24">Gross</th>
+                  <th className="text-center px-2 py-1.5 text-slate-600 font-semibold border-r-2 border-green-200 w-16">Status</th>
+                  {/* Amber sub-headers */}
+                  <th className="text-center px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200 w-14">Amt</th>
+                  <th className="text-center px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200 w-14">Date</th>
+                  <th className="text-center px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200 w-14">Period</th>
+                  <th className="text-center px-2 py-1.5 text-slate-600 font-semibold border-r border-slate-200 w-14">Consist.</th>
+                  <th className="text-center px-2 py-1.5 text-slate-600 font-semibold w-14">Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, i) => (
+                  <tr key={row.item.id} className={`border-b border-slate-100 hover:bg-blue-50/30 ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}`}>
+                    {/* Blue: Sample Request */}
+                    <td className="px-2 py-1.5 text-slate-500 font-mono border-r border-slate-100">{row.item.ref || i + 1}</td>
+                    <td className="px-2 py-1.5 text-slate-700 border-r border-slate-100 max-w-[200px] truncate">{row.item.description}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-slate-800 border-r border-slate-100">{fmt(row.item.amount)}</td>
+                    <td className="px-2 py-1.5 text-slate-500 border-r-2 border-blue-100">{row.item.date || '—'}</td>
+                    {/* Green: Client Evidence */}
+                    <td className="px-2 py-1.5 text-slate-600 font-mono border-r border-slate-100">{row.evidence.docRef || '—'}</td>
+                    <td className="px-2 py-1.5 text-slate-600 border-r border-slate-100 max-w-[120px] truncate">{row.evidence.seller || '—'}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-slate-800 border-r border-slate-100">{fmt(row.evidence.gross)}</td>
+                    <td className="px-2 py-1.5 text-center border-r-2 border-green-100">
+                      {row.evidence.status === 'uploaded' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">Uploaded</span>}
+                      {row.evidence.status === 'pending' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-600">Pending</span>}
+                      {row.evidence.status === 'missing' && <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">Missing</span>}
+                    </td>
+                    {/* Amber: Audit Verification */}
+                    <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.amountMatch} /></td>
+                    <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.dateMatch} /></td>
+                    <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.periodCheck} /></td>
+                    <td className="px-2 py-1.5 text-center border-r border-slate-100"><ResultIcon status={row.result.consistency} /></td>
+                    <td className="px-2 py-1.5 text-center">
+                      {row.result.overallResult === 'pass' && <span className="text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">PASS</span>}
+                      {row.result.overallResult === 'fail' && <span className="text-[9px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">FAIL</span>}
+                      {row.result.overallResult === 'pending' && <span className="text-[9px] text-slate-400">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* RIGHT: Summary Panel (25%) */}
+        <div className="w-64 shrink-0 p-3 overflow-y-auto bg-slate-50/50">
+          {/* Audit Summary */}
+          <div className="mb-4">
+            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Audit Summary</div>
+            <div className="space-y-1.5">
+              <SummaryRow label="Population Value" value={`£${fmt(populationValue)}`} />
+              <SummaryRow label="Sample Size" value={`${sampleTotal} items`} />
+              <SummaryRow label="Verified" value={`${passCount} passed`} color="text-green-600" />
+              <SummaryRow label="Errors" value={`${failCount} failed`} color={failCount > 0 ? 'text-red-600' : 'text-slate-500'} />
+              <SummaryRow label="Pending" value={`${pendingCount} remaining`} color="text-slate-400" />
+              <div className="border-t border-slate-200 pt-1.5 mt-1.5">
+                <SummaryRow label="Error %" value={`${errorPct}%`} color={Number(errorPct) > 5 ? 'text-red-600 font-bold' : 'text-green-600 font-bold'} />
+              </div>
+            </div>
+            {/* Conclusion */}
+            {status === 'complete' && (
+              <div className={`mt-3 px-3 py-2 rounded-lg text-center text-sm font-bold ${
+                failCount === 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              }`}>
+                {failCount === 0 ? 'SATISFACTORY' : 'ERRORS IDENTIFIED'}
+              </div>
+            )}
+          </div>
+
+          {/* Document Upload */}
+          <div className="mb-4">
+            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Documents</div>
+            <div className="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-colors cursor-pointer">
+              <Upload className="h-5 w-5 text-slate-300 mx-auto mb-1" />
+              <p className="text-[10px] text-slate-400">Drop files or click to upload</p>
+              <p className="text-[9px] text-slate-300">PDF, images, or ZIP</p>
+            </div>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="space-y-1.5">
+            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Actions</div>
+            <button className="w-full text-left text-xs px-2.5 py-1.5 rounded border border-slate-200 hover:bg-slate-100 flex items-center gap-2 text-slate-600">
+              <ExternalLink className="h-3 w-3" /> Open in Data Extraction
+            </button>
+            <button className="w-full text-left text-xs px-2.5 py-1.5 rounded border border-slate-200 hover:bg-slate-100 flex items-center gap-2 text-slate-600">
+              <FileText className="h-3 w-3" /> View Source Documents
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Flow Progress Bar */}
+      {flowSteps.length > 0 && (
+        <div className="flex items-center gap-1.5 px-4 py-2 bg-slate-50 border-t text-[10px]">
+          <span className="text-slate-400 font-medium shrink-0">Flow:</span>
+          {flowSteps.map((step, i) => (
+            <div key={step.id} className="flex items-center gap-1">
+              {i > 0 && <ChevronRight className="h-3 w-3 text-slate-300" />}
+              <span className={`px-1.5 py-0.5 rounded ${
+                step.status === 'complete' ? 'bg-green-100 text-green-700' :
+                step.status === 'active' ? 'bg-blue-100 text-blue-700 font-semibold' :
+                step.status === 'failed' ? 'bg-red-100 text-red-700' :
+                'bg-slate-100 text-slate-400'
+              }`}>
+                {step.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryRow({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[10px] text-slate-500">{label}</span>
+      <span className={`text-xs font-mono ${color || 'text-slate-800'}`}>{value}</span>
+    </div>
+  );
+}

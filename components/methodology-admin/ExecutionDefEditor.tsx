@@ -505,6 +505,7 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                     <option value="trigger_evidence_request">Create Evidence Request</option>
                     <option value="trigger_review_point">Raise Review Point</option>
                     <option value="trigger_representation">Add to Representation Letter</option>
+                    <option value="trigger_data_extraction">Open Data Extraction Workspace</option>
                   </optgroup>
                 </select>
               </div>
@@ -596,6 +597,22 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                   </div>
                   <div className="bg-purple-100/50 rounded p-2 text-[10px] text-purple-700">
                     <strong>Output to next node:</strong> confirmation that representation was added
+                  </div>
+                </div>
+              )}
+
+              {def.outputFormat === 'trigger_data_extraction' && (
+                <div className="border rounded-lg p-3 bg-indigo-50/50 space-y-2">
+                  <div className="text-[10px] font-bold text-indigo-700 uppercase">Data Extraction Workspace</div>
+                  <div className="text-sm text-slate-700 space-y-1.5">
+                    <div className="flex items-start gap-2"><span className="text-indigo-600 font-bold mt-0.5">1.</span><span>Opens the Financial Data Extraction workspace inside the Audit Plan test row</span></div>
+                    <div className="flex items-start gap-2"><span className="text-indigo-600 font-bold mt-0.5">2.</span><span>Sample items from sampling run populate the left panel (blue)</span></div>
+                    <div className="flex items-start gap-2"><span className="text-indigo-600 font-bold mt-0.5">3.</span><span>Client evidence documents populate the middle panel (green)</span></div>
+                    <div className="flex items-start gap-2"><span className="text-indigo-600 font-bold mt-0.5">4.</span><span>AI verifies each item — results shown in right panel (amber)</span></div>
+                    <div className="flex items-start gap-2"><span className="text-indigo-600 font-bold mt-0.5">5.</span><span>Each test creates its own extraction session tied to this client, period, and FS line</span></div>
+                  </div>
+                  <div className="bg-indigo-100/50 rounded p-2 text-[10px] text-indigo-700">
+                    <strong>Output to next node:</strong> per-item verification results, error total, error %, conclusion (pass/fail)
                   </div>
                 </div>
               )}
