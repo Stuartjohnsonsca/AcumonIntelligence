@@ -221,6 +221,30 @@ export async function PUT(req: Request) {
           }
         }
 
+        // Resume any paused test execution waiting on this portal request
+        try {
+          const pausedExecution = await prisma.testExecution.findFirst({
+            where: { pauseRefId: requestId, status: 'paused' },
+          });
+          if (pausedExecution) {
+            console.log(`[FlowEngine] Resuming execution ${pausedExecution.id} — commit action on request ${requestId}`);
+            resumeExecution(pausedExecution.id, {
+              response: request.response,
+              chatHistory: commitHistory,
+              committed: true,
+              portalRequestId: requestId,
+            }).catch(err => console.error('[FlowEngine] Resume on commit failed:', err));
+          }
+
+          // Also mark any linked OutstandingItem as complete
+          await prisma.outstandingItem.updateMany({
+            where: { portalRequestId: requestId, status: { not: 'complete' } },
+            data: { status: 'complete', completedAt: new Date() },
+          });
+        } catch (err) {
+          console.error('[FlowEngine] Failed to resume on commit:', err);
+        }
+
         return NextResponse.json({ request: updated });
       }
 
