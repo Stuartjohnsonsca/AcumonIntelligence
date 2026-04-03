@@ -78,11 +78,27 @@ export function resolveTemplate(template: string, ctx: ExecutionContext, inputBi
       return nodeOutput?.[field] != null ? String(nodeOutput[field]) : match;
     }
 
-    // {{loop.currentItem}} / {{loop.index}}
+    // {{loop.currentItem}} / {{loop.currentItem.FieldName}} / {{loop.index}}
     if (parts[0] === 'loop') {
       if (parts[1] === 'currentItem') {
         const val = ctx.loop?.currentItem;
-        return typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+        if (val == null) return match;
+
+        // {{loop.currentItem.FieldName}} — access specific field
+        if (parts.length >= 3) {
+          const field = parts[2];
+          const fieldVal = val[field];
+          if (fieldVal != null) return typeof fieldVal === 'object' ? JSON.stringify(fieldVal) : String(fieldVal);
+          // Try case-insensitive match
+          const key = Object.keys(val).find(k => k.toLowerCase() === field.toLowerCase());
+          return key ? String(val[key] ?? '') : match;
+        }
+
+        // {{loop.currentItem}} alone — extract readable summary from object
+        if (typeof val === 'object') {
+          return summariseItem(val);
+        }
+        return String(val);
       }
       if (parts[1] === 'index') {
         return String(ctx.loop?.index ?? 0);
@@ -162,4 +178,38 @@ export function resolveInputs(
   }
 
   return resolved;
+}
+
+/**
+ * Extract a human-readable summary from a data row object.
+ * Prioritises audit-relevant fields: customer, date, description, amounts.
+ */
+function summariseItem(item: Record<string, any>): string {
+  // Find key fields by common names (case-insensitive)
+  const find = (...names: string[]): string => {
+    for (const name of names) {
+      const key = Object.keys(item).find(k => k.toLowerCase() === name.toLowerCase());
+      if (key && item[key] != null && String(item[key]).trim()) return String(item[key]);
+    }
+    return '';
+  };
+
+  const customer = find('ContactName', 'Customer', 'ClientName', 'Name', 'Debtor', 'Creditor', 'Supplier', 'Vendor');
+  const ref = find('Reference', 'Ref', 'InvoiceNumber', 'Invoice', 'TransactionId', 'ID', 'Number');
+  const desc = find('Description', 'Desc', 'Narrative', 'Details', 'Memo');
+  const date = find('InvoiceDate', 'Date', 'TransactionDate', 'TxnDate');
+  const gross = find('Total', 'Gross', 'Amount', 'InvoiceAmountDue', 'LineAmount');
+  const net = find('LineAmount', 'Net', 'SubTotal', 'UnitAmount');
+  const tax = find('TaxTotal', 'TaxAmount', 'Tax', 'VAT');
+
+  const parts: string[] = [];
+  if (customer) parts.push(customer);
+  if (ref) parts.push(`Ref: ${ref}`);
+  if (date) parts.push(`Date: ${date}`);
+  if (desc) parts.push(desc);
+  if (net) parts.push(`Net: ${net}`);
+  if (tax) parts.push(`VAT: ${tax}`);
+  if (gross) parts.push(`Gross: ${gross}`);
+
+  return parts.length > 0 ? parts.join(', ') : JSON.stringify(item).substring(0, 200);
 }
