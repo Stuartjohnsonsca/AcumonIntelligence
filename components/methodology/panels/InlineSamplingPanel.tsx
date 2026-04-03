@@ -57,10 +57,11 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
   const [confidence, setConfidence] = useState(0.95);
   const [errorMetric, setErrorMetric] = useState('net_signed');
 
-  // Column mapping
+  // Column mapping + aggregation
   const [showMapping, setShowMapping] = useState(false);
   const [idColumn, setIdColumn] = useState('');
   const [amountColumn, setAmountColumn] = useState('');
+  const [aggregateColumn, setAggregateColumn] = useState<string>(''); // empty = no aggregation
 
   // Results
   const [running, setRunning] = useState(false);
@@ -109,7 +110,30 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
-  const populationData = localPopulationData;
+  // Aggregate if a column is selected
+  const populationData = (() => {
+    if (!aggregateColumn || !localPopulationData.length) return localPopulationData;
+    const groups = new Map<string, Record<string, any>[]>();
+    for (const row of localPopulationData) {
+      const key = String(row[aggregateColumn] || '');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(row);
+    }
+    // If aggregation produces same count as raw data, skip (already at that level)
+    if (groups.size === localPopulationData.length) return localPopulationData;
+
+    const cols = Object.keys(localPopulationData[0]);
+    const amtCols = cols.filter(c => /amount|total|gross|net|tax|lineamount|unitamount|subtotal|invoiceamountdue|taxamount|taxtotal/i.test(c));
+    const qtyCols = cols.filter(c => /quantity|qty/i.test(c));
+
+    return Array.from(groups.entries()).map(([, rows]) => {
+      const agg: Record<string, any> = { ...rows[0] };
+      for (const c of amtCols) agg[c] = rows.reduce((s, r) => s + (parseFloat(String(r[c] || 0)) || 0), 0);
+      for (const c of qtyCols) agg[c] = rows.reduce((s, r) => s + (parseFloat(String(r[c] || 0)) || 0), 0);
+      agg._lineItemCount = rows.length;
+      return agg;
+    });
+  })();
 
   // Auto-detect columns
   const columns = populationData.length > 0 ? Object.keys(populationData[0]) : [];
@@ -301,6 +325,16 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
                   {columns.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
+              <div>
+                <label className="text-[9px] text-slate-400">Aggregate By (optional)</label>
+                <select value={aggregateColumn} onChange={e => setAggregateColumn(e.target.value)} className="w-full border rounded px-1.5 py-1 text-xs bg-white">
+                  <option value="">No aggregation</option>
+                  {columns.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                {aggregateColumn && localPopulationData.length !== populationData.length && (
+                  <span className="text-[8px] text-teal-600">{localPopulationData.length} rows → {populationData.length} groups</span>
+                )}
+              </div>
             </div>
           )}
           {!showMapping && amountColumn && (
@@ -332,6 +366,23 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
           </div>
         </div>
       </div>
+
+      {/* Aggregation option — always visible before sampling */}
+      {localPopulationData.length > 0 && columns.length > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 bg-slate-50 rounded-lg border border-slate-200">
+          <label className="text-xs font-medium text-slate-600 shrink-0">Aggregate by:</label>
+          <select value={aggregateColumn} onChange={e => setAggregateColumn(e.target.value)} className="border rounded px-2 py-1 text-xs bg-white min-w-[150px]">
+            <option value="">No aggregation (line items)</option>
+            {columns.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {aggregateColumn && localPopulationData.length !== populationData.length && (
+            <span className="text-xs text-teal-600 font-medium">{localPopulationData.length} line items → {populationData.length} {aggregateColumn}s</span>
+          )}
+          {!aggregateColumn && (
+            <span className="text-[10px] text-slate-400">Optional — group line items by invoice/document number before sampling</span>
+          )}
+        </div>
+      )}
 
       {/* Action buttons */}
       <div className="flex items-center gap-2 flex-wrap">
