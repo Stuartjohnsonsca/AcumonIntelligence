@@ -410,12 +410,15 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </div>
                 )}
 
-                {/* Visual Flow Trace */}
+                {/* Visual Flow Trace — collapsible */}
                 {flowSteps.length > 0 && (
-                  <div className="border rounded-lg overflow-hidden">
-                    <div className="bg-slate-50 px-3 py-2 border-b">
+                  <details className="border rounded-lg overflow-hidden" open={executionStatus === 'not_started' || executionStatus === 'failed'}>
+                    <summary className="bg-slate-50 px-3 py-2 border-b cursor-pointer hover:bg-slate-100 flex items-center justify-between select-none">
                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Flow Execution Trace</span>
-                    </div>
+                      <span className="text-[9px] text-slate-400">
+                        {flowSteps.filter(s => s.status === 'completed').length}/{flowSteps.length} steps
+                      </span>
+                    </summary>
                     <div className="divide-y divide-slate-100">
                       {flowSteps.map((step, i) => (
                         <div key={step.id} className={`flex items-center gap-3 px-3 py-2 text-xs ${
@@ -462,7 +465,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </details>
                 )}
 
                 {/* No flow configured hint */}
