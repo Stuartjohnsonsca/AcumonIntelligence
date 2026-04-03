@@ -948,8 +948,14 @@ export async function processNextNode(executionId: string): Promise<void> {
       });
     }
 
+    // Merge custom variables from the node's data into the output
+    const customVars = currentNode.data?.customVars;
+    const nodeOutput = customVars?.length > 0
+      ? { ...result.output, ...Object.fromEntries(customVars.filter((v: any) => v.key).map((v: any) => [v.key, v.value])) }
+      : result.output;
+
     // Update execution context in memory
-    ctx = { ...ctx, nodes: { ...ctx.nodes, [currentNode.id]: result.output } };
+    ctx = { ...ctx, nodes: { ...ctx.nodes, [currentNode.id]: nodeOutput } };
 
     switch (result.action) {
       case 'continue': {

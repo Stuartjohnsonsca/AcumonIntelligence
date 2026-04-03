@@ -638,6 +638,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
   const [editCondition, setEditCondition] = useState('');
   const [editMaxIterations, setEditMaxIterations] = useState(3);
   const [editWaitFor, setEditWaitFor] = useState('');
+  const [editCustomVars, setEditCustomVars] = useState<{ key: string; value: string }[]>([]);
   const [editSubFlowId, setEditSubFlowId] = useState('');
   const [editSubFlowName, setEditSubFlowName] = useState('');
   const [availableFlows, setAvailableFlows] = useState<{ id: string; fsLine: string; description: string; hasFlow: boolean }[]>([]);
@@ -692,6 +693,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
     setEditWaitFor((node.data as any).waitFor || '');
     setEditSubFlowId((node.data as any).subFlowId || '');
     setEditSubFlowName((node.data as any).subFlowName || '');
+    setEditCustomVars((node.data as any).customVars || []);
     // Load available flows for sub-flow picker
     if (node.type === 'subFlow') {
       fetch('/api/methodology-admin/test-bank')
@@ -742,6 +744,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
           description: editDescription,
           assignee: editAssignee,
           inputType: editInputType,
+          customVars: editCustomVars.filter(v => v.key.trim()),
         },
       };
     }));
@@ -1220,6 +1223,31 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                       <p className="text-[10px] text-slate-400 mt-1">Prevents infinite loops — escalates to team if exceeded</p>
                     </div>
                   </>
+                )}
+
+                {/* Custom Variables — available on all node types */}
+                {editingNodeObj.type !== 'start' && (
+                  <details className="border rounded-md mt-2">
+                    <summary className="px-2.5 py-1.5 text-[10px] font-medium text-slate-500 uppercase cursor-pointer hover:bg-slate-50">
+                      Custom Variables {editCustomVars.length > 0 && <span className="text-[8px] ml-1 text-blue-500">({editCustomVars.length})</span>}
+                    </summary>
+                    <div className="px-2.5 pb-2 space-y-1">
+                      <p className="text-[9px] text-slate-400">Key-value pairs stored on this node. Access via {'{{nodes.<nodeId>.<key>}}'} in downstream templates.</p>
+                      {editCustomVars.map((v, i) => (
+                        <div key={i} className="flex gap-1 items-center">
+                          <input value={v.key} onChange={e => { const vars = [...editCustomVars]; vars[i] = { ...vars[i], key: e.target.value }; setEditCustomVars(vars); }}
+                            placeholder="key" className="w-20 text-[11px] border rounded px-1.5 py-1 font-mono" />
+                          <input value={v.value} onChange={e => { const vars = [...editCustomVars]; vars[i] = { ...vars[i], value: e.target.value }; setEditCustomVars(vars); }}
+                            placeholder="value" className="flex-1 text-[11px] border rounded px-1.5 py-1" />
+                          <button onClick={() => setEditCustomVars(editCustomVars.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600 px-0.5">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                      <button onClick={() => setEditCustomVars([...editCustomVars, { key: '', value: '' }])}
+                        className="text-[10px] text-blue-600 hover:text-blue-800">+ Add Variable</button>
+                    </div>
+                  </details>
                 )}
 
                 <Button onClick={saveNodeEdit} size="sm" className="w-full mt-2">Apply Changes</Button>
