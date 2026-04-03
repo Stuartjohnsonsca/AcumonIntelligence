@@ -959,6 +959,20 @@ export async function processNextNode(executionId: string): Promise<void> {
       ctx = { ...ctx, vars: { ...ctx.vars, ...varEntries } };
     }
 
+    // Auto-set flow variables from common node outputs
+    const autoVars: Record<string, any> = {};
+    if (nodeOutput?.populationData?.length) autoVars.populationCount = nodeOutput.populationData.length;
+    if (nodeOutput?.selectedIndices?.length) autoVars.sampleCount = nodeOutput.selectedIndices.length;
+    if (nodeOutput?.sampleSize) autoVars.sampleCount = nodeOutput.sampleSize;
+    if (nodeOutput?.coverage) autoVars.sampleCoverage = nodeOutput.coverage;
+    if (nodeOutput?.itemCount) autoVars.sampleCount = nodeOutput.itemCount;
+    if (nodeOutput?.loopCompleted && nodeOutput?.results?.length) autoVars.verifiedCount = nodeOutput.results.length;
+    if (nodeOutput?.portalRequestId) autoVars.lastPortalRequestId = nodeOutput.portalRequestId;
+    if (nodeOutput?.result === 'pass' || nodeOutput?.result === 'fail') autoVars.lastResult = nodeOutput.result;
+    if (Object.keys(autoVars).length > 0) {
+      ctx = { ...ctx, vars: { ...ctx.vars, ...autoVars } };
+    }
+
     // Update execution context in memory
     ctx = { ...ctx, nodes: { ...ctx.nodes, [currentNode.id]: nodeOutput } };
 
