@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRight, ChevronDown, ExternalLink, Play, RotateCcw, AlertTriangle, Ban } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ItemErrorDetailPanel } from './ItemErrorDetailPanel';
+import { SamplingWorkspaceEmbed } from './SamplingWorkspaceEmbed';
 
 // ─── Types ───
 interface SampleItem {
@@ -366,13 +367,62 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </div>
                 )}
 
-                {executionStatus === 'paused' && (
-                  <div className="text-center mb-4">
-                    <Clock className="h-8 w-8 text-orange-500 mx-auto mb-2" />
-                    <p className="text-sm font-semibold text-orange-700">Paused — Waiting for Response</p>
-                    <p className="text-xs text-slate-500 mb-3">The flow is waiting for a client response or team action. It will resume automatically.</p>
-                  </div>
-                )}
+                {executionStatus === 'paused' && (() => {
+                  const pausedStep = flowSteps.find(s => s.status === 'paused');
+                  const isSamplingPause = pausedStep?.output?.triggerType === 'sampling' || pausedStep?.label?.toLowerCase().includes('sampl');
+                  const isPortalPause = !!pausedStep?.output?.portalRequestId;
+                  const pauseItemId = pausedStep?.output?.outstandingItemId || pausedStep?.output?.portalRequestId;
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Pause status bar */}
+                      <div className="flex items-center gap-3 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg">
+                        <Clock className="h-5 w-5 text-orange-500 shrink-0" />
+                        <div>
+                          <p className="text-sm font-semibold text-orange-700">
+                            {isSamplingPause ? 'Waiting for Sampling' :
+                             isPortalPause ? 'Waiting for Client Response' :
+                             'Paused — Waiting for Response'}
+                          </p>
+                          <p className="text-[11px] text-orange-600">
+                            {isSamplingPause ? 'Run the Sampling Calculator below, then click "Sampling Done" to continue.' :
+                             isPortalPause ? 'A request has been sent to the client portal. The flow will resume automatically when they respond.' :
+                             'The flow will resume automatically when the response arrives.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Sampling workspace */}
+                      {isSamplingPause && pauseItemId && (
+                        <SamplingWorkspaceEmbed
+                          engagementId={engagementId}
+                          executionId={executionId!}
+                          fsLine={fsLine}
+                          testDescription={testDescription}
+                          clientName=""
+                          periodEnd=""
+                          pauseRefId={pauseItemId}
+                          onComplete={() => {
+                            setExecutionStatus('running');
+                            if (executionId) startPolling(executionId);
+                          }}
+                        />
+                      )}
+
+                      {/* Portal request workspace — show the request that was sent */}
+                      {isPortalPause && (
+                        <div className="border rounded-lg p-4 bg-sky-50/50">
+                          <div className="flex items-center gap-2 mb-2">
+                            <FileText className="h-4 w-4 text-sky-600" />
+                            <span className="text-sm font-medium text-sky-700">Portal Request Sent</span>
+                          </div>
+                          <p className="text-xs text-slate-600">A request has been sent to the client via the portal. Check the <strong>Outstanding</strong> tab to see the request and any responses.</p>
+                          <p className="text-[10px] text-slate-400 mt-2">Request ID: {pausedStep?.output?.portalRequestId}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {executionStatus === 'completed' && (
                   <div className="text-center mb-4">
