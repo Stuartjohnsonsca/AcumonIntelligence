@@ -387,11 +387,78 @@ async function handleDecision(
 async function handleWait(
   flow: FlowData,
   node: FlowNode,
+  ctx: ExecutionContext,
   executionId: string,
   engagementId: string,
 ): Promise<NodeResult> {
   const waitFor = node.data.waitFor || 'team_task_complete';
-  return { action: 'pause', pauseReason: waitFor, pauseRefId: executionId, output: { waitingFor: waitFor } };
+
+  // Check if the waited-for event has ALREADY happened
+  // by examining previous node outputs and the engagement state
+  const prevNodeId = getPreviousNodeId(flow, node.id);
+  const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
+
+  // If previous node was a portal request that has a response, evidence is already here
+  if (waitFor === 'evidence_received' || waitFor === 'portal_response' || waitFor === 'client_confirmation') {
+    if (prevOutput?.response || prevOutput?.committed || prevOutput?.chatHistory) {
+      return {
+        action: 'continue',
+        nextNodeId: getNextNodeId(flow, node.id),
+        output: { waitingFor: waitFor, satisfied: true, data: prevOutput },
+      };
+    }
+
+    // Check if there are any responded/committed portal requests for this engagement
+    const respondedRequests = await prisma.portalRequest.findMany({
+      where: { engagementId, status: { in: ['responded', 'committed'] } },
+      orderBy: { respondedAt: 'desc' },
+      take: 1,
+    });
+    if (respondedRequests.length > 0) {
+      return {
+        action: 'continue',
+        nextNodeId: getNextNodeId(flow, node.id),
+        output: {
+          waitingFor: waitFor,
+          satisfied: true,
+          data: {
+            response: respondedRequests[0].response,
+            portalRequestId: respondedRequests[0].id,
+            respondedAt: respondedRequests[0].respondedAt?.toISOString(),
+          },
+        },
+      };
+    }
+  }
+
+  // If previous node output indicates completion, pass through
+  if (waitFor === 'sampling_complete' && prevOutput?.samplingEngagementId) {
+    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { waitingFor: waitFor, satisfied: true, data: prevOutput } };
+  }
+  if (waitFor === 'team_task_complete' && prevOutput?.completed) {
+    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { waitingFor: waitFor, satisfied: true, data: prevOutput } };
+  }
+  if (waitFor === 'review_resolved' && prevOutput?.resolved) {
+    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { waitingFor: waitFor, satisfied: true, data: prevOutput } };
+  }
+
+  // Not yet satisfied — pause and wait
+  // Create an OutstandingItem so it shows in the Outstanding tab
+  const item = await prisma.outstandingItem.create({
+    data: {
+      engagementId,
+      executionId,
+      nodeId: node.id,
+      type: 'flow_task',
+      title: node.data.label || `Wait: ${waitFor.replace(/_/g, ' ')}`,
+      description: `Flow is waiting for: ${waitFor.replace(/_/g, ' ')}`,
+      source: 'flow',
+      status: 'awaiting_team',
+      flowNodeType: 'wait',
+    },
+  });
+
+  return { action: 'pause', pauseReason: waitFor, pauseRefId: item.id, output: { waitingFor: waitFor, outstandingItemId: item.id } };
 }
 
 // ─── Main Engine ───
@@ -500,7 +567,7 @@ export async function processNextNode(executionId: string): Promise<void> {
           result = await handleDecision(flow, currentNode, ctx);
           break;
         case 'wait':
-          result = await handleWait(flow, currentNode, executionId, execution.engagementId);
+          result = await handleWait(flow, currentNode, ctx, executionId, execution.engagementId);
           break;
         case 'action':
         default:
