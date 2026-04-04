@@ -426,6 +426,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                             flowSteps.find(s => s.output?.data?.populationData?.length > 0)?.output?.data?.populationData ||
                             []
                           }
+                          initialSelectedIndices={samplingResults?.selectedIndices}
                           materialityData={{ performanceMateriality: tolerableMisstatement, clearlyTrivial, tolerableMisstatement }}
                           onComplete={(results) => {
                             handleSamplingDone(results);

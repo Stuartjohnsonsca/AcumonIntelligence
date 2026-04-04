@@ -13,6 +13,7 @@ interface Props {
   testDescription: string;
   populationData: any[];   // From flow context (client upload parsed)
   materialityData: { performanceMateriality: number; clearlyTrivial: number; tolerableMisstatement: number };
+  initialSelectedIndices?: number[];  // Persisted selection from prior run
   onComplete: (results: { runId: string; selectedIndices: number[]; sampleSize: number; coverage: number }) => void;
 }
 
@@ -36,7 +37,7 @@ function fmt(n: number | null | undefined): string {
   return `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, testDescription, populationData: initialPopulationData, materialityData, onComplete }: Props) {
+export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, testDescription, populationData: initialPopulationData, materialityData, initialSelectedIndices, onComplete }: Props) {
   // Local population data — can be loaded from props OR from local file upload
   const [localPopulationData, setLocalPopulationData] = useState<any[]>(initialPopulationData || []);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -66,7 +67,7 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
   // Results
   const [running, setRunning] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
-  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set(initialSelectedIndices || []));
   const [sampleTotal, setSampleTotal] = useState<number | null>(null);
   const [coverage, setCoverage] = useState<number | null>(null);
   const [rationale, setRationale] = useState<string | null>(null);
