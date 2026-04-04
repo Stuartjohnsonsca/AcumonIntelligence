@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useMemo, Fragment } from 'react';
-import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
+import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch } from 'lucide-react';
 import { TestExecutionPanel } from './TestExecutionPanel';
+import { ExecutionFlowViewer } from './ExecutionFlowViewer';
 import { assertionShortLabel } from '@/types/methodology';
 
 interface TBRow {
@@ -261,6 +262,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [auditLog, setAuditLog] = useState<any[]>([]);
   const [auditLogLoading, setAuditLogLoading] = useState(false);
+  const [flowViewerExec, setFlowViewerExec] = useState<{ id: string; testDescription: string } | null>(null);
 
   function toggleTestApplicable(testKey: string) {
     setExcludedTests(prev => {
@@ -739,6 +741,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                   <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Steps</th>
                   <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Started</th>
                   <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Error</th>
+                  <th className="w-12 px-2 py-1.5"></th>
                 </tr>
               </thead>
               <tbody>
@@ -778,6 +781,15 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       <td className="px-2 py-1.5 text-red-500 max-w-[200px] truncate">
                         {failedNode?.errorMessage || exec.errorMessage || ''}
                       </td>
+                      <td className="px-2 py-1.5">
+                        <button
+                          onClick={() => setFlowViewerExec({ id: exec.id, testDescription: exec.testDescription })}
+                          className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50"
+                          title="View execution flow"
+                        >
+                          <GitBranch className="h-2.5 w-2.5" /> Flow
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -785,6 +797,16 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             </table>
           )}
         </div>
+      )}
+
+      {/* ─── FLOW VIEWER MODAL ─── */}
+      {flowViewerExec && (
+        <ExecutionFlowViewer
+          engagementId={engagementId}
+          executionId={flowViewerExec.id}
+          testDescription={flowViewerExec.testDescription}
+          onClose={() => setFlowViewerExec(null)}
+        />
       )}
     </div>
   );

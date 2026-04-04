@@ -58,6 +58,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
       completedAt: execution.completedAt,
       updatedAt: execution.updatedAt,
     },
+    flowSnapshot: execution.flowSnapshot,
     flowSteps,
     nodeRuns: execution.nodeRuns,
     outstandingItems: execution.outstandingItems,
