@@ -654,6 +654,48 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         </div>
       )}
 
+      {/* Tab-level error summary bar */}
+      {(() => {
+        const levelConcs = dbConclusions.filter(c =>
+          activeLevel ? c.fsLine === activeLevel : c.fsLine // all for statement
+        );
+        const errorConcs = levelConcs.filter(c => c.conclusion === 'orange' || c.conclusion === 'red');
+        if (errorConcs.length === 0) return null;
+        const totalError = errorConcs.reduce((s: number, c: any) => s + Math.abs(c.extrapolatedError || 0), 0);
+        const hasRed = errorConcs.some((c: any) => c.conclusion === 'red');
+        return (
+          <div className={`flex items-center justify-between px-3 py-1.5 rounded text-xs ${hasRed ? 'bg-red-50 border border-red-200' : 'bg-orange-50 border border-orange-200'}`}>
+            <div className="flex items-center gap-2">
+              <AlertTriangle className={`h-3.5 w-3.5 ${hasRed ? 'text-red-500' : 'text-orange-500'}`} />
+              <span className={`font-medium ${hasRed ? 'text-red-700' : 'text-orange-700'}`}>
+                {errorConcs.length} test{errorConcs.length !== 1 ? 's' : ''} with errors — Total: £{totalError.toLocaleString('en-GB', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <button
+              onClick={async () => {
+                for (const c of errorConcs) {
+                  if (!c.errors || !(c.errors as any[]).length) continue;
+                  await fetch(`/api/engagements/${engagementId}/error-schedule`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      action: 'commit_from_conclusion', conclusionId: c.id,
+                      items: (c.errors as any[]).filter((e: any) => Math.abs(e.difference) > 0).map((e: any) => ({
+                        description: `${e.reference}: ${e.description}`, errorAmount: e.difference,
+                        errorType: e.isAnomaly ? 'judgemental' : 'factual', explanation: e.explanation, isFraud: e.isFraud,
+                      })),
+                    }),
+                  });
+                }
+                alert('Errors committed to Error Schedule');
+              }}
+              className={`text-[10px] font-medium px-2.5 py-1 rounded ${hasRed ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-orange-600 text-white hover:bg-orange-700'}`}
+            >
+              Commit to Error Schedule
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Merge toolbar */}
       {selectedForMerge.size > 0 && (
         <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded text-xs">
@@ -766,15 +808,21 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       const isExecutionOpen = activeExecution === testKey;
                       return (
                       <Fragment key={`${rowKey}-t${ti}`}>
-                        <tr className={`border-b border-slate-50 ${!isApplicable ? 'opacity-30' : ''} ${isExecutionOpen ? 'bg-blue-50/50' : ''}`}>
+                        {(() => {
+                          const testConc = testConclusions[testKey] || testConclusions[test.description];
+                          const dbConc = dbConclusions.find(c => c.testDescription === test.description);
+                          const conc = testConc || dbConc?.conclusion || 'pending';
+                          const isFailed = conc === 'failed';
+                          return (
+                        <tr className={`border-b border-slate-50 ${!isApplicable ? 'opacity-30' : ''} ${isExecutionOpen ? 'bg-blue-50/50' : ''} ${isFailed ? 'bg-red-100' : ''}`}>
                           <td className="text-center">
                             <input type="checkbox" checked={isApplicable} onChange={() => toggleTestApplicable(testKey)}
                               className="w-2.5 h-2.5 rounded border-slate-300 cursor-pointer" title={isApplicable ? 'Applicable — click to exclude' : 'Not applicable — click to include'} />
                           </td>
                           <td colSpan={isThreeLevel ? 8 : 7} className="py-0.5 pl-5">
-                            <div className="flex items-start gap-1.5 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
-                              <span className={`text-[9px] ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}>{test.description}</span>
+                              <span className={`text-[9px] flex-1 ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}>{test.description}</span>
                               {isApplicable && (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); setActiveExecution(isExecutionOpen ? null : testKey); }}
@@ -790,19 +838,44 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 </button>
                               )}
                               {/* Conclusion dot */}
-                              {testConclusions[testKey] && testConclusions[testKey] !== 'pending' && (
+                              {conc !== 'pending' && (
                                 <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                                  testConclusions[testKey] === 'green' ? 'bg-green-500' :
-                                  testConclusions[testKey] === 'orange' ? 'bg-orange-500' : 'bg-red-500'
+                                  conc === 'green' ? 'bg-green-500' :
+                                  conc === 'orange' ? 'bg-orange-500' :
+                                  conc === 'failed' ? 'bg-red-800' : 'bg-red-500'
                                 }`} title={
-                                  testConclusions[testKey] === 'green' ? 'No material errors' :
-                                  testConclusions[testKey] === 'orange' ? 'Errors above CT, within PM' : 'Errors exceed PM'
+                                  conc === 'green' ? 'No material errors' :
+                                  conc === 'orange' ? 'Errors above CT, within PM' :
+                                  conc === 'failed' ? 'Test failed to run' : 'Errors exceed PM'
                                 } />
+                              )}
+                              {/* Review / RI checkboxes */}
+                              {dbConc && (
+                                <div className="flex items-center gap-1 flex-shrink-0 ml-1">
+                                  <span
+                                    className={`inline-flex items-center text-[7px] px-1 py-0.5 rounded cursor-default ${
+                                      dbConc.reviewedBy ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'
+                                    }`}
+                                    title={dbConc.reviewedBy ? `Reviewed by ${dbConc.reviewedByName} on ${new Date(dbConc.reviewedAt).toLocaleDateString('en-GB')}` : 'Not yet reviewed'}
+                                  >
+                                    R {dbConc.reviewedBy ? '✓' : ''}
+                                  </span>
+                                  <span
+                                    className={`inline-flex items-center text-[7px] px-1 py-0.5 rounded cursor-default ${
+                                      dbConc.riSignedBy ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'
+                                    }`}
+                                    title={dbConc.riSignedBy ? `RI signed by ${dbConc.riSignedByName} on ${new Date(dbConc.riSignedAt).toLocaleDateString('en-GB')}` : 'Not yet signed by RI'}
+                                  >
+                                    RI {dbConc.riSignedBy ? '✓' : ''}
+                                  </span>
+                                </div>
                               )}
                               {test.assertion && <span className="text-[7px] px-0.5 py-0 bg-slate-100 text-slate-400 rounded flex-shrink-0">{test.assertion}</span>}
                             </div>
                           </td>
                         </tr>
+                          );
+                        })()}
                         {/* Execution Panel — opens below the test row */}
                         {isExecutionOpen && (
                           <tr>
