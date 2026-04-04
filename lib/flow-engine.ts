@@ -234,7 +234,17 @@ async function handleActionAI(
   executionId: string,
   engagementId: string,
 ): Promise<NodeResult> {
-  const execDef = node.data.executionDef;
+  // Prefer latest execution def from test type (by actionId), fall back to embedded snapshot
+  let execDef = node.data.executionDef;
+  if (node.data.actionId) {
+    const latestType = await prisma.methodologyTestType.findUnique({
+      where: { id: node.data.actionId as string },
+      select: { executionDef: true },
+    });
+    if (latestType?.executionDef) {
+      execDef = latestType.executionDef as any;
+    }
+  }
   if (!execDef) {
     return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { skipped: true, reason: 'No execution definition' } };
   }
