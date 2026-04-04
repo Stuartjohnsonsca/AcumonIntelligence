@@ -49,11 +49,11 @@ interface Props {
 
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
-type TopTab = 'test-bank' | 'test-actions';
+type TopTab = 'test-allocations' | 'test-bank' | 'test-actions' | 'grid-view';
 
 export function TestBankClient({ firmId, initialTestTypes, initialTests, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
-  const [topTab, setTopTab] = useState<TopTab>('test-bank');
+  const [topTab, setTopTab] = useState<TopTab>('test-allocations');
   const [testTypes, setTestTypes] = useState(initialTestTypes);
   const [tests, setTests] = useState(initialTests);
   const [saving, setSaving] = useState(false);
@@ -282,6 +282,10 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
     <div className="space-y-4">
       {/* Top tabs */}
       <div className="flex border-b border-slate-200">
+        <button onClick={() => setTopTab('test-allocations')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-allocations' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          Test Allocations
+        </button>
         <button onClick={() => setTopTab('test-bank')}
           className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-bank' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Test Bank
@@ -290,7 +294,19 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-actions' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Test Actions
         </button>
+        <button onClick={() => setTopTab('grid-view')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'grid-view' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          Grid View
+        </button>
       </div>
+
+      {/* ─── TEST ALLOCATIONS TAB ─── */}
+      {topTab === 'test-allocations' && (
+        <div className="border rounded-lg p-8 text-center">
+          <h3 className="text-sm font-semibold text-slate-800 mb-2">Test Allocations</h3>
+          <p className="text-xs text-slate-500">Assign tests from the Test Bank to FS lines and industries. Coming soon.</p>
+        </div>
+      )}
 
       {/* ─── TEST BANK TAB ─── */}
       {topTab === 'test-bank' && (
@@ -537,6 +553,14 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           </Suspense>
         );
       })()}
+
+      {/* ─── GRID VIEW TAB ─── */}
+      {topTab === 'grid-view' && (
+        <div className="border rounded-lg p-8 text-center">
+          <h3 className="text-sm font-semibold text-slate-800 mb-2">Grid View</h3>
+          <p className="text-xs text-slate-500">Visual grid of tests across FS lines and industries. Coming soon.</p>
+        </div>
+      )}
 
       {/* ─── TEST MODAL (Add/Edit) ─── */}
       {testModalOpen && (
