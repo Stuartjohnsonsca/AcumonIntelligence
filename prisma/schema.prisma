@@ -1920,7 +1920,8 @@ model AuditDocument {
 model AuditTBRow {
   id             String  @id @default(uuid())
   engagementId   String  @map("engagement_id")
-  accountCode    String  @map("account_code")
+  accountCode         String  @map("account_code")              // Working code — may change to merged code
+  originalAccountCode String? @map("original_account_code")     // Real code from TB import, never changes
   description    String
   category       String? // User-defined classification, toggleable
   currentYear    Float?  @map("current_year")

@@ -304,9 +304,22 @@ async function handleAccountingExtract(
     return { action: 'error', errorMessage: `${connection.system} connection expired on ${connection.expiresAt.toLocaleDateString()}. Please reconnect via the Opening tab.` };
   }
 
-  // Get account code from TB row context or node description
+  // Get account codes — resolve merged codes to real codes via originalAccountCode
   const accountCode = ctx.test.tbRow?.accountCode || '';
-  const accountCodes = accountCode ? [accountCode] : [];
+  let accountCodes: string[] = [];
+  if (accountCode) {
+    // Check if this is a merged code by looking for TB rows with this accountCode that have originalAccountCode set
+    const mergedRows = await prisma.auditTBRow.findMany({
+      where: { engagementId, accountCode, originalAccountCode: { not: null } },
+      select: { originalAccountCode: true },
+    });
+    if (mergedRows.length > 0) {
+      // Use all original (real) account codes from the merged group
+      accountCodes = mergedRows.map(r => r.originalAccountCode!).filter(Boolean);
+    } else {
+      accountCodes = [accountCode];
+    }
+  }
 
   // Get date range from engagement period
   const dateFrom = engagement.period?.startDate

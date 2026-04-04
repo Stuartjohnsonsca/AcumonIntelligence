@@ -9,6 +9,7 @@ import { assertionShortLabel } from '@/types/methodology';
 interface TBRow {
   id: string;
   accountCode: string;
+  originalAccountCode: string | null;
   description: string;
   fsStatement: string | null;
   fsLevel: string | null;
@@ -259,10 +260,53 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
   const [activeExecution, setActiveExecution] = useState<string | null>(null);
   const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'pending'>>({});
+  const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
+  const [merging, setMerging] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [auditLog, setAuditLog] = useState<any[]>([]);
   const [auditLogLoading, setAuditLogLoading] = useState(false);
   const [flowViewerExec, setFlowViewerExec] = useState<{ id: string; testDescription: string } | null>(null);
+
+  function toggleMergeSelect(rowId: string) {
+    setSelectedForMerge(prev => {
+      const next = new Set(prev);
+      next.has(rowId) ? next.delete(rowId) : next.add(rowId);
+      return next;
+    });
+  }
+
+  async function handleMerge() {
+    if (selectedForMerge.size < 2) return;
+    setMerging(true);
+    const rowIds = Array.from(selectedForMerge);
+    const mergedCode = `MERGED_${activeLevel?.replace(/\s+/g, '_').toUpperCase() || 'GRP'}_${Date.now().toString(36).slice(-4)}`;
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/trial-balance`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'merge', rowIds, mergedCode }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTbRows(data.rows || []);
+        setSelectedForMerge(new Set());
+      }
+    } finally { setMerging(false); }
+  }
+
+  async function handleUnmerge(mergedCode: string) {
+    setMerging(true);
+    const rowIds = tbRows.filter(r => r.accountCode === mergedCode && r.originalAccountCode).map(r => r.id);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/trial-balance`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unmerge', rowIds }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTbRows(data.rows || []);
+      }
+    } finally { setMerging(false); }
+  }
 
   function toggleTestApplicable(testKey: string) {
     setExcludedTests(prev => {
@@ -582,6 +626,20 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         </div>
       )}
 
+      {/* Merge toolbar */}
+      {selectedForMerge.size > 0 && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded text-xs">
+          <span className="text-blue-700 font-medium">{selectedForMerge.size} rows selected</span>
+          {selectedForMerge.size >= 2 && (
+            <button onClick={handleMerge} disabled={merging}
+              className="px-2 py-0.5 bg-blue-600 text-white rounded text-[10px] font-medium hover:bg-blue-700 disabled:opacity-50">
+              {merging ? 'Merging...' : 'Merge Selected'}
+            </button>
+          )}
+          <button onClick={() => setSelectedForMerge(new Set())} className="text-[10px] text-blue-500 hover:text-blue-700">Clear</button>
+        </div>
+      )}
+
       {/* Integrated TB rows with expandable tests */}
       <div className="bg-white rounded border border-slate-200 overflow-hidden">
         {filteredRows.length === 0 ? (
@@ -590,6 +648,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           <table className="w-full text-[10px]" style={{ tableLayout: 'auto' }}>
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
+                <th className="w-5"></th>
                 <th className="w-4"></th>
                 <th className="pl-1 pr-0.5 py-0.5 text-left font-semibold text-slate-600">Code</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">Description</th>
@@ -615,12 +674,42 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rmmMatch && (rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High');
+                const isMerged = !!row.originalAccountCode && row.accountCode !== row.originalAccountCode;
+                const mergedGroupRows = isMerged ? filteredRows.filter(r => r.accountCode === row.accountCode) : [];
+                const isFirstInMerge = isMerged && mergedGroupRows[0]?.id === row.id;
+                const displayCode = row.originalAccountCode || row.accountCode;
                 return (
                   <Fragment key={rowKey}>
-                    <tr className={`border-b border-slate-100 hover:bg-slate-50 ${tests.length > 0 ? 'cursor-pointer' : ''} ${isSig ? 'bg-red-50/20' : ''}`}
+                    {/* Merged group header — show once for the group */}
+                    {isMerged && isFirstInMerge && (
+                      <tr className="border-b border-blue-200 bg-blue-50/50">
+                        <td></td>
+                        <td></td>
+                        <td className="pl-1 pr-0.5 py-1 font-mono text-blue-600 text-[9px] font-bold">{row.accountCode}</td>
+                        <td colSpan={isThreeLevel ? 2 : 1} className="px-0.5 py-1 text-blue-700 font-medium">
+                          Merged: {mergedGroupRows.length} accounts
+                        </td>
+                        <td className="px-0.5 py-1 text-right whitespace-nowrap font-medium text-blue-700">{fmtAmount(mergedGroupRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0))}</td>
+                        <td className="px-0.5 py-1 text-right text-blue-500 whitespace-nowrap">{fmtAmount(mergedGroupRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0))}</td>
+                        <td></td>
+                        <td className="px-0.5 py-1">
+                          <button onClick={() => handleUnmerge(row.accountCode)} disabled={merging}
+                            className="text-[8px] px-1.5 py-0.5 bg-white border border-blue-300 text-blue-600 rounded hover:bg-blue-100 font-medium">
+                            Unmerge
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                    <tr className={`border-b border-slate-100 hover:bg-slate-50 ${tests.length > 0 ? 'cursor-pointer' : ''} ${isSig ? 'bg-red-50/20' : ''} ${isMerged ? 'bg-blue-50/20' : ''}`}
                       onClick={() => tests.length > 0 && toggleRmmExpand(rowKey)}>
+                      <td className="text-center px-0.5" onClick={e => { e.stopPropagation(); toggleMergeSelect(row.id); }}>
+                        {!isMerged && (
+                          <input type="checkbox" checked={selectedForMerge.has(row.id)} readOnly
+                            className="w-3 h-3 rounded border-slate-300 text-blue-600 cursor-pointer" />
+                        )}
+                      </td>
                       <td className="text-center text-slate-400 text-[9px]">{tests.length > 0 ? (isExp ? '▼' : '▶') : ''}</td>
-                      <td className="pl-1 pr-0.5 py-px font-mono text-slate-500">{row.accountCode}</td>
+                      <td className="pl-1 pr-0.5 py-px font-mono text-slate-500">{displayCode}</td>
                       <td className="px-0.5 py-px text-slate-700">{row.description}</td>
                       {isThreeLevel && <td className="px-0.5 py-px text-slate-400">{row.fsNoteLevel || ''}</td>}
                       <td className="px-0.5 py-px text-right whitespace-nowrap">{fmtAmount(row.currentYear)}</td>
@@ -653,7 +742,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                             <input type="checkbox" checked={isApplicable} onChange={() => toggleTestApplicable(testKey)}
                               className="w-2.5 h-2.5 rounded border-slate-300 cursor-pointer" title={isApplicable ? 'Applicable — click to exclude' : 'Not applicable — click to include'} />
                           </td>
-                          <td colSpan={isThreeLevel ? 7 : 6} className="py-0.5 pl-4">
+                          <td colSpan={isThreeLevel ? 8 : 7} className="py-0.5 pl-5">
                             <div className="flex items-start gap-1.5 flex-wrap">
                               <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
                               <span className={`text-[9px] ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}>{test.description}</span>
@@ -688,7 +777,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Execution Panel — opens below the test row */}
                         {isExecutionOpen && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 8 : 7} className="p-2 bg-slate-50/50">
+                            <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-slate-50/50">
                               <TestExecutionPanel
                                 testId={testKey}
                                 testDescription={test.description}
