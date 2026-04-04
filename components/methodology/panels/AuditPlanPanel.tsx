@@ -286,9 +286,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   // 2. Framework matching the engagement (e.g. "FRS102")
   // 3. Assertions matching the RMM row's assertions (e.g. "Com", "Cut")
   function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null): { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
-    // Try matching by fsLevel first, then fsNote, then description
+    // Match tests by FS level hierarchy — a test under "Revenue" applies to all Revenue rows
     const searchTerms = [fsLevel, fsNote, desc].filter(Boolean).map(s => s!.toLowerCase());
-    const matchingEntries = testBank.filter(tb => searchTerms.some(term => tb.fsLine.toLowerCase() === term || term.includes(tb.fsLine.toLowerCase()) || tb.fsLine.toLowerCase().includes(term)));
+    // Also include the active statement tab (e.g., "Profit & Loss") for broader matching
+    const matchingEntries = testBank.filter(tb => {
+      const tbLine = tb.fsLine.toLowerCase().trim();
+      return searchTerms.some(term => {
+        const t = term.trim();
+        return tbLine === t || t.includes(tbLine) || tbLine.includes(t) ||
+          // Fuzzy: "revenue" matches "revenue - rebilled services" etc.
+          t.split(/[\s\-\/]+/).some(word => word.length > 3 && tbLine.includes(word));
+      });
+    });
 
     const allTests: { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
     const seen = new Set<string>(); // Deduplicate by description
@@ -309,10 +318,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           });
           if (!matches) continue;
         }
-        // Filter by categories if the test has them — only show if test applies to this category
+        // Filter by categories if the test has them — but only if the row is NOT at the same FS level
+        // Tests under "Revenue" should show for ALL Revenue rows (including Rebilled Services)
         if ((test as any).categories && Array.isArray((test as any).categories) && (test as any).categories.length > 0) {
           const cats = (test as any).categories.map((c: string) => c.toLowerCase());
-          if (!searchTerms.some(term => cats.some((c: string) => c.includes(term) || term.includes(c)))) continue;
+          // Only filter if the FS level doesn't directly match — don't restrict tests at their own level
+          const fsLevelMatch = fsLevel && cats.some((c: string) => c === fsLevel.toLowerCase() || fsLevel.toLowerCase() === c);
+          if (!fsLevelMatch && !searchTerms.some(term => cats.some((c: string) => c.includes(term) || term.includes(c)))) continue;
         }
         // Deduplicate
         if (seen.has(test.description)) continue;
