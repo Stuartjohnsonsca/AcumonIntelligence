@@ -50,6 +50,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [executionId, setExecutionId] = useState<string | null>(null);
   const [executionStatus, setExecutionStatus] = useState<string>('not_started');
   const [executionError, setExecutionError] = useState<string | null>(null);
+  const [pauseReason, setPauseReason] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<string[]>([]);
   const [starting, setStarting] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -151,6 +152,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         setExecutionStatus(data.execution.status);
         setFlowSteps(data.flowSteps || []);
         if (data.execution.errorMessage) setExecutionError(data.execution.errorMessage);
+        if (data.execution.pauseReason) setPauseReason(data.execution.pauseReason);
         if (['completed', 'failed', 'cancelled'].includes(data.execution.status)) {
           if (pollRef.current) clearInterval(pollRef.current);
           setFindingsOpen(true);
@@ -226,7 +228,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             executionStatus === 'running' ? 'bg-blue-100 text-blue-700' :
             executionStatus === 'failed' ? 'bg-red-100 text-red-700' :
             'bg-slate-100 text-slate-500'
-          }`}>{executionStatus === 'completed' ? 'Complete' : executionStatus === 'paused' ? 'Paused' : executionStatus === 'running' ? 'Running' : executionStatus === 'failed' ? 'Failed' : 'Not Started'}</span>
+          }`}>{executionStatus === 'completed' ? 'Complete' : executionStatus === 'paused' ? `Paused${pauseReason ? ` (${pauseReason})` : ''}` : executionStatus === 'running' ? 'Running' : executionStatus === 'failed' ? 'Failed' : 'Not Started'}</span>
         </div>
         <div className="flex items-center gap-1.5">
           {(executionStatus === 'running' || executionStatus === 'paused') && (
@@ -307,7 +309,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     <span className={`flex-1 ${step.status === 'completed' ? 'text-green-700' : step.status === 'failed' ? 'text-red-700' : step.status === 'running' ? 'text-blue-700' : 'text-slate-500'}`}>{step.label}</span>
                     {step.output?.result && <span className={`text-[8px] px-1 py-0.5 rounded-full font-medium ${step.output.result === 'pass' ? 'bg-green-100 text-green-700' : step.output.result === 'fail' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>{step.output.result}</span>}
                     {step.output?.decision && <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{step.output.decision}</span>}
-                    {step.status === 'paused' && <span className="text-[8px] px-1 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Paused</span>}
+                    {step.status === 'paused' && <span className="text-[8px] px-1 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Paused{step.output?.pauseReason ? `: ${step.output.pauseReason}` : ''}{step.output?.requiresReview ? ' (review)' : ''}{step.output?.triggerType ? ` (${step.output.triggerType})` : ''}</span>}
                     {step.errorMessage && <span className="text-[8px] text-red-500 break-words max-w-[250px]">{step.errorMessage}</span>}
                     {step.duration && <span className="text-[8px] text-slate-400">{(step.duration / 1000).toFixed(1)}s</span>}
                   </div>
