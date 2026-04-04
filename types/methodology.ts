@@ -57,6 +57,36 @@ export const ASSERTION_TYPES = [
 
 export type AssertionType = typeof ASSERTION_TYPES[number];
 
+// Short display labels for assertions (used in grids, pills, RMM display)
+export const ASSERTION_SHORT_LABELS: Record<string, string> = {
+  'Completeness': 'Com',
+  'Occurrence & Accuracy': 'O&A',
+  'Cut Off': 'Cut',
+  'Classification': 'Cla',
+  'Presentation': 'Pre',
+  'Existence': 'Exi',
+  'Valuation': 'Val',
+  'Rights & Obligations': 'R&O',
+  // Handle common DB abbreviations → canonical short form
+  'Rig': 'R&O',
+  'Com': 'Com',
+  'Comp': 'Com',
+  'Occ': 'O&A',
+  'O&A': 'O&A',
+  'Acc': 'O&A',
+  'Cut': 'Cut',
+  'Cla': 'Cla',
+  'Pre': 'Pre',
+  'Exi': 'Exi',
+  'Val': 'Val',
+  'R&O': 'R&O',
+};
+
+/** Normalise any assertion string to its short display label */
+export function assertionShortLabel(raw: string): string {
+  return ASSERTION_SHORT_LABELS[raw] || ASSERTION_SHORT_LABELS[raw.trim()] || (raw.length > 5 ? raw.split(' ').map(w => w[0]).join('') : raw);
+}
+
 // ─── Test Bank Types ────────────────────────────────────────────────────────
 
 export interface TestBankEntry {

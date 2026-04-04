@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { Loader2, ArrowLeft, FileText, Play } from 'lucide-react';
 import { TestExecutionPanel } from './TestExecutionPanel';
+import { assertionShortLabel } from '@/types/methodology';
 
 interface TBRow {
   id: string;
@@ -571,7 +572,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
                           <div className="flex flex-wrap gap-px">
                             {rmmMatch.assertions.map(a => (
-                              <span key={a} className="text-[7px] px-0.5 py-0 bg-blue-100 text-blue-600 rounded">{a.length > 10 ? a.split(' ').map(w => w[0]).join('') : a}</span>
+                              <span key={a} className="text-[7px] px-0.5 py-0 bg-blue-100 text-blue-600 rounded">{assertionShortLabel(a)}</span>
                             ))}
                           </div>
                         ) : ''}
