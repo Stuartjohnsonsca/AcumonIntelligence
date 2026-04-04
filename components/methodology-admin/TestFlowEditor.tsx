@@ -75,7 +75,6 @@ const INPUT_TYPES = [
   { value: 'evidence_match', label: 'Evidence Matching' },
   { value: 'ai_analysis', label: 'AI Analysis' },
   { value: 'accounting_extract', label: 'Accounting System Extract' },
-  { value: 'verify_evidence', label: 'Verify Evidence (AI)' },
 ];
 
 // ─── Custom Node: Action ───
@@ -140,11 +139,6 @@ function ActionNode({ data, selected }: NodeProps) {
           {inputType === 'accounting_extract' && (
             <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
               <Plug className="h-2.5 w-2.5" /> Accounting
-            </span>
-          )}
-          {inputType === 'verify_evidence' && (
-            <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-              <ShieldAlert className="h-2.5 w-2.5" /> Verify
             </span>
           )}
         </div>

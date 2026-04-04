@@ -518,6 +518,9 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                     <option value="trigger_representation">Add to Representation Letter</option>
                     <option value="trigger_data_extraction">Open Data Extraction Workspace</option>
                   </optgroup>
+                  <optgroup label="Verification">
+                    <option value="verify_evidence">Verify Evidence (assertion-driven)</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -549,6 +552,38 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                   </div>
                   <div className="bg-teal-100/50 rounded p-2 text-[10px] text-teal-700">
                     <strong>Output to next node:</strong> selected sample items, sample size, population total, coverage %
+                  </div>
+                </div>
+              )}
+
+              {def.outputFormat === 'verify_evidence' && (
+                <div className="border rounded-lg p-3 bg-amber-50/50 space-y-3">
+                  <div className="text-[10px] font-bold text-amber-700 uppercase">Verify Evidence</div>
+                  <div className="text-sm text-slate-700 space-y-1.5">
+                    <div className="flex items-start gap-2">
+                      <span className="text-amber-600 font-bold mt-0.5">1.</span>
+                      <span>Collects sample items and evidence from previous flow steps</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-amber-600 font-bold mt-0.5">2.</span>
+                      <span>Reads <strong>assertions</strong> from the test at runtime (set by Methodology Admin in Test Bank)</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-amber-600 font-bold mt-0.5">3.</span>
+                      <span>AI verifies each sample item against evidence using assertion-specific checks</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-amber-600 font-bold mt-0.5">4.</span>
+                      <span><strong>Consistency</strong> check always runs (description vs account code)</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-amber-600 font-bold mt-0.5">5.</span>
+                      <span>Results populate the Audit Verification panel with pass/fail per check</span>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-500 italic">
+                    Evidence sources: uploaded documents, client portal responses, or accounting system extracts.
+                    Verification columns adjust automatically when assertions change.
                   </div>
                 </div>
               )}

@@ -676,6 +676,18 @@ async function handleActionAI(
     return { action: 'pause', pauseReason: 'sampling', pauseRefId: item.id, output: parsedOutput };
   }
 
+  // Verify Evidence — assertion-driven verification using the standalone handler
+  if (execDef.outputFormat === 'verify_evidence') {
+    const verifyResult = await handleVerifyEvidence(flow, node, ctx, executionId, engagementId);
+    // Merge AI raw output with verification results
+    if (verifyResult.output) {
+      verifyResult.output.raw = parsedOutput.raw;
+      verifyResult.output.model = parsedOutput.model;
+      verifyResult.output.tokensUsed = (verifyResult.output.tokensUsed || 0) + (parsedOutput.tokensUsed || 0);
+    }
+    return verifyResult;
+  }
+
   // If requires review, pause for team (must be explicitly set to true)
   if (execDef.requiresReview === true) {
     const item = await prisma.outstandingItem.create({
@@ -1326,8 +1338,6 @@ export async function processNextNode(executionId: string): Promise<void> {
           // Check for system-level input types that bypass AI/Client/Team routing
           if (currentNode.data?.inputType === 'accounting_extract') {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
-          } else if (currentNode.data?.inputType === 'verify_evidence') {
-            result = await handleVerifyEvidence(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'ai') {
             result = await handleActionAI(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'client') {
