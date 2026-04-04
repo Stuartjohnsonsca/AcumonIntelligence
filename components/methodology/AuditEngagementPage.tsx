@@ -157,7 +157,7 @@ export function AuditEngagementPage({ auditType }: Props) {
     setPeriodLabel(pLabel);
     try {
       // 1. Check if engagement exists
-      const checkRes = await fetch(`/api/engagements?clientId=${clientId}&periodId=${pId}&auditType=${auditType}`);
+      const checkRes = await fetch(`/api/engagements?clientId=${encodeURIComponent(clientId)}&periodId=${encodeURIComponent(pId)}&auditType=${encodeURIComponent(auditType)}`);
       let eng: EngagementData | null = null;
       if (checkRes.ok) {
         const checkData = await checkRes.json();
@@ -166,17 +166,24 @@ export function AuditEngagementPage({ auditType }: Props) {
 
       // 2. Create if it doesn't exist
       if (!eng) {
+        const createBody = JSON.stringify({ clientId: String(clientId), periodId: String(pId), auditType: String(auditType) });
         const createRes = await fetch('/api/engagements', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clientId, periodId: pId, auditType }),
+          body: createBody,
         });
         if (!createRes.ok) {
-          const body = await createRes.json().catch(() => ({}));
-          throw new Error(body.error || 'Failed to create engagement');
+          const errData = await createRes.json().catch(() => ({ error: `Status ${createRes.status}` }));
+          // 409 = already exists, try to load it
+          if (createRes.status === 409) {
+            const retryRes = await fetch(`/api/engagements?clientId=${encodeURIComponent(clientId)}&periodId=${encodeURIComponent(pId)}&auditType=${encodeURIComponent(auditType)}`);
+            if (retryRes.ok) { eng = (await retryRes.json()).engagement || null; }
+          }
+          if (!eng) throw new Error(errData.error || 'Failed to create engagement');
+        } else {
+          const createData = await createRes.json();
+          eng = createData.engagement;
         }
-        const createData = await createRes.json();
-        eng = createData.engagement;
       }
 
       if (!eng) throw new Error('Failed to load engagement');
@@ -192,7 +199,8 @@ export function AuditEngagementPage({ auditType }: Props) {
 
       setEngagement(eng);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to open audit file');
+      const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Failed to open audit file';
+      setError(msg);
     } finally {
       setLoading(false);
     }
