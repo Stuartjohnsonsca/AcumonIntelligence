@@ -370,7 +370,30 @@ async function handleActionAI(
       } catch {}
     }
 
-    console.log(`[flow-engine] trigger_sampling: populationData found = ${!!parsedOutput.populationData}, items = ${parsedOutput.populationData?.length || 0}, ctx.nodes keys = ${Object.keys(ctx.nodes).join(', ')}`);
+    // Last resort: read from completed node runs in DB
+    if (!parsedOutput.populationData) {
+      const priorRuns = await prisma.testExecutionNodeRun.findMany({
+        where: { executionId, status: 'completed' },
+        orderBy: { completedAt: 'desc' },
+      });
+      for (const run of priorRuns) {
+        const out = run.output as any;
+        if (!out) continue;
+        if (out.populationData?.length > 0) { parsedOutput.populationData = out.populationData; break; }
+        if (out.dataTable?.length > 0) { parsedOutput.populationData = out.dataTable; break; }
+        if (out.data?.length > 0 && Array.isArray(out.data)) { parsedOutput.populationData = out.data; break; }
+        if (out.rows?.length > 0) { parsedOutput.populationData = out.rows; break; }
+        // Try parsing raw text
+        if (out.raw) {
+          try {
+            const m = (out.raw as string).match(/\[[\s\S]*\]/);
+            if (m) { const p = JSON.parse(m[0]); if (Array.isArray(p) && p.length > 0) { parsedOutput.populationData = p; break; } }
+          } catch {}
+        }
+      }
+    }
+
+    console.log(`[flow-engine] trigger_sampling: populationData found = ${!!parsedOutput.populationData}, items = ${parsedOutput.populationData?.length || 0}`);
     // Create outstanding item for team to run the calculator
     const item = await prisma.outstandingItem.create({
       data: {
