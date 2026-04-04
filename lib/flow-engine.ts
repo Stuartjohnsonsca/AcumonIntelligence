@@ -800,16 +800,23 @@ async function handleForEach(
 
     if (collection === 'sample_items') {
       // From sampling results — resolve selectedIndices against populationData
-      const populationData = prevOutput?.populationData ||
-        Object.values(ctx.nodes).find((n: any) => n?.populationData?.length > 0)?.populationData || [];
-      const selectedIndices = prevOutput?.selectedIndices || [];
+      // Search all nodes for population data and sampling results
+      let populationData: any[] = [];
+      let selectedIndices: number[] = [];
+
+      for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+        const out = nodeOut as any;
+        if (!out) continue;
+        if (out.populationData?.length > 0 && populationData.length === 0) populationData = out.populationData;
+        if (out.dataTable?.length > 0 && populationData.length === 0) populationData = out.dataTable;
+        if (out.selectedIndices?.length > 0 && selectedIndices.length === 0) selectedIndices = out.selectedIndices;
+        if (out.sampleItems?.length > 0 && items.length === 0) items = out.sampleItems;
+      }
 
       if (selectedIndices.length > 0 && populationData.length > 0) {
         // Map indices to actual row objects
         items = selectedIndices.map((idx: number) => populationData[idx]).filter(Boolean);
-      } else if (prevOutput?.sampleItems?.length > 0) {
-        items = prevOutput.sampleItems;
-      } else if (populationData.length > 0) {
+      } else if (items.length === 0 && populationData.length > 0) {
         items = populationData; // Fallback: use full population
       }
     } else if (collection === 'evidence_files') {
@@ -1311,11 +1318,11 @@ export async function resumeExecution(executionId: string, externalData?: any): 
       data: { status: 'completed', completedAt: new Date(), output: externalData },
     });
 
-    // Advance to next node
+    // Advance to next node — use updatedContext so sampling results / external data are available to next step
     const nextNodeId = getNextNodeId(flow, execution.currentNodeId);
     await prisma.testExecution.update({
       where: { id: executionId },
-      data: { status: 'running', currentNodeId: nextNodeId || null, pauseReason: null, pauseRefId: null, context: ctx as any },
+      data: { status: 'running', currentNodeId: nextNodeId || null, pauseReason: null, pauseRefId: null, context: updatedContext as any },
     });
   } else {
     // Resume without new data — just advance
