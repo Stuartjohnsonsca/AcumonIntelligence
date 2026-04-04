@@ -898,7 +898,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                     title={dbConc.riSignedBy ? `RI signed by ${dbConc.riSignedByName} on ${new Date(dbConc.riSignedAt).toLocaleDateString('en-GB')} — click to unsign` : 'Click to sign as RI'}
                                   >
                                     RI {dbConc.riSignedBy ? '✓' : ''}
-                                  </span>
+                                  </button>
                                 </div>
                               )}
                               {test.assertion && <span className="text-[7px] px-0.5 py-0 bg-slate-100 text-slate-400 rounded flex-shrink-0">{test.assertion}</span>}
