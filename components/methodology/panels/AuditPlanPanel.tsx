@@ -357,30 +357,31 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
     const searchTerms = [fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
 
-    let matchedTests: AllocationEntry['test'][] = [];
+    // Deduplicate by test ID across all matching allocations
+    const matchedTestsMap = new Map<string, AllocationEntry['test']>();
 
-    // Match FS level/note to MethodologyFsLine records, then get allocated tests
     if (searchTerms.length > 0) {
       const matchingFsLineIds = new Set<string>();
       for (const fl of fsLinesList) {
         const flName = fl.name.toLowerCase().trim();
-        if (searchTerms.some(term => flName === term || term.includes(flName) || flName.includes(term))) {
+        if (searchTerms.some(term => flName === term)) {
           matchingFsLineIds.add(fl.id);
         }
       }
       if (matchingFsLineIds.size > 0) {
-        matchedTests = allocations.filter(a => matchingFsLineIds.has(a.fsLineId)).map(a => a.test);
+        for (const a of allocations) {
+          if (matchingFsLineIds.has(a.fsLineId) && !matchedTestsMap.has(a.test.id)) {
+            matchedTestsMap.set(a.test.id, a.test);
+          }
+        }
       }
     }
 
     const result: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
-    const seen = new Set<string>();
 
-    for (const test of matchedTests) {
+    for (const test of matchedTestsMap.values()) {
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
-      if (seen.has(test.name)) continue;
-      seen.add(test.name);
 
       const tt = testTypes.find(t => t.code === test.testTypeCode);
       const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
