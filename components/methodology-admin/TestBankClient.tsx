@@ -91,7 +91,6 @@ type TopTab = 'test-allocations' | 'test-bank' | 'test-actions' | 'grid-view';
 
 export function TestBankClient({ firmId, initialTestTypes, initialTests, initialFsLines, initialIndustries, initialAllocations, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
-  const allFrameworks = [...frameworkOptions, 'ALL'];
   const [topTab, setTopTab] = useState<TopTab>('test-allocations');
   const [testTypes, setTestTypes] = useState(initialTestTypes);
   const [tests, setTests] = useState(initialTests);
@@ -133,11 +132,12 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   const [savingExecDef, setSavingExecDef] = useState(false);
 
   // ── Allocation grid helpers ──
+  // Each framework row shows its own tests PLUS any ALL-framework tests
   const getAllocsForCell = useCallback((fsLineId: string, industryId: string, fw: string) => {
     return allocations.filter(a =>
       a.fsLineId === fsLineId &&
       a.industryId === industryId &&
-      (fw === 'ALL' ? a.test.framework === 'ALL' : a.test.framework === fw)
+      (a.test.framework === fw || a.test.framework === 'ALL')
     );
   }, [allocations]);
 
@@ -157,7 +157,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
     setAllocPickerFsLineId(fsLineId);
     setAllocPickerIndustryId(industryId);
     setAllocPickerFramework(fw);
-    // Pre-select currently allocated tests for this specific framework cell
+    // Pre-select: tests with this framework OR ALL that are allocated to this cell
     const existing = getAllocsForCell(fsLineId, industryId, fw).map(a => a.testId);
     setAllocPickerSelectedIds(existing);
     setAllocPickerSearch('');
@@ -167,11 +167,12 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   async function handleSaveAllocations() {
     setSaving(true);
     try {
-      // Get all existing allocations for this fsLine+industry that are NOT the current framework
+      // Keep allocations for other frameworks that aren't visible in this picker
       const otherAllocs = allocations.filter(a =>
         a.fsLineId === allocPickerFsLineId &&
         a.industryId === allocPickerIndustryId &&
-        (allocPickerFramework === 'ALL' ? a.test.framework !== 'ALL' : a.test.framework !== allocPickerFramework)
+        a.test.framework !== allocPickerFramework &&
+        a.test.framework !== 'ALL'
       );
       const otherTestIds = otherAllocs.map(a => a.testId);
       // Merge: other frameworks' tests + newly selected tests
@@ -342,14 +343,14 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                       </tr>
                       {group.lines.map(line => (
                         <React.Fragment key={line.id}>
-                          {allFrameworks.map((fw, fwIdx) => {
+                          {frameworkOptions.map((fw, fwIdx) => {
                             const isFirst = fwIdx === 0;
-                            const isLast = fwIdx === allFrameworks.length - 1;
+                            const isLast = fwIdx === frameworkOptions.length - 1;
                             return (
                               <tr key={`${line.id}-${fw}`} className={`${isLast ? 'border-b border-slate-200' : 'border-b border-slate-100'} hover:bg-blue-50/30`}>
                                 {/* FS Line name — only on first framework row, spans all framework rows */}
                                 {isFirst && (
-                                  <td rowSpan={allFrameworks.length} className="p-2 border-r border-slate-200 align-top bg-white">
+                                  <td rowSpan={frameworkOptions.length} className="p-2 border-r border-slate-200 align-top bg-white">
                                     <div className="flex items-center gap-1">
                                       <span className="font-medium text-slate-800 text-sm">{line.name}</span>
                                       {line.isMandatory && <span className="text-[7px] px-1 py-0.5 bg-blue-100 text-blue-600 rounded">Required</span>}
@@ -401,7 +402,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           )}
 
           <div className="text-xs text-slate-500">
-            {fsLines.length} FS lines &middot; {industries.length} industries &middot; {allFrameworks.length} frameworks &middot; {allocations.length} total allocations
+            {fsLines.length} FS lines &middot; {industries.length} industries &middot; {frameworkOptions.length} frameworks &middot; {allocations.length} total allocations
           </div>
         </div>
       )}
@@ -551,9 +552,9 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
         const fsLine = fsLines.find(f => f.id === allocPickerFsLineId);
         const industry = industries.find(i => i.id === allocPickerIndustryId);
         const searchLower = allocPickerSearch.toLowerCase();
-        // Show tests matching this framework (or ALL row shows ALL-framework tests)
+        // Show tests matching this framework + ALL-framework tests
         const frameworkTests = tests.filter(t =>
-          allocPickerFramework === 'ALL' ? t.framework === 'ALL' : t.framework === allocPickerFramework
+          t.framework === allocPickerFramework || t.framework === 'ALL'
         );
         const filteredTests = frameworkTests.filter(t => {
           if (!searchLower) return true;
