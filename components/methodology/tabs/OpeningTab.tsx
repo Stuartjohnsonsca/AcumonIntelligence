@@ -434,13 +434,22 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
               <span className="w-2 h-2 rounded-full bg-slate-300" />
               <span className="text-xs font-medium text-slate-500">Not Connected</span>
             </div>
-            <p className="text-xs text-slate-400 mb-3">No accounting connection found for this client.</p>
-            <button
-              onClick={handleRenewConnection}
-              className="text-xs px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
-            >
-              Connect
-            </button>
+            <p className="text-xs text-slate-400 mb-3">Connect to your client's accounting system to import trial balance data and automate evidence gathering.</p>
+            <div className="flex items-center gap-2">
+              <a
+                href={`/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${encodeURIComponent(window.location.pathname)}`}
+                className="inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-[#13B5EA] text-white rounded-md hover:bg-[#0e9fd0] font-medium"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.41 15.41L7.17 14l1.41-1.41L11 15.17l4.59-4.59L17 12l-6.41 6.41z"/></svg>
+                Connect with Xero
+              </a>
+              <button
+                onClick={handleRenewConnection}
+                className="text-xs px-4 py-1.5 border border-slate-200 text-slate-600 rounded-md hover:bg-slate-50 font-medium"
+              >
+                Other Systems
+              </button>
+            </div>
           </div>
         )}
       </div>
