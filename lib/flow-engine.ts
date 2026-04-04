@@ -264,6 +264,24 @@ async function handleActionAI(
     }
   }
 
+  // data_table output — AI returns cleaned/filtered data as JSON array
+  if (execDef.outputFormat === 'data_table') {
+    try {
+      const jsonMatch = aiResult.text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed)) {
+          parsedOutput.populationData = parsed;
+          parsedOutput.dataTable = parsed;
+          parsedOutput.rowCount = parsed.length;
+        }
+      }
+    } catch {
+      // AI didn't return valid JSON — store raw text
+      parsedOutput.rawData = aiResult.text;
+    }
+  }
+
   // Handle trigger outputs
   if (execDef.outputFormat === 'trigger_portal_request') {
     const message = execDef.aiCompose ? aiResult.text : resolveTemplate(execDef.requestTemplate?.message || userPrompt, ctx, inputBindings);
