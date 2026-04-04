@@ -379,17 +379,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           {/* Start Audit button — only shown on Opening tab when engagement is pre_start */}
           {isPreStart && activeTab === 'opening' && (() => {
             // Validation checks
-            const hasRI = engagement.teamMembers.some(m => m.role === 'RI');
+            const hasRI = engagement.teamMembers.some(m => m.role === 'RI' || m.role === 'Partner');
             const hasEthicsSpecialist = (engagement.specialists || []).some(s => s.specialistType === 'EthicsPartner' || s.specialistType === 'Ethics');
             const hasTechnicalSpecialist = (engagement.specialists || []).some(s => s.specialistType === 'TechnicalAdvisor' || s.specialistType === 'Technical');
-            const mainContactWithPortal = (engagement.contacts || []).some(c =>
-              c.isMainContact && c.email?.trim() && (c as any).portalAccess !== false
-            );
+            const hasClientContact = (engagement.contacts || []).some(c => c.email?.trim()) || (engagement as any).portalTeam?.length > 0;
             const checks = [
-              { ok: hasRI, label: 'RI assigned to team', required: true },
+              { ok: hasRI, label: 'RI / Partner assigned to team', required: true },
               { ok: hasEthicsSpecialist, label: 'Ethics Specialist assigned', required: false },
               { ok: hasTechnicalSpecialist, label: 'Technical Specialist assigned', required: false },
-              { ok: mainContactWithPortal, label: 'Main contact with email and portal access', required: false },
+              { ok: hasClientContact, label: 'Client contact available', required: false },
             ];
             const allPassed = checks.filter(c => c.required).every(c => c.ok);
             const failedChecks = checks.filter(c => !c.ok);
