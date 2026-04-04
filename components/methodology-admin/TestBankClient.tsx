@@ -312,6 +312,16 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
     setSavingExecDef(true);
     try { const res = await fetch('/api/methodology-admin/test-types', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, executionDef }) }); if (res.ok) { const { testType } = await res.json(); setTestTypes(prev => prev.map(t => t.id === testType.id ? testType : t)); } } finally { setSavingExecDef(false); }
   }
+  async function duplicateTestType(tt: TestType) {
+    const name = `${tt.name} (Copy)`;
+    const code = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const res = await fetch('/api/methodology-admin/test-types', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, code, actionType: tt.actionType, codeSection: tt.codeSection || null, executionDef: tt.executionDef || null }),
+    });
+    if (res.ok) { const { testType } = await res.json(); setTestTypes(prev => [...prev, testType]); }
+  }
+
   async function deleteTestType(id: string) {
     const res = await fetch('/api/methodology-admin/test-types', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
     if (res.ok) setTestTypes(prev => prev.filter(t => t.id !== id));
@@ -520,7 +530,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                         <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.actionType === 'client_action' ? 'Client Action' : tt.actionType === 'ai_action' ? 'AI Action' : 'Human Action'}</span></td>
                         <td className="px-3 py-2 text-slate-500 text-xs font-mono">{tt.codeSection || '\u2014'}</td>
                         <td className="px-3 py-2 text-center"><button onClick={() => setExpandedActionId(expandedActionId === tt.id ? null : tt.id)} className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${expandedActionId === tt.id ? 'bg-blue-100 border-blue-300 text-blue-700' : tt.executionDef ? 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100' : 'bg-orange-50 border-orange-300 text-orange-700 hover:bg-orange-100'}`}><Settings2 className="h-3 w-3" />{expandedActionId === tt.id ? 'Close' : tt.executionDef ? 'Edit' : 'Configure'}</button></td>
-                        <td className="px-3 py-2 text-right"><div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => startEditTestType(tt)} className="p-1 hover:bg-slate-200 rounded"><Pencil className="h-3.5 w-3.5 text-slate-500" /></button><button onClick={() => deleteTestType(tt.id)} className="p-1 hover:bg-red-100 rounded"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button></div></td>
+                        <td className="px-3 py-2 text-right"><div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => duplicateTestType(tt)} className="p-1 hover:bg-blue-100 rounded" title="Duplicate"><Copy className="h-3.5 w-3.5 text-blue-500" /></button><button onClick={() => startEditTestType(tt)} className="p-1 hover:bg-slate-200 rounded" title="Edit"><Pencil className="h-3.5 w-3.5 text-slate-500" /></button><button onClick={() => deleteTestType(tt.id)} className="p-1 hover:bg-red-100 rounded" title="Delete"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button></div></td>
                       </>)}
                     </tr>
                     {expandedActionId === tt.id && <tr><td colSpan={5} className="px-3 pb-3 bg-slate-50/50"><ExecutionDefEditor actionType={tt.actionType} executionDef={tt.executionDef || null} onChange={(def) => saveExecutionDef(tt.id, def)} /></td></tr>}
