@@ -52,7 +52,7 @@ interface AllocationItem {
   fsLineId: string;
   industryId: string;
   sortOrder: number;
-  test: { id: string; name: string; testTypeCode: string; framework: string; significantRisk: boolean };
+  test: { id: string; name: string; testTypeCode: string; assertions: string[] | null; framework: string; significantRisk: boolean };
   fsLine: { id: string; name: string };
   industry: { id: string; name: string };
 }
@@ -370,21 +370,33 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                                 </td>
                                 {/* Industry cells */}
                                 {industries.map(ind => {
-                                  const count = getCellCount(line.id, ind.id, fw);
+                                  const cellAllocs = getAllocsForCell(line.id, ind.id, fw);
+                                  const count = cellAllocs.length;
                                   const has = count > 0;
+                                  // Collect assertions covered by allocated tests
+                                  const cellAssertions = new Set<string>();
+                                  cellAllocs.forEach(a => ((a.test.assertions as string[]) || []).forEach(ass => cellAssertions.add(ass)));
                                   return (
-                                    <td key={ind.id} className={`px-1 py-1 text-center border-r border-slate-100 ${fw === 'ALL' ? 'bg-slate-50/50' : ''}`}>
+                                    <td key={ind.id} className="px-1 py-1 border-r border-slate-100">
                                       <button
                                         onClick={() => openAllocPicker(line.id, ind.id, fw)}
-                                        className="inline-flex items-center gap-1 group/cell"
+                                        className="inline-flex items-center gap-1 group/cell w-full justify-center"
                                         title={has ? `${count} test${count > 1 ? 's' : ''} \u2014 click to edit` : 'Click to allocate'}
                                       >
-                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${
+                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all flex-shrink-0 ${
                                           has ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 group-hover/cell:border-green-400'
                                         }`}>
                                           {has && <Check className="h-2.5 w-2.5" />}
                                         </div>
-                                        {has && <span className="text-[9px] text-green-700 font-medium">{count}</span>}
+                                        {has && (
+                                          <div className="flex flex-wrap gap-px justify-center">
+                                            {Array.from(cellAssertions).map(a => (
+                                              <span key={a} className="text-[7px] px-0.5 py-0 bg-purple-100 text-purple-600 rounded leading-tight">
+                                                {a.length > 5 ? a.split(' ').map(w => w[0]).join('') : a}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
                                       </button>
                                     </td>
                                   );
@@ -587,15 +599,35 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 {filteredTests.map(test => {
                   const isSelected = allocPickerSelectedIds.includes(test.id);
                   const tt = testTypes.find(t => t.code === test.testTypeCode);
+                  const hasAssertions = ((test.assertions as string[]) || []).length > 0;
                   return (
-                    <div key={test.id} onClick={() => setAllocPickerSelectedIds(prev => isSelected ? prev.filter(id => id !== test.id) : [...prev, test.id])}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors mb-1 ${isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-50 border border-transparent'}`}>
-                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'}`}>
-                        {isSelected && <Check className="h-3 w-3 text-white" />}
+                    <div key={test.id}
+                      onClick={() => {
+                        if (!hasAssertions) return; // Block allocation of tests without assertions
+                        setAllocPickerSelectedIds(prev => isSelected ? prev.filter(id => id !== test.id) : [...prev, test.id]);
+                      }}
+                      className={`flex items-center gap-3 px-3 py-2 rounded-md transition-colors mb-1 ${
+                        !hasAssertions ? 'opacity-50 cursor-not-allowed border border-red-200 bg-red-50/30' :
+                        isSelected ? 'bg-blue-50 border border-blue-200 cursor-pointer' : 'hover:bg-slate-50 border border-transparent cursor-pointer'
+                      }`}>
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                        !hasAssertions ? 'border-red-300 bg-red-50' :
+                        isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
+                      }`}>
+                        {isSelected && hasAssertions && <Check className="h-3 w-3 text-white" />}
+                        {!hasAssertions && <X className="h-3 w-3 text-red-400" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-slate-800 font-medium truncate">{test.name}</div>
-                        {test.description && <div className="text-[10px] text-slate-400 truncate">{test.description}</div>}
+                        {!hasAssertions && <div className="text-[10px] text-red-500 font-medium">No assertions set - cannot allocate</div>}
+                        {hasAssertions && (
+                          <div className="flex flex-wrap gap-0.5 mt-0.5">
+                            {((test.assertions as string[]) || []).map((a, i) => (
+                              <span key={i} className="text-[8px] px-1 py-0 bg-purple-100 text-purple-600 rounded">{a.length > 12 ? a.split(' ').map(w => w[0]).join('') : a}</span>
+                            ))}
+                          </div>
+                        )}
+                        {test.description && <div className="text-[10px] text-slate-400 truncate mt-0.5">{test.description}</div>}
                       </div>
                       {tt && <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.name}</span>}
                       {test.significantRisk && <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0" />}

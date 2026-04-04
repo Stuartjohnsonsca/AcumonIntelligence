@@ -37,7 +37,7 @@ export default async function TestBankPage() {
     prisma.methodologyTestAllocation.findMany({
       where: { test: { firmId } },
       include: {
-        test: { select: { id: true, name: true, testTypeCode: true, framework: true, significantRisk: true } },
+        test: { select: { id: true, name: true, testTypeCode: true, assertions: true, framework: true, significantRisk: true } },
         fsLine: { select: { id: true, name: true } },
         industry: { select: { id: true, name: true } },
       },
