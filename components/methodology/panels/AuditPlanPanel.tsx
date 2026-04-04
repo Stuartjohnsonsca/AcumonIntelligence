@@ -248,6 +248,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [allocations, setAllocations] = useState<AllocationEntry[]>([]);
   const [fsLinesList, setFsLinesList] = useState<FsLineEntry[]>([]);
   const [testTypes, setTestTypes] = useState<TestType[]>([]);
+  // Legacy fallback: if no allocations exist (migration not run), use old test-bank data
+  const [legacyTestBank, setLegacyTestBank] = useState<{ fsLine: string; tests: any[] }[]>([]);
+  const [useLegacy, setUseLegacy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeStatement, setActiveStatement] = useState('');
   const [activeLevel, setActiveLevel] = useState('');
@@ -286,8 +289,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         }
         if (allocRes.ok) {
           const allocData = await allocRes.json();
-          setAllocations(allocData.allocations || []);
+          const allocs = allocData.allocations || [];
+          setAllocations(allocs);
           setFsLinesList(allocData.fsLines || []);
+          // If no allocations, fall back to legacy test-bank
+          if (allocs.length === 0) {
+            const legacyRes = await fetch('/api/methodology-admin/test-bank');
+            if (legacyRes.ok) {
+              const legacyData = await legacyRes.json();
+              setLegacyTestBank(legacyData.testBanks || legacyData.entries || []);
+              setUseLegacy(true);
+            }
+          }
         }
         if (ttRes.ok) {
           const ttData = await ttRes.json();
@@ -336,9 +349,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     });
   }
 
-  // FK-based test lookup: find allocations whose FS line name matches the active level/note
+  // Get tests for a row — uses FK-based allocation lookup with legacy fallback
   function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
-    // Find matching FS lines by name — exact match on fsLevel or fsNote
+    if (useLegacy) {
+      return getTestsForRowLegacy(fsLevel, fsNote, desc, assertions, statement);
+    }
+
+    // FK-based: find allocations whose FS line name matches the active level/note
     const matchingFsLineIds = new Set<string>();
     const searchTerms = [fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
 
@@ -349,7 +366,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       }
     }
 
-    // Filter allocations by matching FS line IDs
     const matchingAllocs = allocations.filter(a => matchingFsLineIds.has(a.fsLineId));
 
     const allTests: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
@@ -357,14 +373,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
     for (const alloc of matchingAllocs) {
       const test = alloc.test;
-      // Filter by framework
-      if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') {
-        continue;
-      }
-      // Filter by assertion
+      if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
-
-      // Deduplicate by test name
       if (seen.has(test.name)) continue;
       seen.add(test.name);
 
@@ -381,6 +391,53 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         flow: test.flow,
         executionDef: tt?.executionDef,
       });
+    }
+    return allTests;
+  }
+
+  // Legacy fallback: fuzzy string matching on old MethodologyTestBank entries
+  function getTestsForRowLegacy(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
+    const searchTerms = [fsLevel, fsNote, desc, statement].filter(Boolean).map(s => s!.toLowerCase().trim());
+
+    const matchingEntries = legacyTestBank.filter(tb => {
+      const tbLine = tb.fsLine.toLowerCase().trim();
+      if (!tbLine) return true;
+      return searchTerms.some(term => {
+        return tbLine === term || term.includes(tbLine) || tbLine.includes(term) ||
+          term.split(/[\s\-\/,]+/).some(word => word.length > 3 && tbLine.includes(word)) ||
+          tbLine.split(/[\s\-\/,]+/).some(word => word.length > 3 && term.includes(word));
+      });
+    });
+
+    const allTests: { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
+    const seen = new Set<string>();
+
+    for (const entry of matchingEntries) {
+      for (const test of entry.tests || []) {
+        if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
+        if (assertions && assertions.length > 0 && test.assertion) {
+          const testAss = test.assertion.toLowerCase().trim();
+          const testAliases = Object.entries(ASSERTION_ALIASES)
+            .filter(([, aliases]) => aliases.some(a => a === testAss || testAss.includes(a) || a.includes(testAss)))
+            .flatMap(([, aliases]) => aliases);
+          const matches = assertions.some(a => {
+            const rowAss = a.toLowerCase().trim();
+            if (testAss.includes(rowAss) || rowAss.includes(testAss)) return true;
+            return testAliases.some(alias => alias === rowAss || rowAss.includes(alias) || alias.includes(rowAss));
+          });
+          if (!matches) continue;
+        }
+        if ((test as any).categories?.length > 0) {
+          const cats = (test as any).categories.map((c: string) => c.toLowerCase());
+          const fsLevelMatch = fsLevel && cats.some((c: string) => c === fsLevel.toLowerCase());
+          if (!fsLevelMatch && !searchTerms.some(term => cats.some((c: string) => c.includes(term) || term.includes(c)))) continue;
+        }
+        if (seen.has(test.description)) continue;
+        seen.add(test.description);
+        const tt = testTypes.find(t => t.code === test.testTypeCode);
+        const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
+        allTests.push({ ...test, color, typeName: tt?.name || test.testTypeCode, flow: (test as any).flow, executionDef: (tt as any)?.executionDef });
+      }
     }
     return allTests;
   }

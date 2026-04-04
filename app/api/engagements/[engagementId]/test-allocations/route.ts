@@ -19,7 +19,7 @@ export async function GET(
     where: { id: engagementId },
     select: {
       firmId: true,
-      methodologyConfig: { select: { config: true } },
+      methodologyVersion: { select: { config: true } },
     },
   });
 
@@ -31,7 +31,7 @@ export async function GET(
   }
 
   // Get industry from methodology config
-  const config = (engagement.methodologyConfig as any)?.config || {};
+  const config = (engagement.methodologyVersion?.config as any) || {};
   const industryId = config.industryId || config.industry;
 
   // If no industry configured, try default industry
