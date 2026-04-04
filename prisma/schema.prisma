@@ -1655,6 +1655,8 @@ model AuditEngagement {
   tbRows              AuditTBRow[]
   testExecutions       TestExecution[]
   outstandingItems     OutstandingItem[]
+  testConclusions      AuditTestConclusion[]
+  errorScheduleItems   AuditErrorSchedule[]
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -2391,5 +2393,75 @@ model OutstandingItem {
   @@index([engagementId, status])
   @@index([executionId])
   @@map("outstanding_items")
+}
+
+// ─── Test Conclusions & Error Handling ───────────────────────────────────────
+
+model AuditTestConclusion {
+  id                     String    @id @default(uuid())
+  engagementId           String    @map("engagement_id")
+  executionId            String?   @map("execution_id")
+  fsLine                 String    @map("fs_line")
+  testDescription        String    @map("test_description")
+  accountCode            String?   @map("account_code")
+
+  // Conclusion
+  status                 String    @default("pending")          // pending | concluded | reviewed | signed_off
+  conclusion             String?                                // green | orange | red | failed
+  totalErrors            Float     @default(0)                  @map("total_errors")
+  extrapolatedError      Float     @default(0)                  @map("extrapolated_error")
+  populationSize         Int       @default(0)                  @map("population_size")
+  sampleSize             Int       @default(0)                  @map("sample_size")
+
+  // Error items: [{ itemIndex, difference, explanation, isFraud, isIsolated, isAnomaly }]
+  errors                 Json?
+
+  // Auditor analysis
+  controlRelianceConcern Boolean   @default(false)              @map("control_reliance_concern")
+  extrapolationExceedsTM Boolean   @default(false)              @map("extrapolation_exceeds_tm")
+  auditorNotes           String?   @map("auditor_notes") @db.Text
+
+  // Follow-up actions: ["expand_sample", "alternative_procedures", "request_management", "revise_approach", "error_schedule"]
+  followUpActions        Json?                                  @map("follow_up_actions")
+  followUpData           Json?                                  @map("follow_up_data")  // Per-action data (e.g. revise approach text)
+
+  // Review signoffs
+  reviewedBy             String?   @map("reviewed_by")
+  reviewedByName         String?   @map("reviewed_by_name")
+  reviewedAt             DateTime? @map("reviewed_at")
+  riSignedBy             String?   @map("ri_signed_by")
+  riSignedByName         String?   @map("ri_signed_by_name")
+  riSignedAt             DateTime? @map("ri_signed_at")
+
+  createdAt              DateTime  @default(now())              @map("created_at")
+  updatedAt              DateTime  @updatedAt                   @map("updated_at")
+
+  engagement             AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@index([engagementId, fsLine])
+  @@map("audit_test_conclusions")
+}
+
+model AuditErrorSchedule {
+  id              String    @id @default(uuid())
+  engagementId    String    @map("engagement_id")
+  conclusionId    String?   @map("conclusion_id")
+  fsLine          String    @map("fs_line")
+  accountCode     String?   @map("account_code")
+  description     String
+  errorAmount     Float     @map("error_amount")
+  errorType       String    @map("error_type")       // factual | judgemental | projected
+  explanation     String?   @db.Text
+  isFraud         Boolean   @default(false)           @map("is_fraud")
+  committedBy     String?   @map("committed_by")
+  committedByName String?   @map("committed_by_name")
+  committedAt     DateTime? @map("committed_at")
+  createdAt       DateTime  @default(now())           @map("created_at")
+
+  engagement      AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@map("audit_error_schedules")
 }
 
