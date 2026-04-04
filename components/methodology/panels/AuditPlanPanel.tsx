@@ -675,7 +675,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rmmMatch && (rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High');
                 const isMerged = !!row.originalAccountCode && row.accountCode !== row.originalAccountCode;
-                const mergedGroupRows = isMerged ? filteredRows.filter(r => r.accountCode === row.accountCode) : [];
+                // Use ALL tb rows for merged totals (not filtered — filtered excludes zero rows)
+                const mergedGroupRows = isMerged ? tbRows.filter(r => r.accountCode === row.accountCode) : [];
                 const isFirstInMerge = isMerged && mergedGroupRows[0]?.id === row.id;
                 const displayCode = row.originalAccountCode || row.accountCode;
                 return (
