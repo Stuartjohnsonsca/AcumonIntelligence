@@ -296,6 +296,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
     const matchingEntries = testBank.filter(tb => {
       const tbLine = tb.fsLine.toLowerCase().trim();
+      // Empty FS Line = unassigned tests — show for all rows
+      if (!tbLine) return true;
       return searchTerms.some(term => {
         return tbLine === term || term.includes(tbLine) || tbLine.includes(term) ||
           // Word-level fuzzy: individual words >3 chars
