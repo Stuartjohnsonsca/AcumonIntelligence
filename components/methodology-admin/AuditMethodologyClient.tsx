@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3, MessageSquareMore, ListChecks } from 'lucide-react';
+import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3, MessageSquareMore, ListChecks, FileText } from 'lucide-react';
 
 const tiles = [
   {
@@ -67,6 +67,14 @@ const tiles = [
     icon: MessageSquareMore,
     color: 'bg-teal-50 border-teal-200 hover:bg-teal-100',
     iconColor: 'text-teal-600',
+  },
+  {
+    title: 'Point Headings',
+    description: 'Manage heading categories for Management Letters and Representation Letters',
+    href: '/methodology-admin/audit-methodology/point-headings',
+    icon: FileText,
+    color: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100',
+    iconColor: 'text-indigo-600',
   },
 ];
 
