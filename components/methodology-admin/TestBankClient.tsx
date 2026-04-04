@@ -59,11 +59,11 @@ const DEFAULT_FS_LINES = [
 
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
-type TopTab = 'test-bank' | 'test-actions' | 'grid-view';
+type TopTab = 'test-allocations' | 'test-bank' | 'test-actions' | 'grid-view';
 
 export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTestBanks, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
-  const [topTab, setTopTab] = useState<TopTab>('test-bank');
+  const [topTab, setTopTab] = useState<TopTab>('test-allocations');
   const [industries, setIndustries] = useState(initialIndustries);
   const [testTypes, setTestTypes] = useState(initialTestTypes);
   const [testBanks, setTestBanks] = useState(initialTestBanks);
@@ -314,6 +314,10 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     <div className="space-y-4">
       {/* Top tabs */}
       <div className="flex border-b border-slate-200">
+        <button onClick={() => setTopTab('test-allocations')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-allocations' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          Test Allocations
+        </button>
         <button onClick={() => setTopTab('test-bank')}
           className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-bank' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Test Bank
@@ -327,6 +331,87 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           Grid View
         </button>
       </div>
+
+      {/* ─── TEST BANK TAB (all tests in a flat list) ─── */}
+      {topTab === 'test-bank' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">All Tests</h3>
+              <p className="text-xs text-slate-500">Every test across all FS lines and industries. Click a test to see its flow and actions.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select value={selectedIndustry} onChange={e => setSelectedIndustry(e.target.value)}
+                className="border rounded-md px-2 py-1.5 text-sm bg-white">
+                <option value="">All Industries</option>
+                {industries.map(ind => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-100 border-b">
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold">FS Line</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold">Test Description</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-32">Action Type</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-28">Assertion</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-24">Framework</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-16">Flow</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12">Sig.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {testBanks
+                  .filter(tb => !selectedIndustry || tb.industryId === selectedIndustry)
+                  .flatMap(tb => ((tb.tests as any[]) || []).map((test: any) => ({ ...test, fsLine: tb.fsLine, industryId: tb.industryId })))
+                  .map((test: any, i: number) => {
+                    const tt = testTypes.find(t => t.code === test.testTypeCode);
+                    const hasFlow = !!(test as any).flow?.nodes?.length;
+                    return (
+                      <tr key={`${test.fsLine}-${i}`} className={`border-b border-slate-50 hover:bg-slate-50/50 ${i % 2 ? 'bg-slate-50/20' : ''}`}>
+                        <td className="px-3 py-2 text-slate-700 font-medium text-xs">{test.fsLine}</td>
+                        <td className="px-3 py-2 text-slate-700 text-xs">{test.description}</td>
+                        <td className="px-3 py-2">
+                          {tt && (
+                            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                              tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' :
+                              tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' :
+                              'bg-blue-100 text-blue-700'
+                            }`}>{tt.name}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          {test.assertion && <span className="text-[10px] px-1 py-0.5 bg-slate-100 text-slate-500 rounded">{test.assertion}</span>}
+                          {test.assertions?.map((a: string, ai: number) => (
+                            <span key={ai} className="text-[10px] px-1 py-0.5 bg-purple-100 text-purple-700 rounded mr-0.5">{a.length > 15 ? a.split(' ').map((w: string) => w[0]).join('') : a}</span>
+                          ))}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-slate-500">{test.framework || 'All'}</td>
+                        <td className="px-3 py-2 text-center">
+                          {hasFlow ? (
+                            <span className="inline-block w-3 h-3 rounded-full bg-green-500" title="Flow configured" />
+                          ) : (
+                            <span className="inline-block w-3 h-3 rounded-full bg-slate-200" title="No flow" />
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {test.significantRisk && <span className="inline-block w-3 h-3 rounded-full bg-red-500" title="Significant risk" />}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="text-xs text-slate-500">
+            {testBanks.filter(tb => !selectedIndustry || tb.industryId === selectedIndustry).reduce((sum, tb) => sum + ((tb.tests as any[])?.length || 0), 0)} total tests
+            {selectedIndustry && ` in ${industries.find(i => i.id === selectedIndustry)?.name || 'selected industry'}`}
+          </div>
+        </div>
+      )}
 
       {/* ─── TEST ACTIONS TAB ─── */}
       {topTab === 'test-actions' && (
@@ -471,8 +556,8 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         </div>
       )}
 
-      {/* ─── TEST BANK TAB ─── */}
-      {topTab === 'test-bank' && (
+      {/* ─── TEST ALLOCATIONS TAB (formerly Test Bank) ─── */}
+      {topTab === 'test-allocations' && (
         <div className="space-y-4">
           {/* Toolbar row */}
           <div className="flex items-end gap-4 flex-wrap">

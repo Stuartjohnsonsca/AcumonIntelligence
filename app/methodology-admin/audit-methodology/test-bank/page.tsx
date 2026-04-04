@@ -51,7 +51,7 @@ export default async function TestBankPage() {
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Test Bank</h1>
-        <p className="text-slate-600 mt-1">Define audit tests by industry and FS statement line</p>
+        <p className="text-slate-600 mt-1">Manage test allocations, tests, and test actions across FS lines and industries</p>
       </div>
       <TestBankClient
         firmId={firmId}
