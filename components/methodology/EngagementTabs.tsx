@@ -19,6 +19,9 @@ import { PriorPeriodTab } from './tabs/PriorPeriodTab';
 import { AuditPlanPanel } from './panels/AuditPlanPanel';
 import { EngagementOutstandingTab } from './tabs/EngagementOutstandingTab';
 import { CommunicationTab } from './tabs/CommunicationTab';
+import { ReviewPointsPanel } from './panels/ReviewPointsPanel';
+import { ManagementPointPanel } from './panels/ManagementPointPanel';
+import { RIMattersPanel } from './panels/RIMattersPanel';
 
 interface Props {
   engagement: EngagementData;
@@ -133,6 +136,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   }, []);
   const [engStatus, setEngStatus] = useState(engagement.status);
   const [starting, setStarting] = useState(false);
+  const [openPanel, setOpenPanel] = useState<'review_point' | 'representation' | 'management' | 'ri_matter' | null>(null);
 
   const isPreStart = engStatus === 'pre_start';
 
@@ -242,19 +246,33 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     <div>
       {/* Persistent action buttons */}
       <div className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-t-lg">
-        <button className="px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition-colors">
+        <button onClick={() => setOpenPanel('review_point')} className="px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition-colors">
           Review Point
         </button>
-        <button className="px-2.5 py-1 text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors">
+        <button onClick={() => setOpenPanel('representation')} className="px-2.5 py-1 text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors">
           Representation
         </button>
-        <button className="px-2.5 py-1 text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100 transition-colors">
+        <button onClick={() => setOpenPanel('management')} className="px-2.5 py-1 text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100 transition-colors">
           Management
         </button>
-        <button className="px-2.5 py-1 text-[10px] font-medium bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition-colors">
+        <button onClick={() => setOpenPanel('ri_matter')} className="px-2.5 py-1 text-[10px] font-medium bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition-colors">
           RI Matters
         </button>
       </div>
+
+      {/* Panel modals */}
+      {openPanel === 'review_point' && (
+        <ReviewPointsPanel engagementId={engagement.id} userId={currentUserId} onClose={() => setOpenPanel(null)} />
+      )}
+      {openPanel === 'management' && (
+        <ManagementPointPanel engagementId={engagement.id} pointType="management" title="Management Letter Points" onClose={() => setOpenPanel(null)} />
+      )}
+      {openPanel === 'representation' && (
+        <ManagementPointPanel engagementId={engagement.id} pointType="representation" title="Representation Letter Points" onClose={() => setOpenPanel(null)} />
+      )}
+      {openPanel === 'ri_matter' && (
+        <RIMattersPanel engagementId={engagement.id} userId={currentUserId} onClose={() => setOpenPanel(null)} />
+      )}
 
       {/* When Audit Plan is open: split layout with vertical sidebar */}
       {showAuditPlan ? (

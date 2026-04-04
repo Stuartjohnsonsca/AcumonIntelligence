@@ -1657,6 +1657,7 @@ model AuditEngagement {
   outstandingItems     OutstandingItem[]
   testConclusions      AuditTestConclusion[]
   errorScheduleItems   AuditErrorSchedule[]
+  auditPoints          AuditPoint[]
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -2465,3 +2466,41 @@ model AuditErrorSchedule {
   @@map("audit_error_schedules")
 }
 
+// ─── Audit Points (Review Points, Management, Representation, RI Matters) ───
+
+model AuditPoint {
+  id              String    @id @default(uuid())
+  engagementId    String    @map("engagement_id")
+  pointType       String    @map("point_type")         // review_point | management | representation | ri_matter
+  chatNumber      Int       @map("chat_number")
+  status          String    @default("open")            // open | closed | committed | cancelled
+
+  // Content
+  description     String    @db.Text
+  heading         String?
+  body            String?   @db.Text                    // Rich text body (for management/representation)
+  reference       String?   @db.Text                    // URL/path to source location
+
+  // Creator
+  createdById     String    @map("created_by_id")
+  createdByName   String    @map("created_by_name")
+  createdAt       DateTime  @default(now())             @map("created_at")
+  updatedAt       DateTime  @updatedAt                  @map("updated_at")
+
+  // Closure / Commit
+  closedById      String?   @map("closed_by_id")
+  closedByName    String?   @map("closed_by_name")
+  closedAt        DateTime? @map("closed_at")
+
+  // Thread responses: [{ id, userId, userName, message, attachments, createdAt }]
+  responses       Json?
+
+  // Attachments on main point: [{name, url, type, size}]
+  attachments     Json?
+
+  engagement      AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId, pointType])
+  @@index([engagementId, pointType, status])
+  @@map("audit_points")
+}
