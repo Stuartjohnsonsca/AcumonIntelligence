@@ -28,16 +28,35 @@ interface RMMItem {
   fsNote: string | null;
 }
 
-interface TestBankEntry {
-  fsLine: string;
-  tests: { description: string; testTypeCode: string; assertion?: string; framework?: string; significantRisk?: boolean }[];
+interface AllocationEntry {
+  id: string;
+  testId: string;
+  fsLineId: string;
+  fsLine: { id: string; name: string };
+  test: {
+    id: string;
+    name: string;
+    description: string | null;
+    testTypeCode: string;
+    assertions: string[] | null;
+    framework: string;
+    significantRisk: boolean;
+    flow: any | null;
+  };
+}
+
+interface FsLineEntry {
+  id: string;
+  name: string;
+  lineType: string;
+  fsCategory: string;
 }
 
 interface TestType {
   code: string;
   name: string;
   actionType: string;
-  color?: string;
+  executionDef?: any | null;
 }
 
 const TEST_TYPE_COLORS: Record<string, string> = {
@@ -226,7 +245,8 @@ function dayBefore(d: string | null | undefined): string {
 export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
-  const [testBank, setTestBank] = useState<TestBankEntry[]>([]);
+  const [allocations, setAllocations] = useState<AllocationEntry[]>([]);
+  const [fsLinesList, setFsLinesList] = useState<FsLineEntry[]>([]);
   const [testTypes, setTestTypes] = useState<TestType[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeStatement, setActiveStatement] = useState('');
@@ -249,11 +269,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, engRes, tbankRes, ttRes] = await Promise.all([
+        const [tbRes, rmmRes, engRes, allocRes, ttRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}`),
-          fetch('/api/methodology-admin/test-bank'),
+          fetch(`/api/engagements/${engagementId}/test-allocations`),
           fetch('/api/methodology-admin/test-types'),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
@@ -264,9 +284,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             fsStatement: r.fsStatement || null, fsLevel: r.fsLevel || null, fsNote: r.fsNote || null,
           })));
         }
-        if (tbankRes.ok) {
-          const tbData = await tbankRes.json();
-          setTestBank(tbData.testBanks || tbData.entries || []);
+        if (allocRes.ok) {
+          const allocData = await allocRes.json();
+          setAllocations(allocData.allocations || []);
+          setFsLinesList(allocData.fsLines || []);
         }
         if (ttRes.ok) {
           const ttData = await ttRes.json();
@@ -284,83 +305,82 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     load();
   }, [engagementId]);
 
-  // Get tests from Test Bank for a given FS Line, filtered by assertions
-  // Get tests from Test Bank filtered by:
-  // 1. FS Line matching the row's fsLevel (e.g. "Revenue")
-  // 2. Framework matching the engagement (e.g. "FRS102")
-  // 3. Assertions matching the RMM row's assertions (e.g. "Com", "Cut")
-  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
-    // Match tests by FS level hierarchy — a test under "Revenue" applies to ALL rows
-    // within the Revenue tab, regardless of what the row's own fsLevel says
-    const searchTerms = [fsLevel, fsNote, desc, statement].filter(Boolean).map(s => s!.toLowerCase().trim());
+  // Assertion aliases for matching abbreviated RMM assertions to full test assertions
+  const ASSERTION_ALIASES: Record<string, string[]> = {
+    'completeness': ['com', 'comp', 'completeness'],
+    'occurrence': ['occ', 'occur', 'occurrence', 'o&a', 'occurrence & accuracy'],
+    'accuracy': ['acc', 'accuracy', 'o&a', 'occurrence & accuracy'],
+    'cut off': ['cut', 'cutoff', 'cut off', 'cut-off'],
+    'classification': ['cla', 'class', 'classification'],
+    'presentation': ['pre', 'pres', 'presentation'],
+    'existence': ['exi', 'exist', 'existence'],
+    'valuation': ['val', 'valuation'],
+    'rights & obligations': ['r&o', 'rig', 'rights', 'rights & obligations', 'rights and obligations', 'obligations'],
+  };
 
-    const matchingEntries = testBank.filter(tb => {
-      const tbLine = tb.fsLine.toLowerCase().trim();
-      // Empty FS Line = unassigned tests — show for all rows
-      if (!tbLine) return true;
-      return searchTerms.some(term => {
-        return tbLine === term || term.includes(tbLine) || tbLine.includes(term) ||
-          // Word-level fuzzy: individual words >3 chars
-          term.split(/[\s\-\/,]+/).some(word => word.length > 3 && tbLine.includes(word)) ||
-          tbLine.split(/[\s\-\/,]+/).some(word => word.length > 3 && term.includes(word));
+  function assertionMatches(testAssertions: string[] | null, rowAssertions: string[] | null): boolean {
+    if (!rowAssertions || rowAssertions.length === 0) return true; // No assertions on row = show all tests
+    if (!testAssertions || testAssertions.length === 0) return true; // Test has no assertion filter = applies to all
+
+    return testAssertions.some(ta => {
+      const testAss = ta.toLowerCase().trim();
+      const testAliases = Object.entries(ASSERTION_ALIASES)
+        .filter(([, aliases]) => aliases.some(a => a === testAss || testAss.includes(a) || a.includes(testAss)))
+        .flatMap(([, aliases]) => aliases);
+
+      return rowAssertions.some(ra => {
+        const rowAss = ra.toLowerCase().trim();
+        if (testAss.includes(rowAss) || rowAss.includes(testAss)) return true;
+        return testAliases.some(alias => alias === rowAss || rowAss.includes(alias) || alias.includes(rowAss));
       });
     });
+  }
 
-    const allTests: { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
-    const seen = new Set<string>(); // Deduplicate by description
+  // FK-based test lookup: find allocations whose FS line name matches the active level/note
+  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
+    // Find matching FS lines by name — exact match on fsLevel or fsNote
+    const matchingFsLineIds = new Set<string>();
+    const searchTerms = [fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
 
-    for (const entry of matchingEntries) {
-      for (const test of entry.tests || []) {
-        // Filter by framework
-        if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') {
-          continue;
-        }
-        // Filter by assertion — test must match at least one of the row's assertions
-        // Handle abbreviations: R&O = Rig = Rights = Rights & Obligations, Com = Completeness, etc.
-        const ASSERTION_ALIASES: Record<string, string[]> = {
-          'completeness': ['com', 'comp', 'completeness'],
-          'occurrence': ['occ', 'occur', 'occurrence', 'o&a', 'occurrence & accuracy'],
-          'accuracy': ['acc', 'accuracy', 'o&a', 'occurrence & accuracy'],
-          'cut off': ['cut', 'cutoff', 'cut off', 'cut-off'],
-          'classification': ['cla', 'class', 'classification'],
-          'presentation': ['pre', 'pres', 'presentation'],
-          'existence': ['exi', 'exist', 'existence'],
-          'valuation': ['val', 'valuation'],
-          'rights & obligations': ['r&o', 'rig', 'rights', 'rights & obligations', 'rights and obligations', 'obligations'],
-        };
-
-        if (assertions && assertions.length > 0 && test.assertion) {
-          const testAss = test.assertion.toLowerCase().trim();
-          // Find which canonical assertion the test belongs to
-          const testAliases = Object.entries(ASSERTION_ALIASES)
-            .filter(([, aliases]) => aliases.some(a => a === testAss || testAss.includes(a) || a.includes(testAss)))
-            .flatMap(([, aliases]) => aliases);
-
-          const matches = assertions.some(a => {
-            const rowAss = a.toLowerCase().trim();
-            // Direct match
-            if (testAss.includes(rowAss) || rowAss.includes(testAss)) return true;
-            // Alias match — both resolve to the same canonical assertion
-            return testAliases.some(alias => alias === rowAss || rowAss.includes(alias) || alias.includes(rowAss));
-          });
-          if (!matches) continue;
-        }
-        // Filter by categories if the test has them — but only if the row is NOT at the same FS level
-        // Tests under "Revenue" should show for ALL Revenue rows (including Rebilled Services)
-        if ((test as any).categories && Array.isArray((test as any).categories) && (test as any).categories.length > 0) {
-          const cats = (test as any).categories.map((c: string) => c.toLowerCase());
-          // Only filter if the FS level doesn't directly match — don't restrict tests at their own level
-          const fsLevelMatch = fsLevel && cats.some((c: string) => c === fsLevel.toLowerCase() || fsLevel.toLowerCase() === c);
-          if (!fsLevelMatch && !searchTerms.some(term => cats.some((c: string) => c.includes(term) || term.includes(c)))) continue;
-        }
-        // Deduplicate
-        if (seen.has(test.description)) continue;
-        seen.add(test.description);
-
-        const tt = testTypes.find(t => t.code === test.testTypeCode);
-        const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
-        allTests.push({ ...test, color, typeName: tt?.name || test.testTypeCode, flow: (test as any).flow, executionDef: (tt as any)?.executionDef });
+    for (const fl of fsLinesList) {
+      const flName = fl.name.toLowerCase().trim();
+      if (searchTerms.some(term => flName === term || term.includes(flName) || flName.includes(term))) {
+        matchingFsLineIds.add(fl.id);
       }
+    }
+
+    // Filter allocations by matching FS line IDs
+    const matchingAllocs = allocations.filter(a => matchingFsLineIds.has(a.fsLineId));
+
+    const allTests: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
+    const seen = new Set<string>();
+
+    for (const alloc of matchingAllocs) {
+      const test = alloc.test;
+      // Filter by framework
+      if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') {
+        continue;
+      }
+      // Filter by assertion
+      if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
+
+      // Deduplicate by test name
+      if (seen.has(test.name)) continue;
+      seen.add(test.name);
+
+      const tt = testTypes.find(t => t.code === test.testTypeCode);
+      const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
+      allTests.push({
+        description: test.name,
+        testTypeCode: test.testTypeCode,
+        assertions: (test.assertions as string[]) || [],
+        assertion: ((test.assertions as string[]) || [])[0] || '',
+        framework: test.framework,
+        color,
+        typeName: tt?.name || test.testTypeCode,
+        flow: test.flow,
+        executionDef: tt?.executionDef,
+      });
     }
     return allTests;
   }

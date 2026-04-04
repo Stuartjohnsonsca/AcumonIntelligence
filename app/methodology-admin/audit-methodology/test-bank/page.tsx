@@ -17,7 +17,7 @@ export default async function TestBankPage() {
 
   const firmId = session.user.firmId;
 
-  const [industries, testTypes, testBanks, fwTemplate] = await Promise.all([
+  const [industries, testTypes, tests, fsLines, allocations, fwTemplate] = await Promise.all([
     prisma.methodologyIndustry.findMany({
       where: { firmId, isActive: true },
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
@@ -26,8 +26,22 @@ export default async function TestBankPage() {
       where: { firmId, isActive: true },
       orderBy: { name: 'asc' },
     }),
-    prisma.methodologyTestBank.findMany({
-      where: { firmId },
+    prisma.methodologyTest.findMany({
+      where: { firmId, isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    }),
+    prisma.methodologyFsLine.findMany({
+      where: { firmId, isActive: true },
+      orderBy: [{ isMandatory: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+    }),
+    prisma.methodologyTestAllocation.findMany({
+      where: { test: { firmId } },
+      include: {
+        test: { select: { id: true, name: true } },
+        fsLine: { select: { id: true, name: true } },
+        industry: { select: { id: true, name: true } },
+      },
+      orderBy: { sortOrder: 'asc' },
     }),
     prisma.methodologyTemplate.findFirst({
       where: { firmId, templateType: 'audit_type_schedules', auditType: '__framework_options' },
@@ -57,7 +71,9 @@ export default async function TestBankPage() {
         firmId={firmId}
         initialIndustries={industries}
         initialTestTypes={testTypes}
-        initialTestBanks={testBanks as any}
+        initialTests={tests as any}
+        initialFsLines={fsLines as any}
+        initialAllocations={allocations as any}
         initialFrameworkOptions={frameworkOptions}
         initialTestActions={testActions}
         canEditFlow={canEditFlow}
