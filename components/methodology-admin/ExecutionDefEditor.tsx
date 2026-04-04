@@ -155,7 +155,7 @@ const PLACEHOLDERS = [
 ];
 
 function getDefaultDef(actionType: string) {
-  if (actionType === 'ai_action') return { promptTemplate: '', inputs: [], outputFormat: 'pass_fail', requiresReview: true, systemInstruction: '' };
+  if (actionType === 'ai_action') return { promptTemplate: '', inputs: [], outputFormat: 'pass_fail', requiresReview: false, systemInstruction: '' };
   if (actionType === 'client_action') return { requestTemplate: { subject: '', message: '' }, expectedResponse: 'file_upload', evidenceTypes: [], deadline: { days: 5, escalateOnOverdue: false } };
   return { instructions: '', inputs: [], outputFormat: 'form_data', toolsRequired: [] };
 }
@@ -644,7 +644,7 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
                   <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={def.requiresReview ?? true}
+                      checked={def.requiresReview ?? false}
                       onChange={e => update({ requiresReview: e.target.checked })}
                       className="rounded text-blue-600"
                     />

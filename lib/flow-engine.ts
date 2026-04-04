@@ -341,8 +341,8 @@ async function handleActionAI(
     return { action: 'pause', pauseReason: 'sampling', pauseRefId: item.id, output: parsedOutput };
   }
 
-  // If requires review, pause for team
-  if (execDef.requiresReview) {
+  // If requires review, pause for team (must be explicitly set to true)
+  if (execDef.requiresReview === true) {
     const item = await prisma.outstandingItem.create({
       data: {
         engagementId,
