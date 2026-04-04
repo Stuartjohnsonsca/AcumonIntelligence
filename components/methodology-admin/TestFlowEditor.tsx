@@ -19,7 +19,7 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { X, Save, Loader2, GripVertical, Diamond, Play, CircleCheck, Bot, Users, User, Globe, FileInput, Calculator, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { X, Save, Loader2, GripVertical, Diamond, Play, CircleCheck, Bot, Users, User, Globe, FileInput, Calculator, AlertTriangle, CheckCircle2, ShieldAlert, Plug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 // ─── Types ───
@@ -74,6 +74,7 @@ const INPUT_TYPES = [
   { value: 'tb_reference', label: 'Trial Balance Reference' },
   { value: 'evidence_match', label: 'Evidence Matching' },
   { value: 'ai_analysis', label: 'AI Analysis' },
+  { value: 'accounting_extract', label: 'Accounting System Extract' },
 ];
 
 // ─── Custom Node: Action ───
@@ -133,6 +134,11 @@ function ActionNode({ data, selected }: NodeProps) {
           {(inputType === 'file_upload' || inputType === 'data_entry') && (
             <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
               <FileInput className="h-2.5 w-2.5" /> Input
+            </span>
+          )}
+          {inputType === 'accounting_extract' && (
+            <span className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+              <Plug className="h-2.5 w-2.5" /> Accounting
             </span>
           )}
         </div>

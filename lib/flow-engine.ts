@@ -10,6 +10,7 @@ import { prisma } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { resolveTemplate, resolveInputs, type ExecutionContext } from './flow-template';
 import { parsePortalResponseFiles } from './flow-file-parser';
+import { getTransactions as xeroGetTransactions, type XeroTransaction } from './xero';
 import OpenAI from 'openai';
 
 // ─── Types ───
@@ -225,6 +226,107 @@ async function handleStart(flow: FlowData, node: FlowNode): Promise<NodeResult> 
 
 async function handleEnd(): Promise<NodeResult> {
   return { action: 'complete', output: { completed: true } };
+}
+
+// ─── Accounting System Extractor ───
+// Calls the connected accounting system API directly (no AI)
+async function handleAccountingExtract(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  const startTime = Date.now();
+
+  // Get client ID from engagement
+  const engagement = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: {
+      clientId: true,
+      period: { select: { startDate: true, endDate: true } },
+    },
+  });
+  if (!engagement) {
+    return { action: 'error', errorMessage: 'Engagement not found' };
+  }
+
+  // Find accounting connection
+  const connection = await prisma.accountingConnection.findFirst({
+    where: { clientId: engagement.clientId },
+  });
+  if (!connection) {
+    return { action: 'error', errorMessage: 'No accounting system connected for this client. Connect via the Opening tab → Connection section.' };
+  }
+
+  // Check if connection is expired
+  if (new Date() > connection.expiresAt) {
+    return { action: 'error', errorMessage: `${connection.system} connection expired on ${connection.expiresAt.toLocaleDateString()}. Please reconnect via the Opening tab.` };
+  }
+
+  // Get account code from TB row context or node description
+  const accountCode = ctx.test.tbRow?.accountCode || '';
+  const accountCodes = accountCode ? [accountCode] : [];
+
+  // Get date range from engagement period
+  const dateFrom = engagement.period?.startDate
+    ? new Date(engagement.period.startDate).toISOString().split('T')[0]
+    : new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
+  const dateTo = engagement.period?.endDate
+    ? new Date(engagement.period.endDate).toISOString().split('T')[0]
+    : new Date().toISOString().split('T')[0];
+
+  try {
+    let populationData: any[] = [];
+
+    switch (connection.system.toLowerCase()) {
+      case 'xero': {
+        const transactions = await xeroGetTransactions(engagement.clientId, accountCodes, dateFrom, dateTo);
+        // Flatten transactions into rows for sampling calculator
+        populationData = transactions.flatMap((txn: XeroTransaction) => {
+          return (txn.LineItems || []).map(li => ({
+            date: txn.Date ? new Date(txn.Date).toLocaleDateString('en-GB') : '',
+            reference: txn.Reference || txn.InvoiceNumber || '',
+            invoiceNumber: txn.InvoiceNumber || '',
+            contact: txn.Contact?.Name || '',
+            description: li.Description || '',
+            accountCode: li.AccountCode || '',
+            amount: li.LineAmount || 0,
+            taxAmount: li.TaxAmount || 0,
+            total: txn.Total || 0,
+            type: txn.Type || '',
+            status: txn.Status || '',
+            dueDate: txn.DueDate ? new Date(txn.DueDate).toLocaleDateString('en-GB') : '',
+          }));
+        });
+        break;
+      }
+      // Future: case 'sage': ...
+      // Future: case 'quickbooks': ...
+      default:
+        return { action: 'error', errorMessage: `Accounting system "${connection.system}" is not yet supported for data extraction. Currently supported: Xero.` };
+    }
+
+    const duration = Date.now() - startTime;
+    console.log(`[flow-engine] accounting_extract: ${connection.system} returned ${populationData.length} rows in ${duration}ms`);
+
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: {
+        populationData,
+        dataTable: populationData,
+        rowCount: populationData.length,
+        source: connection.system,
+        orgName: connection.orgName,
+        accountCodes,
+        dateRange: { from: dateFrom, to: dateTo },
+        duration,
+      },
+    };
+  } catch (err: any) {
+    return { action: 'error', errorMessage: `Failed to extract data from ${connection.system}: ${err.message || 'Unknown error'}` };
+  }
 }
 
 async function handleActionAI(
@@ -1054,7 +1156,10 @@ export async function processNextNode(executionId: string): Promise<void> {
           break;
         case 'action':
         default:
-          if (assignee === 'ai') {
+          // Check for system-level input types that bypass AI/Client/Team routing
+          if (currentNode.data?.inputType === 'accounting_extract') {
+            result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (assignee === 'ai') {
             result = await handleActionAI(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'client') {
             result = await handleActionClient(flow, currentNode, ctx, executionId, execution.engagementId);
