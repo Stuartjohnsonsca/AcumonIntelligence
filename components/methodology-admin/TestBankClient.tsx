@@ -659,7 +659,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                             ))}
                           </div>
                         )}
-                        {test.description && <div className="text-[10px] text-slate-400 truncate mt-0.5">{test.description}</div>}
+                        {test.description && <div className="text-[10px] text-slate-400 mt-0.5 line-clamp-2" title={test.description}>{test.description}</div>}
                       </div>
                       {tt && <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.name}</span>}
                       {test.significantRisk && <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0" />}
