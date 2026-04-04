@@ -383,10 +383,10 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                                         className="inline-flex items-center gap-1 group/cell w-full justify-center"
                                         title={has ? `${count} test${count > 1 ? 's' : ''} \u2014 click to edit` : 'Click to allocate'}
                                       >
-                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all flex-shrink-0 ${
+                                        <div className={`min-w-[18px] h-[18px] rounded border flex items-center justify-center transition-all flex-shrink-0 px-0.5 ${
                                           has ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 group-hover/cell:border-green-400'
                                         }`}>
-                                          {has && <Check className="h-2.5 w-2.5" />}
+                                          {has && <span className="text-[9px] font-bold leading-none">{count}</span>}
                                         </div>
                                         {has && (
                                           <div className="flex flex-wrap gap-px justify-center">
