@@ -5,6 +5,7 @@ import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRigh
 import { Button } from '@/components/ui/button';
 import { ItemErrorDetailPanel } from './ItemErrorDetailPanel';
 import { InlineSamplingPanel } from './InlineSamplingPanel';
+import { AuditVerificationPanel } from './AuditVerificationPanel';
 
 // ─── Types ───
 interface SampleItem { id: string; ref: string; description: string; amount: number; date?: string; reference?: string; }
@@ -58,6 +59,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [progressOpen, setProgressOpen] = useState(false);
   const [samplingOpen, setSamplingOpen] = useState(true);
   const [findingsOpen, setFindingsOpen] = useState(false);
+  const [verificationOpen, setVerificationOpen] = useState(true);
 
   // ─── Computed values (MUST be before any useEffect that references them) ───
   const sampleTotal = sampleItems.length;
@@ -445,7 +447,53 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             )}
           </div>
 
-          {/* SECTION 3: Findings & Conclusions (collapsible) */}
+          {/* SECTION 3: Audit Verification (collapsible — Data Extraction layout) */}
+          <div>
+            <button onClick={() => setVerificationOpen(!verificationOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
+              <div className="flex items-center gap-2">
+                {verificationOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Audit Verification</span>
+                {sampleItems.length > 0 && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{sampleItems.length} items</span>}
+              </div>
+            </button>
+            {verificationOpen && (
+              <div className="p-3">
+                <AuditVerificationPanel
+                  sampleItems={sampleItems.map((item, i) => ({
+                    index: i,
+                    reference: item.ref || String(i + 1),
+                    customer: item.description || '',
+                    description: item.description || '',
+                    date: item.date || '',
+                    net: item.amount || 0,
+                    tax: 0,
+                    gross: item.amount || 0,
+                  }))}
+                  evidenceDocs={evidence.map((ev, i) => ({
+                    sampleIndex: sampleItems.findIndex(s => s.id === ev.itemId),
+                    fileName: ev.fileName || '',
+                    docRef: ev.docRef || '',
+                    date: ev.date || '',
+                    seller: ev.seller || '',
+                    net: ev.net || 0,
+                    tax: ev.tax || 0,
+                    gross: ev.gross || 0,
+                    status: ev.status === 'uploaded' ? 'matched' as const : ev.status === 'missing' ? 'missing' as const : 'pending' as const,
+                  }))}
+                  verificationResults={results.map(r => ({
+                    sampleIndex: sampleItems.findIndex(s => s.id === r.itemId),
+                    amountMatch: r.amountMatch as any,
+                    dateMatch: r.dateMatch as any,
+                    periodCheck: r.periodCheck as any,
+                    sellerMatch: r.consistency as any,
+                    overallResult: r.overallResult as any,
+                  }))}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* SECTION 4: Findings & Conclusions (collapsible) */}
           <div>
             <button onClick={() => setFindingsOpen(!findingsOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
               <div className="flex items-center gap-2">
