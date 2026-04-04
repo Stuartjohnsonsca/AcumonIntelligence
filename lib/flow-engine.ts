@@ -228,6 +228,46 @@ async function handleEnd(): Promise<NodeResult> {
   return { action: 'complete', output: { completed: true } };
 }
 
+// ─── Date parser for accounting systems ───
+function parseAccountingDate(raw: any): string {
+  if (!raw) return '';
+  const s = String(raw);
+  // Xero .NET JSON date: /Date(1609459200000+0000)/
+  const dotNetMatch = s.match(/\/Date\((\d+)([+-]\d+)?\)\//);
+  if (dotNetMatch) {
+    const d = new Date(parseInt(dotNetMatch[1], 10));
+    if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+  }
+  // ISO 8601: 2026-03-15T00:00:00
+  if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+  }
+  // DD/MM/YYYY or DD-MM-YYYY
+  const ukMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (ukMatch) return `${ukMatch[1].padStart(2, '0')}-${ukMatch[2].padStart(2, '0')}-${ukMatch[3]}`;
+  // MM/DD/YYYY (US format) — try parsing
+  const usMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (usMatch) {
+    const month = parseInt(usMatch[1], 10);
+    if (month > 12) return `${usMatch[1].padStart(2, '0')}-${usMatch[2].padStart(2, '0')}-${usMatch[3]}`;
+  }
+  // Epoch milliseconds
+  if (/^\d{13}$/.test(s)) {
+    const d = new Date(parseInt(s, 10));
+    if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+  }
+  // Epoch seconds
+  if (/^\d{10}$/.test(s)) {
+    const d = new Date(parseInt(s, 10) * 1000);
+    if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+  }
+  // Last resort: try native Date parse
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+  return s; // Return raw if nothing works
+}
+
 // ─── Accounting System Extractor ───
 // Calls the connected accounting system API directly (no AI)
 async function handleAccountingExtract(
@@ -285,7 +325,7 @@ async function handleAccountingExtract(
         // Flatten transactions into rows for sampling calculator
         populationData = transactions.flatMap((txn: XeroTransaction) => {
           return (txn.LineItems || []).map(li => ({
-            date: txn.Date ? new Date(txn.Date).toLocaleDateString('en-GB') : '',
+            date: parseAccountingDate(txn.Date),
             reference: txn.Reference || txn.InvoiceNumber || '',
             invoiceNumber: txn.InvoiceNumber || '',
             contact: txn.Contact?.Name || '',
@@ -296,7 +336,7 @@ async function handleAccountingExtract(
             total: txn.Total || 0,
             type: txn.Type || '',
             status: txn.Status || '',
-            dueDate: txn.DueDate ? new Date(txn.DueDate).toLocaleDateString('en-GB') : '',
+            dueDate: parseAccountingDate(txn.DueDate),
           }));
         });
         break;
