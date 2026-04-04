@@ -282,6 +282,9 @@ async function handleActionAI(
     }
   }
 
+  // Log for debugging pause issues
+  console.log(`[flow-engine] AI action "${node.data.label}" outputFormat="${execDef.outputFormat}" requiresReview=${execDef.requiresReview}`);
+
   // Handle trigger outputs
   if (execDef.outputFormat === 'trigger_portal_request') {
     const message = execDef.aiCompose ? aiResult.text : resolveTemplate(execDef.requestTemplate?.message || userPrompt, ctx, inputBindings);
