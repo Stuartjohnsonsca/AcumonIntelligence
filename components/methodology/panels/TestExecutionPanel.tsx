@@ -17,6 +17,7 @@ interface Props {
   clientId?: string; periodId?: string;
   tbRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote: string | null };
   sessionId?: string; flowData?: any; executionDef?: any;
+  assertions?: string[];  // Test assertions — drives verification columns
   onClose: () => void;
   onConclusionChange?: (conclusion: 'green' | 'orange' | 'red' | 'pending') => void;
 }
@@ -34,7 +35,7 @@ function ResultIcon({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, clientId, periodId, tbRow, flowData, executionDef, onClose, onConclusionChange }: Props) {
+export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, clientId, periodId, tbRow, flowData, executionDef, assertions, onClose, onConclusionChange }: Props) {
   // Data state
   const [sampleItems, setSampleItems] = useState<SampleItem[]>([]);
   const [evidence, setEvidence] = useState<ClientEvidence[]>([]);
@@ -536,6 +537,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   engagementId={engagementId}
                   executionId={executionId || undefined}
                   fsLine={fsLine}
+                  assertions={assertions}
                   sampleItems={sampleItems.map((item, i) => ({
                     index: i,
                     reference: item.ref || String(i + 1),

@@ -369,6 +369,126 @@ async function handleAccountingExtract(
   }
 }
 
+// ─── Verify Evidence Handler ───
+// AI verifies uploaded evidence against sample items using assertion-driven checks.
+// Assertions are read from the MethodologyTest at runtime (not hardcoded).
+async function handleVerifyEvidence(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  const startTime = Date.now();
+
+  // Get the test's assertions from the MethodologyTest
+  let assertions: string[] = [];
+  const testDescription = ctx.test?.description || '';
+
+  // Try to find the test by name to get its assertions
+  const test = await prisma.methodologyTest.findFirst({
+    where: { name: testDescription, isActive: true },
+    select: { assertions: true },
+  });
+  if (test?.assertions && Array.isArray(test.assertions)) {
+    assertions = test.assertions as string[];
+  }
+
+  // Collect sample items and evidence from previous flow steps
+  let sampleItems: any[] = [];
+  let evidenceData: any[] = [];
+
+  for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+    const out = nodeOut as any;
+    if (!out) continue;
+    // Sample items from sampling step
+    if (out.selectedIndices?.length > 0 && sampleItems.length === 0) {
+      const popData = Object.values(ctx.nodes).find((n: any) => n?.populationData?.length > 0) as any;
+      if (popData?.populationData) {
+        sampleItems = out.selectedIndices.map((idx: number) => popData.populationData[idx]).filter(Boolean);
+      }
+    }
+    if (out.sampleItems?.length > 0 && sampleItems.length === 0) sampleItems = out.sampleItems;
+    if (out.populationData?.length > 0 && sampleItems.length === 0) sampleItems = out.populationData;
+    // Evidence from portal responses or uploads
+    if (out.parsedFiles?.length > 0) evidenceData.push(...out.parsedFiles);
+    if (out.evidenceData?.length > 0) evidenceData.push(...out.evidenceData);
+  }
+
+  // Build verification prompt based on assertions
+  const assertionChecks = assertions.length > 0
+    ? assertions.map(a => {
+        const checks: Record<string, string> = {
+          'Completeness': 'Check all items have supporting evidence. Flag any missing documents.',
+          'Occurrence & Accuracy': 'Verify amounts match exactly between the ledger and evidence. Report any differences.',
+          'Cut Off': 'Verify transaction dates fall within the audit period. Flag any items outside the period.',
+          'Classification': 'Verify the transaction is recorded in the correct account classification.',
+          'Presentation': 'Verify proper presentation and disclosure.',
+          'Existence': 'Verify the transaction/asset exists — check for genuine evidence of goods/services.',
+          'Valuation': 'Verify the valuation amount is correctly calculated.',
+          'Rights & Obligations': 'Verify the entity on the evidence is the audit client.',
+        };
+        return checks[a] || `Check: ${a}`;
+      }).join('\n')
+    : 'Check amount match, date match, period correctness, and consistency of description.';
+
+  const systemPrompt = `You are a UK statutory auditor performing substantive testing. For each sample item, verify it against the evidence provided. Be precise and reference specific figures. Return results as a JSON array.`;
+
+  const userPrompt = `Verify the following ${sampleItems.length} sample items against available evidence.
+
+ASSERTIONS TO CHECK:
+${assertionChecks}
+
+ALWAYS CHECK: Is the description on the evidence consistent with the account code description? (Consistency check)
+
+SAMPLE ITEMS:
+${JSON.stringify(sampleItems.slice(0, 30), null, 2)}
+
+EVIDENCE:
+${JSON.stringify(evidenceData.slice(0, 30), null, 2)}
+
+For each sample item, return a JSON array with objects containing:
+- itemIndex (number)
+- checks: object with keys for each check performed, values "pass"|"fail"|"pending"
+- overallResult: "pass"|"fail"
+- notes: brief explanation of findings
+- difference: numeric difference if amount mismatch (0 if matched)
+
+Return ONLY the JSON array, no other text.`;
+
+  try {
+    const aiResult = await callAI(systemPrompt, userPrompt);
+    const duration = Date.now() - startTime;
+
+    let verificationResults: any[] = [];
+    try {
+      const jsonMatch = aiResult.text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) verificationResults = JSON.parse(jsonMatch[0]);
+    } catch {
+      // AI didn't return valid JSON
+    }
+
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: {
+        verificationResults,
+        assertions,
+        sampleCount: sampleItems.length,
+        evidenceCount: evidenceData.length,
+        passCount: verificationResults.filter((r: any) => r.overallResult === 'pass').length,
+        failCount: verificationResults.filter((r: any) => r.overallResult === 'fail').length,
+        raw: aiResult.text,
+        model: aiResult.model,
+        tokensUsed: aiResult.tokensUsed,
+        duration,
+      },
+    };
+  } catch (err: any) {
+    return { action: 'error', errorMessage: `Evidence verification failed: ${err.message || 'Unknown error'}` };
+  }
+}
+
 async function handleActionAI(
   flow: FlowData,
   node: FlowNode,
@@ -1206,6 +1326,8 @@ export async function processNextNode(executionId: string): Promise<void> {
           // Check for system-level input types that bypass AI/Client/Team routing
           if (currentNode.data?.inputType === 'accounting_extract') {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'verify_evidence') {
+            result = await handleVerifyEvidence(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'ai') {
             result = await handleActionAI(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'client') {

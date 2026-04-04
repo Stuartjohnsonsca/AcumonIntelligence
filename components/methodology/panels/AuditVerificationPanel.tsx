@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronDown, ChevronRight, FileText, Eye, CheckCircle2, XCircle, Clock, AlertTriangle, X, Loader2, ExternalLink, Upload } from 'lucide-react';
+import { getVerificationChecks, type VerificationCheck as VCheck } from '@/types/methodology';
 
 interface SampleRow {
   index: number;
@@ -42,6 +43,7 @@ interface Props {
   engagementId?: string;
   executionId?: string;
   fsLine?: string;
+  assertions?: string[];  // Test assertions — drives which verification columns show
   sampleItems: SampleRow[];
   evidenceDocs: EvidenceDoc[];
   verificationResults: VerificationCheck[];
@@ -61,7 +63,9 @@ function CheckIcon({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function AuditVerificationPanel({ engagementId, executionId, fsLine, sampleItems, evidenceDocs, verificationResults, onRowClick }: Props) {
+export function AuditVerificationPanel({ engagementId, executionId, fsLine, assertions, sampleItems, evidenceDocs, verificationResults, onRowClick }: Props) {
+  // Determine verification columns from test assertions
+  const verificationColumns = useMemo(() => getVerificationChecks(assertions || []), [assertions]);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [previewDoc, setPreviewDoc] = useState<EvidenceDoc | null>(null);
   const [extractionJobId, setExtractionJobId] = useState<string | null>(null);
@@ -160,7 +164,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, samp
               <th colSpan={4} className="bg-green-600 text-white text-[10px] font-semibold px-2 py-1 text-left border-r-2 border-white">
                 Client Evidence (uploaded)
               </th>
-              <th colSpan={5} className="bg-amber-600 text-white text-[10px] font-semibold px-2 py-1 text-left">
+              <th colSpan={verificationColumns.length + 1} className="bg-amber-600 text-white text-[10px] font-semibold px-2 py-1 text-left">
                 Audit Verification
               </th>
             </tr>
@@ -177,11 +181,12 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, samp
               <th className="px-2 py-1 text-left border-r border-slate-200">Seller</th>
               <th className="px-2 py-1 text-right border-r border-slate-200 w-20">Gross</th>
               <th className="px-2 py-1 text-center border-r-2 border-green-200 w-14">Status</th>
-              {/* Amber */}
-              <th className="px-2 py-1 text-center border-r border-slate-200 w-10">Amt</th>
-              <th className="px-2 py-1 text-center border-r border-slate-200 w-10">Date</th>
-              <th className="px-2 py-1 text-center border-r border-slate-200 w-10">Period</th>
-              <th className="px-2 py-1 text-center border-r border-slate-200 w-10">Seller</th>
+              {/* Amber — dynamic from assertions */}
+              {verificationColumns.map((col, ci) => (
+                <th key={col.key} className={`px-2 py-1 text-center ${ci < verificationColumns.length - 1 ? 'border-r border-slate-200' : ''} w-12`} title={col.description}>
+                  {col.shortLabel}
+                </th>
+              ))}
               <th className="px-2 py-1 text-center w-14">Result</th>
             </tr>
           </thead>
@@ -221,11 +226,11 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, samp
                       }`}>{doc.status}</span>
                     ) : <span className="text-[8px] text-slate-300">—</span>}
                   </td>
-                  {/* Amber: Verification */}
-                  <td className="px-2 py-1.5 text-center border-r border-slate-100"><CheckIcon status={check?.amountMatch || 'pending'} /></td>
-                  <td className="px-2 py-1.5 text-center border-r border-slate-100"><CheckIcon status={check?.dateMatch || 'pending'} /></td>
-                  <td className="px-2 py-1.5 text-center border-r border-slate-100"><CheckIcon status={check?.periodCheck || 'pending'} /></td>
-                  <td className="px-2 py-1.5 text-center border-r border-slate-100"><CheckIcon status={check?.sellerMatch || 'pending'} /></td>
+                  {/* Amber: Dynamic verification checks from assertions */}
+                  {verificationColumns.map(col => {
+                    const checkResult = (check as any)?.[col.key] || 'pending';
+                    return <td key={col.key} className="px-2 py-1.5 text-center border-r border-slate-100"><CheckIcon status={checkResult} /></td>;
+                  })}
                   <td className="px-2 py-1.5 text-center">
                     {check?.overallResult === 'pass' && <span className="text-[8px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">PASS</span>}
                     {check?.overallResult === 'fail' && <span className="text-[8px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">FAIL</span>}
@@ -235,7 +240,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, samp
               );
             })}
             {sampleItems.length === 0 && (
-              <tr><td colSpan={14} className="px-4 py-8 text-center text-sm text-slate-400">No sample items to verify yet</td></tr>
+              <tr><td colSpan={10 + verificationColumns.length} className="px-4 py-8 text-center text-sm text-slate-400">No sample items to verify yet</td></tr>
             )}
           </tbody>
         </table>

@@ -700,6 +700,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 tbRow={{ accountCode: row.accountCode, description: row.description, currentYear: row.currentYear, priorYear: row.priorYear, fsNote: row.fsNoteLevel }}
                                 flowData={(test as any).flow || null}
                                 executionDef={(test as any).executionDef || null}
+                                assertions={(test as any).assertions || []}
                                 onClose={() => setActiveExecution(null)}
                                 onConclusionChange={(c) => setTestConclusions(prev => ({ ...prev, [testKey]: c }))}
                               />
