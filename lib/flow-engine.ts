@@ -334,22 +334,32 @@ async function handleActionAI(
 
   if (execDef.outputFormat === 'trigger_sampling') {
     parsedOutput.triggerType = 'sampling';
-    // Carry population data from previous steps into the sampling output
-    const prevNodeId = getPreviousNodeId(flow, node.id);
-    const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
-    if (prevOutput?.populationData) {
-      parsedOutput.populationData = prevOutput.populationData;
-    } else if (prevOutput?.dataTable) {
-      parsedOutput.populationData = prevOutput.dataTable;
-    } else {
-      // Search all previous node outputs for population data
-      for (const [, nodeOutput] of Object.entries(ctx.nodes)) {
-        const out = nodeOutput as any;
-        if (out?.populationData?.length > 0) { parsedOutput.populationData = out.populationData; break; }
-        if (out?.dataTable?.length > 0) { parsedOutput.populationData = out.dataTable; break; }
+
+    // Search all previous node outputs for population/table data
+    for (const [nodeKey, nodeOutput] of Object.entries(ctx.nodes)) {
+      const out = nodeOutput as any;
+      if (parsedOutput.populationData) break;
+      // Check all common data keys
+      if (out?.populationData?.length > 0) { parsedOutput.populationData = out.populationData; break; }
+      if (out?.dataTable?.length > 0) { parsedOutput.populationData = out.dataTable; break; }
+      if (out?.data?.length > 0 && Array.isArray(out.data)) { parsedOutput.populationData = out.data; break; }
+      if (out?.rows?.length > 0) { parsedOutput.populationData = out.rows; break; }
+      if (out?.items?.length > 0) { parsedOutput.populationData = out.items; break; }
+      if (out?.invoices?.length > 0) { parsedOutput.populationData = out.invoices; break; }
+      if (out?.transactions?.length > 0) { parsedOutput.populationData = out.transactions; break; }
+      // Try parsing raw AI text from any node that might contain JSON array
+      if (out?.raw && !parsedOutput.populationData) {
+        try {
+          const jsonMatch = (out.raw as string).match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed) && parsed.length > 0) { parsedOutput.populationData = parsed; break; }
+          }
+        } catch {}
       }
     }
-    // Also try to parse AI result as data table if it returned JSON
+
+    // Also try to parse this step's own AI result as data
     if (!parsedOutput.populationData) {
       try {
         const jsonMatch = aiResult.text.match(/\[[\s\S]*\]/);
@@ -359,6 +369,8 @@ async function handleActionAI(
         }
       } catch {}
     }
+
+    console.log(`[flow-engine] trigger_sampling: populationData found = ${!!parsedOutput.populationData}, items = ${parsedOutput.populationData?.length || 0}, ctx.nodes keys = ${Object.keys(ctx.nodes).join(', ')}`);
     // Create outstanding item for team to run the calculator
     const item = await prisma.outstandingItem.create({
       data: {
