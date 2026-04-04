@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, Fragment } from 'react';
 import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch } from 'lucide-react';
 import { TestExecutionPanel } from './TestExecutionPanel';
 import { ExecutionFlowViewer } from './ExecutionFlowViewer';
+import { ErrorSchedulePanel } from './ErrorSchedulePanel';
 import { assertionShortLabel } from '@/types/methodology';
 
 interface TBRow {
@@ -280,6 +281,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [auditLog, setAuditLog] = useState<any[]>([]);
   const [auditLogLoading, setAuditLogLoading] = useState(false);
   const [flowViewerExec, setFlowViewerExec] = useState<{ id: string; testDescription: string } | null>(null);
+  const [showErrorSchedule, setShowErrorSchedule] = useState(false);
 
   function toggleMergeSelect(rowId: string) {
     setSelectedForMerge(prev => {
@@ -602,6 +604,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           <ClipboardList className="h-3 w-3" />
           Test Audit Log
         </button>
+        <button onClick={() => setShowErrorSchedule(!showErrorSchedule)}
+          className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
+            showErrorSchedule ? 'bg-red-100 border-red-300 text-red-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}>
+          <AlertTriangle className="h-3 w-3" />
+          Error Schedule
+        </button>
       </div>
 
       {/* Level 1: FS Statement tabs */}
@@ -849,22 +858,44 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                   conc === 'failed' ? 'Test failed to run' : 'Errors exceed PM'
                                 } />
                               )}
-                              {/* Review / RI checkboxes */}
+                              {/* Review / RI checkboxes — clickable */}
                               {dbConc && (
-                                <div className="flex items-center gap-1 flex-shrink-0 ml-1">
-                                  <span
-                                    className={`inline-flex items-center text-[7px] px-1 py-0.5 rounded cursor-default ${
-                                      dbConc.reviewedBy ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'
+                                <div className="flex items-center gap-1 flex-shrink-0 ml-1" onClick={e => e.stopPropagation()}>
+                                  <button
+                                    onClick={async () => {
+                                      const action = dbConc.reviewedBy ? 'unreview' : 'review';
+                                      const res = await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
+                                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ id: dbConc.id, action }),
+                                      });
+                                      if (res.ok) {
+                                        const { conclusion: updated } = await res.json();
+                                        setDbConclusions(prev => prev.map(c => c.id === updated.id ? updated : c));
+                                      }
+                                    }}
+                                    className={`inline-flex items-center text-[7px] px-1 py-0.5 rounded cursor-pointer transition-colors ${
+                                      dbConc.reviewedBy ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
                                     }`}
-                                    title={dbConc.reviewedBy ? `Reviewed by ${dbConc.reviewedByName} on ${new Date(dbConc.reviewedAt).toLocaleDateString('en-GB')}` : 'Not yet reviewed'}
+                                    title={dbConc.reviewedBy ? `Reviewed by ${dbConc.reviewedByName} on ${new Date(dbConc.reviewedAt).toLocaleDateString('en-GB')} — click to unreview` : 'Click to review'}
                                   >
                                     R {dbConc.reviewedBy ? '✓' : ''}
-                                  </span>
-                                  <span
-                                    className={`inline-flex items-center text-[7px] px-1 py-0.5 rounded cursor-default ${
-                                      dbConc.riSignedBy ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      const action = dbConc.riSignedBy ? 'ri_unsignoff' : 'ri_signoff';
+                                      const res = await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
+                                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ id: dbConc.id, action }),
+                                      });
+                                      if (res.ok) {
+                                        const { conclusion: updated } = await res.json();
+                                        setDbConclusions(prev => prev.map(c => c.id === updated.id ? updated : c));
+                                      }
+                                    }}
+                                    className={`inline-flex items-center text-[7px] px-1 py-0.5 rounded cursor-pointer transition-colors ${
+                                      dbConc.riSignedBy ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
                                     }`}
-                                    title={dbConc.riSignedBy ? `RI signed by ${dbConc.riSignedByName} on ${new Date(dbConc.riSignedAt).toLocaleDateString('en-GB')}` : 'Not yet signed by RI'}
+                                    title={dbConc.riSignedBy ? `RI signed by ${dbConc.riSignedByName} on ${new Date(dbConc.riSignedAt).toLocaleDateString('en-GB')} — click to unsign` : 'Click to sign as RI'}
                                   >
                                     RI {dbConc.riSignedBy ? '✓' : ''}
                                   </span>
@@ -908,6 +939,21 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           </table>
         )}
       </div>
+
+      {/* ─── ERROR SCHEDULE ─── */}
+      {showErrorSchedule && (
+        <div className="bg-white rounded border border-slate-200 overflow-hidden">
+          <div className="px-3 py-2 bg-red-50 border-b border-red-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+              <span className="text-xs font-semibold text-red-700">Error Schedule</span>
+            </div>
+          </div>
+          <div className="p-3">
+            <ErrorSchedulePanel engagementId={engagementId} />
+          </div>
+        </div>
+      )}
 
       {/* ─── AUDIT LOG ─── */}
       {showAuditLog && (

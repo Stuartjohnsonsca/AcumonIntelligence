@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { AlertTriangle, CheckCircle2, XCircle, Loader2, Send, FileSpreadsheet, RefreshCw, Edit3, AlertOctagon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { InlineSamplingPanel } from './InlineSamplingPanel';
+import { BespokeSpreadsheet } from './BespokeSpreadsheet';
 
 interface ErrorItem {
   itemIndex: number;
@@ -28,6 +30,10 @@ interface Props {
   verificationResults: { itemIndex: number; overallResult: string; difference?: number; notes?: string }[];
   populationSize: number;
   sampleSize: number;
+  populationData?: any[];           // For expand sample
+  priorSelectedIndices?: number[];  // Original sample indices
+  clientId?: string;
+  periodId?: string;
   clearlyTrivial: number;
   performanceMateriality: number;
   tolerableMisstatement: number;
@@ -165,16 +171,19 @@ export function ErrorInvestigationPanel({
           });
         }
 
-        // If "request_management" selected, create portal request
+        // If "request_management" selected, create outstanding item for approval (Reviewer/RI must approve before sending)
         if (followUpActions.has('request_management') && managementMessage) {
-          const eng = await fetch(`/api/engagements/${engagementId}`).then(r => r.json());
-          await fetch('/api/portal/requests', {
+          await fetch(`/api/engagements/${engagementId}/outstanding`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              clientId: eng.engagement?.clientId,
-              engagementId,
-              section: 'explanations',
-              question: managementMessage,
+              type: 'portal_request',
+              title: `Management Investigation: ${testDescription}`,
+              description: managementMessage,
+              source: 'conclusion',
+              status: 'awaiting_team',
+              priority: 'high',
+              fsLine,
+              testName: testDescription,
             }),
           });
         }
@@ -320,18 +329,48 @@ export function ErrorInvestigationPanel({
                 className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 mt-0.5" />
               <div>
                 <span className="font-medium text-slate-800">Expand sample size</span>
-                <p className="text-[10px] text-slate-500 mt-0.5">Re-open sampling calculator with increased risk factors. Previous selections remain highlighted.</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Re-open sampling calculator with increased risk factors. Previous selections remain highlighted in green, new in blue.</p>
               </div>
             </label>
+            {followUpActions.has('expand_sample') && populationData && populationData.length > 0 && (
+              <div className="ml-6 border border-blue-200 rounded-lg p-2 bg-blue-50/30">
+                <InlineSamplingPanel
+                  engagementId={engagementId}
+                  clientId={clientId || ''}
+                  periodId={periodId || ''}
+                  fsLine={fsLine}
+                  testDescription={testDescription}
+                  populationData={populationData}
+                  materialityData={{ performanceMateriality, clearlyTrivial, tolerableMisstatement }}
+                  initialSelectedIndices={priorSelectedIndices}
+                  priorSelectedIndices={priorSelectedIndices}
+                  expandedMode={true}
+                  onComplete={(results) => {
+                    // Expanded sample complete — results include both original + new
+                  }}
+                />
+              </div>
+            )}
 
             <label className="flex items-start gap-2 text-xs cursor-pointer p-2 rounded border border-transparent hover:border-amber-200 hover:bg-amber-50">
               <input type="checkbox" checked={followUpActions.has('alternative_procedures')} onChange={() => toggleFollowUp('alternative_procedures')}
                 className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 mt-0.5" />
               <div>
                 <span className="font-medium text-slate-800">Perform alternative or additional substantive procedures</span>
-                <p className="text-[10px] text-slate-500 mt-0.5">Open test picker or bespoke spreadsheet for additional testing.</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Open bespoke spreadsheet with rows, columns, formulas, and upload.</p>
               </div>
             </label>
+            {followUpActions.has('alternative_procedures') && (
+              <div className="ml-6">
+                <BespokeSpreadsheet
+                  title={`Additional Procedures — ${testDescription}`}
+                  onSave={(data) => {
+                    // Save spreadsheet data to follow-up data
+                    setReviseApproachText(prev => prev + `\n\nAlternative procedures spreadsheet: ${data.rows.length} rows`);
+                  }}
+                />
+              </div>
+            )}
 
             <label className="flex items-start gap-2 text-xs cursor-pointer p-2 rounded border border-transparent hover:border-amber-200 hover:bg-amber-50">
               <input type="checkbox" checked={followUpActions.has('request_management')} onChange={() => toggleFollowUp('request_management')}

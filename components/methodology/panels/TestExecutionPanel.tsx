@@ -631,6 +631,13 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     }))}
                     populationSize={populationSize}
                     sampleSize={sampleTotal}
+                    populationData={
+                      flowSteps.find(s => s.output?.populationData?.length > 0)?.output?.populationData ||
+                      flowSteps.find(s => s.output?.dataTable?.length > 0)?.output?.dataTable || []
+                    }
+                    priorSelectedIndices={samplingResults?.selectedIndices || flowSteps.find(s => s.output?.selectedIndices)?.output?.selectedIndices}
+                    clientId={clientId}
+                    periodId={periodId}
                     clearlyTrivial={clearlyTrivial}
                     performanceMateriality={tolerableMisstatement}
                     tolerableMisstatement={tolerableMisstatement}

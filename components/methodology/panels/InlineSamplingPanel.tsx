@@ -14,6 +14,8 @@ interface Props {
   populationData: any[];   // From flow context (client upload parsed)
   materialityData: { performanceMateriality: number; clearlyTrivial: number; tolerableMisstatement: number };
   initialSelectedIndices?: number[];  // Persisted selection from prior run
+  priorSelectedIndices?: number[];   // Original sample (green) — used when expanding sample
+  expandedMode?: boolean;            // If true, prior selections locked green, new selections blue
   onComplete: (results: { runId: string; selectedIndices: number[]; sampleSize: number; coverage: number }) => void;
 }
 
@@ -37,7 +39,8 @@ function fmt(n: number | null | undefined): string {
   return `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, testDescription, populationData: initialPopulationData, materialityData, initialSelectedIndices, onComplete }: Props) {
+export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, testDescription, populationData: initialPopulationData, materialityData, initialSelectedIndices, priorSelectedIndices, expandedMode, onComplete }: Props) {
+  const priorSet = new Set(priorSelectedIndices || []);
   // Local population data — can be loaded from props OR from local file upload
   const [localPopulationData, setLocalPopulationData] = useState<any[]>(initialPopulationData || []);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -441,11 +444,17 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
                 <tbody className="divide-y divide-slate-50">
                   {populationData.map((row, i) => {
                     const isSelected = selectedIndices.has(i);
+                    const isPrior = expandedMode && priorSet.has(i);
+                    const isNewExpanded = expandedMode && isSelected && !isPrior;
                     return (
-                      <tr key={i} className={isSelected ? 'bg-green-50' : i % 2 ? 'bg-slate-50/30' : ''}>
+                      <tr key={i} className={isPrior ? 'bg-green-50' : isNewExpanded ? 'bg-blue-50' : isSelected ? 'bg-green-50' : i % 2 ? 'bg-slate-50/30' : ''}>
                         <td className="px-2 py-1 text-slate-400 font-mono">{i + 1}</td>
-                        {selectedIndices.size > 0 && (
-                          <td className="px-2 py-1 text-center">{isSelected && <span className="inline-block w-3 h-3 rounded-full bg-green-500" />}</td>
+                        {(selectedIndices.size > 0 || priorSet.size > 0) && (
+                          <td className="px-2 py-1 text-center">
+                            {isPrior && <span className="inline-block w-3 h-3 rounded-full bg-green-500" title="Original sample" />}
+                            {isNewExpanded && <span className="inline-block w-3 h-3 rounded-full bg-blue-500" title="Expanded sample" />}
+                            {isSelected && !expandedMode && <span className="inline-block w-3 h-3 rounded-full bg-green-500" />}
+                          </td>
                         )}
                         {columns.slice(0, 8).map(col => (
                           <td key={col} className={`px-2 py-1 truncate max-w-[120px] ${isSelected ? 'text-green-800 font-medium' : 'text-slate-500'}`}>
