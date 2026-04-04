@@ -52,16 +52,13 @@ export function PointHeadingsClient({ managementHeadings: initMgt, representatio
     } finally { setSaving(false); }
   }
 
-  function HeadingList({ headings, setHeadings, newValue, setNewValue, color }: {
-    headings: string[]; setHeadings: (h: string[]) => void;
-    newValue: string; setNewValue: (v: string) => void; color: string;
-  }) {
+  function renderHeadingList(headings: string[], setHeadings: (h: string[]) => void, newValue: string, setNewValue: (v: string) => void) {
     return (
       <div className="space-y-1">
         {headings.map((h, i) => (
-          <div key={i} className="flex items-center gap-2 group">
+          <div key={`h-${i}`} className="flex items-center gap-2 group">
             <GripVertical className="h-3 w-3 text-slate-300 flex-shrink-0" />
-            <input value={h} onChange={e => setHeadings(headings.map((x, j) => j === i ? e.target.value : x))}
+            <input value={h} onChange={e => { const next = [...headings]; next[i] = e.target.value; setHeadings(next); }}
               className="flex-1 border border-slate-200 rounded px-2 py-1.5 text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none" />
             <button onClick={() => setHeadings(headings.filter((_, j) => j !== i))}
               className="p-1 text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -95,14 +92,14 @@ export function PointHeadingsClient({ managementHeadings: initMgt, representatio
         <div className="border rounded-lg p-4">
           <h3 className="text-sm font-semibold text-orange-700 mb-1">Management Letter Headings</h3>
           <p className="text-xs text-slate-500 mb-3">Categories for management letter points. Users can also add custom headings per engagement.</p>
-          <HeadingList headings={mgtHeadings} setHeadings={setMgtHeadings} newValue={mgtNew} setNewValue={setMgtNew} color="orange" />
+          {renderHeadingList(mgtHeadings, setMgtHeadings, mgtNew, setMgtNew)}
         </div>
 
         {/* Representation Letter Headings */}
         <div className="border rounded-lg p-4">
           <h3 className="text-sm font-semibold text-purple-700 mb-1">Representation Letter Headings</h3>
           <p className="text-xs text-slate-500 mb-3">Categories for representation letter points. Users can also add custom headings per engagement.</p>
-          <HeadingList headings={repHeadings} setHeadings={setRepHeadings} newValue={repNew} setNewValue={setRepNew} color="purple" />
+          {renderHeadingList(repHeadings, setRepHeadings, repNew, setRepNew)}
         </div>
       </div>
 
