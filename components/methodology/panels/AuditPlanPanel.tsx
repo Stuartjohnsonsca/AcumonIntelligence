@@ -271,7 +271,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
   const [activeExecution, setActiveExecution] = useState<string | null>(null);
-  const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'pending'>>({});
+  const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'>>({});
+  const [dbConclusions, setDbConclusions] = useState<any[]>([]);
+  const [errorFooterOpen, setErrorFooterOpen] = useState(true);
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
@@ -331,12 +333,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, allocRes, ttRes, pfRes] = await Promise.all([
+        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}/test-allocations`),
           fetch('/api/methodology-admin/test-types'),
           fetch(`/api/engagements/${engagementId}/permanent-file`),
+          fetch(`/api/engagements/${engagementId}/test-conclusions`),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
@@ -376,6 +379,19 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               }
             }
           }
+        }
+        // Load persisted conclusions
+        if (concRes.ok) {
+          const concData = await concRes.json();
+          const conclusions = concData.conclusions || [];
+          setDbConclusions(conclusions);
+          // Populate testConclusions state from DB
+          const conc: Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'> = {};
+          for (const c of conclusions) {
+            const key = c.testDescription;
+            if (c.conclusion) conc[key] = c.conclusion;
+          }
+          setTestConclusions(conc);
         }
       } catch (err) { console.error('Failed to load:', err); }
       setLoading(false);
@@ -903,6 +919,70 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
 
       {/* ─── FLOW VIEWER MODAL ─── */}
+      {/* ─── PERSISTENT ERROR SUMMARY FOOTER ─── */}
+      {dbConclusions.length > 0 && (
+        <div className="fixed bottom-4 left-4 z-50 w-72 bg-white rounded-lg shadow-xl border border-slate-200 overflow-hidden">
+          <button onClick={() => setErrorFooterOpen(!errorFooterOpen)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-slate-800 text-white text-xs font-bold">
+            <span>Errors: {activeLevel || activeStatement}</span>
+            <span className="text-[9px] text-slate-300">{errorFooterOpen ? '▼' : '▲'}</span>
+          </button>
+          {errorFooterOpen && (() => {
+            // Filter conclusions by active statement/level
+            const filtered = dbConclusions.filter(c => {
+              if (activeLevel) return c.fsLine === activeLevel;
+              return true; // Show all for statement level
+            });
+            if (filtered.length === 0) return <div className="p-3 text-xs text-slate-400 text-center">No test conclusions yet</div>;
+
+            // Group by fsLine
+            const byFsLine: Record<string, { total: number; conclusion: string }> = {};
+            for (const c of filtered) {
+              if (!byFsLine[c.fsLine]) byFsLine[c.fsLine] = { total: 0, conclusion: 'green' };
+              byFsLine[c.fsLine].total += (c.extrapolatedError || 0);
+              if (c.conclusion === 'red') byFsLine[c.fsLine].conclusion = 'red';
+              else if (c.conclusion === 'orange' && byFsLine[c.fsLine].conclusion !== 'red') byFsLine[c.fsLine].conclusion = 'orange';
+            }
+
+            const totalDr = Object.values(byFsLine).reduce((s, v) => s + (v.total > 0 ? v.total : 0), 0);
+            const totalCr = Object.values(byFsLine).reduce((s, v) => s + (v.total < 0 ? Math.abs(v.total) : 0), 0);
+            const netError = totalDr - totalCr;
+            const footerCT = filtered[0]?.clearlyTrivial || 0;
+            const footerTM = filtered[0]?.tolerableMisstatement || 0;
+            const netConclusion = footerCT === 0 && footerTM === 0
+              ? (Object.values(byFsLine).some(v => v.conclusion === 'red') ? 'red' : Object.values(byFsLine).some(v => v.conclusion === 'orange') ? 'orange' : 'green')
+              : Math.abs(netError) <= footerCT ? 'green' : Math.abs(netError) <= footerTM ? 'orange' : 'red';
+
+            return (
+              <div className="p-2 space-y-1 max-h-[200px] overflow-y-auto">
+                {Object.entries(byFsLine).map(([fsLine, data]) => (
+                  <div key={fsLine} className="flex items-center justify-between text-[10px] px-1">
+                    <span className="text-slate-600 truncate flex-1">{fsLine}</span>
+                    <span className={`font-mono font-medium ${data.total >= 0 ? '' : 'pl-2'}`}>
+                      £{Math.abs(data.total).toLocaleString('en-GB', { minimumFractionDigits: 2 })} {data.total >= 0 ? 'Dr' : 'Cr'}
+                    </span>
+                    <div className={`w-2 h-2 rounded-full ml-2 ${
+                      data.conclusion === 'green' ? 'bg-green-500' : data.conclusion === 'orange' ? 'bg-orange-500' : 'bg-red-500'
+                    }`} />
+                  </div>
+                ))}
+                <div className="border-t border-slate-200 pt-1 mt-1">
+                  <div className="flex items-center justify-between text-[10px] font-bold px-1">
+                    <span className="text-slate-700">Net Error</span>
+                    <div className="flex items-center gap-1">
+                      <span className="font-mono">£{Math.abs(netError).toLocaleString('en-GB', { minimumFractionDigits: 2 })} {netError >= 0 ? 'Dr' : 'Cr'}</span>
+                      <div className={`w-2.5 h-2.5 rounded-full ${
+                        netConclusion === 'green' ? 'bg-green-500' : netConclusion === 'orange' ? 'bg-orange-500' : 'bg-red-500'
+                      }`} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {flowViewerExec && (
         <ExecutionFlowViewer
           engagementId={engagementId}

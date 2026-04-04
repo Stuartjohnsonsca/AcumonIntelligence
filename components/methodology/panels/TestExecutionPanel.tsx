@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ItemErrorDetailPanel } from './ItemErrorDetailPanel';
 import { InlineSamplingPanel } from './InlineSamplingPanel';
 import { AuditVerificationPanel } from './AuditVerificationPanel';
+import { ErrorInvestigationPanel } from './ErrorInvestigationPanel';
 
 // ─── Types ───
 interface SampleItem { id: string; ref: string; description: string; amount: number; date?: string; reference?: string; }
@@ -613,27 +614,34 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </div>
                 </div>
 
-                {/* Conclusion */}
-                {executionStatus === 'completed' && (
-                  <div className={`px-4 py-3 rounded-lg text-center text-sm font-bold ${
-                    conclusion === 'green' ? 'bg-green-100 text-green-700' :
-                    conclusion === 'orange' ? 'bg-orange-100 text-orange-700' :
-                    conclusion === 'red' ? 'bg-red-100 text-red-700' :
-                    'bg-slate-100 text-slate-500'
-                  }`}>
-                    {conclusion === 'green' ? 'SATISFACTORY — No material errors' :
-                     conclusion === 'orange' ? 'ERRORS IDENTIFIED — Above CT, within PM' :
-                     conclusion === 'red' ? 'MATERIAL ERRORS — Exceeds Performance Materiality' :
-                     'Pending'}
-                  </div>
+                {/* Error Investigation & Conclusion */}
+                {(executionStatus === 'completed' || executionStatus === 'failed') && (
+                  <ErrorInvestigationPanel
+                    engagementId={engagementId}
+                    executionId={executionId || undefined}
+                    fsLine={fsLine}
+                    testDescription={testDescription}
+                    accountCode={tbRow?.accountCode}
+                    sampleItems={sampleItems.map(s => ({ ref: s.ref, description: s.description, amount: s.amount }))}
+                    verificationResults={results.map((r, i) => ({
+                      itemIndex: i,
+                      overallResult: r.overallResult,
+                      difference: r.overallResult === 'fail' ? (sampleItems[i]?.amount || 0) * 0.1 : 0,
+                      notes: r.notes,
+                    }))}
+                    populationSize={populationSize}
+                    sampleSize={sampleTotal}
+                    clearlyTrivial={clearlyTrivial}
+                    performanceMateriality={tolerableMisstatement}
+                    tolerableMisstatement={tolerableMisstatement}
+                    onConclusionChange={(c) => onConclusionChange?.(c)}
+                  />
                 )}
 
-                {/* Error/failed state */}
+                {/* Retry for failed executions */}
                 {executionStatus === 'failed' && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-                    <div className="flex items-center gap-2 text-sm font-medium text-red-700 mb-1"><XCircle className="h-4 w-4" /> Execution Failed</div>
-                    {executionError && <p className="text-xs text-red-600">{executionError}</p>}
-                    <Button onClick={handleRetry} size="sm" variant="outline" className="mt-2 text-red-600 border-red-200"><RotateCcw className="h-3.5 w-3.5 mr-1" /> Retry</Button>
+                  <div className="mt-2">
+                    <Button onClick={handleRetry} size="sm" variant="outline" className="text-red-600 border-red-200"><RotateCcw className="h-3.5 w-3.5 mr-1" /> Retry</Button>
                   </div>
                 )}
               </div>
