@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, Fragment } from 'react';
-import { Loader2, ArrowLeft, FileText, Play } from 'lucide-react';
+import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
 import { TestExecutionPanel } from './TestExecutionPanel';
 import { assertionShortLabel } from '@/types/methodology';
 
@@ -256,8 +256,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [framework, setFramework] = useState('');
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
-  const [activeExecution, setActiveExecution] = useState<string | null>(null); // testKey of open execution panel
-  const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'pending'>>({}); // testKey → conclusion dot
+  const [activeExecution, setActiveExecution] = useState<string | null>(null);
+  const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'pending'>>({});
+  const [showAuditLog, setShowAuditLog] = useState(false);
+  const [auditLog, setAuditLog] = useState<any[]>([]);
+  const [auditLogLoading, setAuditLogLoading] = useState(false);
 
   function toggleTestApplicable(testKey: string) {
     setExcludedTests(prev => {
@@ -476,6 +479,23 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
   useEffect(() => { setActiveNote(''); }, [activeLevel]);
 
+  async function loadAuditLog() {
+    setAuditLogLoading(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/test-execution`);
+      if (res.ok) {
+        const data = await res.json();
+        setAuditLog(data.executions || []);
+      }
+    } catch {} finally { setAuditLogLoading(false); }
+  }
+
+  function toggleAuditLog() {
+    const next = !showAuditLog;
+    setShowAuditLog(next);
+    if (next && auditLog.length === 0) loadAuditLog();
+  }
+
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 text-blue-500 animate-spin" /></div>;
 
   if (statements.length === 0) {
@@ -493,12 +513,21 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   return (
     <div className="space-y-2">
       {/* Header — compact */}
-      <div className="flex items-center gap-3">
-        <button onClick={onClose} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
-          <ArrowLeft className="h-3 w-3" /> Back to RMM
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onClose} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+            <ArrowLeft className="h-3 w-3" /> Back to RMM
+          </button>
+          <h2 className="text-sm font-semibold text-slate-800">Audit Plan</h2>
+          {framework && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">{framework}</span>}
+        </div>
+        <button onClick={toggleAuditLog}
+          className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
+            showAuditLog ? 'bg-blue-100 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}>
+          <ClipboardList className="h-3 w-3" />
+          Test Audit Log
         </button>
-        <h2 className="text-sm font-semibold text-slate-800">Audit Plan</h2>
-        {framework && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">{framework}</span>}
       </div>
 
       {/* Level 1: FS Statement tabs */}
@@ -685,6 +714,78 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           </table>
         )}
       </div>
+
+      {/* ─── AUDIT LOG ─── */}
+      {showAuditLog && (
+        <div className="bg-white rounded border border-slate-200 overflow-hidden">
+          <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ClipboardList className="h-3.5 w-3.5 text-slate-500" />
+              <span className="text-xs font-semibold text-slate-700">Test Execution Audit Log</span>
+            </div>
+            <button onClick={loadAuditLog} className="text-[10px] text-blue-600 hover:text-blue-800">Refresh</button>
+          </div>
+          {auditLogLoading ? (
+            <div className="p-4 text-center"><Loader2 className="h-4 w-4 animate-spin text-blue-500 mx-auto" /></div>
+          ) : auditLog.length === 0 ? (
+            <div className="p-4 text-center text-xs text-slate-400">No test executions recorded yet.</div>
+          ) : (
+            <table className="w-full text-[10px]">
+              <thead className="bg-slate-50 border-b">
+                <tr>
+                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Test</th>
+                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">FS Line</th>
+                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Status</th>
+                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Steps</th>
+                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Started</th>
+                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLog.map(exec => {
+                  const completedSteps = (exec.nodeRuns || []).filter((r: any) => r.status === 'completed').length;
+                  const failedSteps = (exec.nodeRuns || []).filter((r: any) => r.status === 'failed').length;
+                  const totalSteps = (exec.nodeRuns || []).length;
+                  const failedNode = (exec.nodeRuns || []).find((r: any) => r.status === 'failed');
+                  return (
+                    <tr key={exec.id} className={`border-b border-slate-50 hover:bg-slate-50 ${exec.status === 'failed' ? 'bg-red-50/30' : ''}`}>
+                      <td className="px-2 py-1.5 text-slate-700 font-medium max-w-[200px] truncate">{exec.testDescription}</td>
+                      <td className="px-2 py-1.5 text-slate-500">{exec.fsLine}</td>
+                      <td className="px-2 py-1.5">
+                        <span className={`inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
+                          exec.status === 'completed' ? 'bg-green-100 text-green-700' :
+                          exec.status === 'failed' ? 'bg-red-100 text-red-700' :
+                          exec.status === 'running' ? 'bg-blue-100 text-blue-700' :
+                          exec.status === 'paused' ? 'bg-orange-100 text-orange-700' :
+                          exec.status === 'cancelled' ? 'bg-slate-100 text-slate-500' :
+                          'bg-slate-100 text-slate-500'
+                        }`}>
+                          {exec.status === 'completed' && <CheckCircle2 className="h-2.5 w-2.5" />}
+                          {exec.status === 'failed' && <XCircle className="h-2.5 w-2.5" />}
+                          {exec.status === 'running' && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+                          {exec.status === 'paused' && <Clock className="h-2.5 w-2.5" />}
+                          {exec.status}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-slate-500">
+                        <span className="text-green-600">{completedSteps}</span>
+                        {failedSteps > 0 && <span className="text-red-500 ml-1">/ {failedSteps} failed</span>}
+                        <span className="text-slate-400"> / {totalSteps}</span>
+                      </td>
+                      <td className="px-2 py-1.5 text-slate-400">
+                        {exec.startedAt ? new Date(exec.startedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                      </td>
+                      <td className="px-2 py-1.5 text-red-500 max-w-[200px] truncate">
+                        {failedNode?.errorMessage || exec.errorMessage || ''}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }

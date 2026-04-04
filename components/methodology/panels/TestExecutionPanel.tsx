@@ -268,6 +268,19 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
       {executionStatus !== 'not_started' && (
         <div className="divide-y divide-slate-200">
 
+          {/* Error banner for failed executions */}
+          {executionStatus === 'failed' && executionError && (
+            <div className="bg-red-50 border-b border-red-200 px-4 py-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-red-700">Execution Failed</p>
+                  <p className="text-xs text-red-600 mt-0.5">{executionError}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* SECTION 1: Progress Steps (collapsible) */}
           <div>
             <button onClick={() => setProgressOpen(!progressOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
@@ -295,7 +308,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     {step.output?.result && <span className={`text-[8px] px-1 py-0.5 rounded-full font-medium ${step.output.result === 'pass' ? 'bg-green-100 text-green-700' : step.output.result === 'fail' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>{step.output.result}</span>}
                     {step.output?.decision && <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{step.output.decision}</span>}
                     {step.status === 'paused' && <span className="text-[8px] px-1 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Paused</span>}
-                    {step.errorMessage && <span className="text-[8px] text-red-500 truncate max-w-[150px]">{step.errorMessage}</span>}
+                    {step.errorMessage && <span className="text-[8px] text-red-500 break-words max-w-[250px]">{step.errorMessage}</span>}
                     {step.duration && <span className="text-[8px] text-slate-400">{(step.duration / 1000).toFixed(1)}s</span>}
                   </div>
                 ))}
