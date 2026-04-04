@@ -459,6 +459,9 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             {verificationOpen && (
               <div className="p-3">
                 <AuditVerificationPanel
+                  engagementId={engagementId}
+                  executionId={executionId || undefined}
+                  fsLine={fsLine}
                   sampleItems={sampleItems.map((item, i) => ({
                     index: i,
                     reference: item.ref || String(i + 1),

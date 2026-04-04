@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronDown, ChevronRight, FileText, Eye, CheckCircle2, XCircle, Clock, AlertTriangle, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ChevronDown, ChevronRight, FileText, Eye, CheckCircle2, XCircle, Clock, AlertTriangle, X, Loader2, ExternalLink } from 'lucide-react';
 
 interface SampleRow {
   index: number;
@@ -39,6 +39,9 @@ interface VerificationCheck {
 }
 
 interface Props {
+  engagementId?: string;
+  executionId?: string;
+  fsLine?: string;
   sampleItems: SampleRow[];
   evidenceDocs: EvidenceDoc[];
   verificationResults: VerificationCheck[];
@@ -58,9 +61,26 @@ function CheckIcon({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function AuditVerificationPanel({ sampleItems, evidenceDocs, verificationResults, onRowClick }: Props) {
+export function AuditVerificationPanel({ engagementId, executionId, fsLine, sampleItems, evidenceDocs, verificationResults, onRowClick }: Props) {
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [previewDoc, setPreviewDoc] = useState<EvidenceDoc | null>(null);
+  const [extractionJobId, setExtractionJobId] = useState<string | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
+
+  // Auto-create or load extraction session on mount
+  useEffect(() => {
+    if (!engagementId) return;
+    setSessionLoading(true);
+    fetch(`/api/engagements/${engagementId}/extraction-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ testExecutionId: executionId, fsLine }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.job?.id) setExtractionJobId(data.job.id); })
+      .catch(() => {})
+      .finally(() => setSessionLoading(false));
+  }, [engagementId, executionId]);
 
   const passCount = verificationResults.filter(r => r.overallResult === 'pass').length;
   const failCount = verificationResults.filter(r => r.overallResult === 'fail').length;
@@ -77,12 +97,24 @@ export function AuditVerificationPanel({ sampleItems, evidenceDocs, verification
     <div className="flex border rounded-lg overflow-hidden bg-white" style={{ minHeight: 400 }}>
       {/* LEFT: Three-section spreadsheet (75%) */}
       <div className="flex-1 overflow-auto">
-        {/* Summary bar */}
-        <div className="flex items-center gap-4 px-3 py-2 bg-slate-50 border-b text-xs">
-          <span className="text-slate-500">{sampleItems.length} items</span>
-          <span className="text-green-600 font-medium">{passCount} passed</span>
+        {/* Session + Summary bar */}
+        <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-b text-xs">
+          <div className="flex items-center gap-4">
+            <span className="text-slate-500">{sampleItems.length} items</span>
+            <span className="text-green-600 font-medium">{passCount} passed</span>
           {failCount > 0 && <span className="text-red-600 font-medium">{failCount} failed</span>}
           {pendingCount > 0 && <span className="text-slate-400">{pendingCount} pending</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            {sessionLoading && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+            {extractionJobId && (
+              <a href={`/tools/data-extraction?jobId=${extractionJobId}`} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800">
+                Open in Data Extraction <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+            {extractionJobId && <span className="text-[9px] text-slate-300 font-mono">{extractionJobId.slice(0, 8)}</span>}
+          </div>
         </div>
 
         <table className="w-full text-xs border-collapse">

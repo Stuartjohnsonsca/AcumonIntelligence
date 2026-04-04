@@ -375,6 +375,9 @@ model ExtractionJob {
   id                   String    @id @default(uuid())
   clientId             String    @map("client_id")
   userId               String    @map("user_id")
+  engagementId         String?   @map("engagement_id")    // Links to audit engagement
+  testExecutionId      String?   @map("test_execution_id") // Links to test execution that created this job
+  fsLine               String?   @map("fs_line")           // FS line being tested
   status               String    @default("pending") // pending | processing | complete | failed | expired
   totalFiles           Int       @default(0) @map("total_files")
   processedCount       Int       @default(0) @map("processed_count")
@@ -394,6 +397,8 @@ model ExtractionJob {
   files     ExtractionFile[]
   records   ExtractedRecord[]
 
+  @@index([engagementId])
+  @@index([testExecutionId])
   @@map("extraction_jobs")
 }
 
