@@ -52,6 +52,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [pauseReason, setPauseReason] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<string[]>([]);
+  const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [completing, setCompleting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -294,26 +295,52 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
               <span className="text-[9px] text-slate-400">{flowSteps.filter(s => s.status === 'completed').length}/{flowSteps.length} steps</span>
             </button>
             {progressOpen && (
-              <div className="divide-y divide-slate-50 max-h-[250px] overflow-y-auto">
-                {flowSteps.map((step) => (
-                  <div key={step.id} className={`flex items-center gap-2.5 px-4 py-1.5 text-xs ${
-                    step.status === 'failed' ? 'bg-red-50' : step.status === 'running' ? 'bg-blue-50' : step.status === 'paused' ? 'bg-orange-50' : step.status === 'completed' ? 'bg-green-50/20' : ''
-                  }`}>
-                    <div className="w-4 h-4 flex items-center justify-center shrink-0">
-                      {step.status === 'completed' && <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
-                      {step.status === 'running' && <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin" />}
-                      {step.status === 'paused' && <Clock className="h-3.5 w-3.5 text-orange-500" />}
-                      {step.status === 'failed' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-                      {(step.status === 'pending' || step.status === 'skipped') && <div className="w-2.5 h-2.5 rounded-full border-2 border-slate-300" />}
+              <div className="divide-y divide-slate-50 max-h-[350px] overflow-y-auto">
+                {flowSteps.map((step) => {
+                  const isExpanded = expandedStepId === step.id;
+                  const hasOutput = step.output && Object.keys(step.output).length > 0;
+                  return (
+                    <div key={step.id}>
+                      <div
+                        className={`flex items-center gap-2.5 px-4 py-1.5 text-xs cursor-pointer ${
+                          step.status === 'failed' ? 'bg-red-50' : step.status === 'running' ? 'bg-blue-50' : step.status === 'paused' ? 'bg-orange-50' : step.status === 'completed' ? 'bg-green-50/20' : ''
+                        }`}
+                        onClick={() => setExpandedStepId(isExpanded ? null : step.id)}
+                      >
+                        <div className="w-4 h-4 flex items-center justify-center shrink-0">
+                          {step.status === 'completed' && <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
+                          {step.status === 'running' && <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin" />}
+                          {step.status === 'paused' && <Clock className="h-3.5 w-3.5 text-orange-500" />}
+                          {step.status === 'failed' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
+                          {(step.status === 'pending' || step.status === 'skipped') && <div className="w-2.5 h-2.5 rounded-full border-2 border-slate-300" />}
+                        </div>
+                        <span className={`flex-1 ${step.status === 'completed' ? 'text-green-700' : step.status === 'failed' ? 'text-red-700' : step.status === 'running' ? 'text-blue-700' : 'text-slate-500'}`}>{step.label}</span>
+                        {step.output?.result && <span className={`text-[8px] px-1 py-0.5 rounded-full font-medium ${step.output.result === 'pass' ? 'bg-green-100 text-green-700' : step.output.result === 'fail' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>{step.output.result}</span>}
+                        {step.output?.decision && <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{step.output.decision}</span>}
+                        {step.output?.populationData?.length > 0 && <span className="text-[8px] px-1 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium">{step.output.populationData.length} rows</span>}
+                        {step.output?.dataTable?.length > 0 && !step.output?.populationData && <span className="text-[8px] px-1 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium">{step.output.dataTable.length} rows</span>}
+                        {step.status === 'paused' && <span className="text-[8px] px-1 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Paused{pauseReason ? `: ${pauseReason}` : ''}</span>}
+                        {step.errorMessage && <span className="text-[8px] text-red-500 break-words max-w-[250px]">{step.errorMessage}</span>}
+                        {step.duration && <span className="text-[8px] text-slate-400">{(step.duration / 1000).toFixed(1)}s</span>}
+                        {hasOutput && <span className="text-[8px] text-slate-300">{isExpanded ? '▼' : '▶'}</span>}
+                      </div>
+                      {isExpanded && hasOutput && (
+                        <div className="px-4 py-2 bg-slate-50 border-t border-slate-100">
+                          <div className="text-[9px] font-mono text-slate-600 whitespace-pre-wrap max-h-[200px] overflow-auto bg-white rounded border border-slate-200 p-2">
+                            {(() => {
+                              const display = { ...step.output };
+                              // Truncate raw AI text for readability
+                              if (display.raw && typeof display.raw === 'string' && display.raw.length > 500) {
+                                display.raw = display.raw.slice(0, 500) + '... [truncated]';
+                              }
+                              return JSON.stringify(display, null, 2);
+                            })()}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <span className={`flex-1 ${step.status === 'completed' ? 'text-green-700' : step.status === 'failed' ? 'text-red-700' : step.status === 'running' ? 'text-blue-700' : 'text-slate-500'}`}>{step.label}</span>
-                    {step.output?.result && <span className={`text-[8px] px-1 py-0.5 rounded-full font-medium ${step.output.result === 'pass' ? 'bg-green-100 text-green-700' : step.output.result === 'fail' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>{step.output.result}</span>}
-                    {step.output?.decision && <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{step.output.decision}</span>}
-                    {step.status === 'paused' && <span className="text-[8px] px-1 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Paused{step.output?.pauseReason ? `: ${step.output.pauseReason}` : ''}{step.output?.requiresReview ? ' (review)' : ''}{step.output?.triggerType ? ` (${step.output.triggerType})` : ''}</span>}
-                    {step.errorMessage && <span className="text-[8px] text-red-500 break-words max-w-[250px]">{step.errorMessage}</span>}
-                    {step.duration && <span className="text-[8px] text-slate-400">{(step.duration / 1000).toFixed(1)}s</span>}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
