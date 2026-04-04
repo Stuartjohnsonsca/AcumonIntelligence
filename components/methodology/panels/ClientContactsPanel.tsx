@@ -255,7 +255,44 @@ export function ClientContactsPanel({ engagementId, clientId, initialContacts }:
                         <span className="text-[9px] text-blue-400">{pt.role}</span>
                       )}
                     </div>
-                    <span className="text-[9px] text-blue-400 italic">Portal added</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-blue-400 italic">Portal added</span>
+                      <button
+                        onClick={() => {
+                          // Add portal contact to engagement contacts for editing
+                          const newContact: ContactData = {
+                            id: '',
+                            name: pt.name,
+                            email: pt.email,
+                            phone: '',
+                            role: pt.role || '',
+                            isMainContact: false,
+                          };
+                          setContacts(prev => [...prev, newContact]);
+                        }}
+                        className="text-[8px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 font-medium"
+                        title="Copy to engagement contacts for editing"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Remove ${pt.name} from the portal team? They will lose portal access.`)) return;
+                          try {
+                            await fetch(`/api/clients/${clientId}/portal-users`, {
+                              method: 'DELETE',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ userId: pt.id }),
+                            });
+                            setPortalTeam(prev => prev.filter(p => p.id !== pt.id));
+                          } catch {}
+                        }}
+                        className="text-[8px] px-1.5 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100 font-medium"
+                        title="Remove from portal team"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
                   <p className="text-xs font-medium text-blue-600">{pt.name}</p>
                   <p className="text-[10px] text-blue-400">{pt.email}</p>
