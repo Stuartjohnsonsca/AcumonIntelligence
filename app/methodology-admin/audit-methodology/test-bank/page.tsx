@@ -17,11 +17,7 @@ export default async function TestBankPage() {
 
   const firmId = session.user.firmId;
 
-  const [industries, testTypes, tests, fsLines, allocations, fwTemplate] = await Promise.all([
-    prisma.methodologyIndustry.findMany({
-      where: { firmId, isActive: true },
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-    }),
+  const [testTypes, tests, fwTemplate] = await Promise.all([
     prisma.methodologyTestType.findMany({
       where: { firmId, isActive: true },
       orderBy: { name: 'asc' },
@@ -30,26 +26,12 @@ export default async function TestBankPage() {
       where: { firmId, isActive: true },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     }),
-    prisma.methodologyFsLine.findMany({
-      where: { firmId, isActive: true },
-      orderBy: [{ isMandatory: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
-    }),
-    prisma.methodologyTestAllocation.findMany({
-      where: { test: { firmId } },
-      include: {
-        test: { select: { id: true, name: true } },
-        fsLine: { select: { id: true, name: true } },
-        industry: { select: { id: true, name: true } },
-      },
-      orderBy: { sortOrder: 'asc' },
-    }),
     prisma.methodologyTemplate.findFirst({
       where: { firmId, templateType: 'audit_type_schedules', auditType: '__framework_options' },
     }),
   ]);
 
   const frameworkOptions = fwTemplate ? fwTemplate.items as string[] : [];
-  // Derive flow builder actions from Test Types (now called Test Actions)
   const testActions = testTypes.map(tt => ({
     id: tt.id,
     name: tt.name,
@@ -65,15 +47,12 @@ export default async function TestBankPage() {
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Test Bank</h1>
-        <p className="text-slate-600 mt-1">Manage test allocations, tests, and test actions across FS lines and industries</p>
+        <p className="text-slate-600 mt-1">Manage audit tests and test actions</p>
       </div>
       <TestBankClient
         firmId={firmId}
-        initialIndustries={industries}
         initialTestTypes={testTypes}
         initialTests={tests as any}
-        initialFsLines={fsLines as any}
-        initialAllocations={allocations as any}
         initialFrameworkOptions={frameworkOptions}
         initialTestActions={testActions}
         canEditFlow={canEditFlow}

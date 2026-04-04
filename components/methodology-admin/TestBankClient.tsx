@@ -1,18 +1,11 @@
 'use client';
 
-import React, { useState, useCallback, useRef, lazy, Suspense } from 'react';
+import React, { useState, useRef, lazy, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Copy, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch, Settings2, Search, Check } from 'lucide-react';
+import { Plus, X, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch, Settings2 } from 'lucide-react';
 const TestFlowEditor = lazy(() => import('./TestFlowEditor').then(m => ({ default: m.TestFlowEditor })));
 import { ExecutionDefEditor } from './ExecutionDefEditor';
 import { ASSERTION_TYPES } from '@/types/methodology';
-
-interface Industry {
-  id: string;
-  name: string;
-  code: string;
-  isDefault: boolean;
-}
 
 interface TestType {
   id: string;
@@ -37,27 +30,6 @@ interface MethodologyTestItem {
   isActive: boolean;
 }
 
-interface FsLineItem {
-  id: string;
-  name: string;
-  lineType: string;
-  fsCategory: string;
-  sortOrder: number;
-  isMandatory: boolean;
-  parentFsLineId: string | null;
-}
-
-interface AllocationItem {
-  id: string;
-  testId: string;
-  fsLineId: string;
-  industryId: string;
-  sortOrder: number;
-  test: { id: string; name: string };
-  fsLine: { id: string; name: string };
-  industry: { id: string; name: string };
-}
-
 interface TestActionItem {
   id: string;
   name: string;
@@ -68,11 +40,8 @@ interface TestActionItem {
 
 interface Props {
   firmId: string;
-  initialIndustries: Industry[];
   initialTestTypes: TestType[];
   initialTests: MethodologyTestItem[];
-  initialFsLines: FsLineItem[];
-  initialAllocations: AllocationItem[];
   initialFrameworkOptions?: string[];
   initialTestActions?: TestActionItem[];
   canEditFlow?: boolean;
@@ -80,36 +49,19 @@ interface Props {
 
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
-type TopTab = 'test-allocations' | 'test-bank' | 'test-actions';
+type TopTab = 'test-bank' | 'test-actions';
 
-export function TestBankClient({ firmId, initialIndustries, initialTestTypes, initialTests, initialFsLines, initialAllocations, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
+export function TestBankClient({ firmId, initialTestTypes, initialTests, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
-  const [topTab, setTopTab] = useState<TopTab>('test-allocations');
-  const [industries, setIndustries] = useState(initialIndustries);
+  const [topTab, setTopTab] = useState<TopTab>('test-bank');
   const [testTypes, setTestTypes] = useState(initialTestTypes);
   const [tests, setTests] = useState(initialTests);
-  const [fsLines, setFsLines] = useState(initialFsLines);
-  const [allocations, setAllocations] = useState(initialAllocations);
   const [saving, setSaving] = useState(false);
 
   // Test Bank tab state
   const [editingTest, setEditingTest] = useState<MethodologyTestItem | null>(null);
   const [testModalOpen, setTestModalOpen] = useState(false);
   const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false });
-
-  // Allocation picker state
-  const [allocPickerOpen, setAllocPickerOpen] = useState(false);
-  const [allocPickerFsLineId, setAllocPickerFsLineId] = useState('');
-  const [allocPickerIndustryId, setAllocPickerIndustryId] = useState('');
-  const [allocPickerSelectedIds, setAllocPickerSelectedIds] = useState<string[]>([]);
-  const [allocPickerSearch, setAllocPickerSearch] = useState('');
-
-  // Allocations tab state
-  const [newFsLineName, setNewFsLineName] = useState('');
-  const [newIndustryName, setNewIndustryName] = useState('');
-  const [copySourceIndustry, setCopySourceIndustry] = useState('');
-  const [copyTargetIndustry, setCopyTargetIndustry] = useState('');
-  const [selectedIndustry, setSelectedIndustry] = useState<string>(industries[0]?.id || '');
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -129,20 +81,6 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   const [editCodeSection, setEditCodeSection] = useState('');
   const [expandedActionId, setExpandedActionId] = useState<string | null>(null);
   const [savingExecDef, setSavingExecDef] = useState(false);
-
-  // ── Allocation helpers ──
-  const getAllocCount = useCallback((fsLineId: string, industryId: string) => {
-    return allocations.filter(a => a.fsLineId === fsLineId && a.industryId === industryId).length;
-  }, [allocations]);
-
-  const getAssertionsForFsLine = useCallback((fsLineId: string) => {
-    const assertionSet = new Set<string>();
-    const testIds = allocations.filter(a => a.fsLineId === fsLineId).map(a => a.testId);
-    tests.filter(t => testIds.includes(t.id)).forEach(t => {
-      ((t.assertions as string[]) || []).forEach(a => assertionSet.add(a));
-    });
-    return Array.from(assertionSet);
-  }, [allocations, tests]);
 
   // ── Test Bank CRUD ──
   function openNewTestModal() {
@@ -205,14 +143,13 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
   }
 
   async function handleDeleteTest(id: string) {
-    if (!confirm('Delete this test? This will also remove all its allocations.')) return;
+    if (!confirm('Delete this test?')) return;
     const res = await fetch('/api/methodology-admin/tests', {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
     });
     if (res.ok) {
       setTests(prev => prev.filter(t => t.id !== id));
-      setAllocations(prev => prev.filter(a => a.testId !== id));
     }
   }
 
@@ -257,7 +194,6 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('industryId', selectedIndustry);
       const res = await fetch('/api/methodology-admin/test-bank/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) {
@@ -267,7 +203,6 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           setUploadResult(`Upload rejected \u2014 ${data.count} validation error${data.count > 1 ? 's' : ''}.\n\n${errorList}${more}`);
         } else { setUploadResult(`Upload failed: ${data.error}`); }
       } else {
-        // Refresh tests from new API
         const testsRes = await fetch('/api/methodology-admin/tests');
         if (testsRes.ok) {
           const testsData = await testsRes.json();
@@ -281,113 +216,6 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }
-
-  // ── Allocation Picker ──
-  function openAllocPicker(fsLineId: string, industryId: string) {
-    setAllocPickerFsLineId(fsLineId);
-    setAllocPickerIndustryId(industryId);
-    const existing = allocations
-      .filter(a => a.fsLineId === fsLineId && a.industryId === industryId)
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map(a => a.testId);
-    setAllocPickerSelectedIds(existing);
-    setAllocPickerSearch('');
-    setAllocPickerOpen(true);
-  }
-
-  async function handleSaveAllocations() {
-    setSaving(true);
-    try {
-      const res = await fetch('/api/methodology-admin/test-allocations', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fsLineId: allocPickerFsLineId, industryId: allocPickerIndustryId, testIds: allocPickerSelectedIds }),
-      });
-      if (res.ok) {
-        const { allocations: newAllocs } = await res.json();
-        setAllocations(prev => {
-          const filtered = prev.filter(a => !(a.fsLineId === allocPickerFsLineId && a.industryId === allocPickerIndustryId));
-          return [...filtered, ...newAllocs.map((a: any) => ({
-            ...a,
-            test: a.test || { id: a.testId, name: tests.find(t => t.id === a.testId)?.name || '' },
-            fsLine: a.fsLine || { id: a.fsLineId, name: fsLines.find(f => f.id === a.fsLineId)?.name || '' },
-            industry: { id: allocPickerIndustryId, name: industries.find(i => i.id === allocPickerIndustryId)?.name || '' },
-          }))];
-        });
-      }
-    } finally { setSaving(false); setAllocPickerOpen(false); }
-  }
-
-  async function handleAddFsLine() {
-    const name = newFsLineName.trim();
-    if (!name) return;
-    // Infer category from name
-    const lower = name.toLowerCase();
-    let fsCategory = 'pnl';
-    if (['going concern', 'management override', 'notes', 'disclosure'].some(k => lower.includes(k))) fsCategory = 'notes';
-    else if (['cash', 'bank', 'debtors', 'creditors', 'stock', 'fixed asset', 'loan', 'share capital', 'reserves', 'accruals', 'provisions', 'investments'].some(k => lower.includes(k))) fsCategory = 'balance_sheet';
-    setSaving(true);
-    try {
-      const res = await fetch('/api/methodology-admin/fs-lines', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, lineType: 'fs_line_item', fsCategory }),
-      });
-      if (res.ok) {
-        const { fsLine } = await res.json();
-        setFsLines(prev => [...prev, fsLine]);
-        setNewFsLineName('');
-      }
-    } finally { setSaving(false); }
-  }
-
-  async function handleRemoveFsLine(id: string) {
-    const line = fsLines.find(f => f.id === id);
-    if (line?.isMandatory) return;
-    const res = await fetch('/api/methodology-admin/fs-lines', {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    });
-    if (res.ok) {
-      setFsLines(prev => prev.filter(f => f.id !== id));
-      setAllocations(prev => prev.filter(a => a.fsLineId !== id));
-    }
-  }
-
-  async function handleAddIndustry() {
-    const name = newIndustryName.trim();
-    if (!name) return;
-    const code = name.toLowerCase().replace(/\s+/g, '_');
-    setSaving(true);
-    try {
-      const res = await fetch('/api/methodology-admin/industries', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, code }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setIndustries(prev => [...prev, data.industry]);
-        setNewIndustryName('');
-      }
-    } finally { setSaving(false); }
-  }
-
-  async function handleCopyIndustry() {
-    if (!copySourceIndustry || !copyTargetIndustry || copySourceIndustry === copyTargetIndustry) return;
-    setSaving(true);
-    try {
-      const res = await fetch('/api/methodology-admin/test-allocations', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'copy', sourceIndustryId: copySourceIndustry, targetIndustryId: copyTargetIndustry }),
-      });
-      if (res.ok) {
-        // Refresh allocations
-        const allocRes = await fetch('/api/methodology-admin/test-allocations');
-        if (allocRes.ok) {
-          const data = await allocRes.json();
-          setAllocations(data.allocations || []);
-        }
-      }
-    } finally { setSaving(false); }
   }
 
   // ── Test Type CRUD ──
@@ -454,10 +282,6 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
     <div className="space-y-4">
       {/* Top tabs */}
       <div className="flex border-b border-slate-200">
-        <button onClick={() => setTopTab('test-allocations')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-allocations' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-          Test Allocations
-        </button>
         <button onClick={() => setTopTab('test-bank')}
           className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === 'test-bank' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Test Bank
@@ -479,13 +303,7 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
             <div className="flex items-center gap-2">
               <Button onClick={openNewTestModal} size="sm" variant="outline"><Plus className="h-3.5 w-3.5 mr-1" /> Add Test</Button>
               <Button onClick={downloadTestBank} size="sm" variant="outline"><Download className="h-3.5 w-3.5 mr-1" /> Download CSV</Button>
-              <div className="flex items-center gap-1">
-                <select value={selectedIndustry} onChange={e => setSelectedIndustry(e.target.value)}
-                  className="border rounded-md px-2 py-1.5 text-xs bg-white h-[32px]">
-                  {industries.map(ind => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
-                </select>
-                <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" disabled={uploading}><Upload className="h-3.5 w-3.5 mr-1" /> Upload</Button>
-              </div>
+              <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" disabled={uploading}><Upload className="h-3.5 w-3.5 mr-1" /> Upload</Button>
               <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} className="hidden" />
             </div>
           </div>
@@ -703,135 +521,6 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
         </div>
       )}
 
-      {/* ─── TEST ALLOCATIONS TAB ─── */}
-      {topTab === 'test-allocations' && (
-        <div className="space-y-4">
-          <div className="flex items-end gap-4 flex-wrap">
-            <div>
-              <label className="text-xs font-medium text-slate-600 mb-1 block">Add FS Line</label>
-              <div className="flex items-center gap-1">
-                <input type="text" value={newFsLineName} onChange={e => setNewFsLineName(e.target.value)}
-                  placeholder="FS Statement Line..." className="border rounded-md px-2 py-1.5 text-sm w-48"
-                  onKeyDown={e => e.key === 'Enter' && handleAddFsLine()} />
-                <Button onClick={handleAddFsLine} size="sm" variant="outline" className="h-[34px]"><Plus className="h-3.5 w-3.5 mr-1" /> Add</Button>
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600 mb-1 block">+ Industry</label>
-              <div className="flex items-center gap-1">
-                <input type="text" value={newIndustryName} onChange={e => setNewIndustryName(e.target.value)}
-                  placeholder="Industry name..." className="border rounded-md px-2 py-1.5 text-sm w-40"
-                  onKeyDown={e => e.key === 'Enter' && handleAddIndustry()} />
-                <Button onClick={handleAddIndustry} size="sm" variant="outline" className="h-[34px]" disabled={saving}><Plus className="h-3.5 w-3.5 mr-1" /> Add</Button>
-              </div>
-            </div>
-            <div className="ml-auto flex items-end gap-1">
-              <div>
-                <label className="text-xs font-medium text-slate-600 mb-1 block">Copy Allocations</label>
-                <div className="flex items-center gap-1">
-                  <select value={copySourceIndustry} onChange={e => setCopySourceIndustry(e.target.value)}
-                    className="border rounded-md px-2 py-1.5 text-xs bg-white w-28 h-[34px]">
-                    <option value="">From...</option>
-                    {industries.map(ind => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
-                  </select>
-                  <span className="text-slate-400 text-xs">\u2192</span>
-                  <select value={copyTargetIndustry} onChange={e => setCopyTargetIndustry(e.target.value)}
-                    className="border rounded-md px-2 py-1.5 text-xs bg-white w-28 h-[34px]">
-                    <option value="">To...</option>
-                    {industries.map(ind => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
-                  </select>
-                  <Button onClick={handleCopyIndustry} size="sm" variant="outline" className="h-[34px]" disabled={saving}>
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Grid: FS Lines as rows, Industries as columns */}
-          <div className="border rounded-lg overflow-auto">
-            <table className="w-full border-collapse text-xs">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-slate-100">
-                  <th className="text-left font-semibold text-slate-700 p-2.5 min-w-[200px] border-b border-r border-slate-200">FS Statement Line</th>
-                  <th className="text-left font-semibold text-slate-700 p-2.5 min-w-[180px] border-b border-r border-slate-200">Assertions</th>
-                  {industries.map(ind => (
-                    <th key={ind.id} className="text-center font-semibold text-slate-700 p-2 min-w-[80px] border-b border-r border-slate-200">
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[10px] leading-tight">{ind.name}</span>
-                        {ind.isDefault && <span className="text-[8px] text-blue-500">(Default)</span>}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {fsLines.map((line, rowIdx) => {
-                  const assertions = getAssertionsForFsLine(line.id);
-                  return (
-                    <tr key={line.id} className={`border-b border-slate-100 ${rowIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'} hover:bg-blue-50/30 transition-colors`}>
-                      <td className="p-2.5 border-r border-slate-100">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-medium text-slate-800 text-sm">{line.name}</span>
-                          {line.isMandatory && <span className="text-[8px] text-blue-500">(Required)</span>}
-                          {!line.isMandatory && (
-                            <button onClick={() => handleRemoveFsLine(line.id)} className="text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><X className="h-3 w-3" /></button>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-2 border-r border-slate-100">
-                        {assertions.length > 0 ? (
-                          <div className="flex flex-wrap gap-0.5">
-                            {assertions.map(a => (
-                              <span key={a} className="inline-block px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] leading-tight">
-                                {a.length > 15 ? a.split(' ').map(w => w[0]).join('') : a}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-slate-300 italic">\u2014</span>
-                        )}
-                      </td>
-                      {industries.map(ind => {
-                        const count = getAllocCount(line.id, ind.id);
-                        const has = count > 0;
-                        return (
-                          <td key={ind.id} className="p-2 text-center border-r border-slate-100">
-                            <button
-                              onClick={() => openAllocPicker(line.id, ind.id)}
-                              className="inline-flex flex-col items-center gap-0.5 group/dot"
-                              title={has ? `${count} test${count > 1 ? 's' : ''} \u2014 click to amend` : 'Click to allocate tests'}
-                            >
-                              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
-                                has
-                                  ? 'bg-green-500 border-green-500 text-white'
-                                  : 'bg-white border-slate-300 group-hover/dot:border-green-400'
-                              }`}>
-                                {has && <span className="text-[9px] font-bold">{count}</span>}
-                              </div>
-                              <span className={`text-[8px] ${has ? 'text-green-600 font-medium' : 'text-slate-400'}`}>
-                                {has ? 'Amend' : 'Add'}
-                              </span>
-                            </button>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-                {fsLines.length === 0 && (
-                  <tr><td colSpan={2 + industries.length} className="text-center py-8 text-slate-400 text-sm">No FS lines. Add an FS line to get started.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="text-xs text-slate-500">
-            {fsLines.length} FS lines &middot; {industries.length} industries &middot; {allocations.length} total allocations
-          </div>
-        </div>
-      )}
-
       {/* ─── FLOW EDITOR ─── */}
       {flowEditorOpen && flowTestId && (() => {
         const flowTest = tests.find(t => t.id === flowTestId);
@@ -935,98 +624,6 @@ export function TestBankClient({ firmId, initialIndustries, initialTestTypes, in
           </div>
         </div>
       )}
-
-      {/* ─── ALLOCATION PICKER MODAL ─── */}
-      {allocPickerOpen && (() => {
-        const fsLine = fsLines.find(f => f.id === allocPickerFsLineId);
-        const industry = industries.find(i => i.id === allocPickerIndustryId);
-        const searchLower = allocPickerSearch.toLowerCase();
-        const filteredTests = tests.filter(t => {
-          if (!searchLower) return true;
-          return t.name.toLowerCase().includes(searchLower) || (t.description || '').toLowerCase().includes(searchLower);
-        });
-
-        return (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30">
-            <div className="bg-white rounded-lg shadow-xl w-[700px] max-h-[80vh] overflow-hidden flex flex-col">
-              <div className="flex items-center justify-between p-4 border-b">
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Allocate Tests</h3>
-                  <p className="text-xs text-slate-500">{fsLine?.name} &middot; {industry?.name}</p>
-                </div>
-                <button onClick={() => setAllocPickerOpen(false)} className="text-slate-400 hover:text-slate-600">
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="px-4 pt-3">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
-                  <input
-                    value={allocPickerSearch}
-                    onChange={e => setAllocPickerSearch(e.target.value)}
-                    placeholder="Search tests..."
-                    className="w-full border border-slate-300 rounded-md pl-8 pr-3 py-2 text-sm"
-                    autoFocus
-                  />
-                </div>
-                <div className="text-[10px] text-slate-500 mt-1">{allocPickerSelectedIds.length} test{allocPickerSelectedIds.length !== 1 ? 's' : ''} selected</div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-4 py-2" style={{ maxHeight: '400px' }}>
-                {filteredTests.map(test => {
-                  const isSelected = allocPickerSelectedIds.includes(test.id);
-                  const tt = testTypes.find(t => t.code === test.testTypeCode);
-                  return (
-                    <div
-                      key={test.id}
-                      onClick={() => {
-                        setAllocPickerSelectedIds(prev =>
-                          isSelected ? prev.filter(id => id !== test.id) : [...prev, test.id]
-                        );
-                      }}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors mb-1 ${
-                        isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-50 border border-transparent'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                        isSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
-                      }`}>
-                        {isSelected && <Check className="h-3 w-3 text-white" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-slate-800 font-medium truncate">{test.name}</div>
-                        {test.description && <div className="text-[10px] text-slate-400 truncate">{test.description}</div>}
-                      </div>
-                      {tt && (
-                        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 ${
-                          tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' :
-                          tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' :
-                          'bg-blue-100 text-blue-700'
-                        }`}>{tt.name}</span>
-                      )}
-                      {test.significantRisk && <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0" title="Significant risk" />}
-                    </div>
-                  );
-                })}
-                {filteredTests.length === 0 && (
-                  <div className="text-center py-8 text-slate-400 text-sm">
-                    {tests.length === 0 ? 'No tests in Test Bank. Create tests first.' : 'No tests match your search.'}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 p-4 border-t">
-                <Button onClick={() => setAllocPickerOpen(false)} size="sm" variant="outline">Cancel</Button>
-                <Button onClick={handleSaveAllocations} size="sm" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
-                  Save Allocations
-                </Button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }
