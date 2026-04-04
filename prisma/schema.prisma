@@ -53,6 +53,7 @@ model Firm {
   methodologyIndustries    MethodologyIndustry[]
   methodologyTestTypes     MethodologyTestType[]
   methodologyTestBanks     MethodologyTestBank[]
+  methodologyTests         MethodologyTest[]
   methodologyFsLines       MethodologyFsLine[]
   methodologyToolSettings  MethodologyToolSetting[]
   methodologyRiskTables    MethodologyRiskTable[]
@@ -1983,7 +1984,8 @@ model MethodologyIndustry {
 
   firm      Firm                @relation(fields: [firmId], references: [id], onDelete: Cascade)
   testBanks MethodologyTestBank[]
-  fsLineMappings MethodologyFsLineIndustry[]
+  fsLineMappings   MethodologyFsLineIndustry[]
+  testAllocations  MethodologyTestAllocation[]
 
   @@unique([firmId, code])
   @@index([firmId])
@@ -2024,6 +2026,46 @@ model MethodologyTestBank {
   @@map("methodology_test_banks")
 }
 
+model MethodologyTest {
+  id              String   @id @default(uuid())
+  firmId          String   @map("firm_id")
+  name            String
+  description     String?  @db.Text
+  testTypeCode    String   @map("test_type_code")
+  assertions      Json?    // ["Completeness", "Existence", ...]
+  framework       String   @default("ALL")
+  significantRisk Boolean  @default(false) @map("significant_risk")
+  flow            Json?    // { nodes, edges }
+  sortOrder       Int      @default(0) @map("sort_order")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  firm        Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  allocations MethodologyTestAllocation[]
+
+  @@unique([firmId, name])
+  @@index([firmId])
+  @@map("methodology_tests")
+}
+
+model MethodologyTestAllocation {
+  id         String @id @default(uuid())
+  testId     String @map("test_id")
+  fsLineId   String @map("fs_line_id")
+  industryId String @map("industry_id")
+  sortOrder  Int    @default(0) @map("sort_order")
+
+  test     MethodologyTest     @relation(fields: [testId], references: [id], onDelete: Cascade)
+  fsLine   MethodologyFsLine   @relation(fields: [fsLineId], references: [id], onDelete: Cascade)
+  industry MethodologyIndustry @relation(fields: [industryId], references: [id], onDelete: Cascade)
+
+  @@unique([testId, fsLineId, industryId])
+  @@index([fsLineId, industryId])
+  @@index([testId])
+  @@map("methodology_test_allocations")
+}
+
 model MethodologyFsLine {
   id              String  @id @default(uuid())
   firmId          String  @map("firm_id")
@@ -2039,6 +2081,7 @@ model MethodologyFsLine {
   parent           MethodologyFsLine?  @relation("FsLineHierarchy", fields: [parentFsLineId], references: [id], onDelete: SetNull)
   children         MethodologyFsLine[] @relation("FsLineHierarchy")
   industryMappings MethodologyFsLineIndustry[]
+  testAllocations  MethodologyTestAllocation[]
 
   @@unique([firmId, name])
   @@index([firmId])
