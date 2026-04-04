@@ -178,7 +178,7 @@ export function ClientContactsPanel({ engagementId, clientId, initialContacts }:
 
       <div className="space-y-2 max-h-[250px] overflow-auto">
         {contacts.length === 0 && (
-          <p className="text-xs text-slate-400 italic">No contacts added yet</p>
+          <p className="text-xs text-slate-400 italic">No engagement contacts added. See Client Portal Team below.</p>
         )}
         {contacts.map((contact, i) => (
           <div key={contact.id || `new-${i}`} className={`p-2 rounded border ${contact.isMainContact ? 'border-blue-300 bg-blue-50/30' : 'border-slate-100'}`}>

@@ -386,12 +386,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               c.isMainContact && c.email?.trim() && (c as any).portalAccess !== false
             );
             const checks = [
-              { ok: hasRI, label: 'RI assigned to team' },
-              { ok: hasEthicsSpecialist, label: 'Ethics Specialist assigned' },
-              { ok: hasTechnicalSpecialist, label: 'Technical Specialist assigned' },
-              { ok: mainContactWithPortal, label: 'Main contact with email and portal access' },
+              { ok: hasRI, label: 'RI assigned to team', required: true },
+              { ok: hasEthicsSpecialist, label: 'Ethics Specialist assigned', required: false },
+              { ok: hasTechnicalSpecialist, label: 'Technical Specialist assigned', required: false },
+              { ok: mainContactWithPortal, label: 'Main contact with email and portal access', required: false },
             ];
-            const allPassed = checks.every(c => c.ok);
+            const allPassed = checks.filter(c => c.required).every(c => c.ok);
             const failedChecks = checks.filter(c => !c.ok);
 
             return (
