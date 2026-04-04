@@ -233,6 +233,18 @@ function fmtAmount(v: number | null | undefined): string {
   return `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${n < 0 ? ' Cr' : ' Dr'}`;
 }
 
+function AmountCell({ value, className = '' }: { value: number | null | undefined; className?: string }) {
+  if (value == null) return <span></span>;
+  const n = Number(value);
+  if (isNaN(n)) return <span></span>;
+  const isCr = n < 0;
+  return (
+    <span className={`${isCr ? 'pl-3' : ''} ${className}`}>
+      £{Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2 })}{isCr ? ' Cr' : ' Dr'}
+    </span>
+  );
+}
+
 function fmtDate(d: string | null | undefined): string {
   if (!d) return '';
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -690,8 +702,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         <td colSpan={isThreeLevel ? 2 : 1} className="px-0.5 py-1 text-blue-700 font-medium">
                           Merged: {mergedGroupRows.length} accounts
                         </td>
-                        <td className="px-0.5 py-1 text-right whitespace-nowrap font-medium text-blue-700">{fmtAmount(mergedGroupRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0))}</td>
-                        <td className="px-0.5 py-1 text-right text-blue-500 whitespace-nowrap">{fmtAmount(mergedGroupRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0))}</td>
+                        <td className="px-0.5 py-1 text-right whitespace-nowrap font-medium"><AmountCell value={mergedGroupRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0)} className="text-blue-700" /></td>
+                        <td className="px-0.5 py-1 text-right whitespace-nowrap"><AmountCell value={mergedGroupRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0)} className="text-blue-500" /></td>
                         <td></td>
                         <td className="px-0.5 py-1">
                           <button onClick={() => handleUnmerge(row.accountCode)} disabled={merging}
@@ -713,8 +725,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       <td className="pl-1 pr-0.5 py-px font-mono text-slate-500">{displayCode}</td>
                       <td className="px-0.5 py-px text-slate-700">{row.description}</td>
                       {isThreeLevel && <td className="px-0.5 py-px text-slate-400">{row.fsNoteLevel || ''}</td>}
-                      <td className="px-0.5 py-px text-right whitespace-nowrap">{fmtAmount(row.currentYear)}</td>
-                      <td className="px-0.5 py-px text-right text-slate-500 whitespace-nowrap">{fmtAmount(row.priorYear)}</td>
+                      <td className="px-0.5 py-px text-right whitespace-nowrap"><AmountCell value={row.currentYear} /></td>
+                      <td className="px-0.5 py-px text-right whitespace-nowrap"><AmountCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px">
                         {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
                           <div className="flex flex-wrap gap-px">
