@@ -70,12 +70,16 @@ export function useAutoSave<T>(
     };
   }, [data, delay, enabled, performSave]);
 
-  // Cleanup on unmount
+  // Save on unmount if there's a pending save
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        // Fire the save immediately on unmount
+        performSave();
+      }
     };
-  }, []);
+  }, [performSave]);
 
   return { saving, lastSaved, error, triggerSave: performSave };
 }
