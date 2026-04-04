@@ -16,6 +16,29 @@ export async function GET(req: Request) {
   const periodId = searchParams.get('periodId');
   const auditType = searchParams.get('auditType');
 
+  const prior = searchParams.get('prior') === 'true';
+  const currentEngagementId = searchParams.get('currentEngagementId');
+
+  // Prior engagement lookup — find most recent engagement for this client/auditType excluding current
+  if (prior && clientId && auditType) {
+    try {
+      const where: any = { clientId, auditType };
+      if (currentEngagementId) where.id = { not: currentEngagementId };
+      const engagement = await prisma.auditEngagement.findFirst({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          client: { select: { clientName: true } },
+          period: { select: { startDate: true, endDate: true } },
+        },
+      });
+      return NextResponse.json({ engagement });
+    } catch (err) {
+      console.error('Error fetching prior engagement:', err);
+      return NextResponse.json({ error: 'Failed to fetch prior engagement' }, { status: 500 });
+    }
+  }
+
   if (!clientId || !periodId || !auditType) {
     return NextResponse.json({ error: 'clientId, periodId, and auditType are required' }, { status: 400 });
   }
