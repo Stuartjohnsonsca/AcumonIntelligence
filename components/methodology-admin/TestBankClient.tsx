@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch, Settings2, Search, Check } from 'lucide-react';
+import { Plus, X, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch, Settings2, Search, Check, Copy } from 'lucide-react';
 const TestFlowEditor = lazy(() => import('./TestFlowEditor').then(m => ({ default: m.TestFlowEditor })));
 import { ExecutionDefEditor } from './ExecutionDefEditor';
 import { ASSERTION_TYPES, assertionShortLabel } from '@/types/methodology';
@@ -236,6 +236,28 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
     } finally { setSaving(false); setTestModalOpen(false); }
   }
 
+  async function handleDuplicateTest(test: MethodologyTestItem) {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/methodology-admin/tests', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `${test.name} (Copy)`,
+          description: test.description,
+          testTypeCode: test.testTypeCode,
+          assertions: test.assertions,
+          framework: test.framework,
+          significantRisk: test.significantRisk,
+          flow: test.flow,
+        }),
+      });
+      if (res.ok) {
+        const { test: newTest } = await res.json();
+        setTests(prev => [...prev, newTest]);
+      }
+    } finally { setSaving(false); }
+  }
+
   async function handleDeleteTest(id: string) {
     if (!confirm('Delete this test?')) return;
     const res = await fetch('/api/methodology-admin/tests', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
@@ -458,7 +480,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                       <td className="px-3 py-2 text-[10px] text-slate-500">{test.framework || 'All'}</td>
                       <td className="px-3 py-2 text-center"><button onClick={() => { setFlowTestId(test.id); setFlowEditorOpen(true); }} className={`p-0.5 rounded hover:bg-blue-50 ${hasFlow ? 'text-green-600' : 'text-slate-300'}`}><GitBranch className="h-3.5 w-3.5" /></button></td>
                       <td className="px-3 py-2 text-center">{test.significantRisk && <span className="inline-block w-3 h-3 rounded-full bg-red-500" />}</td>
-                      <td className="px-3 py-2 text-right"><div className="flex items-center gap-0.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditTestModal(test)} className="p-1 hover:bg-slate-200 rounded"><Pencil className="h-3 w-3 text-slate-500" /></button><button onClick={() => handleDeleteTest(test.id)} className="p-1 hover:bg-red-100 rounded"><Trash2 className="h-3 w-3 text-red-500" /></button></div></td>
+                      <td className="px-3 py-2 text-right"><div className="flex items-center gap-0.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => handleDuplicateTest(test)} className="p-1 hover:bg-blue-100 rounded" title="Duplicate"><Copy className="h-3 w-3 text-blue-500" /></button><button onClick={() => openEditTestModal(test)} className="p-1 hover:bg-slate-200 rounded" title="Edit"><Pencil className="h-3 w-3 text-slate-500" /></button><button onClick={() => handleDeleteTest(test.id)} className="p-1 hover:bg-red-100 rounded" title="Delete"><Trash2 className="h-3 w-3 text-red-500" /></button></div></td>
                     </tr>
                   );
                 })}
