@@ -285,17 +285,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   // 1. FS Line matching the row's fsLevel (e.g. "Revenue")
   // 2. Framework matching the engagement (e.g. "FRS102")
   // 3. Assertions matching the RMM row's assertions (e.g. "Com", "Cut")
-  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null): { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
-    // Match tests by FS level hierarchy — a test under "Revenue" applies to all Revenue rows
-    const searchTerms = [fsLevel, fsNote, desc].filter(Boolean).map(s => s!.toLowerCase());
-    // Also include the active statement tab (e.g., "Profit & Loss") for broader matching
+  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
+    // Match tests by FS level hierarchy — a test under "Revenue" applies to ALL rows
+    // within the Revenue tab, regardless of what the row's own fsLevel says
+    const searchTerms = [fsLevel, fsNote, desc, statement].filter(Boolean).map(s => s!.toLowerCase().trim());
+
     const matchingEntries = testBank.filter(tb => {
       const tbLine = tb.fsLine.toLowerCase().trim();
       return searchTerms.some(term => {
-        const t = term.trim();
-        return tbLine === t || t.includes(tbLine) || tbLine.includes(t) ||
-          // Fuzzy: "revenue" matches "revenue - rebilled services" etc.
-          t.split(/[\s\-\/]+/).some(word => word.length > 3 && tbLine.includes(word));
+        return tbLine === term || term.includes(tbLine) || tbLine.includes(term) ||
+          // Word-level fuzzy: individual words >3 chars
+          term.split(/[\s\-\/,]+/).some(word => word.length > 3 && tbLine.includes(word)) ||
+          tbLine.split(/[\s\-\/,]+/).some(word => word.length > 3 && term.includes(word));
       });
     });
 
@@ -309,12 +310,32 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           continue;
         }
         // Filter by assertion — test must match at least one of the row's assertions
+        // Handle abbreviations: R&O = Rig = Rights = Rights & Obligations, Com = Completeness, etc.
+        const ASSERTION_ALIASES: Record<string, string[]> = {
+          'completeness': ['com', 'comp', 'completeness'],
+          'occurrence': ['occ', 'occur', 'occurrence', 'o&a', 'occurrence & accuracy'],
+          'accuracy': ['acc', 'accuracy', 'o&a', 'occurrence & accuracy'],
+          'cut off': ['cut', 'cutoff', 'cut off', 'cut-off'],
+          'classification': ['cla', 'class', 'classification'],
+          'presentation': ['pre', 'pres', 'presentation'],
+          'existence': ['exi', 'exist', 'existence'],
+          'valuation': ['val', 'valuation'],
+          'rights & obligations': ['r&o', 'rig', 'rights', 'rights & obligations', 'rights and obligations', 'obligations'],
+        };
+
         if (assertions && assertions.length > 0 && test.assertion) {
-          const testAss = test.assertion.toLowerCase();
+          const testAss = test.assertion.toLowerCase().trim();
+          // Find which canonical assertion the test belongs to
+          const testAliases = Object.entries(ASSERTION_ALIASES)
+            .filter(([, aliases]) => aliases.some(a => a === testAss || testAss.includes(a) || a.includes(testAss)))
+            .flatMap(([, aliases]) => aliases);
+
           const matches = assertions.some(a => {
-            const rowAss = a.toLowerCase();
-            return testAss.includes(rowAss) || rowAss.includes(testAss) ||
-              testAss.startsWith(rowAss.slice(0, 3)) || rowAss.startsWith(testAss.slice(0, 3));
+            const rowAss = a.toLowerCase().trim();
+            // Direct match
+            if (testAss.includes(rowAss) || rowAss.includes(testAss)) return true;
+            // Alias match — both resolve to the same canonical assertion
+            return testAliases.some(alias => alias === rowAss || rowAss.includes(alias) || alias.includes(rowAss));
           });
           if (!matches) continue;
         }
@@ -510,7 +531,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               {filteredRows.map(row => {
                 const rmmMatch = rmmItems.find(r => r.lineItem.toLowerCase() === (row.fsLevel || activeLevel || row.fsNoteLevel || '').toLowerCase());
                 // Use activeLevel (the sub-tab) as the primary lookup — this is the FS Level like "Revenue"
-                const tests = getTestsForRow(activeLevel || row.fsLevel, row.fsNoteLevel, row.description, rmmMatch?.assertions || null);
+                const tests = getTestsForRow(activeLevel || row.fsLevel, row.fsNoteLevel, row.description, rmmMatch?.assertions || null, activeStatement);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rmmMatch && (rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High');
