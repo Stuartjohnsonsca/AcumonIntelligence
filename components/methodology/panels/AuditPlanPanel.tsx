@@ -23,6 +23,9 @@ interface RMMItem {
   amount: number | null;
   assertions: string[] | null;
   notes: string | null;
+  fsStatement: string | null;
+  fsLevel: string | null;
+  fsNote: string | null;
 }
 
 interface TestBankEntry {
@@ -258,6 +261,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           setRmmItems(((await rmmRes.json()).rows || []).map((r: any) => ({
             lineItem: r.lineItem, riskIdentified: r.riskIdentified, overallRisk: r.overallRisk || r.finalRiskAssessment,
             amount: r.amount, assertions: r.assertions || [], notes: r.notes,
+            fsStatement: r.fsStatement || null, fsLevel: r.fsLevel || null, fsNote: r.fsNote || null,
           })));
         }
         if (tbankRes.ok) {
@@ -530,8 +534,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             <tbody>
               {filteredRows.map(row => {
                 const rmmMatch = rmmItems.find(r => r.lineItem.toLowerCase() === (row.fsLevel || activeLevel || row.fsNoteLevel || '').toLowerCase());
-                // Use activeLevel (the sub-tab) as the primary lookup — this is the FS Level like "Revenue"
-                const tests = getTestsForRow(activeLevel || row.fsLevel, row.fsNoteLevel, row.description, rmmMatch?.assertions || null, activeStatement);
+                // Use RMM stored FS hierarchy if available, then active tabs, then row fields
+                const effectiveFsLevel = rmmMatch?.fsLevel || activeLevel || row.fsLevel;
+                const effectiveFsNote = rmmMatch?.fsNote || row.fsNoteLevel;
+                const effectiveStatement = rmmMatch?.fsStatement || activeStatement;
+                const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rmmMatch && (rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High');

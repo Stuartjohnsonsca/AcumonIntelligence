@@ -18,10 +18,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     return NextResponse.json({ error: 'items array required' }, { status: 400 });
   }
 
-  // Load TB rows to aggregate amounts by FS Level
+  // Load TB rows to aggregate amounts by FS Level and get FS hierarchy
   const tbRows = await prisma.auditTBRow.findMany({
     where: { engagementId },
-    select: { fsLevel: true, fsStatement: true, currentYear: true },
+    select: { fsLevel: true, fsStatement: true, fsNoteLevel: true, description: true, currentYear: true },
   });
 
   // Aggregate TB amounts by FS Level (the PAR particulars = FS Level)
@@ -49,12 +49,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     // Look up amount from TB aggregation
     const amount = amountsByLevel[lineItem] ?? item.currentYear ?? null;
 
+    // Look up FS hierarchy from TB — find the matching row(s) for this line item
+    const matchingTb = tbRows.find(tb =>
+      tb.fsLevel === lineItem || tb.fsNoteLevel === lineItem || tb.description === lineItem
+    ) || tbRows.find(tb =>
+      (tb.fsLevel || '').toLowerCase().includes(lineItem.toLowerCase()) ||
+      lineItem.toLowerCase().includes((tb.fsLevel || '').toLowerCase())
+    );
+    const fsStatement = matchingTb?.fsStatement || item.fsStatement || null;
+    const fsLevel = matchingTb?.fsLevel || item.fsLevel || null;
+    const fsNote = matchingTb?.fsNoteLevel || item.fsNote || null;
+
     // Nature = client explanation text only (not audit team notes)
-    // Extract last client message from reasons (chat history format: [Name, date]: message)
     let clientText = '';
     if (item.reasons) {
       const lines = item.reasons.split('\n').filter((l: string) => l.trim() && !l.startsWith('[Attachments:'));
-      // Find lines that are from client (not audit team metadata)
       const clientLines = lines.filter((l: string) => !l.startsWith('PAR variance:') && !l.startsWith('['));
       clientText = clientLines.join('\n').trim();
       if (!clientText) clientText = lines[0] || '';
@@ -68,6 +77,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         riskIdentified: clientText || `Flagged from PAR — significant movement identified`,
         amount: amount != null ? Math.round(amount * 100) / 100 : null,
         sortOrder: ++maxSort,
+        fsStatement,
+        fsLevel,
+        fsNote,
       },
     });
     created++;

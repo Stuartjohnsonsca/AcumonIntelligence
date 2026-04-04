@@ -1873,6 +1873,10 @@ model AuditRMMRow {
   isMandatory          Boolean @default(false) @map("is_mandatory")
   notes                String? @db.Text
   sortOrder            Int     @default(0) @map("sort_order")
+  // FS hierarchy — auto-populated when imported from TB/PAR
+  fsStatement          String? @map("fs_statement")  // e.g. "Profit & Loss"
+  fsLevel              String? @map("fs_level")      // e.g. "Revenue"
+  fsNote               String? @map("fs_note")       // e.g. "Trade Debtors"
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
