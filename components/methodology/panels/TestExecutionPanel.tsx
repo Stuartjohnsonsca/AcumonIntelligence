@@ -53,6 +53,9 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [pauseReason, setPauseReason] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<string[]>([]);
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
+  const [samplingResults, setSamplingResults] = useState<{ runId: string; selectedIndices: number[]; sampleSize: number; coverage: number } | null>(null);
+  const [samplingCompleted, setSamplingCompleted] = useState(false);
+  const [samplingCalcOpen, setSamplingCalcOpen] = useState(true);
   const [starting, setStarting] = useState(false);
   const [completing, setCompleting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -194,15 +197,17 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
     if (res.ok) { setExecutionStatus('running'); startPolling(executionId); }
   }
 
-  async function handleSamplingDone() {
+  async function handleSamplingDone(results?: { runId: string; selectedIndices: number[]; sampleSize: number; coverage: number }) {
     setCompleting(true);
+    if (results) setSamplingResults(results);
+    setSamplingCompleted(true);
+    setSamplingCalcOpen(false);
     try {
+      const responseData = { completed: true, samplingDone: true, ...(results || {}) };
       if (pauseItemId) {
-        // Mark the outstanding item as complete — this triggers resumeExecution via the outstanding API
-        await fetch(`/api/engagements/${engagementId}/outstanding`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: pauseItemId, responseData: { completed: true } }) });
+        await fetch(`/api/engagements/${engagementId}/outstanding`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemId: pauseItemId, responseData }) });
       } else if (executionId) {
-        // Fallback: resume the execution directly
-        await fetch(`/api/engagements/${engagementId}/test-execution/${executionId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resume', responseData: { completed: true, samplingDone: true } }) });
+        await fetch(`/api/engagements/${engagementId}/test-execution/${executionId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resume', responseData }) });
       }
       setExecutionStatus('running'); if (executionId) startPolling(executionId);
     } catch {} finally { setCompleting(false); }
@@ -357,26 +362,42 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             </button>
             {samplingOpen && (
               <div className="p-4 space-y-3">
-                {/* Sampling pause — show inline calculator */}
-                {isSamplingPause && (
-                  <InlineSamplingPanel
-                    engagementId={engagementId}
-                    clientId={clientId || ''}
-                    periodId={periodId || ''}
-                    fsLine={fsLine}
-                    testDescription={testDescription}
-                    populationData={
-                      // Search all completed flow steps for population data (e.g., from Wait for Evidence or portal response)
-                      pausedStep?.output?.populationData ||
-                      flowSteps.find(s => s.output?.populationData?.length > 0)?.output?.populationData ||
-                      flowSteps.find(s => s.output?.data?.populationData?.length > 0)?.output?.data?.populationData ||
-                      []
-                    }
-                    materialityData={{ performanceMateriality: tolerableMisstatement, clearlyTrivial, tolerableMisstatement }}
-                    onComplete={(results) => {
-                      handleSamplingDone();
-                    }}
-                  />
+                {/* Sampling calculator — shown during pause AND after completion (collapsed as evidence) */}
+                {(isSamplingPause || samplingCompleted) && (
+                  <div className="border border-teal-200 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => setSamplingCalcOpen(!samplingCalcOpen)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-teal-50/50 hover:bg-teal-100/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        {samplingCalcOpen ? <ChevronDown className="h-3 w-3 text-teal-500" /> : <ChevronRight className="h-3 w-3 text-teal-500" />}
+                        <span className="text-[10px] font-bold text-teal-700 uppercase">Sampling Calculator</span>
+                        {samplingCompleted && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Completed</span>}
+                        {samplingResults && <span className="text-[8px] text-teal-500">{samplingResults.sampleSize} items sampled</span>}
+                      </div>
+                    </button>
+                    {samplingCalcOpen && (
+                      <div className="p-3">
+                        <InlineSamplingPanel
+                          engagementId={engagementId}
+                          clientId={clientId || ''}
+                          periodId={periodId || ''}
+                          fsLine={fsLine}
+                          testDescription={testDescription}
+                          populationData={
+                            pausedStep?.output?.populationData ||
+                            flowSteps.find(s => s.output?.populationData?.length > 0)?.output?.populationData ||
+                            flowSteps.find(s => s.output?.data?.populationData?.length > 0)?.output?.data?.populationData ||
+                            []
+                          }
+                          materialityData={{ performanceMateriality: tolerableMisstatement, clearlyTrivial, tolerableMisstatement }}
+                          onComplete={(results) => {
+                            handleSamplingDone(results);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Portal pause */}
