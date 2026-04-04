@@ -248,7 +248,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [allocations, setAllocations] = useState<AllocationEntry[]>([]);
   const [fsLinesList, setFsLinesList] = useState<FsLineEntry[]>([]);
-  const [allTests, setAllTests] = useState<AllocationEntry['test'][]>([]);
   const [testTypes, setTestTypes] = useState<TestType[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeStatement, setActiveStatement] = useState('');
@@ -271,12 +270,12 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, engRes, allocRes, ttRes] = await Promise.all([
+        const [tbRes, rmmRes, allocRes, ttRes, pfRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
-          fetch(`/api/engagements/${engagementId}`),
           fetch(`/api/engagements/${engagementId}/test-allocations`),
           fetch('/api/methodology-admin/test-types'),
+          fetch(`/api/engagements/${engagementId}/permanent-file`),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
@@ -290,16 +289,31 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           const allocData = await allocRes.json();
           setAllocations(allocData.allocations || []);
           setFsLinesList(allocData.fsLines || []);
-          setAllTests(allocData.tests || []);
         }
         if (ttRes.ok) {
           const ttData = await ttRes.json();
           setTestTypes(ttData.types || ttData.testTypes || []);
         }
-        if (engRes.ok) {
-          const eng = (await engRes.json()).engagement;
-          if (eng?.methodologyConfig?.config?.accountingFramework) {
-            setFramework(eng.methodologyConfig.config.accountingFramework);
+        // Get accounting framework from permanent file answers
+        if (pfRes.ok) {
+          const pfData = await pfRes.json();
+          const answers = pfData.answers || pfData.data || {};
+          // Find the framework answer — look for key containing 'applicable financial reporting'
+          for (const [key, val] of Object.entries(answers)) {
+            if (typeof val === 'string' && key.toLowerCase().includes('applicable financial reporting')) {
+              setFramework(val);
+              break;
+            }
+          }
+          // Also check nested format
+          if (!framework && Array.isArray(pfData.sections)) {
+            for (const section of pfData.sections) {
+              for (const answer of section.answers || []) {
+                if (answer.questionText?.toLowerCase().includes('applicable financial reporting') && answer.value) {
+                  setFramework(answer.value);
+                }
+              }
+            }
           }
         }
       } catch (err) { console.error('Failed to load:', err); }
@@ -343,10 +357,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
     const searchTerms = [fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
 
-    // Try allocation-based lookup first
     let matchedTests: AllocationEntry['test'][] = [];
 
-    if (allocations.length > 0) {
+    // Match FS level/note to MethodologyFsLine records, then get allocated tests
+    if (searchTerms.length > 0) {
       const matchingFsLineIds = new Set<string>();
       for (const fl of fsLinesList) {
         const flName = fl.name.toLowerCase().trim();
@@ -354,18 +368,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           matchingFsLineIds.add(fl.id);
         }
       }
-      matchedTests = allocations.filter(a => matchingFsLineIds.has(a.fsLineId)).map(a => a.test);
-    }
-
-    // Fallback: match all tests by name against search terms (works without allocations)
-    if (matchedTests.length === 0 && allTests.length > 0) {
-      matchedTests = allTests.filter(t => {
-        const tName = t.name.toLowerCase().trim();
-        return searchTerms.some(term =>
-          tName.includes(term) || term.includes(tName) ||
-          term.split(/[\s\-\/,]+/).some(word => word.length > 3 && tName.includes(word))
-        );
-      });
+      if (matchingFsLineIds.size > 0) {
+        matchedTests = allocations.filter(a => matchingFsLineIds.has(a.fsLineId)).map(a => a.test);
+      }
     }
 
     const result: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];

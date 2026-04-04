@@ -24,7 +24,7 @@ const PERMANENT_FILE_QUESTIONS = (() => {
     q('Understanding the Entity', 'Industry', 'textarea', i++),
     q('Understanding the Entity', 'Regulatory framework (whether the entity is registered or not)?', 'textarea', i++),
     q('Understanding the Entity', 'Financing', 'textarea', i++),
-    q('Financial Reporting Framework', 'Applicable financial reporting framework', 'textarea', i++),
+    q('Financial Reporting Framework', 'Applicable financial reporting framework', 'dropdown', i++, { dropdownOptions: ['IFRS', 'FRS102', 'FRS101', 'FRS105', 'Charities'] }),
     q('Financial Reporting Framework', 'Significant accounting policies', 'textarea', i++),
     q('Financial Reporting Framework', 'Changes in accounting policies from prior year', 'textarea', i++),
     q('Financial Reporting Framework', 'Is Reporting currency different from functional currency', 'yesno', i++),

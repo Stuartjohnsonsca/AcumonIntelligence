@@ -30,11 +30,9 @@ export async function GET(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // Get industry from methodology config
+  // Get industry from methodology config (used for filtering, but we return all allocations)
   const config = (engagement.methodologyVersion?.config as any) || {};
   const industryId = config.industryId || config.industry;
-
-  // If no industry configured, try default industry
   let effectiveIndustryId = industryId;
   if (!effectiveIndustryId) {
     const defaultIndustry = await prisma.methodologyIndustry.findFirst({
@@ -44,14 +42,10 @@ export async function GET(
     effectiveIndustryId = defaultIndustry?.id;
   }
 
-  if (!effectiveIndustryId) {
-    return NextResponse.json({ allocations: [], fsLines: [] });
-  }
-
+  // Return ALL allocations for the firm (client filters by industry if needed)
   const [allocations, fsLines, allTests] = await Promise.all([
     prisma.methodologyTestAllocation.findMany({
       where: {
-        industryId: effectiveIndustryId,
         test: { firmId: engagement.firmId, isActive: true },
       },
       include: {
