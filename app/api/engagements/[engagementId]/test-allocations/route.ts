@@ -48,7 +48,7 @@ export async function GET(
     return NextResponse.json({ allocations: [], fsLines: [] });
   }
 
-  const [allocations, fsLines] = await Promise.all([
+  const [allocations, fsLines, allTests] = await Promise.all([
     prisma.methodologyTestAllocation.findMany({
       where: {
         industryId: effectiveIndustryId,
@@ -78,7 +78,22 @@ export async function GET(
       select: { id: true, name: true, lineType: true, fsCategory: true },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     }),
+    // Also return all tests so the client can match by name if no allocations exist
+    prisma.methodologyTest.findMany({
+      where: { firmId: engagement.firmId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        testTypeCode: true,
+        assertions: true,
+        framework: true,
+        significantRisk: true,
+        flow: true,
+      },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    }),
   ]);
 
-  return NextResponse.json({ allocations, fsLines, industryId: effectiveIndustryId });
+  return NextResponse.json({ allocations, fsLines, tests: allTests, industryId: effectiveIndustryId });
 }

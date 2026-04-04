@@ -248,6 +248,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [allocations, setAllocations] = useState<AllocationEntry[]>([]);
   const [fsLinesList, setFsLinesList] = useState<FsLineEntry[]>([]);
+  const [allTests, setAllTests] = useState<AllocationEntry['test'][]>([]);
   const [testTypes, setTestTypes] = useState<TestType[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeStatement, setActiveStatement] = useState('');
@@ -289,6 +290,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           const allocData = await allocRes.json();
           setAllocations(allocData.allocations || []);
           setFsLinesList(allocData.fsLines || []);
+          setAllTests(allocData.tests || []);
         }
         if (ttRes.ok) {
           const ttData = await ttRes.json();
@@ -337,25 +339,39 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     });
   }
 
-  // FK-based test lookup: find allocations whose FS line name matches the active level/note
+  // Find tests for a row — tries allocation-based lookup first, falls back to name matching
   function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
-    const matchingFsLineIds = new Set<string>();
     const searchTerms = [fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
 
-    for (const fl of fsLinesList) {
-      const flName = fl.name.toLowerCase().trim();
-      if (searchTerms.some(term => flName === term || term.includes(flName) || flName.includes(term))) {
-        matchingFsLineIds.add(fl.id);
+    // Try allocation-based lookup first
+    let matchedTests: AllocationEntry['test'][] = [];
+
+    if (allocations.length > 0) {
+      const matchingFsLineIds = new Set<string>();
+      for (const fl of fsLinesList) {
+        const flName = fl.name.toLowerCase().trim();
+        if (searchTerms.some(term => flName === term || term.includes(flName) || flName.includes(term))) {
+          matchingFsLineIds.add(fl.id);
+        }
       }
+      matchedTests = allocations.filter(a => matchingFsLineIds.has(a.fsLineId)).map(a => a.test);
     }
 
-    const matchingAllocs = allocations.filter(a => matchingFsLineIds.has(a.fsLineId));
+    // Fallback: match all tests by name against search terms (works without allocations)
+    if (matchedTests.length === 0 && allTests.length > 0) {
+      matchedTests = allTests.filter(t => {
+        const tName = t.name.toLowerCase().trim();
+        return searchTerms.some(term =>
+          tName.includes(term) || term.includes(tName) ||
+          term.split(/[\s\-\/,]+/).some(word => word.length > 3 && tName.includes(word))
+        );
+      });
+    }
 
-    const allTests: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
+    const result: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
     const seen = new Set<string>();
 
-    for (const alloc of matchingAllocs) {
-      const test = alloc.test;
+    for (const test of matchedTests) {
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
       if (seen.has(test.name)) continue;
@@ -363,7 +379,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
       const tt = testTypes.find(t => t.code === test.testTypeCode);
       const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
-      allTests.push({
+      result.push({
         description: test.name,
         testTypeCode: test.testTypeCode,
         assertions: (test.assertions as string[]) || [],
@@ -375,7 +391,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         executionDef: tt?.executionDef,
       });
     }
-    return allTests;
+    return result;
   }
 
 
