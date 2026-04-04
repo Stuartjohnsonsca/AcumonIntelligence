@@ -517,6 +517,18 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                 <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Audit Verification</span>
                 {sampleItems.length > 0 && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{sampleItems.length} items</span>}
               </div>
+              {sampleItems.length > 0 && (
+                <a
+                  href={`/tools/data-extraction?engagementId=${engagementId}&executionId=${executionId || ''}&fsLine=${encodeURIComponent(fsLine)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="inline-flex items-center gap-1 text-[10px] font-medium px-2.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Open Financial Data Extractor
+                </a>
+              )}
             </button>
             {verificationOpen && (
               <div className="p-3">

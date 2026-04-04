@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, FileText, Eye, CheckCircle2, XCircle, Clock, AlertTriangle, X, Loader2, ExternalLink } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { ChevronDown, ChevronRight, FileText, Eye, CheckCircle2, XCircle, Clock, AlertTriangle, X, Loader2, ExternalLink, Upload } from 'lucide-react';
 
 interface SampleRow {
   index: number;
@@ -66,6 +66,39 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, samp
   const [previewDoc, setPreviewDoc] = useState<EvidenceDoc | null>(null);
   const [extractionJobId, setExtractionJobId] = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; status: string }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    const newFiles: { name: string; status: string }[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        newFiles.push({ name: file.name, status: 'uploading' });
+        setUploadedFiles(prev => [...prev, { name: file.name, status: 'uploading' }]);
+        const formData = new FormData();
+        formData.append('file', file);
+        if (extractionJobId) formData.append('jobId', extractionJobId);
+        if (engagementId) formData.append('engagementId', engagementId);
+        if (executionId) formData.append('executionId', executionId);
+        if (fsLine) formData.append('fsLine', fsLine);
+        const res = await fetch('/api/tools/extraction/upload', { method: 'POST', body: formData });
+        if (res.ok) {
+          setUploadedFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'extracted' } : f));
+        } else {
+          setUploadedFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'failed' } : f));
+        }
+      }
+    } catch {
+      // Handle error
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   // Auto-create or load extraction session on mount
   useEffect(() => {
@@ -280,11 +313,34 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, samp
             )}
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-slate-300 p-4">
-            <div className="text-center">
-              <Eye className="h-10 w-10 mx-auto mb-2" />
-              <p className="text-xs font-medium">Click a row to preview</p>
-              <p className="text-[10px] mt-1">Select a sample item to see its evidence document</p>
+          <div className="flex-1 flex flex-col">
+            {/* Document upload area */}
+            <div className="p-4 flex-1 flex flex-col items-center justify-center">
+              <div className="w-full border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-colors cursor-pointer"
+                onClick={() => fileInputRef.current?.click()}>
+                <FileText className="h-8 w-8 mx-auto mb-2 text-slate-300" />
+                <p className="text-xs font-medium text-slate-500">Click to select files</p>
+                <p className="text-[10px] text-slate-400 mt-1">PDF, images, or ZIP files</p>
+              </div>
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.zip" className="hidden"
+                onChange={handleFileUpload} />
+              {uploading && (
+                <div className="mt-3 flex items-center gap-2 text-xs text-blue-600">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading & extracting...
+                </div>
+              )}
+              {uploadedFiles.length > 0 && (
+                <div className="mt-3 w-full space-y-1">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase">Uploaded Documents</div>
+                  {uploadedFiles.map((f, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-slate-600 bg-white rounded border border-slate-200 px-2 py-1">
+                      <FileText className="h-3 w-3 text-green-500 flex-shrink-0" />
+                      <span className="truncate flex-1">{f.name}</span>
+                      <span className="text-[9px] text-slate-400">{f.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
