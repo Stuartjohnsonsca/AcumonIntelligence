@@ -30,11 +30,26 @@ function formatDateTime(d: string) {
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export function ManagementPointPanel({ engagementId, pointType, title, headingOptions = [], onClose }: Props) {
+export function ManagementPointPanel({ engagementId, pointType, title, headingOptions: initialHeadings = [], onClose }: Props) {
   const [points, setPoints] = useState<PointData[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [headingOptions, setHeadingOptions] = useState<string[]>(initialHeadings);
+
+  // Fetch headings from methodology template
+  useEffect(() => {
+    if (initialHeadings.length > 0) return;
+    const templateType = pointType === 'management' ? 'management_headings' : 'representation_headings';
+    fetch(`/api/methodology-admin/templates?type=${templateType}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.template?.items && Array.isArray(data.template.items)) {
+          setHeadingOptions(data.template.items);
+        }
+      })
+      .catch(() => {});
+  }, [pointType, initialHeadings.length]);
   const [selectedPoint, setSelectedPoint] = useState<string | null>(null);
 
   // Create form
