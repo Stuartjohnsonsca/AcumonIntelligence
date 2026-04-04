@@ -103,6 +103,42 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   // Report conclusion to parent
   useEffect(() => { onConclusionChange?.(conclusion); }, [conclusion]);
 
+  // Populate sampleItems from flow step outputs (after sampling completes or forEach starts)
+  useEffect(() => {
+    if (sampleItems.length > 0) return; // Already populated
+
+    // Find population data and selected indices from any step
+    let populationData: any[] = [];
+    let selectedIndices: number[] = [];
+
+    for (const step of flowSteps) {
+      if (!step.output) continue;
+      if (step.output.populationData?.length > 0 && populationData.length === 0) populationData = step.output.populationData;
+      if (step.output.dataTable?.length > 0 && populationData.length === 0) populationData = step.output.dataTable;
+      if (step.output.selectedIndices?.length > 0) selectedIndices = step.output.selectedIndices;
+    }
+
+    // Also check samplingResults from local state
+    if (samplingResults?.selectedIndices?.length > 0 && selectedIndices.length === 0) {
+      selectedIndices = samplingResults.selectedIndices;
+    }
+
+    if (populationData.length > 0 && (selectedIndices.length > 0 || samplingCompleted)) {
+      const items = selectedIndices.length > 0
+        ? selectedIndices.map(idx => populationData[idx]).filter(Boolean)
+        : populationData;
+
+      setSampleItems(items.map((item: any, i: number) => ({
+        id: item.invoiceNumber || item.InvoiceNumber || item.reference || item.Reference || String(i + 1),
+        ref: item.invoiceNumber || item.InvoiceNumber || item.reference || item.Reference || String(i + 1),
+        description: item.contact || item.Contact || item.description || item.Description || item.ContactName || '',
+        amount: Number(item.amount || item.Amount || item.total || item.Total || item.lineAmount || item.LineAmount || 0),
+        date: item.date || item.Date || '',
+        reference: item.reference || item.Reference || item.invoiceNumber || item.InvoiceNumber || '',
+      })));
+    }
+  }, [flowSteps, samplingCompleted, samplingResults]);
+
   // ─── Lifecycle ───
   useEffect(() => {
     loadExistingExecution();
