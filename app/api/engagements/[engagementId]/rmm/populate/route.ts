@@ -60,6 +60,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           inherentRiskLevel: prior.inherentRiskLevel,
           likelihood: prior.likelihood,
           magnitude: prior.magnitude,
+          fsStatement: prior.fsStatement,
+          fsLevel: prior.fsLevel,
+          fsNote: prior.fsNote,
           // Control Risk reset for new year
           controlRisk: null,
           sortOrder: ++maxSort,
@@ -74,23 +77,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   const tbRows = await prisma.auditTBRow.findMany({ where: { engagementId } });
 
   if (source === 'fs_line') {
-    // Group by fsLevel, aggregate amounts
-    const groups: Record<string, number> = {};
+    // Group by fsLevel, aggregate amounts, capture FS hierarchy
+    const groups: Record<string, { amount: number; fsStatement: string | null; fsLevel: string | null; fsNote: string | null }> = {};
     for (const tb of tbRows) {
       const level = tb.fsLevel || tb.fsStatement || '';
       if (level && !existingLineItems.has(level)) {
-        groups[level] = (groups[level] || 0) + (tb.currentYear || 0);
+        if (!groups[level]) {
+          groups[level] = { amount: 0, fsStatement: tb.fsStatement || null, fsLevel: tb.fsLevel || null, fsNote: (tb as any).fsNoteLevel || null };
+        }
+        groups[level].amount += (tb.currentYear || 0);
       }
     }
 
     let created = 0;
-    for (const [lineItem, amount] of Object.entries(groups)) {
+    for (const [lineItem, data] of Object.entries(groups)) {
       await prisma.auditRMMRow.create({
         data: {
           engagementId,
           lineItem,
           lineType: 'fs_line',
-          amount: Math.round(amount * 100) / 100,
+          amount: Math.round(data.amount * 100) / 100,
+          fsStatement: data.fsStatement,
+          fsLevel: data.fsLevel,
+          fsNote: data.fsNote,
           sortOrder: ++maxSort,
         },
       });
@@ -100,7 +109,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   }
 
   if (source === 'tb_account') {
-    // Individual TB accounts
+    // Individual TB accounts — carry FS hierarchy from TB row
     let created = 0;
     for (const tb of tbRows) {
       const lineItem = tb.description || tb.accountCode || '';
@@ -111,6 +120,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           lineItem,
           lineType: 'tb_account',
           amount: tb.currentYear != null ? Math.round(tb.currentYear * 100) / 100 : null,
+          fsStatement: tb.fsStatement || null,
+          fsLevel: tb.fsLevel || null,
+          fsNote: (tb as any).fsNoteLevel || null,
           sortOrder: ++maxSort,
         },
       });

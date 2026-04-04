@@ -570,11 +570,15 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             </thead>
             <tbody>
               {filteredRows.map(row => {
-                const rmmMatch = rmmItems.find(r => r.lineItem.toLowerCase() === (row.fsLevel || activeLevel || row.fsNoteLevel || '').toLowerCase());
-                // Use RMM stored FS hierarchy if available, then active tabs, then row fields
-                const effectiveFsLevel = rmmMatch?.fsLevel || activeLevel || row.fsLevel;
-                const effectiveFsNote = rmmMatch?.fsNote || row.fsNoteLevel;
-                const effectiveStatement = rmmMatch?.fsStatement || activeStatement;
+                // Match RMM by lineItem or fsLevel
+                const rmmMatch = rmmItems.find(r =>
+                  r.lineItem.toLowerCase() === (row.fsLevel || activeLevel || row.fsNoteLevel || '').toLowerCase() ||
+                  (r.fsLevel && r.fsLevel.toLowerCase() === (activeLevel || '').toLowerCase())
+                );
+                // The active tab level (e.g. "Revenue") is the primary FS level for test matching
+                const effectiveFsLevel = activeLevel || rmmMatch?.fsLevel || row.fsLevel;
+                const effectiveFsNote = activeNote || rmmMatch?.fsNote || row.fsNoteLevel;
+                const effectiveStatement = activeStatement || rmmMatch?.fsStatement;
                 const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
