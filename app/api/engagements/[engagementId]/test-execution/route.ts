@@ -9,7 +9,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
 
-  const { fsLine, testDescription, testTypeCode, flowData } = await req.json();
+  const { fsLine, testDescription, testTypeCode, flowData, tbRow } = await req.json();
 
   if (!fsLine || !testDescription) {
     return NextResponse.json({ error: 'fsLine and testDescription are required' }, { status: 400 });
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
       }, { status: 400 });
     }
 
-    const executionId = await startExecution(engagementId, fsLine, testDescription, testTypeCode || null, flow, session.user.id);
+    const executionId = await startExecution(engagementId, fsLine, testDescription, testTypeCode || null, flow, session.user.id, tbRow);
 
     return NextResponse.json({ executionId, status: 'running' });
   } catch (err: any) {

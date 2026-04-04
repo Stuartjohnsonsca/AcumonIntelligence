@@ -14,6 +14,7 @@ interface FlowStep { id: string; label: string; status: string; output?: any; er
 interface Props {
   testId: string; testDescription: string; testType: string; engagementId: string; fsLine: string;
   clientId?: string; periodId?: string;
+  tbRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote: string | null };
   sessionId?: string; flowData?: any; executionDef?: any;
   onClose: () => void;
   onConclusionChange?: (conclusion: 'green' | 'orange' | 'red' | 'pending') => void;
@@ -32,7 +33,7 @@ function ResultIcon({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, clientId, periodId, flowData, executionDef, onClose, onConclusionChange }: Props) {
+export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, clientId, periodId, tbRow, flowData, executionDef, onClose, onConclusionChange }: Props) {
   // Data state
   const [sampleItems, setSampleItems] = useState<SampleItem[]>([]);
   const [evidence, setEvidence] = useState<ClientEvidence[]>([]);
@@ -124,7 +125,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
     try {
       const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fsLine, testDescription, testTypeCode: testType, flowData }),
+        body: JSON.stringify({ fsLine, testDescription, testTypeCode: testType, flowData, tbRow }),
       });
       if (res.ok) {
         const data = await res.json();

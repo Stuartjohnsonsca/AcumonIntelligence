@@ -24,13 +24,16 @@ export interface ExecutionContext {
   nodes: Record<string, any>;    // outputs keyed by nodeId
   vars: Record<string, any>;     // flow-level variables — persist across nodes and sub-flows
   tb?: {
-    currentYear: number;
-    priorYear: number;
+    currentYear: number;      // FS line total CY
+    priorYear: number;        // FS line total PY
     variance: number;
     variancePct: number;
     accountCount: number;
-    accountCode: string;
-    description: string;
+    accountCode: string;      // Triggering row's account code
+    description: string;      // Triggering row's description
+    rowCurrentYear: number;   // Triggering row's CY amount
+    rowPriorYear: number;     // Triggering row's PY amount
+    fsNote: string;           // FS Note level
     accounts: { code: string; description: string; currentYear: number; priorYear: number }[];
   };
   loop?: {

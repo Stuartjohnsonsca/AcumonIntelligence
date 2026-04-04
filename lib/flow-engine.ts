@@ -106,7 +106,12 @@ async function callAI(systemPrompt: string, userPrompt: string): Promise<{ text:
 
 // ─── Context Builder ───
 
-async function buildContext(engagementId: string, fsLine: string, testDescription: string): Promise<ExecutionContext> {
+async function buildContext(
+  engagementId: string,
+  fsLine: string,
+  testDescription: string,
+  triggeringRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote?: string | null },
+): Promise<ExecutionContext> {
   const engagement = await prisma.auditEngagement.findUnique({
     where: { id: engagementId },
     include: {
@@ -158,15 +163,22 @@ async function buildContext(engagementId: string, fsLine: string, testDescriptio
       variancePct: tbPriorYear !== 0 ? ((tbVariance / Math.abs(tbPriorYear)) * 100) : 0,
       accountCount: tbRows.length,
       accounts: tbAccounts,
-      // First account (for single-account FS lines)
-      accountCode: tbRows[0]?.accountCode || '',
-      description: tbRows[0]?.description || '',
+      // Triggering row's account (from the specific row clicked in Audit Plan)
+      accountCode: triggeringRow?.accountCode || tbRows[0]?.accountCode || '',
+      description: triggeringRow?.description || tbRows[0]?.description || '',
+      // Triggering row specific amounts (if available)
+      rowCurrentYear: triggeringRow?.currentYear ?? tbCurrentYear,
+      rowPriorYear: triggeringRow?.priorYear ?? tbPriorYear,
+      fsNote: triggeringRow?.fsNote || '',
     },
     nodes: {},
     vars: {
       tbBalance: tbCurrentYear,
       tbPriorYear,
       tbVariance,
+      tbAccountCode: triggeringRow?.accountCode || tbRows[0]?.accountCode || '',
+      tbDescription: triggeringRow?.description || tbRows[0]?.description || '',
+      tbRowBalance: triggeringRow?.currentYear ?? tbCurrentYear,
     },
   };
 }
@@ -811,11 +823,12 @@ export async function startExecution(
   testTypeCode: string | null,
   flowData: FlowData,
   userId: string,
+  tbRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote?: string | null },
 ): Promise<string> {
   const eng = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
   if (!eng) throw new Error('Engagement not found');
 
-  const ctx = await buildContext(engagementId, fsLine, testDescription);
+  const ctx = await buildContext(engagementId, fsLine, testDescription, tbRow);
 
   const execution = await prisma.testExecution.create({
     data: {
