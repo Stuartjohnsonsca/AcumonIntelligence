@@ -64,7 +64,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
     loadEnabledConnectors();
   }, []);
 
-  // Load accounting connection status
+  // Load accounting connection status (also triggers after OAuth redirect)
   useEffect(() => {
     async function loadConnection() {
       try {
@@ -72,6 +72,18 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
         if (res.ok) {
           const data = await res.json();
           setConnection(data);
+          // If just returned from OAuth, show success
+          const params = new URLSearchParams(window.location.search);
+          if (params.get('xeroConnected') === 'true' && data.connected) {
+            setTestResult({ ok: true, message: `Successfully connected to ${data.orgName || 'Xero'}` });
+            // Clean up URL
+            const cleanUrl = window.location.pathname;
+            window.history.replaceState({}, '', cleanUrl);
+          }
+          if (params.get('xeroError')) {
+            setTestResult({ ok: false, message: `Connection failed: ${params.get('xeroError')}` });
+            window.history.replaceState({}, '', window.location.pathname);
+          }
         }
       } catch (err) {
         console.error('Failed to load connection status:', err);
