@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import type { TemplateQuestion, QuestionInputType } from '@/types/methodology';
@@ -66,6 +66,12 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
   const [questions, setQuestions] = useState<TemplateQuestion[]>(initialQuestions);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  // Sync questions when template type or audit type changes
+  useEffect(() => {
+    setQuestions(initialQuestions);
+    setExpandedId(null);
+  }, [templateType, auditType]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [editingSectionName, setEditingSectionName] = useState<string | null>(null);
