@@ -30,6 +30,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
   const [docStatus, setDocStatus] = useState<DocStatus[]>([]);
   const [repoDocs, setRepoDocs] = useState<{ id: string; documentName: string; uploadedDate: string | null }[]>([]);
   const [points, setPoints] = useState<Record<string, ReviewPoint[]>>({});
+  const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [linking, setLinking] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<string | null>(null);
@@ -55,6 +56,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
         setDocStatus(json.docStatus || []);
         setRepoDocs(json.documents || []);
         setPoints(json.points || {});
+        setSummaries(json.summaries || {});
         if (json.openingBalances?.rows) setObRows(json.openingBalances.rows);
         if (json.obMapping?.mapping) setObMapping(json.obMapping.mapping);
       }
@@ -284,6 +286,25 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                   </div>
                   );
                 })()}
+              </div>
+            )}
+
+            {/* AI Summary text box */}
+            {isExpanded && summaries[doc.key] && (
+              <div className="border-t border-slate-200 px-4 py-3 bg-purple-50/30">
+                <div className="text-[10px] font-bold text-purple-600 uppercase mb-1">AI Summary</div>
+                <div className="text-xs text-slate-700 whitespace-pre-wrap bg-white rounded border border-purple-200 px-3 py-2 max-h-[150px] overflow-y-auto">
+                  {(() => {
+                    // Try to format as readable summary
+                    try {
+                      const parsed = JSON.parse(summaries[doc.key]);
+                      if (Array.isArray(parsed)) {
+                        return parsed.map((p: any, i: number) => `${i + 1}. ${p.point}: ${p.detail}`).join('\n\n');
+                      }
+                    } catch {}
+                    return summaries[doc.key];
+                  })()}
+                </div>
               </div>
             )}
 
