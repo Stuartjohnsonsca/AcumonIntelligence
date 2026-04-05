@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { getAccounts, getTrialBalanceReport } from '@/lib/xero';
+import { getAccounts, getTrialBalanceReport, getValidAccessToken } from '@/lib/xero';
 
 /**
  * POST /api/engagements/[engagementId]/trial-balance/import-accounting
@@ -44,11 +44,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
     switch (connection.system.toLowerCase()) {
       case 'xero': {
-        // Fetch accounts first (may refresh token), then TB reports in parallel
-        const accounts = await getAccounts(engagement.clientId);
-        const [currentTB, priorTB] = await Promise.all([
-          getTrialBalanceReport(engagement.clientId, currentYearDate),
-          getTrialBalanceReport(engagement.clientId, priorYearDate),
+        // Get a fresh token once, then use it for all Xero API calls
+        const xeroAuth = await getValidAccessToken(engagement.clientId);
+        const [accounts, currentTB, priorTB] = await Promise.all([
+          getAccounts(engagement.clientId),
+          getTrialBalanceReport(engagement.clientId, currentYearDate, xeroAuth),
+          getTrialBalanceReport(engagement.clientId, priorYearDate, xeroAuth),
         ]);
 
         // Xero account types → FS categories

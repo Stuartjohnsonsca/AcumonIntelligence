@@ -175,7 +175,7 @@ export async function getConnectedTenants(accessToken: string): Promise<XeroTena
   return res.json();
 }
 
-async function getValidAccessToken(clientId: string): Promise<{ accessToken: string; tenantId: string }> {
+export async function getValidAccessToken(clientId: string): Promise<{ accessToken: string; tenantId: string }> {
   const start = Date.now();
   const conn = await prisma.accountingConnection.findUnique({
     where: { clientId_system: { clientId, system: 'xero' } },
@@ -255,9 +255,10 @@ export interface XeroTBEntry {
 export async function getTrialBalanceReport(
   clientId: string,
   date: string, // YYYY-MM-DD
+  auth?: { accessToken: string; tenantId: string },
 ): Promise<Map<string, XeroTBEntry>> {
   const result = new Map<string, XeroTBEntry>();
-  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+  const { accessToken, tenantId } = auth || await getValidAccessToken(clientId);
 
   const res = await xeroFetchWithRetry(
     `${XERO_API_BASE}/Reports/TrialBalance?date=${date}`,
