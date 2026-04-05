@@ -459,40 +459,46 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     });
   }
 
-  // Find tests for a row — tries allocation-based lookup first, falls back to name matching
+  // Find tests for a row — uses TBCYvPY fsLevel/fsNote mapping to look up allocated tests.
+  // The TB row's fsLevel is the key — set via AI Classification or manually in TBCYvPY.
   function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string, riskClassification?: string | null): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
-    // Use canonical FS Level name (mapped to firm taxonomy) for matching
-    const canonFsLevel = fsLevel ? (fsLevelMap[fsLevel] || fsLevel) : null;
-    const searchTerms = [canonFsLevel, fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
-    // Deduplicate search terms
-    const uniqueTerms = [...new Set(searchTerms)];
+    // Build list of FS Line names to search — canonical mapped name + raw + fsNote
+    const names = new Set<string>();
+    if (fsLevel) {
+      names.add(fsLevel.toLowerCase().trim());
+      const canon = fsLevelMap[fsLevel];
+      if (canon) names.add(canon.toLowerCase().trim());
+    }
+    if (fsNote) names.add(fsNote.toLowerCase().trim());
 
-    // Deduplicate by test ID across all matching allocations
-    const matchedTestsMap = new Map<string, AllocationEntry['test']>();
+    // Find matching FS Line IDs by name (direct lookup from firm taxonomy)
+    const matchingFsLineIds = new Set<string>();
+    for (const fl of fsLinesList) {
+      if (names.has(fl.name.toLowerCase().trim())) {
+        matchingFsLineIds.add(fl.id);
+      }
+    }
 
-    if (uniqueTerms.length > 0) {
-      const matchingFsLineIds = new Set<string>();
+    // If no direct match, try aliases as fallback
+    if (matchingFsLineIds.size === 0 && names.size > 0) {
       for (const fl of fsLinesList) {
         const flName = fl.name.toLowerCase().trim();
-        if (uniqueTerms.some(term => {
-          if (flName === term) return true; // exact match
-          // Check aliases: does the TB term have aliases that match the FS line?
+        for (const term of names) {
           const aliases = FS_LINE_ALIASES[term] || [];
-          if (aliases.includes(flName)) return true;
-          // Reverse: does the FS line name have aliases that match the TB term?
           const reverseAliases = FS_LINE_ALIASES[flName] || [];
-          if (reverseAliases.includes(term)) return true;
-          return false;
-        })) {
-          matchingFsLineIds.add(fl.id);
-        }
-      }
-      if (matchingFsLineIds.size > 0) {
-        for (const a of allocations) {
-          if (matchingFsLineIds.has(a.fsLineId) && !matchedTestsMap.has(a.test.id)) {
-            matchedTestsMap.set(a.test.id, a.test);
+          if (aliases.includes(flName) || reverseAliases.includes(term)) {
+            matchingFsLineIds.add(fl.id);
+            break;
           }
         }
+      }
+    }
+
+    // Get all tests allocated to the matched FS Lines
+    const matchedTestsMap = new Map<string, AllocationEntry['test']>();
+    for (const a of allocations) {
+      if (matchingFsLineIds.has(a.fsLineId) && !matchedTestsMap.has(a.test.id)) {
+        matchedTestsMap.set(a.test.id, a.test);
       }
     }
 
