@@ -153,7 +153,11 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
       const res = await fetch(`/api/engagements/${engagementId}/test-execution?fsLine=${encodeURIComponent(fsLine)}`);
       if (res.ok) {
         const data = await res.json();
-        const existing = (data.executions || []).find((e: any) => e.testDescription === testDescription && e.status !== 'cancelled');
+        // Find the most recent execution for this test — prefer running/paused, then completed, then failed
+        const allExecs = (data.executions || [])
+          .filter((e: any) => e.testDescription === testDescription && e.status !== 'cancelled')
+          .sort((a: any, b: any) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+        const existing = allExecs.find((e: any) => e.status === 'running' || e.status === 'paused') || allExecs[0];
         if (existing) {
           setExecutionId(existing.id);
           setExecutionStatus(existing.status);
@@ -166,7 +170,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   }
 
   async function handleStartExecution() {
-    setStarting(true); setExecutionError(null); setDiagnostics([]);
+    setStarting(true); setExecutionError(null); setDiagnostics([]); setFlowSteps([]);
     try {
       const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
