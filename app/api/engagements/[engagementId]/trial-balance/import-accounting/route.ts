@@ -3,6 +3,8 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getAccounts, getTrialBalanceReport, getValidAccessToken } from '@/lib/xero';
 
+export const maxDuration = 60;
+
 /**
  * POST /api/engagements/[engagementId]/trial-balance/import-accounting
  * Imports trial balance from connected accounting system (Xero, etc.)
@@ -47,7 +49,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         // Get a fresh token once, then use it for all Xero API calls
         const xeroAuth = await getValidAccessToken(engagement.clientId);
         const [accounts, currentTB, priorTB] = await Promise.all([
-          getAccounts(engagement.clientId),
+          getAccounts(engagement.clientId, undefined, xeroAuth),
           getTrialBalanceReport(engagement.clientId, currentYearDate, xeroAuth),
           getTrialBalanceReport(engagement.clientId, priorYearDate, xeroAuth),
         ]);

@@ -225,8 +225,8 @@ export interface XeroAccount {
   Status: string;
 }
 
-export async function getAccounts(clientId: string, maxRetries?: number): Promise<XeroAccount[]> {
-  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+export async function getAccounts(clientId: string, maxRetries?: number, auth?: { accessToken: string; tenantId: string }): Promise<XeroAccount[]> {
+  const { accessToken, tenantId } = auth || await getValidAccessToken(clientId);
 
   const res = await xeroFetchWithRetry(`${XERO_API_BASE}/Accounts`, {
     Authorization: `Bearer ${accessToken}`,
