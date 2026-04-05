@@ -635,47 +635,15 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         const cyDateLabel = formatDateDDMMYYYY(periodEndDate) || 'CY';
         const pyDateLabel = dayBefore(periodStartDate) || 'PY';
 
-        // Find rows that disagree between Xero category and FS classification
-        function diffRows(xeroFilter: (r: TBRow) => boolean, fsFilter: (r: TBRow) => boolean): TBRow[] {
-          return rows.filter(r => {
-            const inXero = xeroFilter(r);
-            const inFs = fsFilter(r);
-            return inXero !== inFs; // row is in one group but not the other
-          });
-        }
 
-        // Build tooltip showing Xero value, FS value, difference, and differing account codes
-        function diffDot(xVal: number, fVal: number, diffs: TBRow[], field: 'currentYear' | 'priorYear') {
+        // Build tooltip showing Xero value, FS value, and difference
+        function diffDot(xVal: number, fVal: number) {
           const match = Math.abs(xVal - fVal) < 0.01;
-          if (diffs.length === 0 && match) return <span className="inline-block w-2 h-2 rounded-full bg-green-500 ml-1" title="Xero and FS agree" />;
+          if (match) return <span className="inline-block w-2 h-2 rounded-full bg-green-500 ml-1" title="Xero and FS agree" />;
           const diff = xVal - fVal;
-          const lines = [
-            `${src}: ${f(xVal)}`,
-            `FS: ${f(fVal)}`,
-            `Difference: ${f(diff)}`,
-            '',
-            `${diffs.length} account(s) differ:`,
-            ...diffs.slice(0, 10).map(r => {
-              const cat = r.category || '—';
-              const fs = r.fsStatement || '—';
-              return `  ${r.accountCode}: ${r.description}\n    ${src}: ${cat} → FS: ${fs} / ${r.fsLevel || '—'} (${f(Number(r[field]) || 0)})`;
-            }),
-            ...(diffs.length > 10 ? [`  ...and ${diffs.length - 10} more`] : []),
-          ];
-          return <span className="inline-block w-2 h-2 rounded-full bg-red-500 ml-1 cursor-help" title={lines.join('\n')} />;
+          const title = `${src}: ${f(xVal)}\nFS: ${f(fVal)}\nDifference: ${f(diff)}`;
+          return <span className="inline-block w-2 h-2 rounded-full bg-red-500 ml-1 cursor-help" title={title} />;
         }
-
-        const revDiffs = diffRows(r => xRevCats.has(r.category || ''), r => r.fsLevel === 'Revenue');
-        const costDiffs = diffRows(
-          r => xPnlCats.has(r.category || '') && !xRevCats.has(r.category || ''),
-          r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue'
-        );
-        const pnlDiffs = diffRows(r => xPnlCats.has(r.category || ''), r => r.fsStatement === 'Profit & Loss');
-        const grossDiffs = diffRows(
-          r => !xPnlCats.has(r.category || '') && (r.currentYear || 0) > 0,
-          r => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0
-        );
-        const bsDiffs = diffRows(r => !xPnlCats.has(r.category || ''), r => r.fsStatement === 'Balance Sheet');
 
         return (
           <div className="border border-slate-200 rounded-lg mb-2 overflow-hidden">
@@ -697,11 +665,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 </tr>
               </thead>
               <tbody>
-                <tr><td className={lc}>Revenue</td><td className={xc}>{f(xCyRev)}</td><td className={fc}>{f(fCyRev)}</td><td className="px-0.5">{diffDot(xCyRev, fCyRev, revDiffs, 'currentYear')}</td><td className={xc}>{f(xPyRev)}</td><td className={fc}>{f(fPyRev)}</td><td className="px-0.5">{diffDot(xPyRev, fPyRev, revDiffs, 'priorYear')}</td></tr>
-                <tr><td className={lc}>Costs</td><td className={xc}>{f(xCyCosts)}</td><td className={fc}>{f(fCyCosts)}</td><td className="px-0.5">{diffDot(xCyCosts, fCyCosts, costDiffs, 'currentYear')}</td><td className={xc}>{f(xPyCosts)}</td><td className={fc}>{f(fPyCosts)}</td><td className="px-0.5">{diffDot(xPyCosts, fPyCosts, costDiffs, 'priorYear')}</td></tr>
-                <tr><td className={`${lc} font-semibold text-slate-500`}>Profit</td><td className={`${xc} font-semibold`}>{f(xCyPnL)}</td><td className={`${fc} font-semibold`}>{f(fCyPnL)}</td><td className="px-0.5">{diffDot(xCyPnL, fCyPnL, pnlDiffs, 'currentYear')}</td><td className={`${xc} font-semibold`}>{f(xPyPnL)}</td><td className={`${fc} font-semibold`}>{f(fPyPnL)}</td><td className="px-0.5">{diffDot(xPyPnL, fPyPnL, pnlDiffs, 'priorYear')}</td></tr>
-                <tr><td className={lc}>Gross Assets</td><td className={xc}>{f(xCyGross)}</td><td className={fc}>{f(fCyGross)}</td><td className="px-0.5">{diffDot(xCyGross, fCyGross, grossDiffs, 'currentYear')}</td><td className={xc}>{f(xPyGross)}</td><td className={fc}>{f(fPyGross)}</td><td className="px-0.5">{diffDot(xPyGross, fPyGross, grossDiffs, 'priorYear')}</td></tr>
-                <tr><td className={`${lc} font-semibold text-slate-500`}>Net Assets</td><td className={`${xc} font-semibold`}>{f(xCyBS)}</td><td className={`${fc} font-semibold`}>{f(fCyBS)}</td><td className="px-0.5">{diffDot(xCyBS, fCyBS, bsDiffs, 'currentYear')}</td><td className={`${xc} font-semibold`}>{f(xPyBS)}</td><td className={`${fc} font-semibold`}>{f(fPyBS)}</td><td className="px-0.5">{diffDot(xPyBS, fPyBS, bsDiffs, 'priorYear')}</td></tr>
+                <tr><td className={lc}>Revenue</td><td className={xc}>{f(xCyRev)}</td><td className={fc}>{f(fCyRev)}</td><td className="px-0.5">{diffDot(xCyRev, fCyRev)}</td><td className={xc}>{f(xPyRev)}</td><td className={fc}>{f(fPyRev)}</td><td className="px-0.5">{diffDot(xPyRev, fPyRev)}</td></tr>
+                <tr><td className={lc}>Costs</td><td className={xc}>{f(xCyCosts)}</td><td className={fc}>{f(fCyCosts)}</td><td className="px-0.5">{diffDot(xCyCosts, fCyCosts)}</td><td className={xc}>{f(xPyCosts)}</td><td className={fc}>{f(fPyCosts)}</td><td className="px-0.5">{diffDot(xPyCosts, fPyCosts)}</td></tr>
+                <tr><td className={`${lc} font-semibold text-slate-500`}>Profit</td><td className={`${xc} font-semibold`}>{f(xCyPnL)}</td><td className={`${fc} font-semibold`}>{f(fCyPnL)}</td><td className="px-0.5">{diffDot(xCyPnL, fCyPnL)}</td><td className={`${xc} font-semibold`}>{f(xPyPnL)}</td><td className={`${fc} font-semibold`}>{f(fPyPnL)}</td><td className="px-0.5">{diffDot(xPyPnL, fPyPnL)}</td></tr>
+                <tr><td className={lc}>Gross Assets</td><td className={xc}>{f(xCyGross)}</td><td className={fc}>{f(fCyGross)}</td><td className="px-0.5">{diffDot(xCyGross, fCyGross)}</td><td className={xc}>{f(xPyGross)}</td><td className={fc}>{f(fPyGross)}</td><td className="px-0.5">{diffDot(xPyGross, fPyGross)}</td></tr>
+                <tr><td className={`${lc} font-semibold text-slate-500`}>Net Assets</td><td className={`${xc} font-semibold`}>{f(xCyBS)}</td><td className={`${fc} font-semibold`}>{f(fCyBS)}</td><td className="px-0.5">{diffDot(xCyBS, fCyBS)}</td><td className={`${xc} font-semibold`}>{f(xPyBS)}</td><td className={`${fc} font-semibold`}>{f(fPyBS)}</td><td className="px-0.5">{diffDot(xPyBS, fPyBS)}</td></tr>
                 <tr className="border-t border-slate-200">
                   <td className="text-right pr-2 py-px text-[10px] font-bold text-slate-500">Total</td>
                   <td colSpan={3} className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(cyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${cyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></td>
