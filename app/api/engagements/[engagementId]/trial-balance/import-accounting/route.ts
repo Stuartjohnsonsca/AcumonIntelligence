@@ -46,13 +46,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
     switch (connection.system.toLowerCase()) {
       case 'xero': {
-        // Get a fresh token once, then use it for all Xero API calls
-        const xeroAuth = await getValidAccessToken(engagement.clientId);
-        const [accounts, currentTB, priorTB] = await Promise.all([
-          getAccounts(engagement.clientId, undefined, xeroAuth),
+        // Get a fresh token, fetch accounts first (sequential to avoid 401 races)
+        let xeroAuth = await getValidAccessToken(engagement.clientId);
+        console.log(`[TB Import] Token obtained, fetching accounts...`);
+        let accounts: any[];
+        try {
+          accounts = await getAccounts(engagement.clientId, undefined, xeroAuth);
+        } catch (err: any) {
+          // Token might have just expired — refresh and retry once
+          console.warn(`[TB Import] getAccounts failed: ${err.message}, refreshing token and retrying...`);
+          xeroAuth = await getValidAccessToken(engagement.clientId);
+          accounts = await getAccounts(engagement.clientId, undefined, xeroAuth);
+        }
+        console.log(`[TB Import] Got ${accounts.length} accounts, fetching TB reports...`);
+        const [currentTB, priorTB] = await Promise.all([
           getTrialBalanceReport(engagement.clientId, currentYearDate, xeroAuth),
           getTrialBalanceReport(engagement.clientId, priorYearDate, xeroAuth),
         ]);
+        console.log(`[TB Import] TB reports: CY=${currentTB.size} entries, PY=${priorTB.size} entries`);
 
         // Xero account types → FS categories
         const typeMap: Record<string, string> = {
