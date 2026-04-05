@@ -252,6 +252,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   // AI classify all rows at once
   const [aiAllLoading, setAiAllLoading] = useState(false);
   const [aiAllProgress, setAiAllProgress] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
 
   async function handleAiClassifyAll() {
     const rowsToClassify = rows
@@ -418,6 +420,27 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           {error && <span className="text-xs text-red-500">{error}</span>}
           <button onClick={addRow} className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
           <button
+            onClick={async () => {
+              setImporting(true);
+              try {
+                const res = await fetch(`/api/engagements/${engagementId}/trial-balance/import-accounting`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                  setRows(data.rows || []);
+                  setImportResult(`Imported ${data.imported} accounts from ${data.orgName || data.source} (${data.skipped} already existed)`);
+                } else {
+                  setImportResult(`Import failed: ${data.error}`);
+                }
+              } catch (err: any) {
+                setImportResult(`Import failed: ${err.message}`);
+              } finally { setImporting(false); }
+            }}
+            disabled={importing}
+            className="text-xs px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 disabled:opacity-50 font-medium"
+          >
+            {importing ? '⏳ Importing...' : '📥 Import from Accounting System'}
+          </button>
+          <button
             onClick={handleAiClassifyAll}
             disabled={aiAllLoading}
             className="text-xs px-3 py-1 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 disabled:opacity-50 font-medium"
@@ -426,6 +449,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           </button>
         </div>
       </div>
+
+      {importResult && (
+        <div className={`text-xs px-3 py-2 rounded-lg ${importResult.includes('failed') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+          {importResult}
+          <button onClick={() => setImportResult(null)} className="ml-2 text-slate-400 hover:text-slate-600">×</button>
+        </div>
+      )}
 
       {/* Unified table: summary rows + header + data — all share same column widths */}
       <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 280px)' }}>
