@@ -25,6 +25,8 @@ interface MethodologyTestItem {
   assertions: string[] | null;
   framework: string;
   significantRisk: boolean;
+  outputFormat: string | null;
+  isIngest: boolean;
   flow: any | null;
   sortOrder: number;
   isActive: boolean;
@@ -104,7 +106,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   // Test Bank tab state
   const [editingTest, setEditingTest] = useState<MethodologyTestItem | null>(null);
   const [testModalOpen, setTestModalOpen] = useState(false);
-  const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false });
+  const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false, outputFormat: 'three_section_no_sampling', isIngest: false });
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -215,6 +217,8 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
       assertions: (test.assertions as string[]) || [],
       framework: test.framework === 'ALL' ? '' : test.framework,
       significantRisk: test.significantRisk,
+      outputFormat: test.outputFormat || 'three_section_no_sampling',
+      isIngest: test.isIngest || false,
     });
     setTestModalOpen(true);
   }
@@ -225,13 +229,13 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
       if (editingTest) {
         const res = await fetch('/api/methodology-admin/tests', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: editingTest.id, name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.significantRisk }),
+          body: JSON.stringify({ id: editingTest.id, name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.significantRisk, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest }),
         });
         if (res.ok) { const { test } = await res.json(); setTests(prev => prev.map(t => t.id === test.id ? test : t)); }
       } else {
         const res = await fetch('/api/methodology-admin/tests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.significantRisk }),
+          body: JSON.stringify({ name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.significantRisk, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest }),
         });
         if (res.ok) { const { test } = await res.json(); setTests(prev => [...prev, test]); }
       }
@@ -250,6 +254,8 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           assertions: test.assertions,
           framework: test.framework,
           significantRisk: test.significantRisk,
+          outputFormat: test.outputFormat,
+          isIngest: test.isIngest,
           flow: test.flow,
         }),
       });
@@ -605,7 +611,11 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 <div><label className="text-xs font-medium text-slate-600 block mb-1">Framework</label><select value={testForm.framework} onChange={e => setTestForm(prev => ({ ...prev, framework: e.target.value }))} className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"><option value="">All Frameworks</option>{frameworkOptions.map(fw => <option key={fw} value={fw}>{fw}</option>)}</select></div>
               </div>
               <div><label className="text-xs font-medium text-slate-600 block mb-1">Assertions</label><div className="flex flex-wrap gap-1">{ASSERTION_TYPES.map(a => { const c = testForm.assertions.includes(a); return (<label key={a} className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border cursor-pointer transition-colors ${c ? 'bg-purple-100 border-purple-300 text-purple-700' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}><input type="checkbox" checked={c} className="hidden" onChange={e => setTestForm(prev => ({ ...prev, assertions: e.target.checked ? [...prev.assertions, a] : prev.assertions.filter(x => x !== a) }))} />{a.length > 15 ? a.split(' ').map(w => w[0]).join('') : a}</label>); })}</div></div>
-              <div><label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={testForm.significantRisk} onChange={e => setTestForm(prev => ({ ...prev, significantRisk: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-red-500" /><span className="text-sm text-slate-700">Significant Risk</span></label></div>
+              <div className="flex items-center gap-6 flex-wrap">
+                <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={testForm.significantRisk} onChange={e => setTestForm(prev => ({ ...prev, significantRisk: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-red-500" /><span className="text-sm text-slate-700">Significant Risk</span></label>
+                <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={testForm.isIngest} onChange={e => setTestForm(prev => ({ ...prev, isIngest: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-slate-500" /><span className="text-sm text-slate-700">Ingest / Prerequisite</span></label>
+              </div>
+              <div><label className="text-xs font-medium text-slate-600 block mb-1">Output Format</label><select value={testForm.outputFormat} onChange={e => setTestForm(prev => ({ ...prev, outputFormat: e.target.value }))} className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"><option value="three_section_sampling">3-Section with Sampling</option><option value="three_section_no_sampling">3-Section without Sampling</option><option value="document_summary">Document Summary</option><option value="spreadsheet">Spreadsheet</option></select></div>
             </div>
             <div className="flex items-center justify-end gap-2 mt-6">
               <Button onClick={() => setTestModalOpen(false)} size="sm" variant="outline">Cancel</Button>

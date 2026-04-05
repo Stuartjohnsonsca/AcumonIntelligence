@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { name, description, testTypeCode, assertions, framework, significantRisk, flow } = await req.json();
+  const { name, description, testTypeCode, assertions, framework, significantRisk, outputFormat, isIngest, flow } = await req.json();
   if (!name?.trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
 
   const test = await prisma.methodologyTest.create({
@@ -42,6 +42,8 @@ export async function POST(req: NextRequest) {
       assertions: assertions || [],
       framework: framework || 'ALL',
       significantRisk: significantRisk || false,
+      outputFormat: outputFormat || null,
+      isIngest: isIngest || false,
       flow: flow || null,
     },
   });
@@ -66,6 +68,8 @@ export async function PATCH(req: NextRequest) {
   if (updates.assertions !== undefined) data.assertions = updates.assertions;
   if (updates.framework !== undefined) data.framework = updates.framework;
   if (updates.significantRisk !== undefined) data.significantRisk = updates.significantRisk;
+  if (updates.outputFormat !== undefined) data.outputFormat = updates.outputFormat || null;
+  if (updates.isIngest !== undefined) data.isIngest = updates.isIngest;
   if (updates.flow !== undefined) data.flow = updates.flow;
   if (updates.sortOrder !== undefined) data.sortOrder = updates.sortOrder;
   if (updates.isActive !== undefined) data.isActive = updates.isActive;

@@ -2045,6 +2045,8 @@ model MethodologyTest {
   assertions      Json?    // ["Completeness", "Existence", ...]
   framework       String   @default("ALL")
   significantRisk Boolean  @default(false) @map("significant_risk")
+  outputFormat    String?  @map("output_format") // three_section_sampling | three_section_no_sampling | document_summary | spreadsheet
+  isIngest        Boolean  @default(false) @map("is_ingest") // Data collection/prep, not an auditable test
   flow            Json?    // { nodes, edges }
   sortOrder       Int      @default(0) @map("sort_order")
   isActive        Boolean  @default(true) @map("is_active")

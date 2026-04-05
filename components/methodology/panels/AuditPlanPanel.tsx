@@ -461,7 +461,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
   // Find tests for a row — uses TBCYvPY fsLevel/fsNote mapping to look up allocated tests.
   // The TB row's fsLevel is the key — set via AI Classification or manually in TBCYvPY.
-  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string, riskClassification?: string | null): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
+  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string, riskClassification?: string | null): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any; isIngest?: boolean; outputFormat?: string }[] {
     // Build list of FS Line names to search — canonical mapped name + raw + fsNote
     const names = new Set<string>();
     if (fsLevel) {
@@ -524,10 +524,12 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         assertions: (test.assertions as string[]) || [],
         assertion: ((test.assertions as string[]) || [])[0] || '',
         framework: test.framework,
-        color,
-        typeName: tt?.name || test.testTypeCode,
+        color: (test as any).isIngest ? 'bg-slate-100 text-slate-400 border-slate-200' : color,
+        typeName: (test as any).isIngest ? 'Ingest' : (tt?.name || test.testTypeCode),
         flow: test.flow,
         executionDef: tt?.executionDef,
+        isIngest: (test as any).isIngest || false,
+        outputFormat: (test as any).outputFormat || null,
       });
     }
     return result;
@@ -964,7 +966,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                           const conc = testConc || dbConc?.conclusion || 'pending';
                           const isFailed = conc === 'failed';
                           return (
-                        <tr className={`border-b border-slate-50 ${!isApplicable ? 'opacity-30' : ''} ${isExecutionOpen ? 'bg-blue-50/50' : ''} ${isFailed ? 'bg-red-100' : ''}`}>
+                        <tr className={`border-b border-slate-50 ${!isApplicable ? 'opacity-30' : ''} ${isExecutionOpen ? 'bg-blue-50/50' : ''} ${isFailed ? 'bg-red-100' : ''} ${test.isIngest ? 'opacity-50' : ''}`}>
                           <td className="text-center">
                             <input type="checkbox" checked={isApplicable} onChange={() => toggleTestApplicable(testKey)}
                               className="w-2.5 h-2.5 rounded border-slate-300 cursor-pointer" title={isApplicable ? 'Applicable — click to exclude' : 'Not applicable — click to include'} />
