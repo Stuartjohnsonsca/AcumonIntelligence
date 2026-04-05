@@ -39,42 +39,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     let debugInfo = '';
 
     // Compute dates for TB report
-    // Xero returns cumulative P&L from its financial year start, so we need
-    // 4 TB snapshots to isolate single-period P&L figures:
-    //   CY P&L = TB@cyEnd - TB@cyPLBase
-    //   PY P&L = TB@pyEnd - TB@pyPLBase
-    // Balance sheet items are point-in-time and don't need subtraction.
+    // CY = TB as at period end date (e.g. 31/3/2025)
+    // PY = TB as at day before period start (e.g. 31/3/2024)
+    // Values are imported exactly as Xero returns them — no manipulation.
     const formatDate = (d: Date) => d.toISOString().split('T')[0];
+    const currentYearDate = formatDate(engagement.period.endDate);
+    const priorDate = new Date(engagement.period.startDate);
+    priorDate.setDate(priorDate.getDate() - 1);
+    const priorYearDate = formatDate(priorDate);
 
-    const cyEndDate = formatDate(engagement.period.endDate);              // e.g. 2025-03-31
-
-    const cyPLBaseRaw = new Date(engagement.period.startDate);
-    cyPLBaseRaw.setDate(cyPLBaseRaw.getDate() - 1);
-    const cyPLBaseDate = formatDate(cyPLBaseRaw);                         // e.g. 2025-02-28
-
-    const pyEndDate = cyPLBaseDate;                                       // PY end = CY P&L base
-
-    // Mirror the period back using calendar month arithmetic to compute PY P&L base.
-    // We subtract the same year/month offset from pyEnd as exists between cyPLBase and cyEnd,
-    // then use end-of-month to handle varying month lengths correctly.
-    // e.g. CY 1/3→31/3 (1 month): pyEnd=28/2, go back 1 month → end of Jan = 31/1
-    // e.g. CY 1/1→31/3 (3 months): pyEnd=31/12, go back 3 months → end of Sep = 30/9
-    const periodStart = new Date(engagement.period.startDate);
-    const periodEnd = new Date(engagement.period.endDate);
-    const monthSpan = (periodEnd.getFullYear() - periodStart.getFullYear()) * 12
-      + periodEnd.getMonth() - periodStart.getMonth() + 1;
-
-    // PY period start = periodStart minus monthSpan months.
-    // PY P&L base = that date minus 1 day (end of month before PY period).
-    const pyPeriodStart = new Date(Date.UTC(
-      periodStart.getUTCFullYear(),
-      periodStart.getUTCMonth() - monthSpan,
-      periodStart.getUTCDate()
-    ));
-    pyPeriodStart.setUTCDate(pyPeriodStart.getUTCDate() - 1);
-    const pyPLBaseDate = formatDate(pyPeriodStart);                       // e.g. 2025-01-31
-
-    console.log(`[TB Import] Dates — CY end: ${cyEndDate}, CY P&L base: ${cyPLBaseDate}, PY end: ${pyEndDate}, PY P&L base: ${pyPLBaseDate}, period months: ${monthSpan}`);
+    console.log(`[TB Import] Dates — CY: ${currentYearDate}, PY: ${priorYearDate}`);
 
     switch (connection.system.toLowerCase()) {
       case 'xero': {
@@ -90,14 +64,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           xeroAuth = await getValidAccessToken(engagement.clientId);
           accounts = await getAccounts(engagement.clientId, undefined, xeroAuth);
         }
-        console.log(`[TB Import] Got ${accounts.length} accounts, fetching 4 TB reports...`);
-        const [cyEndTB, cyPLBaseTB, pyEndTB, pyPLBaseTB] = await Promise.all([
-          getTrialBalanceReport(engagement.clientId, cyEndDate, xeroAuth),
-          getTrialBalanceReport(engagement.clientId, cyPLBaseDate, xeroAuth),
-          getTrialBalanceReport(engagement.clientId, pyEndDate, xeroAuth),
-          getTrialBalanceReport(engagement.clientId, pyPLBaseDate, xeroAuth),
+        console.log(`[TB Import] Got ${accounts.length} accounts, fetching TB reports...`);
+        const [currentTB, priorTB] = await Promise.all([
+          getTrialBalanceReport(engagement.clientId, currentYearDate, xeroAuth),
+          getTrialBalanceReport(engagement.clientId, priorYearDate, xeroAuth),
         ]);
-        console.log(`[TB Import] TB reports: CY end=${cyEndTB.size}, CY P&L base=${cyPLBaseTB.size}, PY end=${pyEndTB.size}, PY P&L base=${pyPLBaseTB.size}`);
+        console.log(`[TB Import] TB reports: CY=${currentTB.size} entries, PY=${priorTB.size} entries`);
 
         // Xero account types → FS categories
         const typeMap: Record<string, string> = {
@@ -139,41 +111,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             : entry.debit - entry.credit;  // Assets/expenses: positive when debit balance
         }
 
-        // ── Chart-of-accounts-driven: import EVERY account, look up TB values ──
-        // Track imbalance to add a balancing "Profit/Loss for Period" equity line.
-        let cyImbalance = 0, pyImbalance = 0;
+        // ── Chart-of-accounts-driven: import EVERY account, look up exact TB values ──
+        // No P&L manipulation — values match Xero exactly.
         let matched = 0;
 
         for (const a of accounts) {
           const accountId = a.AccountID || '';
           const accountType = a.Type || '';
           const accountCode = a.Code || accountId;
-          const isPnL = statementMap[accountType] === 'Profit & Loss';
 
-          // Look up TB values by AccountID
-          const cyEnd = cyEndTB.get(accountId);
-          const cyBase = cyPLBaseTB.get(accountId);
-          const pyEnd = pyEndTB.get(accountId);
-          const pyBase = pyPLBaseTB.get(accountId);
+          // Look up TB values by AccountID — exact figures from Xero
+          const cy = currentTB.get(accountId);
+          const py = priorTB.get(accountId);
 
-          if (cyEnd || cyBase || pyEnd || pyBase) matched++;
+          if (cy || py) matched++;
 
-          // BS: point-in-time at period end. P&L: subtract base to isolate period.
-          const cyAmount = isPnL
-            ? netBalance(cyEnd, accountType) - netBalance(cyBase, accountType)
-            : netBalance(cyEnd, accountType);
-          const pyAmount = isPnL
-            ? netBalance(pyEnd, accountType) - netBalance(pyBase, accountType)
-            : netBalance(pyEnd, accountType);
-
-          // Track imbalance: debit-normal adds, credit-normal subtracts
-          if (creditNormalTypes.has(accountType)) {
-            cyImbalance -= cyAmount;
-            pyImbalance -= pyAmount;
-          } else {
-            cyImbalance += cyAmount;
-            pyImbalance += pyAmount;
-          }
+          const cyAmount = netBalance(cy, accountType);
+          const pyAmount = netBalance(py, accountType);
 
           tbRows.push({
             accountCode,
@@ -184,22 +138,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             fsLevel: typeMap[accountType] || a.Class || '',
             fsStatement: statementMap[accountType] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
           } as any);
-        }
-
-        // ── Add balancing "Profit/Loss for Period" equity line ──
-        // When P&L is stripped to a single period, the BS still reflects full cumulative
-        // equity. This line bridges the gap so the TB always totals zero.
-        if (cyImbalance !== 0 || pyImbalance !== 0) {
-          tbRows.push({
-            accountCode: 'PL-PERIOD',
-            description: 'Profit/Loss for Period',
-            currentYear: cyImbalance,
-            priorYear: pyImbalance,
-            category: 'Equity',
-            fsLevel: 'Equity',
-            fsStatement: 'Balance Sheet',
-          } as any);
-          console.log(`[TB Import] Added Profit/Loss for Period — CY: ${cyImbalance}, PY: ${pyImbalance}`);
         }
 
         // Remove rows that are zero in both CY and PY (no activity)
