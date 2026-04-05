@@ -264,7 +264,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           <div className={`w-3 h-3 rounded-full ${dotColor} shrink-0`} title={`Conclusion: ${conclusion}`} />
           <div className="min-w-0">
             <div className="text-sm font-semibold text-slate-800 truncate">{testDescription}</div>
-            <div className="text-[10px] text-slate-400">{fsLine}</div>
+            <div className="text-[10px] text-slate-400">{fsLine}{tbRow?.accountCode ? ` — ${tbRow.accountCode}: ${tbRow.description || ''}` : ''}</div>
           </div>
           <span className={`text-[9px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
             executionStatus === 'completed' ? 'bg-green-100 text-green-700' :
@@ -362,6 +362,12 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                         {step.output?.decision && <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{step.output.decision}</span>}
                         {step.output?.populationData?.length > 0 && <span className="text-[8px] px-1 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium">{step.output.populationData.length} rows</span>}
                         {step.output?.dataTable?.length > 0 && !step.output?.populationData && <span className="text-[8px] px-1 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium">{step.output.dataTable.length} rows</span>}
+                        {/* Extraction progress detail */}
+                        {step.output?.progress && <span className="text-[8px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{step.output.progress}</span>}
+                        {step.output?.transactionCount > 0 && !step.output?.dataTable && <span className="text-[8px] px-1 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">{step.output.transactionCount} txns</span>}
+                        {/* Evidence info */}
+                        {step.output?.uploadCount > 0 && <span className="text-[8px] px-1 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">{step.output.uploadCount} files</span>}
+                        {step.output?.evidenceFound === false && <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">No evidence</span>}
                         {step.status === 'paused' && <span className="text-[8px] px-1 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Paused{pauseReason ? `: ${pauseReason}` : ''}</span>}
                         {step.errorMessage && <span className="text-[8px] text-red-500 break-words max-w-[250px]">{step.errorMessage}</span>}
                         {step.duration && <span className="text-[8px] text-slate-400">{(step.duration / 1000).toFixed(1)}s</span>}
