@@ -151,7 +151,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     onShowCategoryChange?.(show);
   }
 
-  const { saving, lastSaved, error } = useAutoSave(
+  const { saving, lastSaved, error, triggerSave } = useAutoSave(
     `/api/engagements/${engagementId}/trial-balance`,
     { rows },
     { enabled: !importing && JSON.stringify(rows) !== JSON.stringify(initialRows) }
@@ -399,6 +399,9 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           break; // Stop processing batches on error
         }
       }
+      // Force save immediately — don't rely on auto-save debounce
+      setAiAllProgress('Saving classifications...');
+      triggerSave();
       setAiAllProgress('Done!');
       setTimeout(() => setAiAllProgress(''), 2000);
     } catch (err) {

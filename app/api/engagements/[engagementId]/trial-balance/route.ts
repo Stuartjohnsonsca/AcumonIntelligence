@@ -44,7 +44,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
           accountCode: row.accountCode, description: row.description, category: row.category,
           currentYear: row.currentYear ?? null, priorYear: row.priorYear ?? null,
           fsNoteLevel: row.fsNoteLevel, fsLevel: row.fsLevel, fsStatement: row.fsStatement,
-          groupName: row.groupName, sortOrder: row.sortOrder,
+          groupName: row.groupName, aiConfidence: (row as any).aiConfidence ?? null, sortOrder: row.sortOrder,
         },
       });
     } else {
@@ -53,7 +53,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
           description: row.description, category: row.category,
           currentYear: row.currentYear ?? null, priorYear: row.priorYear ?? null,
           fsNoteLevel: row.fsNoteLevel, fsLevel: row.fsLevel, fsStatement: row.fsStatement,
-          groupName: row.groupName, sortOrder: row.sortOrder },
+          groupName: row.groupName, aiConfidence: (row as any).aiConfidence ?? null, sortOrder: row.sortOrder },
       });
     }
   }

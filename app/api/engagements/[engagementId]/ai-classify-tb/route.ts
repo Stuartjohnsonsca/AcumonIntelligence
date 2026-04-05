@@ -176,6 +176,31 @@ No other text.`;
 
     const classifications = JSON.parse(jsonStr);
 
+    // Save classifications directly to DB — don't rely on frontend auto-save
+    // The rows array has { index, accountCode } — match by accountCode to find the DB row
+    const tbRowsDb = await prisma.auditTBRow.findMany({
+      where: { engagementId },
+      select: { id: true, accountCode: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    for (const c of classifications) {
+      const sourceRow = rows[c.index - (rows[0]?.index || 0)];
+      if (!sourceRow) continue;
+      // Find DB row by account code
+      const dbRow = tbRowsDb.find(r => r.accountCode === sourceRow.accountCode);
+      if (dbRow && (c.fsNoteLevel || c.fsLevel || c.fsStatement)) {
+        await prisma.auditTBRow.update({
+          where: { id: dbRow.id },
+          data: {
+            fsNoteLevel: c.fsNoteLevel || undefined,
+            fsLevel: c.fsLevel || undefined,
+            fsStatement: c.fsStatement || undefined,
+            aiConfidence: c.confidence ?? null,
+          },
+        });
+      }
+    }
+
     // Log usage
     try {
       const usage = completion.usage;
