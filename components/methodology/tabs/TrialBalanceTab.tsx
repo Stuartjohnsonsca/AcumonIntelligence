@@ -417,6 +417,33 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
   if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading Trial Balance...</div>;
 
+  function exportCSV() {
+    const headers = ['Account Code', 'Description', 'Category', formatDateDDMMYYYY(periodEndDate) || 'Current Year', dayBefore(periodStartDate) || 'Prior Year', 'FS Note', 'FS Level', 'FS Statement'];
+    if (isGroupAudit) headers.push('Group Name');
+    const csvRows = [headers.join(',')];
+    for (const row of rows) {
+      const vals = [
+        `"${(row.accountCode || '').replace(/"/g, '""')}"`,
+        `"${(row.description || '').replace(/"/g, '""')}"`,
+        `"${(row.category || '').replace(/"/g, '""')}"`,
+        row.currentYear ?? '',
+        row.priorYear ?? '',
+        `"${(row.fsNoteLevel || '').replace(/"/g, '""')}"`,
+        `"${(row.fsLevel || '').replace(/"/g, '""')}"`,
+        `"${(row.fsStatement || '').replace(/"/g, '""')}"`,
+      ];
+      if (isGroupAudit) vals.push(`"${(row.groupName || '').replace(/"/g, '""')}"`);
+      csvRows.push(vals.join(','));
+    }
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `trial-balance-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const numCls = 'w-full border-0 bg-transparent text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5';
   const txtCls = 'w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5';
 
@@ -463,6 +490,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             className="text-xs px-3 py-1 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 disabled:opacity-50 font-medium"
           >
             {aiAllLoading ? aiAllProgress : '⚡ AI Classify All'}
+          </button>
+          <button
+            onClick={exportCSV}
+            className="text-xs px-3 py-1 bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 font-medium"
+          >
+            📤 Export CSV
           </button>
         </div>
       </div>
