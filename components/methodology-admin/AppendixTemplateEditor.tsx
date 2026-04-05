@@ -44,6 +44,24 @@ function inputTypeBadge(inputType: string) {
   </span>;
 }
 
+// Isolated component for dropdown options — prevents parent re-renders from resetting input
+function DropdownOptionsEditor({ options, onChange }: { options: string[]; onChange: (opts: string[]) => void }) {
+  const [text, setText] = useState(options.join(', '));
+  return (
+    <div className="col-span-2">
+      <label className="block text-xs text-slate-500 mb-1 font-medium">Dropdown Options (comma-separated)</label>
+      <input
+        type="text"
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={() => onChange(text.split(',').map(s => s.trim()).filter(Boolean))}
+        className="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        placeholder="Option 1, Option 2, Option 3"
+      />
+    </div>
+  );
+}
+
 export function AppendixTemplateEditor({ firmId, templateType, auditType, initialQuestions, sectionOptions, onSave }: Props) {
   const [questions, setQuestions] = useState<TemplateQuestion[]>(initialQuestions);
   const [saving, setSaving] = useState(false);
@@ -299,16 +317,11 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
 
                             {/* Dropdown options editor */}
                             {q.inputType === 'dropdown' && (
-                              <div className="col-span-2">
-                                <label className="block text-xs text-slate-500 mb-1 font-medium">Dropdown Options (comma-separated)</label>
-                                <input
-                                  type="text"
-                                  defaultValue={(q.dropdownOptions || []).join(', ')}
-                                  onBlur={e => updateQuestion(q.id, { dropdownOptions: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                                  className="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                  placeholder="Option 1, Option 2, Option 3"
-                                />
-                              </div>
+                              <DropdownOptionsEditor
+                                key={q.id + '-dropdown'}
+                                options={q.dropdownOptions || []}
+                                onChange={opts => updateQuestion(q.id, { dropdownOptions: opts })}
+                              />
                             )}
 
                             {/* Formula expression */}
