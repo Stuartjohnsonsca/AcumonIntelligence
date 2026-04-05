@@ -89,11 +89,11 @@ const flow = {
 
 async function main() {
   // Find all firms
-  const firms = await prisma.firm.findMany({ select: { id: true, firmName: true } });
+  const firms = await prisma.firm.findMany({ select: { id: true, name: true } });
   console.log(`Found ${firms.length} firm(s)`);
 
   for (const firm of firms) {
-    console.log(`\nProcessing firm: ${firm.firmName} (${firm.id})`);
+    console.log(`\nProcessing firm: ${firm.name} (${firm.id})`);
 
     // Check if test type exists for this firm
     let testType = await prisma.methodologyTestType.findFirst({
@@ -106,10 +106,8 @@ async function main() {
           firmId: firm.id,
           code: TEST_TYPE_CODE,
           name: TEST_NAME,
-          description: 'Request bank statements for the engagement year plus 2 months post year-end, one request per bank account.',
           actionType: 'client',
           executionDef: flow.nodes.find(n => n.id === 'node_request')?.data.executionDef || {},
-          sortOrder: 100,
         },
       });
       console.log(`  Created test type: ${TEST_TYPE_CODE}`);
