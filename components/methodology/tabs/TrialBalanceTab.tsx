@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 
 interface Props {
@@ -55,6 +55,22 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
+  const [filters, setFilters] = useState<Record<string, string>>({});
+
+  // Compute filtered rows based on active column filters
+  const filteredRows = useMemo(() => {
+    const activeFilters = Object.entries(filters).filter(([, v]) => v);
+    if (activeFilters.length === 0) return rows;
+    return rows.filter(row => {
+      for (const [field, value] of activeFilters) {
+        const cellVal = String((row as any)[field] ?? '').toLowerCase();
+        if (!cellVal.includes(value.toLowerCase())) return false;
+      }
+      return true;
+    });
+  }, [rows, filters]);
+
+  const hasActiveFilters = Object.values(filters).some(v => v);
 
   // Sync when parent changes (e.g. Opening tab toggle)
   useEffect(() => {
@@ -528,7 +544,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           {/* Compact summary rows above the column header */}
           {(() => {
             const sum = (filter: (r: TBRow) => boolean, field: 'currentYear' | 'priorYear') =>
-              rows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
+              filteredRows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
             const cyRev = sum(r => r.fsLevel === 'Revenue', 'currentYear');
             const pyRev = sum(r => r.fsLevel === 'Revenue', 'priorYear');
             const cyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'currentYear');
@@ -540,8 +556,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             // Gross Assets = total of debit-side BS items (positive amounts on BS)
             const cyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0, 'currentYear');
             const pyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.priorYear || 0) > 0, 'priorYear');
-            const cyTotal = rows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
-            const pyTotal = rows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
+            const cyTotal = filteredRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
+            const pyTotal = filteredRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
             const cyBal = Math.abs(cyTotal) < 0.01;
             const pyBal = Math.abs(pyTotal) < 0.01;
             const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
@@ -577,9 +593,30 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               {isGroupAudit && <th className="text-left px-2 py-2 text-slate-500 font-medium">Group Name</th>}
               <th className="w-8"></th>
             </tr>
+            {/* Filter row */}
+            <tr className="bg-slate-50 border-b border-slate-200">
+              {['accountCode', 'description', ...(showCategory ? ['category'] : []), 'currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement', ...(isGroupAudit ? ['groupName'] : [])].map(field => (
+                <th key={field} className="px-1 py-1">
+                  <input
+                    type="text"
+                    value={filters[field] || ''}
+                    onChange={e => setFilters(prev => ({ ...prev, [field]: e.target.value }))}
+                    placeholder="Filter..."
+                    className="w-full text-[10px] px-1.5 py-0.5 border border-slate-200 rounded bg-white text-slate-600 placeholder:text-slate-300 focus:outline-none focus:border-blue-300"
+                  />
+                </th>
+              ))}
+              <th className="px-1 py-1">
+                {hasActiveFilters && (
+                  <button onClick={() => setFilters({})} className="text-[9px] text-red-400 hover:text-red-600" title="Clear all filters">✕</button>
+                )}
+              </th>
+            </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
+            {filteredRows.map((row) => {
+              const i = rows.indexOf(row);
+              return (
               <tr key={row.id || `new-${i}`} className="border-b border-slate-100 hover:bg-slate-50/50">
                 <td className="px-2 py-0.5">
                   <input type="text" value={row.accountCode} onChange={e => updateRow(i, 'accountCode', e.target.value)} onPaste={e => handlePaste(e, i, 0)} className={txtCls} placeholder="Code" />
@@ -694,12 +731,15 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   </td>
                 )}
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      <div className="mt-2 text-xs text-slate-400">{rows.length} row{rows.length !== 1 ? 's' : ''}</div>
+      <div className="mt-2 text-xs text-slate-400">
+        {hasActiveFilters ? `${filteredRows.length} of ${rows.length} rows (filtered)` : `${rows.length} row${rows.length !== 1 ? 's' : ''}`}
+      </div>
     </div>
   );
 }
