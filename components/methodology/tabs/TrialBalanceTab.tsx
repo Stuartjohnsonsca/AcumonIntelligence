@@ -444,7 +444,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   const importedRows = data.rows || [];
                   setRows(importedRows);
                   setInitialRows(importedRows);
-                  setImportResult(`Imported ${data.imported} accounts from ${data.orgName || data.source}${data.updated ? `, updated ${data.updated} balances` : ''}${data.skipped ? ` (${data.skipped} already existed)` : ''}`);
+                  setImportResult(`Imported ${data.imported} accounts from ${data.orgName || data.source}${data.updated ? `, updated ${data.updated} balances` : ''}${data.skipped ? ` (${data.skipped} already existed)` : ''}${data.debug ? ` [${data.debug}]` : ''}`);
                 } else {
                   setImportResult(`Import failed: ${data.error}`);
                 }

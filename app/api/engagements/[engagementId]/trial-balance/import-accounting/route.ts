@@ -231,6 +231,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       skipped: tbRows.length - created - updated,
       source: connection.system,
       orgName: connection.orgName,
+      debug: `Accounts API: ${(accounts as any[]).length}, TB CY: ${currentTB.size}, TB PY: ${priorTB.size}, matched ID: ${matchedById}, matched name: ${matchedByName}, unmatched: ${unmatched}`,
     });
   } catch (err: any) {
     console.error('TB import error:', err);
