@@ -644,14 +644,25 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           });
         }
 
-        // Build tooltip showing difference details
+        // Build tooltip showing Xero value, FS value, difference, and differing account codes
         function diffDot(xVal: number, fVal: number, diffs: TBRow[], field: 'currentYear' | 'priorYear') {
           const match = Math.abs(xVal - fVal) < 0.01;
           if (diffs.length === 0 && match) return <span className="inline-block w-2 h-2 rounded-full bg-green-500 ml-1" title="Xero and FS agree" />;
-          const diffTotal = Math.abs(xVal - fVal);
-          const codes = diffs.slice(0, 10).map(r => `${r.accountCode}: ${r.description} (${f(Number(r[field]) || 0)})`).join('\n');
-          const title = `Difference: ${f(diffTotal)}\n${diffs.length} account(s) differ:\n${codes}${diffs.length > 10 ? `\n...and ${diffs.length - 10} more` : ''}`;
-          return <span className="inline-block w-2 h-2 rounded-full bg-red-500 ml-1 cursor-help" title={title} />;
+          const diff = xVal - fVal;
+          const lines = [
+            `${src}: ${f(xVal)}`,
+            `FS: ${f(fVal)}`,
+            `Difference: ${f(diff)}`,
+            '',
+            `${diffs.length} account(s) differ:`,
+            ...diffs.slice(0, 10).map(r => {
+              const cat = r.category || '—';
+              const fs = r.fsStatement || '—';
+              return `  ${r.accountCode}: ${r.description}\n    ${src}: ${cat} → FS: ${fs} / ${r.fsLevel || '—'} (${f(Number(r[field]) || 0)})`;
+            }),
+            ...(diffs.length > 10 ? [`  ...and ${diffs.length - 10} more`] : []),
+          ];
+          return <span className="inline-block w-2 h-2 rounded-full bg-red-500 ml-1 cursor-help" title={lines.join('\n')} />;
         }
 
         const revDiffs = diffRows(r => xRevCats.has(r.category || ''), r => r.fsLevel === 'Revenue');
