@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import OpenAI from 'openai';
+
+export const maxDuration = 120; // Allow up to 2 minutes for large TB classification
 
 const CATEGORY_TO_STATEMENT: Record<string, string> = {
   pnl: 'Profit & Loss',
@@ -52,47 +54,47 @@ export async function POST(
 
   console.log(`[AI Classify] Using model: ${MODEL}, API key prefix: ${apiKey.slice(0, 8)}...`);
 
-  const { rows } = await req.json();
+  const body = await req.json();
+
+  // If action=poll, check background task status
+  if (body.action === 'poll' && body.taskId) {
+    const task = await prisma.backgroundTask.findUnique({ where: { id: body.taskId } });
+    if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    return NextResponse.json({ status: task.status, progress: task.progress, error: task.error, result: task.result });
+  }
+
+  const { rows } = body;
   if (!rows || !Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: 'rows array required' }, { status: 400 });
   }
 
-  // Load the firm's FS Lines hierarchy for context
-  const fsLines = await prisma.methodologyFsLine.findMany({
-    where: { firmId, isActive: true },
-    include: { parent: { select: { id: true, name: true, fsCategory: true } } },
-    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  // Create background task and return immediately
+  const task = await prisma.backgroundTask.create({
+    data: { userId: session.user.id, type: 'ai-classify-tb', status: 'running', progress: { phase: 'starting', classified: 0, total: rows.length } as any },
   });
 
-  const fsLineItems = fsLines
-    .filter(l => l.lineType === 'fs_line_item')
-    .map(l => `${l.name} (${CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory})`);
+  // Process in background — continues even if user navigates away
+  after(async () => {
+    try {
+      // Load the firm's FS Lines hierarchy for context
+      const fsLines = await prisma.methodologyFsLine.findMany({
+        where: { firmId, isActive: true },
+        include: { parent: { select: { id: true, name: true, fsCategory: true } } },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      });
 
-  const noteItems = fsLines
-    .filter(l => l.lineType === 'note_item')
-    .map(l => {
-      const parent = l.parent;
-      return `${l.name} → parent: ${parent?.name || 'none'} (${parent ? CATEGORY_TO_STATEMENT[parent.fsCategory] || parent.fsCategory : l.fsCategory})`;
-    });
+      const fsLineItems = fsLines
+        .filter(l => l.lineType === 'fs_line_item')
+        .map(l => `${l.name} (${CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory})`);
 
-  // Build the prompt
-  const rowDescriptions = rows
-    .slice(0, 50)
-    .map((r: any) => {
-      let line = `[${r.index}] Code: "${r.accountCode || ''}" | Desc: "${r.description || ''}" | Amount: ${r.currentYear ?? 'nil'}`;
-      // Include accounting system metadata if available (e.g. Xero Type, Class)
-      if (r.sourceMetadata) {
-        const meta = r.sourceMetadata;
-        if (meta.xeroType) line += ` | Type: ${meta.xeroType}`;
-        if (meta.xeroClass) line += ` | Class: ${meta.xeroClass}`;
-        if (meta.xeroDescription) line += ` | Detail: ${meta.xeroDescription}`;
-      }
-      if (r.category) line += ` | Category: ${r.category}`;
-      return line;
-    })
-    .join('\n');
+      const noteItems = fsLines
+        .filter(l => l.lineType === 'note_item')
+        .map(l => {
+          const parent = l.parent;
+          return `${l.name} → parent: ${parent?.name || 'none'} (${parent ? CATEGORY_TO_STATEMENT[parent.fsCategory] || parent.fsCategory : l.fsCategory})`;
+        });
 
-  const systemPrompt = `You are a financial statement classification expert for UK statutory audits.
+      const systemPrompt = `You are a financial statement classification expert for UK statutory audits.
 
 Given trial balance account descriptions, classify each into:
 - fsNoteLevel: The specific note disclosure item (e.g. "Trade Debtors", "Revenue", "Depreciation")
@@ -103,7 +105,7 @@ CRITICAL — Accounting System Type OVERRIDES description:
 When a "Type" field is provided from the accounting system, it is the AUTHORITATIVE classification.
 The account description/name may be misleading — always trust the Type over the description.
 Key Type mappings:
-- Type: BANK → ALWAYS "Cash at Bank", fsStatement "Balance Sheet" — regardless of description (e.g. "Modulr - Staff Wages" with Type BANK is a bank account, NOT a staff cost)
+- Type: BANK → ALWAYS "Cash at Bank", fsStatement "Balance Sheet"
 - Type: REVENUE → ALWAYS Revenue, fsStatement "Profit & Loss"
 - Type: DIRECTCOSTS → ALWAYS Cost of Sales, fsStatement "Profit & Loss"
 - Type: EXPENSE or OVERHEADS → ALWAYS Expenses/Administrative Expenses, fsStatement "Profit & Loss"
@@ -119,25 +121,20 @@ Key Type mappings:
 Also: accounts with NO account code (null/empty) are typically bank accounts in Xero.
 
 Additional description-based rules (only when Type is not provided):
-- Sales, revenue, turnover, fees, commissions, rebilled services → fsLevel "Revenue", fsStatement "Profit & Loss"
+- Sales, revenue, turnover, fees, commissions → fsLevel "Revenue", fsStatement "Profit & Loss"
 - Cost of sales, direct costs, materials → fsLevel "Cost of Sales", fsStatement "Profit & Loss"
-- Wages, salaries, NI, pensions, staff costs → fsLevel "Staff Costs" or "Administrative Expenses", fsStatement "Profit & Loss"
+- Wages, salaries, NI, pensions, staff costs → fsLevel "Administrative Expenses", fsStatement "Profit & Loss"
 - Rent, utilities, insurance, repairs, office costs → fsLevel "Administrative Expenses", fsStatement "Profit & Loss"
-- Depreciation CHARGE (current year expense) → fsLevel "Depreciation", fsStatement "Profit & Loss"
-- ACCUMULATED depreciation, aggregate depreciation (contra asset) → fsLevel "Tangible Fixed Assets", fsStatement "Balance Sheet"
-- Amortisation charge → fsLevel "Amortisation", fsStatement "Profit & Loss"
-- Accumulated amortisation (contra asset) → fsLevel "Intangible Fixed Assets", fsStatement "Balance Sheet"
+- Depreciation CHARGE → fsLevel "Depreciation", fsStatement "Profit & Loss"
+- ACCUMULATED depreciation (contra asset) → fsLevel "Tangible Fixed Assets", fsStatement "Balance Sheet"
 - Interest, bank charges → fsLevel "Interest", fsStatement "Profit & Loss"
 - Tax, corporation tax → fsLevel "Taxation", fsStatement "Profit & Loss"
 - Trade debtors, prepayments, other debtors, VAT recoverable → fsLevel "Debtors", fsStatement "Balance Sheet"
 - Cash, bank → fsLevel "Cash at Bank", fsStatement "Balance Sheet"
-- Trade creditors, accruals, other creditors, VAT payable, PAYE → fsLevel "Creditors", fsStatement "Balance Sheet"
+- Trade creditors, accruals, other creditors, VAT payable → fsLevel "Creditors", fsStatement "Balance Sheet"
 - Loans, HP, mortgages → fsLevel "Loans & Borrowings", fsStatement "Balance Sheet"
-- Fixed assets, plant, equipment, vehicles, IT → fsLevel "Tangible Fixed Assets", fsStatement "Balance Sheet"
-- Goodwill, IP, software → fsLevel "Intangible Fixed Assets", fsStatement "Balance Sheet"
+- Fixed assets, plant, equipment → fsLevel "Tangible Fixed Assets", fsStatement "Balance Sheet"
 - Share capital, reserves, retained earnings, dividends → fsLevel "Capital & Reserves", fsStatement "Balance Sheet"
-- Provisions → fsLevel "Provisions", fsStatement "Balance Sheet"
-- Use common sense for the fsNoteLevel — it should be the most specific description of what the account represents.
 
 The firm has these FS Line Items configured:
 ${fsLineItems.join('\n')}
@@ -145,84 +142,114 @@ ${fsLineItems.join('\n')}
 And these Note Items (with parents):
 ${noteItems.join('\n')}
 
-Prefer matching to existing configured items where possible. If no exact match, suggest the most appropriate name.
+Prefer matching to existing configured items where possible.
 
 Respond ONLY with a JSON array. Each element: { "index": <number>, "fsNoteLevel": "<string>", "fsLevel": "<string>", "fsStatement": "<string>", "confidence": <number 0-100> }
-The confidence score (0-100) reflects how certain you are about the classification:
-- 90-100: Clear, unambiguous match to a configured FS line
-- 70-89: Good match but some ambiguity
-- 50-69: Educated guess, could be wrong
-- Below 50: Very uncertain
 No other text.`;
 
-  try {
-    const completion = await client.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: rowDescriptions },
-      ],
-      max_tokens: 4096,
-      temperature: 0.1,
-    });
-
-    const responseText = completion.choices[0]?.message?.content || '';
-
-    // Parse JSON from response (handle markdown code blocks)
-    let jsonStr = responseText.trim();
-    if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-    }
-
-    const classifications = JSON.parse(jsonStr);
-
-    // Save classifications directly to DB — don't rely on frontend auto-save
-    // The rows array has { index, accountCode } — match by accountCode to find the DB row
-    const tbRowsDb = await prisma.auditTBRow.findMany({
-      where: { engagementId },
-      select: { id: true, accountCode: true },
-      orderBy: { sortOrder: 'asc' },
-    });
-    for (const c of classifications) {
-      const sourceRow = rows[c.index - (rows[0]?.index || 0)];
-      if (!sourceRow) continue;
-      // Find DB row by account code
-      const dbRow = tbRowsDb.find(r => r.accountCode === sourceRow.accountCode);
-      if (dbRow && (c.fsNoteLevel || c.fsLevel || c.fsStatement)) {
-        await prisma.auditTBRow.update({
-          where: { id: dbRow.id },
-          data: {
-            fsNoteLevel: c.fsNoteLevel || undefined,
-            fsLevel: c.fsLevel || undefined,
-            fsStatement: c.fsStatement || undefined,
-            aiConfidence: c.confidence ?? null,
-          },
-        });
-      }
-    }
-
-    // Log usage
-    try {
-      const usage = completion.usage;
-      await prisma.aiUsage.create({
-        data: {
-          clientId: engagement.clientId,
-          userId: session.user.id,
-          action: 'TB Classification',
-          model: MODEL,
-          operation: 'classify_tb_rows',
-          promptTokens: usage?.prompt_tokens || 0,
-          completionTokens: usage?.completion_tokens || 0,
-          totalTokens: usage?.total_tokens || 0,
-          estimatedCostUsd: ((usage?.prompt_tokens || 0) * 0.0008 + (usage?.completion_tokens || 0) * 0.0008) / 1000,
-        },
+      // Load all TB rows from DB for matching
+      const tbRowsDb = await prisma.auditTBRow.findMany({
+        where: { engagementId },
+        select: { id: true, accountCode: true },
+        orderBy: { sortOrder: 'asc' },
       });
-    } catch {}
 
-    return NextResponse.json({ classifications });
-  } catch (err: any) {
-    console.error('AI classification error:', err?.message || err, err?.status, err?.response?.data);
-    const message = err?.message || 'AI classification failed';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+      let totalClassified = 0;
+
+      // Process in batches of 30
+      for (let i = 0; i < rows.length; i += 30) {
+        const batch = rows.slice(i, i + 30);
+
+        await prisma.backgroundTask.update({
+          where: { id: task.id },
+          data: { progress: { phase: 'classifying', classified: totalClassified, total: rows.length, batch: `${i + 1}–${Math.min(i + 30, rows.length)}` } as any },
+        });
+
+        const rowDescriptions = batch
+          .map((r: any) => {
+            let line = `[${r.index}] Code: "${r.accountCode || ''}" | Desc: "${r.description || ''}" | Amount: ${r.currentYear ?? 'nil'}`;
+            if (r.sourceMetadata) {
+              const meta = r.sourceMetadata;
+              if (meta.xeroType) line += ` | Type: ${meta.xeroType}`;
+              if (meta.xeroClass) line += ` | Class: ${meta.xeroClass}`;
+              if (meta.xeroDescription) line += ` | Detail: ${meta.xeroDescription}`;
+            }
+            if (r.category) line += ` | Category: ${r.category}`;
+            return line;
+          })
+          .join('\n');
+
+        try {
+          const completion = await client.chat.completions.create({
+            model: MODEL,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: rowDescriptions },
+            ],
+            max_tokens: 4096,
+            temperature: 0.1,
+          });
+
+          const responseText = completion.choices[0]?.message?.content || '';
+          let jsonStr = responseText.trim();
+          if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
+
+          const classifications = JSON.parse(jsonStr);
+
+          // Save each classification directly to DB
+          for (const c of classifications) {
+            const sourceRow = batch.find((r: any) => r.index === c.index);
+            if (!sourceRow) continue;
+            const dbRow = tbRowsDb.find(r => r.accountCode === sourceRow.accountCode);
+            if (dbRow && (c.fsNoteLevel || c.fsLevel || c.fsStatement)) {
+              await prisma.auditTBRow.update({
+                where: { id: dbRow.id },
+                data: {
+                  fsNoteLevel: c.fsNoteLevel || undefined,
+                  fsLevel: c.fsLevel || undefined,
+                  fsStatement: c.fsStatement || undefined,
+                  aiConfidence: c.confidence ?? null,
+                },
+              });
+              totalClassified++;
+            }
+          }
+
+          // Log AI usage
+          try {
+            const usage = completion.usage;
+            await prisma.aiUsage.create({
+              data: {
+                clientId: engagement!.clientId,
+                userId: session.user.id,
+                action: 'TB Classification',
+                model: MODEL,
+                operation: 'classify_tb_rows',
+                promptTokens: usage?.prompt_tokens || 0,
+                completionTokens: usage?.completion_tokens || 0,
+                totalTokens: usage?.total_tokens || 0,
+                estimatedCostUsd: ((usage?.prompt_tokens || 0) * 0.0008 + (usage?.completion_tokens || 0) * 0.0008) / 1000,
+              },
+            });
+          } catch {}
+        } catch (err: any) {
+          console.error(`[AI Classify] Batch ${i}–${i + 30} failed:`, err?.message);
+          // Continue with next batch
+        }
+      }
+
+      await prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: { status: 'completed', result: { classified: totalClassified, total: rows.length } as any },
+      });
+    } catch (err: any) {
+      console.error('[AI Classify] Background task failed:', err);
+      await prisma.backgroundTask.update({
+        where: { id: task.id },
+        data: { status: 'error', error: err.message || 'Classification failed' },
+      });
+    }
+  });
+
+  return NextResponse.json({ taskId: task.id, status: 'running', total: rows.length });
 }

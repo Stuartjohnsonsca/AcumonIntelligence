@@ -360,54 +360,57 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     if (rowsToClassify.length === 0) return;
 
     setAiAllLoading(true);
-    setAiAllProgress(`Classifying ${rowsToClassify.length} rows...`);
+    setAiAllProgress(`Starting classification of ${rowsToClassify.length} rows...`);
 
     try {
-      // Process in batches of 30
-      for (let i = 0; i < rowsToClassify.length; i += 30) {
-        const batch = rowsToClassify.slice(i, i + 30);
-        setAiAllProgress(`Classifying rows ${i + 1}–${Math.min(i + 30, rowsToClassify.length)} of ${rowsToClassify.length}...`);
-
-        const res = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rows: batch }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.classifications) {
-            setRows(prev => {
-              const updated = [...prev];
-              for (const c of data.classifications) {
-                if (c.index >= 0 && c.index < updated.length) {
-                  updated[c.index] = {
-                    ...updated[c.index],
-                    fsNoteLevel: c.fsNoteLevel || updated[c.index].fsNoteLevel,
-                    fsLevel: c.fsLevel || updated[c.index].fsLevel,
-                    fsStatement: c.fsStatement || updated[c.index].fsStatement,
-                    aiConfidence: c.confidence ?? null,
-                  };
-                }
-              }
-              return updated;
-            });
-          }
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          setAiAllProgress(`Error: ${errData.error || res.status}`);
-          break; // Stop processing batches on error
-        }
+      // Start background task on server
+      const res = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: rowsToClassify }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setAiAllProgress(`Error: ${errData.error || res.status}`);
+        setAiAllLoading(false);
+        return;
       }
-      // Force save immediately — don't rely on auto-save debounce
-      setAiAllProgress('Saving classifications...');
-      triggerSave();
-      setAiAllProgress('Done!');
-      setTimeout(() => setAiAllProgress(''), 2000);
+      const { taskId } = await res.json();
+
+      // Poll for completion — server does the work even if we navigate away
+      const poll = async () => {
+        try {
+          const pollRes = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'poll', taskId }),
+          });
+          if (!pollRes.ok) return;
+          const data = await pollRes.json();
+
+          if (data.status === 'running') {
+            const p = data.progress || {};
+            setAiAllProgress(`Classifying ${p.batch || '...'} (${p.classified || 0}/${p.total || '?'})...`);
+            setTimeout(poll, 2000);
+          } else if (data.status === 'completed') {
+            const r = data.result || {};
+            setAiAllProgress(`Done! Classified ${r.classified || 0} of ${r.total || 0} rows.`);
+            // Reload TB data from DB to get the server-saved classifications
+            await loadData();
+            setTimeout(() => setAiAllProgress(''), 3000);
+            setAiAllLoading(false);
+          } else {
+            setAiAllProgress(`Error: ${data.error || 'Classification failed'}`);
+            setAiAllLoading(false);
+          }
+        } catch {
+          setTimeout(poll, 3000); // Retry on network error
+        }
+      };
+      setTimeout(poll, 2000);
     } catch (err) {
       console.error('AI classify all failed:', err);
       setAiAllProgress('Failed');
-    } finally {
       setAiAllLoading(false);
     }
   }
