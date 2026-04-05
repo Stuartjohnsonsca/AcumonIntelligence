@@ -36,6 +36,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   try {
     let tbRows: { accountCode: string; description: string; currentYear: number; priorYear: number; category?: string }[] = [];
+    let debugInfo = '';
 
     // Compute dates for TB report
     const formatDate = (d: Date) => d.toISOString().split('T')[0];
@@ -147,7 +148,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           })
           .filter((r: any) => r.accountCode);
 
-        console.log(`[TB Import] Matching: ${matchedById} by ID, ${matchedByName} by name, ${unmatched} unmatched. Result: ${tbRows.length} rows with balances`);
+        debugInfo = `Accounts: ${accounts.length}, TB CY: ${currentTB.size}, TB PY: ${priorTB.size}, ID: ${matchedById}, name: ${matchedByName}, unmatched: ${unmatched}, rows: ${tbRows.length}`;
+        console.log(`[TB Import] ${debugInfo}`);
 
         // Include accounts from TB reports that aren't in the chart of accounts
         // (no account type available, so use absolute value of whichever column has the amount)
@@ -231,7 +233,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       skipped: tbRows.length - created - updated,
       source: connection.system,
       orgName: connection.orgName,
-      debug: `Accounts API: ${(accounts as any[]).length}, TB CY: ${currentTB.size}, TB PY: ${priorTB.size}, matched ID: ${matchedById}, matched name: ${matchedByName}, unmatched: ${unmatched}`,
+      debug: debugInfo,
     });
   } catch (err: any) {
     console.error('TB import error:', err);
