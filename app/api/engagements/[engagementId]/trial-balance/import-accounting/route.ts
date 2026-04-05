@@ -44,9 +44,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
     switch (connection.system.toLowerCase()) {
       case 'xero': {
-        // Fetch chart of accounts + trial balance reports in parallel
-        const [accounts, currentTB, priorTB] = await Promise.all([
-          getAccounts(engagement.clientId),
+        // Fetch accounts first (may refresh token), then TB reports in parallel
+        const accounts = await getAccounts(engagement.clientId);
+        const [currentTB, priorTB] = await Promise.all([
           getTrialBalanceReport(engagement.clientId, currentYearDate),
           getTrialBalanceReport(engagement.clientId, priorYearDate),
         ]);
