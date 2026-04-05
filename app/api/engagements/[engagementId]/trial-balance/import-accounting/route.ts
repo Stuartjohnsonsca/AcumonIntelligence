@@ -177,13 +177,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     for (const row of tbRows) {
       const match = existingByOriginal.get(row.accountCode) || existingByCode.get(row.accountCode);
       if (match) {
-        // Update balances on existing row (preserve user-edited accountCode, metadata, etc.)
+        // Update balances and metadata on existing row, clear FS fields for re-classification
         await prisma.auditTBRow.update({
           where: { id: match.id },
           data: {
             currentYear: row.currentYear ?? null,
             priorYear: row.priorYear ?? null,
             sourceMetadata: (row as any).sourceMetadata ?? undefined,
+            category: (row as any).category ?? undefined,
+            fsNoteLevel: null,
+            fsLevel: null,
+            fsStatement: null,
+            aiConfidence: null,
           },
         });
         updated++;
