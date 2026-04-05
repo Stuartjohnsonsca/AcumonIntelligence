@@ -182,9 +182,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
   function switchTab(key: TabKey) {
     setActiveTab(key);
-    const url = new URL(window.location.href);
-    url.searchParams.set('tab', key);
-    router.replace(url.pathname + url.search, { scroll: false });
+    // Use history.replaceState instead of router.replace to avoid Next.js re-rendering the server component
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', key);
+      window.history.replaceState({}, '', url.pathname + url.search);
+    } catch {}
   }
 
   const continuanceLabel = 'Continuance';
