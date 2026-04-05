@@ -390,8 +390,10 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
     const row = computedRows[index];
     const accepted = { ...(row.accepted || {}) };
     if (accepted[role]) {
-      // Unclaim
+      // Unclaim — cascade down: senior uncheck also unticks junior roles
       delete accepted[role];
+      if (role === 'partner') { delete accepted.reviewer; delete accepted.operator; }
+      if (role === 'reviewer') { delete accepted.operator; }
     } else {
       const now = new Date().toISOString();
       accepted[role] = { name: userName || 'User', at: now };

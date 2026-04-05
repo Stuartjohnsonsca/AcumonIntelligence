@@ -282,7 +282,7 @@ export default function PortalAuditPage() {
     if (activeEngagementId) {
       filtered = filtered.filter(r => {
         const engId = (r as any).run?.engagement?.id || (r as any).engagementId;
-        return !engId || engId === activeEngagementId;
+        return engId === activeEngagementId;
       });
     }
     return filtered;
