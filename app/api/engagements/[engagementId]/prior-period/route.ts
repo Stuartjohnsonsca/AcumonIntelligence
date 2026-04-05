@@ -120,92 +120,90 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     after(async () => {
       const updateProgress = (progress: any) => prisma.backgroundTask.update({ where: { id: task.id }, data: { progress } });
       try {
+        const prompts: Record<string, string> = {
+          pp_letter_of_comment: `You are reviewing a prior period Letter of Comment (Management Letter). List each key point as a separate numbered item. For each point include: the finding/recommendation, management's response if any, and current status. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Aim for 5-10 points covering control deficiencies, recommendations, and outstanding items.`,
+          pp_letter_of_representation: `You are reviewing a prior period Letter of Representation. List each key representation as a separate numbered item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover representations about: fraud awareness, going concern, related party transactions, completeness of information, compliance with laws, subsequent events. Aim for 6-10 points.`,
+          pp_financial_statements: `You are reviewing the prior period Financial Statements, focusing on the Audit Opinion. List each key finding as a separate item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover: opinion type (unqualified/qualified/adverse/disclaimer), emphasis of matter paragraphs, key audit matters, going concern assessment, material uncertainties. Aim for 4-8 points.`,
+        };
 
-    const prompts: Record<string, string> = {
-      pp_letter_of_comment: `You are reviewing a prior period Letter of Comment (Management Letter). List each key point as a separate numbered item. For each point include: the finding/recommendation, management's response if any, and current status. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Aim for 5-10 points covering control deficiencies, recommendations, and outstanding items.`,
-      pp_letter_of_representation: `You are reviewing a prior period Letter of Representation. List each key representation as a separate numbered item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover representations about: fraud awareness, going concern, related party transactions, completeness of information, compliance with laws, subsequent events. Aim for 6-10 points.`,
-      pp_financial_statements: `You are reviewing the prior period Financial Statements, focusing on the Audit Opinion. List each key finding as a separate item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover: opinion type (unqualified/qualified/adverse/disclaimer), emphasis of matter paragraphs, key audit matters, going concern assessment, material uncertainties. Aim for 4-8 points.`,
-    };
-
-    await updateProgress({ phase: 'reading', message: 'Reading document...' });
-    // Try to get actual document content
-    let documentContent = '';
-    try {
-      const links = await getData(engagementId, LINKS_KEY) as Record<string, string>;
-      const linkedDocId = links[docKey];
-      if (linkedDocId) {
-        const doc = await prisma.auditDocument.findUnique({ where: { id: linkedDocId } });
-        if (doc?.storagePath) {
-          const { downloadBlob } = await import('@/lib/azure-blob');
-          const buffer = await downloadBlob(doc.storagePath, process.env.AZURE_STORAGE_CONTAINER_INBOX || 'upload-inbox');
-          // For PDFs, extract text; for other files, use raw text
-          if (doc.mimeType?.includes('pdf')) {
-            try {
-              const pdf = await import('pdf-parse');
-              const parsed = await pdf.default(buffer);
-              documentContent = parsed.text?.slice(0, 8000) || '';
-            } catch {
-              documentContent = buffer.toString('utf-8').slice(0, 8000);
+        await updateProgress({ phase: 'reading', message: 'Reading document...' });
+        // Try to get actual document content
+        let documentContent = '';
+        try {
+          const links = await getData(engagementId, LINKS_KEY) as Record<string, string>;
+          const linkedDocId = links[docKey];
+          if (linkedDocId) {
+            const doc = await prisma.auditDocument.findUnique({ where: { id: linkedDocId } });
+            if (doc?.storagePath) {
+              const { downloadBlob } = await import('@/lib/azure-blob');
+              const buffer = await downloadBlob(doc.storagePath, process.env.AZURE_STORAGE_CONTAINER_INBOX || 'upload-inbox');
+              // For PDFs, extract text; for other files, use raw text
+              if (doc.mimeType?.includes('pdf')) {
+                try {
+                  const pdf = await import('pdf-parse');
+                  const parsed = await pdf.default(buffer);
+                  documentContent = parsed.text?.slice(0, 8000) || '';
+                } catch {
+                  documentContent = buffer.toString('utf-8').slice(0, 8000);
+                }
+              } else {
+                documentContent = buffer.toString('utf-8').slice(0, 8000);
+              }
             }
-          } else {
-            documentContent = buffer.toString('utf-8').slice(0, 8000);
           }
+        } catch (err) {
+          console.error('Failed to read document content:', err);
         }
-      }
-    } catch (err) {
-      console.error('Failed to read document content:', err);
-    }
 
-    try {
-      await updateProgress({ phase: 'analysing', message: 'AI is reviewing the document...' });
-      const userMessage = documentContent
-        ? `Document: "${documentName || docKey}"\n\nDocument Content:\n${documentContent}\n\nBased on the above document content, provide a structured review. Return ONLY valid JSON array.`
-        : `Document: "${documentName || docKey}"\n\nProvide a structured review based on standard audit practice for this type of prior period document. Return ONLY valid JSON array.`;
+        await updateProgress({ phase: 'analysing', message: 'AI is reviewing the document...' });
+        const userMessage = documentContent
+          ? `Document: "${documentName || docKey}"\n\nDocument Content:\n${documentContent}\n\nBased on the above document content, provide a structured review. Return ONLY valid JSON array.`
+          : `Document: "${documentName || docKey}"\n\nProvide a structured review based on standard audit practice for this type of prior period document. Return ONLY valid JSON array.`;
 
-      const aiRes = await fetch('https://api.together.xyz/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-          messages: [
-            { role: 'system', content: prompts[docKey] },
-            { role: 'user', content: userMessage },
-          ],
-          max_tokens: 2000,
-          temperature: 0.3,
-        }),
-      });
+        const aiRes = await fetch('https://api.together.xyz/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+            messages: [
+              { role: 'system', content: prompts[docKey] },
+              { role: 'user', content: userMessage },
+            ],
+            max_tokens: 2000,
+            temperature: 0.3,
+          }),
+        });
 
-      if (!aiRes.ok) throw new Error(`AI returned ${aiRes.status}`);
-      const aiData = await aiRes.json();
-      let content = aiData.choices?.[0]?.message?.content?.trim() || '[]';
+        if (!aiRes.ok) throw new Error(`AI returned ${aiRes.status}`);
+        const aiData = await aiRes.json();
+        let content = aiData.choices?.[0]?.message?.content?.trim() || '[]';
 
-      // Parse JSON from AI response (may have markdown wrapping)
-      content = content.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-      let parsedPoints: { point: string; detail: string }[] = [];
-      try { parsedPoints = JSON.parse(content); } catch {
-        // Fallback: split by newlines
-        parsedPoints = content.split('\n').filter((l: string) => l.trim()).map((l: string, i: number) => ({ point: `Point ${i + 1}`, detail: l.trim() }));
-      }
+        // Parse JSON from AI response (may have markdown wrapping)
+        content = content.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
+        let parsedPoints: { point: string; detail: string }[] = [];
+        try { parsedPoints = JSON.parse(content); } catch {
+          // Fallback: split by newlines
+          parsedPoints = content.split('\n').filter((l: string) => l.trim()).map((l: string, i: number) => ({ point: `Point ${i + 1}`, detail: l.trim() }));
+        }
 
-      // Store points with default statuses
-      const pointsWithStatus = parsedPoints.map((p: { point: string; detail: string }, i: number) => ({
-        id: `${docKey}_${i}`,
-        point: p.point,
-        detail: p.detail,
-        notRelevant: false,
-        carryForward: false,
-        signOffs: {},
-      }));
+        // Store points with default statuses
+        const pointsWithStatus = parsedPoints.map((p: { point: string; detail: string }, i: number) => ({
+          id: `${docKey}_${i}`,
+          point: p.point,
+          detail: p.detail,
+          notRelevant: false,
+          carryForward: false,
+          signOffs: {},
+        }));
 
-      const allPoints = await getData(engagementId, POINTS_KEY);
-      allPoints[docKey] = pointsWithStatus;
-      await setData(engagementId, POINTS_KEY, allPoints);
+        const allPoints = await getData(engagementId, POINTS_KEY);
+        allPoints[docKey] = pointsWithStatus;
+        await setData(engagementId, POINTS_KEY, allPoints);
 
-      // Also store raw summary
-      const summaries = await getData(engagementId, SUMMARIES_KEY);
-      summaries[docKey] = content;
-      await setData(engagementId, SUMMARIES_KEY, summaries);
+        // Also store raw summary
+        const summaries = await getData(engagementId, SUMMARIES_KEY);
+        summaries[docKey] = content;
+        await setData(engagementId, SUMMARIES_KEY, summaries);
 
         await prisma.backgroundTask.update({
           where: { id: task.id },
