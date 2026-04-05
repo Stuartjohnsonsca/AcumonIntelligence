@@ -660,10 +660,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 text-blue-500 animate-spin" /></div>;
 
   if (statements.length === 0) {
+    const hasRows = tbRows.length > 0;
+    const unclassified = tbRows.filter(r => !r.fsStatement).length;
     return (
       <div className="text-center py-12">
         <FileText className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-        <p className="text-sm text-slate-500">No FS Statement data found.</p>
+        <p className="text-sm text-slate-500 font-medium">No FS Statement data found.</p>
+        {hasRows && unclassified > 0 && (
+          <p className="text-xs text-amber-600 mt-2">{unclassified} TB row{unclassified !== 1 ? 's' : ''} have not been classified yet. Go to TBCYvPY and run <strong>AI Classify All</strong> first.</p>
+        )}
+        {!hasRows && (
+          <p className="text-xs text-slate-400 mt-2">Import a trial balance first, then run AI Classification.</p>
+        )}
         <button onClick={onClose} className="mt-4 text-xs text-blue-600 hover:text-blue-800">&larr; Back to RMM</button>
       </div>
     );
