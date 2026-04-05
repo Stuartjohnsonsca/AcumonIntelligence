@@ -75,6 +75,7 @@ const INPUT_TYPES = [
   { value: 'evidence_match', label: 'Evidence Matching' },
   { value: 'ai_analysis', label: 'AI Analysis' },
   { value: 'accounting_extract', label: 'Accounting System Extract' },
+  { value: 'use_prior_evidence', label: 'Use Prior Evidence (by tag)' },
 ];
 
 // ─── Custom Node: Action ───
@@ -645,6 +646,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
   const [editMaxIterations, setEditMaxIterations] = useState(3);
   const [editWaitFor, setEditWaitFor] = useState('');
   const [editCustomVars, setEditCustomVars] = useState<{ key: string; value: string }[]>([]);
+  const [editEvidenceTag, setEditEvidenceTag] = useState('');
   const [editSubFlowId, setEditSubFlowId] = useState('');
   const [editSubFlowName, setEditSubFlowName] = useState('');
   const [availableFlows, setAvailableFlows] = useState<{ id: string; fsLine: string; description: string; hasFlow: boolean }[]>([]);
@@ -692,6 +694,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
     setEditDescription((node.data as any).description || '');
     setEditAssignee((node.data as any).assignee || 'team');
     setEditInputType((node.data as any).inputType || 'none');
+    setEditEvidenceTag((node.data as any).evidenceTag || '');
     setEditQuestion((node.data as any).question || '');
     setEditCollection((node.data as any).collection || '');
     setEditCondition((node.data as any).condition || '');
@@ -750,6 +753,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
           description: editDescription,
           assignee: editAssignee,
           inputType: editInputType,
+          evidenceTag: editEvidenceTag || undefined,
           customVars: editCustomVars.filter(v => v.key.trim()),
         },
       };
@@ -1128,6 +1132,25 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                         ))}
                       </select>
                     </div>
+
+                    {/* Evidence Tag — shown for portal_request and use_prior_evidence */}
+                    {(editInputType === 'use_prior_evidence' || editInputType === 'portal_request') && (
+                      <div>
+                        <label className="text-[10px] font-medium text-slate-500 uppercase">Evidence Tag</label>
+                        <p className="text-[9px] text-slate-400">
+                          {editInputType === 'use_prior_evidence'
+                            ? 'Tag to look up — finds prior uploads with this tag (e.g. "bank_statements")'
+                            : 'Tag uploaded evidence for reuse by other tests'}
+                        </p>
+                        <input
+                          type="text"
+                          value={editEvidenceTag}
+                          onChange={e => setEditEvidenceTag(e.target.value)}
+                          placeholder="e.g. bank_statements, invoices"
+                          className="w-full border rounded-md px-2.5 py-1.5 text-sm mt-0.5 bg-white"
+                        />
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -1196,6 +1219,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                     >
                       <option value="sample_items">Sample Items</option>
                       <option value="evidence_files">Evidence Files</option>
+                      <option value="tb_accounts">TB Accounts (1 per account code)</option>
                       <option value="tb_rows">Trial Balance Rows</option>
                       <option value="par_rows">PAR Rows</option>
                       <option value="rmm_rows">RMM Rows</option>

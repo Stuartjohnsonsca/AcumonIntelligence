@@ -779,6 +779,18 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
               </div>
 
               <div>
+                <label className="text-[10px] font-semibold text-slate-500 uppercase">Evidence Tag</label>
+                <p className="text-[9px] text-slate-400 mt-0.5">Tag uploaded evidence for reuse by other tests (e.g. &quot;bank_statements&quot;). Leave blank if not needed.</p>
+                <input
+                  type="text"
+                  value={def.evidenceTag || ''}
+                  onChange={e => update({ evidenceTag: e.target.value || undefined })}
+                  placeholder="e.g. bank_statements, invoices, contracts"
+                  className="w-full text-sm border rounded px-2 py-1.5 mt-0.5 bg-white"
+                />
+              </div>
+
+              <div>
                 <label className="text-[10px] font-semibold text-slate-500 uppercase">Expected Response</label>
                 <select
                   value={def.expectedResponse || 'file_upload'}
