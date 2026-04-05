@@ -89,10 +89,12 @@ export async function POST(req: Request) {
 
   console.log(`[Xero] Confirmed org: ${selectedTenant.tenantName} for client ${pending.clientId}`);
 
-  // Return redirect URL
+  // Return redirect URL — use stored returnUrl if available
+  const returnBase = pending.returnUrl || '/tools/data-extraction';
+  const sep = returnBase.includes('?') ? '&' : '?';
   const redirectUrl = pending.isDelegated && pending.delegatedToken
     ? `/xero-authorise/${pending.delegatedToken}`
-    : `/tools/data-extraction?xeroConnected=true&clientId=${pending.clientId}`;
+    : `${returnBase}${sep}xeroConnected=true&clientId=${pending.clientId}`;
 
   return NextResponse.json({ ok: true, redirectUrl, orgName: selectedTenant.tenantName });
 }

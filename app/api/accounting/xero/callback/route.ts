@@ -150,6 +150,7 @@ export async function GET(req: Request) {
           connectedBy,
           isDelegated,
           delegatedToken,
+          returnUrl,
           tenants: tenants.map((t: { tenantId: string; tenantName: string; createdDateUtc?: string }) => ({
             tenantId: t.tenantId,
             tenantName: t.tenantName,

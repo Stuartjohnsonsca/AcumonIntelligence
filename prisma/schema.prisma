@@ -365,6 +365,7 @@ model PendingXeroAuth {
   isDelegated    Boolean  @default(false) @map("is_delegated")
   delegatedToken String?  @map("delegated_token")
   tenants        Json     // Array of { tenantId, tenantName, createdDateUtc }
+  returnUrl      String?  @map("return_url")
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@map("pending_xero_auths")
