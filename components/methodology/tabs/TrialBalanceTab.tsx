@@ -636,7 +636,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         const pyDateLabel = dayBefore(periodStartDate) || 'PY';
 
 
-        // Build tooltip: totals + each row showing both Xero and FS classification
+        // Build tooltip: totals + only rows that DIFFER between Xero and FS
         function diffDot(
           xVal: number, fVal: number,
           xeroFilter: (r: TBRow) => boolean, fsFilter: (r: TBRow) => boolean,
@@ -644,18 +644,21 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         ) {
           const match = Math.abs(xVal - fVal) < 0.01;
           if (match) return <span className="inline-block w-2 h-2 rounded-full bg-green-500 ml-1" title={`${src} and FS agree: ${f(xVal)}`} />;
-          // Get all rows in either group
-          const relevant = rows.filter(r => xeroFilter(r) || fsFilter(r));
+          // Only rows where Xero and FS disagree on classification
+          const diffs = rows.filter(r => xeroFilter(r) !== fsFilter(r));
           const lines = [
             `${src} Total: ${f(xVal)}`,
             `FS Total: ${f(fVal)}`,
             `Difference: ${f(xVal - fVal)}`,
             '',
-            ...relevant.map(r => {
-              const amt = f(Number(r[field]) || 0);
-              const xCat = r.category || '—';
-              const fsCat = `${r.fsLevel || '—'}`;
-              return `${r.description} (${r.accountCode}) ${amt} : ${xCat} → ${fsCat}`;
+            ...diffs.map(r => {
+              const amt = Number(r[field]) || 0;
+              const inXero = xeroFilter(r);
+              const inFs = fsFilter(r);
+              // Show: what Xero says, what FS says, and the amount that moved
+              const xAmt = inXero ? f(amt) : '—';
+              const fAmt = inFs ? f(amt) : '—';
+              return `${r.description} (${r.accountCode}): ${src} ${xAmt} | FS ${fAmt} | Diff ${f(inXero ? amt : -amt)}`;
             }),
           ];
           return <span className="inline-block w-2 h-2 rounded-full bg-red-500 ml-1 cursor-help" title={lines.join('\n')} />;
