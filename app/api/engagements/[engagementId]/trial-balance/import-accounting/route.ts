@@ -128,15 +128,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           'INVENTORY': 'Balance Sheet', 'PREPAYMENT': 'Balance Sheet',
         };
 
-        // ── Build lookup from chart of accounts (ALL accounts, not just ACTIVE) ──
-        // Keyed by AccountID for direct match, plus name-based fallback
-        const accountById = new Map<string, any>();
-        const accountByName = new Map<string, any>();
-        for (const a of accounts) {
-          if (a.AccountID) accountById.set(a.AccountID, a);
-          if (a.Name) accountByName.set(a.Name.toLowerCase(), a);
-        }
-
         console.log(`[TB Import] Chart of accounts: ${accounts.length} total, ${accounts.filter((a: any) => a.Status === 'ACTIVE').length} active`);
 
         // Credit-normal account types: use credit - debit so values are positive
@@ -148,55 +139,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             : entry.debit - entry.credit;  // Assets/expenses: positive when debit balance
         }
 
-        // ── Collect ALL unique account IDs across ALL 4 TB reports ──
-        // This is TB-report-driven: every account with any balance in any period is included.
-        const allAccountIds = new Set<string>();
-        for (const tb of [cyEndTB, cyPLBaseTB, pyEndTB, pyPLBaseTB]) {
-          for (const accountId of tb.keys()) allAccountIds.add(accountId);
-        }
-        console.log(`[TB Import] Unique account IDs across all 4 TB reports: ${allAccountIds.size}`);
-
-        // ── Build rows: iterate every TB account, enrich with chart of accounts metadata ──
-        // Track imbalance so we can add a balancing "Profit/Loss for Period" equity line.
-        // Debit-normal accounts contribute positively, credit-normal accounts negatively.
+        // ── Chart-of-accounts-driven: import EVERY account, look up TB values ──
+        // Track imbalance to add a balancing "Profit/Loss for Period" equity line.
         let cyImbalance = 0, pyImbalance = 0;
-        let matchedById = 0, matchedByName = 0, noMetadata = 0;
+        let matched = 0;
 
-        for (const accountId of allAccountIds) {
-          // Look up chart-of-accounts metadata by AccountID, then by name
-          let acct = accountById.get(accountId);
-          if (!acct) {
-            // Try name-based fallback using the account name from whichever TB has this entry
-            const tbEntry = cyEndTB.get(accountId) || pyEndTB.get(accountId)
-              || cyPLBaseTB.get(accountId) || pyPLBaseTB.get(accountId);
-            if (tbEntry) {
-              acct = accountByName.get(tbEntry.accountName.toLowerCase());
-              if (acct) matchedByName++;
-            }
-            if (!acct) noMetadata++;
-          } else {
-            matchedById++;
-          }
+        for (const a of accounts) {
+          const accountId = a.AccountID || '';
+          const accountType = a.Type || '';
+          const accountCode = a.Code || accountId;
+          const isPnL = statementMap[accountType] === 'Profit & Loss';
 
-          const accountType = acct?.Type || '';
-          const accountName = acct?.Name
-            || cyEndTB.get(accountId)?.accountName
-            || pyEndTB.get(accountId)?.accountName
-            || cyPLBaseTB.get(accountId)?.accountName
-            || pyPLBaseTB.get(accountId)?.accountName
-            || accountId;
-
-          // Use Code if available, otherwise AccountID as the code (never blank)
-          const accountCode = acct?.Code || accountId;
-
-          const isPnL = accountType ? statementMap[accountType] === 'Profit & Loss' : false;
-
-          // BS: point-in-time at period end. P&L: subtract base to isolate period.
+          // Look up TB values by AccountID
           const cyEnd = cyEndTB.get(accountId);
           const cyBase = cyPLBaseTB.get(accountId);
           const pyEnd = pyEndTB.get(accountId);
           const pyBase = pyPLBaseTB.get(accountId);
 
+          if (cyEnd || cyBase || pyEnd || pyBase) matched++;
+
+          // BS: point-in-time at period end. P&L: subtract base to isolate period.
           const cyAmount = isPnL
             ? netBalance(cyEnd, accountType) - netBalance(cyBase, accountType)
             : netBalance(cyEnd, accountType);
@@ -215,32 +177,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
           tbRows.push({
             accountCode,
-            description: accountName,
+            description: a.Name || '',
             currentYear: cyAmount,
             priorYear: pyAmount,
             category: typeMap[accountType] || accountType || undefined,
-            fsLevel: typeMap[accountType] || acct?.Class || '',
-            fsStatement: statementMap[accountType] || (acct?.Class === 'ASSET' || acct?.Class === 'LIABILITY' || acct?.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
+            fsLevel: typeMap[accountType] || a.Class || '',
+            fsStatement: statementMap[accountType] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
           } as any);
-        }
-
-        // Also include active chart-of-accounts entries with zero balances
-        // (ensures the full chart is represented even for accounts with no activity)
-        const includedIds = new Set(allAccountIds);
-        for (const a of accounts) {
-          if (a.Status !== 'ACTIVE') continue;
-          if (!a.AccountID || includedIds.has(a.AccountID)) continue;
-          const accountCode = a.Code || a.AccountID;
-          tbRows.push({
-            accountCode,
-            description: a.Name || '',
-            currentYear: 0,
-            priorYear: 0,
-            category: typeMap[a.Type] || a.Type || undefined,
-            fsLevel: typeMap[a.Type] || a.Class || '',
-            fsStatement: statementMap[a.Type] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
-          } as any);
-          includedIds.add(a.AccountID);
         }
 
         // ── Add balancing "Profit/Loss for Period" equity line ──
@@ -250,7 +193,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           tbRows.push({
             accountCode: 'PL-PERIOD',
             description: 'Profit/Loss for Period',
-            currentYear: cyImbalance,   // credit-normal: stored positive = credit balance
+            currentYear: cyImbalance,
             priorYear: pyImbalance,
             category: 'Equity',
             fsLevel: 'Equity',
@@ -259,7 +202,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           console.log(`[TB Import] Added Profit/Loss for Period — CY: ${cyImbalance}, PY: ${pyImbalance}`);
         }
 
-        debugInfo = `Accounts: ${accounts.length}, TB unique IDs: ${allAccountIds.size}, matched by ID: ${matchedById}, by name: ${matchedByName}, no metadata: ${noMetadata}, total rows: ${tbRows.length}`;
+        // Remove rows that are zero in both CY and PY (no activity)
+        const beforeFilter = tbRows.length;
+        tbRows = tbRows.filter(r => r.currentYear !== 0 || r.priorYear !== 0);
+
+        debugInfo = `Accounts: ${accounts.length}, matched TB: ${matched}, rows before filter: ${beforeFilter}, after: ${tbRows.length}`;
         console.log(`[TB Import] ${debugInfo}`);
         break;
       }
