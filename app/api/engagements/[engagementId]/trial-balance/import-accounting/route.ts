@@ -81,7 +81,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           'INVENTORY': 'Balance Sheet', 'PREPAYMENT': 'Balance Sheet',
         };
 
-        // Match TB report amounts to accounts by AccountID
+        // Build name-based fallback maps for TB report matching
+        const currentTBByName = new Map<string, typeof currentTB extends Map<string, infer V> ? V : never>();
+        for (const [, entry] of currentTB) currentTBByName.set(entry.accountName.toLowerCase(), entry);
+        const priorTBByName = new Map<string, typeof priorTB extends Map<string, infer V> ? V : never>();
+        for (const [, entry] of priorTB) priorTBByName.set(entry.accountName.toLowerCase(), entry);
+
+        console.log(`[TB Import] Chart of accounts: ${accounts.length} total, ${accounts.filter((a: any) => a.Status === 'ACTIVE').length} active`);
+        console.log(`[TB Import] TB report entries — CY: ${currentTB.size}, PY: ${priorTB.size}`);
+
+        // Match TB report amounts to accounts by AccountID, falling back to name
+        let matchedById = 0, matchedByName = 0, unmatched = 0;
         const processedAccountIds = new Set<string>();
         tbRows = accounts
           .filter((a: any) => a.Status === 'ACTIVE')
@@ -89,8 +99,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             const code = a.Code || '';
             const accountId = a.AccountID || '';
             if (accountId) processedAccountIds.add(accountId);
-            const cy = currentTB.get(accountId);
-            const py = priorTB.get(accountId);
+
+            // Try matching by AccountID first, then by name
+            let cy = currentTB.get(accountId);
+            let py = priorTB.get(accountId);
+            if (cy || py) { matchedById++; }
+            else {
+              const nameLower = (a.Name || '').toLowerCase();
+              cy = currentTBByName.get(nameLower) || undefined;
+              py = priorTBByName.get(nameLower) || undefined;
+              if (cy || py) matchedByName++;
+              else unmatched++;
+            }
+
             return {
               accountCode: code,
               description: a.Name || '',
@@ -103,12 +124,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           })
           .filter((r: any) => r.accountCode && (r.currentYear !== 0 || r.priorYear !== 0));
 
+        console.log(`[TB Import] Matching: ${matchedById} by ID, ${matchedByName} by name, ${unmatched} unmatched. Result: ${tbRows.length} rows with balances`);
+
         // Include accounts from TB reports that aren't in the chart of accounts
         for (const [accountId, entry] of currentTB) {
           if (processedAccountIds.has(accountId)) continue;
           const py = priorTB.get(accountId);
           tbRows.push({
-            accountCode: entry.accountName, // No code available, use name
+            accountCode: entry.accountName,
             description: entry.accountName,
             currentYear: entry.debit - entry.credit,
             priorYear: py ? py.debit - py.credit : 0,
