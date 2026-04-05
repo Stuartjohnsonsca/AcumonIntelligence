@@ -461,16 +461,20 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
   // Find tests for a row — tries allocation-based lookup first, falls back to name matching
   function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string, riskClassification?: string | null): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
-    const searchTerms = [fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
+    // Use canonical FS Level name (mapped to firm taxonomy) for matching
+    const canonFsLevel = fsLevel ? (fsLevelMap[fsLevel] || fsLevel) : null;
+    const searchTerms = [canonFsLevel, fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
+    // Deduplicate search terms
+    const uniqueTerms = [...new Set(searchTerms)];
 
     // Deduplicate by test ID across all matching allocations
     const matchedTestsMap = new Map<string, AllocationEntry['test']>();
 
-    if (searchTerms.length > 0) {
+    if (uniqueTerms.length > 0) {
       const matchingFsLineIds = new Set<string>();
       for (const fl of fsLinesList) {
         const flName = fl.name.toLowerCase().trim();
-        if (searchTerms.some(term => {
+        if (uniqueTerms.some(term => {
           if (flName === term) return true; // exact match
           // Check aliases: does the TB term have aliases that match the FS line?
           const aliases = FS_LINE_ALIASES[term] || [];
