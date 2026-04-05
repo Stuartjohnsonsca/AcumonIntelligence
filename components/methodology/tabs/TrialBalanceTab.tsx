@@ -544,7 +544,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           {/* Compact summary rows above the column header */}
           {(() => {
             const sum = (filter: (r: TBRow) => boolean, field: 'currentYear' | 'priorYear') =>
-              filteredRows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
+              rows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
             const cyRev = sum(r => r.fsLevel === 'Revenue', 'currentYear');
             const pyRev = sum(r => r.fsLevel === 'Revenue', 'priorYear');
             const cyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'currentYear');
@@ -556,8 +556,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             // Gross Assets = total of debit-side BS items (positive amounts on BS)
             const cyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0, 'currentYear');
             const pyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.priorYear || 0) > 0, 'priorYear');
-            const cyTotal = filteredRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
-            const pyTotal = filteredRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
+            const cyTotal = rows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
+            const pyTotal = rows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
             const cyBal = Math.abs(cyTotal) < 0.01;
             const pyBal = Math.abs(pyTotal) < 0.01;
             const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
@@ -733,6 +733,21 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               </tr>
               );
             })}
+            {/* Filtered totals row at bottom of table */}
+            {hasActiveFilters && (() => {
+              const fCy = filteredRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
+              const fPy = filteredRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
+              const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
+              const ls = showCategory ? 3 : 2;
+              return (
+                <tr className="bg-blue-50 border-t-2 border-blue-200 sticky bottom-0">
+                  <td colSpan={ls} className="text-right pr-2 py-1 text-[10px] font-bold text-blue-700">Filtered Total ({filteredRows.length} rows)</td>
+                  <td className="text-right px-2 py-1 text-[10px] font-bold text-blue-800">{f(fCy)}</td>
+                  <td className="text-right px-2 py-1 text-[10px] font-bold text-blue-800">{f(fPy)}</td>
+                  <td colSpan={10} />
+                </tr>
+              );
+            })()}
           </tbody>
         </table>
       </div>
