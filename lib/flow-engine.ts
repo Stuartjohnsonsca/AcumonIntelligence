@@ -269,6 +269,78 @@ function parseAccountingDate(raw: any): string {
   return s; // Return raw if nothing works
 }
 
+// ─── Use Prior Evidence ───
+// Looks up already-uploaded evidence by evidenceTag from prior portal requests.
+// Avoids re-requesting documents the client has already provided.
+async function handleUsePriorEvidence(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  const evidenceTag = node.data.evidenceTag || node.data.executionDef?.evidenceTag;
+  if (!evidenceTag) {
+    return { action: 'error', errorMessage: 'use_prior_evidence node requires an evidenceTag (e.g. "bank_statements")' };
+  }
+
+  console.log(`[flow-engine] Looking up prior evidence: tag="${evidenceTag}" engagement="${engagementId}"`);
+
+  // Find all portal requests for this engagement with the matching evidenceTag that have been responded to
+  const portalRequests = await prisma.portalRequest.findMany({
+    where: {
+      engagementId,
+      evidenceTag,
+      status: { in: ['responded', 'verified', 'committed', 'chat_replied'] },
+    },
+    select: { id: true, question: true, response: true, status: true },
+  });
+
+  if (portalRequests.length === 0) {
+    console.log(`[flow-engine] No prior evidence found for tag="${evidenceTag}"`);
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: { evidenceFound: false, evidenceTag, message: `No prior evidence with tag "${evidenceTag}" found. The prerequisite test may not have been run yet.`, files: [], requests: [] },
+    };
+  }
+
+  // Find all uploads linked to these portal requests
+  const requestIds = portalRequests.map(r => r.id);
+  const uploads = await prisma.portalUpload.findMany({
+    where: { portalRequestId: { in: requestIds } },
+    select: { id: true, portalRequestId: true, originalName: true, storagePath: true, containerName: true, mimeType: true, createdAt: true },
+  });
+
+  console.log(`[flow-engine] Found ${portalRequests.length} portal requests, ${uploads.length} uploads for tag="${evidenceTag}"`);
+
+  // Parse uploaded spreadsheet files using the existing parser
+  const { parsePortalResponseFiles } = await import('@/lib/flow-file-parser');
+  const allParsedFiles: any[] = [];
+  for (const reqId of requestIds) {
+    try {
+      const parsed = await parsePortalResponseFiles(reqId);
+      allParsedFiles.push(...parsed);
+    } catch (err) {
+      console.warn(`[flow-engine] Failed to parse files for request ${reqId}:`, (err as Error).message);
+    }
+  }
+
+  return {
+    action: 'continue',
+    nextNodeId: getNextNodeId(flow, node.id),
+    output: {
+      evidenceFound: true,
+      evidenceTag,
+      requestCount: portalRequests.length,
+      uploadCount: uploads.length,
+      parsedFiles: allParsedFiles,
+      uploads: uploads.map(u => ({ id: u.id, fileName: u.originalName, storagePath: u.storagePath, containerName: u.containerName })),
+      requests: portalRequests.map(r => ({ id: r.id, question: r.question, response: r.response, status: r.status })),
+    },
+  };
+}
+
 // ─── Accounting System Extractor ───
 // Calls the connected accounting system API directly (no AI)
 async function handleAccountingExtract(
@@ -583,6 +655,7 @@ async function handleActionAI(
         status: 'outstanding',
         requestedById: 'system',
         requestedByName: 'Audit System (AI)',
+        evidenceTag: execDef.evidenceTag || node.data.evidenceTag || null,
       },
     });
 
@@ -770,6 +843,7 @@ async function handleActionClient(
       status: 'outstanding',
       requestedById: 'system',
       requestedByName: 'Audit System',
+      evidenceTag: execDef.evidenceTag || node.data.evidenceTag || null,
     },
   });
 
@@ -1353,7 +1427,9 @@ export async function processNextNode(executionId: string): Promise<void> {
         case 'action':
         default:
           // Check for system-level input types that bypass AI/Client/Team routing
-          if (currentNode.data?.inputType === 'accounting_extract') {
+          if (currentNode.data?.inputType === 'use_prior_evidence') {
+            result = await handleUsePriorEvidence(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'accounting_extract') {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'ai') {
             result = await handleActionAI(flow, currentNode, ctx, executionId, execution.engagementId);

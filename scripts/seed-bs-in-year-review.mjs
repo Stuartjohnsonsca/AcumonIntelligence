@@ -63,6 +63,7 @@ const flow = {
             ].join('\n'),
           },
           expectedResponse: 'file_upload',
+          evidenceTag: 'bank_statements',
           evidenceTypes: ['bank_statement'],
           deadline: {
             days: 7,

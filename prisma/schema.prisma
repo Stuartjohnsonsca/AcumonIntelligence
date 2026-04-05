@@ -948,12 +948,14 @@ model PortalRequest {
   respondedAt   DateTime? @map("responded_at")
   verifiedAt    DateTime? @map("verified_at")
   chatHistory   Json?     @map("chat_history") // Array of { from, name, message, timestamp }
+  evidenceTag   String?   @map("evidence_tag") // Structured tag for evidence type (e.g. bank_statements, invoices)
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
   @@index([clientId, status])
   @@index([engagementId])
+  @@index([engagementId, evidenceTag])
   @@map("portal_requests")
 }
 
