@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.7.2",
+    "@azure-rest/ai-document-intelligence": "^1.1.0",
     "@azure/communication-email": "^1.1.0",
     "@azure/msal-node": "^5.1.1",
     "@azure/storage-blob": "^12.31.0",

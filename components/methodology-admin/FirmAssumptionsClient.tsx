@@ -414,6 +414,33 @@ export function FirmAssumptionsClient({
         )}
       </div>
 
+      {/* OCR / Document Intelligence Provider */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('ocrProvider')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">OCR / Document Intelligence Provider</h2>
+          {expandedSections.ocrProvider ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.ocrProvider && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">Select the provider used for extracting data from scanned documents (bank statements, invoices, etc.).</p>
+            <select
+              value={(riskClassification as any)._ocrProvider || 'azure_di'}
+              onChange={e => { setRiskClassification(prev => ({ ...prev, _ocrProvider: e.target.value } as any)); setSaved(false); }}
+              className="w-full max-w-md text-sm border rounded px-3 py-2 bg-white"
+            >
+              <option value="azure_di">Azure Document Intelligence (fast, handles text + scanned PDFs)</option>
+              <option value="ai_vision">AI Vision (slower, no extra service needed)</option>
+            </select>
+            {((riskClassification as any)._ocrProvider || 'azure_di') === 'azure_di' && (
+              <p className="text-xs text-blue-600 mt-2">Requires AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY environment variables. Processes 57-page PDFs in ~10 seconds.</p>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Assertions to FS Statements */}
       <div className="border rounded-lg">
         <button

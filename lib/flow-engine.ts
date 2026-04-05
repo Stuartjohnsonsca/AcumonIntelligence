@@ -420,6 +420,16 @@ async function handleUsePriorEvidence(
   };
 }
 
+function deduplicateTransactions(txns: any[]): any[] {
+  const seen = new Set<string>();
+  return txns.filter(txn => {
+    const key = `${txn.date}|${txn.description}|${txn.debit}|${txn.credit}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // ─── Bank Statement PDF Extractor ───
 // Processes ONE PAGE per invocation (with the page split into thirds by the AI extractor).
 // Saves progress after each page. Loops back to this node for the next page.
@@ -504,6 +514,65 @@ async function handleBankStatementExtract(
       },
     };
   }
+
+  // Try Azure Document Intelligence first — processes entire PDF in seconds
+  if (!saved.azureDIAttempted) {
+    try {
+      const { isAzureDIConfigured, extractBankStatementWithAzureDI } = await import('@/lib/azure-document-intelligence');
+      if (isAzureDIConfigured()) {
+        const { downloadBlob } = await import('@/lib/azure-blob');
+        console.log(`[flow-engine] Using Azure Document Intelligence for fast extraction`);
+
+        for (let fi = 0; fi < uploads.length; fi++) {
+          const u = uploads[fi];
+          const fname = (u.fileName || '').toLowerCase();
+          if (!fname.endsWith('.pdf') && !fname.endsWith('.png') && !fname.endsWith('.jpg') && !fname.endsWith('.jpeg')) continue;
+
+          try {
+            const buffer = await downloadBlob(u.storagePath, u.containerName || 'upload-inbox');
+            const result = await extractBankStatementWithAzureDI(buffer, u.fileName);
+
+            statements.push({
+              fileName: u.fileName, bankName: result.bankName, sortCode: result.sortCode,
+              accountNumber: result.accountNumber, statementDate: result.statementDate,
+              openingBalance: result.openingBalance, closingBalance: result.closingBalance,
+              currency: result.currency, transactionCount: result.transactions.length,
+            });
+            for (const txn of result.transactions) {
+              allTransactions.push({ ...txn, sourceFile: u.fileName, accountNumber: result.accountNumber });
+            }
+            console.log(`[flow-engine] Azure DI: ${result.transactions.length} txns from ${u.fileName}`);
+          } catch (err) {
+            console.error(`[flow-engine] Azure DI failed for ${u.fileName}:`, (err as Error).message);
+            statements.push({ fileName: u.fileName, error: (err as Error).message, transactionCount: 0 });
+          }
+
+          // Save progress after each file
+          await prisma.testExecution.update({
+            where: { id: executionId },
+            data: { context: { ...ctx, nodes: { ...ctx.nodes, [node.id]: {
+              extracted: false, statements, allTransactions, transactionCount: allTransactions.length,
+              azureDIAttempted: true, workQueue: [], workIndex: 0,
+              progress: `Azure DI: ${fi + 1}/${uploads.length} files`,
+            } } } as any },
+          });
+        }
+
+        // All files done via Azure DI
+        const deduped = deduplicateTransactions(allTransactions);
+        console.log(`[flow-engine] Azure DI complete: ${deduped.length} txns from ${statements.length} files`);
+        return {
+          action: 'continue',
+          nextNodeId: getNextNodeId(flow, node.id),
+          output: { extracted: true, statements, allTransactions: deduped, transactionCount: deduped.length, fileCount: statements.length, dataTable: deduped },
+        };
+      }
+    } catch (err) {
+      console.warn(`[flow-engine] Azure DI not available, falling back to AI vision:`, (err as Error).message);
+    }
+  }
+
+  // ── Fallback: AI vision page-by-page (slow but works without Azure DI) ──
 
   // Process ONE page this invocation
   const work = workQueue[workIndex];
