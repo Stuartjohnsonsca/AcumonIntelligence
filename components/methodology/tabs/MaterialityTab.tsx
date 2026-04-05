@@ -203,11 +203,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const pyPM = (getPy('performance_materiality_manual') as number) || 0;
   const pyCT = (getPy('clearly_trivial_manual') as number) || 0;
 
-  // (5) Breach detection: if user benchmark % exceeds the calculated figure from (4)
+  // (5) Breach detection: if user benchmark % is strictly outside the range bounds
   const actualPct = effectiveBenchmarkPct / 100;
-  const isBreach = !!(userBenchmarkPct != null && calculatedBenchmarkPct > 0 && userBenchmarkPct > calculatedBenchmarkPct);
+  const rangeHighPct = rangeHigh * 100;
+  const rangeLowPct = rangeLow * 100;
+  const isBreach = !!(userBenchmarkPct != null && rangeRow && (userBenchmarkPct > rangeHighPct || userBenchmarkPct < rangeLowPct));
   const breachWarning = isBreach
-    ? `Benchmark % (${effectiveBenchmarkPct.toFixed(2)}%) exceeds the calculated figure (${calculatedBenchmarkPct.toFixed(2)}%) based on indicator assessments`
+    ? `Benchmark % (${effectiveBenchmarkPct.toFixed(2)}%) is outside the acceptable range (${rangeLowPct.toFixed(1)}%–${rangeHighPct.toFixed(1)}%)`
     : null;
 
   // Load tech approval from saved data
@@ -378,13 +380,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
                   set('benchmark_pct', v === '' ? null : parseFloat(v) || null);
                 }} className={`w-20 text-xs border rounded px-2 py-1.5 text-right ${isBreach ? 'border-red-400 bg-red-50' : ''}`} placeholder="%" />
               ) : (
-                <span className="text-xs font-semibold text-slate-800">{effectiveBenchmarkPct.toFixed(2)}%</span>
+                <span className="text-xs font-semibold text-slate-800">{effectiveBenchmarkPct.toFixed(4)}%</span>
               )}
               <span className="text-[10px] text-slate-400">%</span>
               {/* Show calculated % in green if user has overridden */}
               {calculatedBenchmarkPct > 0 && (
                 <span className="text-[10px] font-semibold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
-                  Calculated: {calculatedBenchmarkPct.toFixed(2)}%
+                  Calculated: {calculatedBenchmarkPct.toFixed(4)}%
                 </span>
               )}
               {rangeRow && <span className="text-[10px] text-slate-400">Range: {(rangeRow.low * 100).toFixed(1)}%–{(rangeRow.high * 100).toFixed(1)}%</span>}
