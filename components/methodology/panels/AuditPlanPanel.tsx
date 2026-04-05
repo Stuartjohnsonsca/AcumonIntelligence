@@ -959,12 +959,12 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       const testKey = `${rowKey}::${test.description}`;
                       const isApplicable = !excludedTests.has(testKey);
                       const isExecutionOpen = activeExecution === testKey;
+                      const testConc = testConclusions[testKey] || testConclusions[test.description];
+                      const dbConc = dbConclusions.find(c => c.testDescription === test.description);
+                      const conc = testConc || dbConc?.conclusion || 'pending';
                       return (
                       <Fragment key={`${rowKey}-t${ti}`}>
                         {(() => {
-                          const testConc = testConclusions[testKey] || testConclusions[test.description];
-                          const dbConc = dbConclusions.find(c => c.testDescription === test.description);
-                          const conc = testConc || dbConc?.conclusion || 'pending';
                           const isFailed = conc === 'failed';
                           return (
                         <tr className={`border-b border-slate-50 ${!isApplicable ? 'opacity-30' : ''} ${isExecutionOpen ? 'bg-blue-50/50' : ''} ${isFailed ? 'bg-red-100' : ''} ${test.isIngest ? 'opacity-50' : ''}`}>
@@ -1079,7 +1079,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                             <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-white">
                               <TestResultsPanel
                                 engagementId={engagementId}
-                                executionId={null}
+                                executionId={dbConc?.executionId || null}
                                 testDescription={test.description}
                                 fsLine={activeLevel || activeStatement}
                                 accountCode={row.accountCode}
@@ -1087,6 +1087,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 conclusion={conc}
                                 executionStatus="completed"
                                 executionOutput={null}
+                                conclusionRecord={dbConc || null}
                               />
                             </td>
                           </tr>

@@ -1,16 +1,16 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { CheckCircle2, XCircle, Clock, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, FileText, ChevronDown, ChevronUp, AlertTriangle, AlertOctagon, Download, Upload } from 'lucide-react';
 
 /**
  * TestResultsPanel — displays test results in the selected output format.
  * Wraps the format-specific content with standard header, error assessment, and sign-off dots.
  *
  * Output formats:
- * - three_section_sampling / three_section_no_sampling → AuditVerificationPanel (existing)
- * - document_summary → Findings table (reuses DocSummary pattern)
- * - spreadsheet → BespokeSpreadsheet with formula support
+ * - three_section_sampling / three_section_no_sampling → Data table + conclusion
+ * - document_summary → Findings table with Key Terms and Missing Information (DocSummary pattern)
+ * - spreadsheet → BespokeSpreadsheet with formula support and DB persistence
  */
 
 interface Props {
@@ -23,6 +23,7 @@ interface Props {
   conclusion: string; // green | orange | red | pending
   executionStatus: string;
   executionOutput?: any; // AI/flow output data
+  conclusionRecord?: any; // Full AuditTestConclusion from DB
   userRole?: string;
   userName?: string;
   userId?: string;
@@ -35,11 +36,20 @@ interface ConclusionData {
   status: string; // pending | concluded | reviewed | signed_off
   totalErrors: number;
   extrapolatedError: number;
+  populationSize: number;
+  sampleSize: number;
   auditorNotes: string;
+  errors?: any[]; // Individual error items
+  controlRelianceConcern?: boolean;
+  extrapolationExceedsTM?: boolean;
+  followUpActions?: string[];
+  followUpData?: any;
   reviewedByName?: string;
   reviewedAt?: string;
   riSignedByName?: string;
   riSignedAt?: string;
+  updatedAt?: string; // For stale detection
+  executionId?: string;
 }
 
 const CONCLUSION_COLORS: Record<string, string> = {
@@ -60,13 +70,17 @@ const STATUS_LABELS: Record<string, string> = {
 export function TestResultsPanel({
   engagementId, executionId, testDescription, fsLine, accountCode,
   outputFormat, conclusion, executionStatus, executionOutput,
-  userRole, userName, userId, onClose,
+  conclusionRecord, userRole, userName, userId, onClose,
 }: Props) {
   const [conclusionData, setConclusionData] = useState<ConclusionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [sectionsOpen, setSectionsOpen] = useState({ results: true, errors: true, signoff: true });
+  const [fetchedOutput, setFetchedOutput] = useState<any>(null);
+
+  // Resolve effective executionId — prop or from conclusion record
+  const effectiveExecutionId = executionId || conclusionRecord?.executionId || null;
 
   // Load existing conclusion
   const loadConclusion = useCallback(async () => {
@@ -85,6 +99,49 @@ export function TestResultsPanel({
     } catch {} finally { setLoading(false); }
   }, [engagementId, testDescription, fsLine]);
 
+  // Fetch execution output from DB when not provided via props
+  useEffect(() => {
+    if (executionOutput) {
+      setFetchedOutput(executionOutput);
+      return;
+    }
+    if (!effectiveExecutionId) return;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/test-execution/${effectiveExecutionId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        // Build merged output from all node runs
+        const nodeRuns = data.nodeRuns || [];
+        const merged: any = {};
+        for (const run of nodeRuns) {
+          if (!run.output) continue;
+          const out = typeof run.output === 'string' ? JSON.parse(run.output) : run.output;
+          // Collect key data fields from all nodes
+          if (out.dataTable?.length && !merged.dataTable) merged.dataTable = out.dataTable;
+          if (out.allTransactions?.length && !merged.allTransactions) merged.allTransactions = out.allTransactions;
+          if (out.populationData?.length && !merged.populationData) merged.populationData = out.populationData;
+          if (out.analysis && !merged.analysis) merged.analysis = out.analysis;
+          if (out.findings?.length && !merged.findings) merged.findings = out.findings;
+          if (out.flaggedItems?.length && !merged.flaggedItems) merged.flaggedItems = out.flaggedItems;
+          if (out.keyTerms?.length && !merged.keyTerms) merged.keyTerms = out.keyTerms;
+          if (out.missingInformation?.length && !merged.missingInformation) merged.missingInformation = out.missingInformation;
+          if (out.spreadsheetData && !merged.spreadsheetData) merged.spreadsheetData = out.spreadsheetData;
+          if (out.summary && !merged.summary) merged.summary = out.summary;
+          if (out.conclusion && !merged.conclusion) merged.conclusion = out.conclusion;
+          if (out.result && !merged.result) merged.result = out.result;
+          if (out.loopCompleted && out.results?.length) {
+            merged.loopResults = out.results;
+          }
+        }
+        // Also check the execution context for accumulated data
+        const ctx = data.execution?.context || (data.flowSnapshot ? null : null);
+        setFetchedOutput(Object.keys(merged).length > 0 ? merged : null);
+      } catch {}
+    })();
+  }, [effectiveExecutionId, executionOutput, engagementId]);
+
   useEffect(() => { loadConclusion(); }, [loadConclusion]);
 
   // Save auditor notes
@@ -98,6 +155,21 @@ export function TestResultsPanel({
         body: JSON.stringify({ id: conclusionData.id, auditorNotes: notes }),
       });
     } catch {} finally { setSaving(false); }
+  }
+
+  // Save spreadsheet data to conclusion followUpData
+  async function saveSpreadsheetData(spreadsheetData: { rows: string[][]; columns: string[] }) {
+    if (!conclusionData?.id) return;
+    try {
+      await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: conclusionData.id,
+          followUpData: { ...(conclusionData.followUpData || {}), spreadsheetData },
+        }),
+      });
+    } catch {}
   }
 
   // Sign-off actions
@@ -120,6 +192,22 @@ export function TestResultsPanel({
   };
 
   const toggleSection = (key: keyof typeof sectionsOpen) => setSectionsOpen(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Stale detection: check if conclusion data changed after a sign-off
+  function isSignOffStale(role: 'reviewer' | 'ri'): boolean {
+    if (!conclusionData?.updatedAt) return false;
+    const dataTime = new Date(conclusionData.updatedAt).getTime();
+    if (role === 'reviewer' && conclusionData.reviewedAt) {
+      return dataTime > new Date(conclusionData.reviewedAt).getTime();
+    }
+    if (role === 'ri' && conclusionData.riSignedAt) {
+      return dataTime > new Date(conclusionData.riSignedAt).getTime();
+    }
+    return false;
+  }
+
+  // Effective output — fetched from DB or passed via props
+  const effectiveOutput = fetchedOutput || executionOutput;
 
   if (loading) return <div className="p-4 text-center text-xs text-slate-400 animate-pulse">Loading results...</div>;
 
@@ -147,17 +235,29 @@ export function TestResultsPanel({
         </button>
         {sectionsOpen.results && (
           <div className="px-4 pb-4">
-            {outputFormat === 'document_summary' && executionOutput && (
-              <DocumentSummaryOutput data={executionOutput} />
+            {outputFormat === 'document_summary' && effectiveOutput && (
+              <DocumentSummaryOutput data={effectiveOutput} />
             )}
             {outputFormat === 'spreadsheet' && (
-              <SpreadsheetOutput engagementId={engagementId} executionId={executionId} data={executionOutput} />
+              <SpreadsheetOutput
+                engagementId={engagementId}
+                executionId={effectiveExecutionId}
+                data={effectiveOutput}
+                onSave={conclusionData?.id ? saveSpreadsheetData : undefined}
+                savedData={conclusionData?.followUpData?.spreadsheetData}
+              />
             )}
-            {(outputFormat === 'three_section_sampling' || outputFormat === 'three_section_no_sampling' || !outputFormat) && executionOutput && (
-              <ThreeSectionOutput data={executionOutput} />
+            {(outputFormat === 'three_section_sampling' || outputFormat === 'three_section_no_sampling' || !outputFormat) && effectiveOutput && (
+              <ThreeSectionOutput data={effectiveOutput} />
             )}
-            {!executionOutput && (
-              <div className="text-xs text-slate-400 text-center py-4">No results data available.</div>
+            {!effectiveOutput && (
+              <div className="text-xs text-slate-400 text-center py-4">
+                {effectiveExecutionId ? (
+                  <span className="animate-pulse">Loading execution data...</span>
+                ) : (
+                  'No results data available.'
+                )}
+              </div>
             )}
           </div>
         )}
@@ -193,6 +293,73 @@ export function TestResultsPanel({
                     <div className="text-[9px] text-slate-400 uppercase">Status</div>
                   </div>
                 </div>
+
+                {/* Individual Error Items */}
+                {Array.isArray(conclusionData.errors) && conclusionData.errors.length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-red-50 px-3 py-1.5 border-b flex items-center gap-2">
+                      <AlertTriangle className="h-3 w-3 text-red-500" />
+                      <span className="text-[10px] font-bold text-red-700 uppercase">Individual Errors</span>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {conclusionData.errors.map((err: any, i: number) => (
+                        <div key={i} className="px-3 py-2 space-y-1.5">
+                          <div className="flex items-center gap-3 text-[10px]">
+                            <span className="font-mono text-slate-500 w-10 shrink-0">{err.reference || `#${err.itemIndex ?? i + 1}`}</span>
+                            <span className="flex-1 text-slate-700 truncate">{err.description || 'Error item'}</span>
+                            <span className="text-slate-500">Sample: {f(err.sampleAmount || 0)}</span>
+                            <span className="text-slate-500">Evidence: {f(err.evidenceAmount || 0)}</span>
+                            <span className={`font-bold ${(err.difference || 0) < 0 ? 'text-red-600' : 'text-amber-600'}`}>
+                              Diff: {f(err.difference || 0)}
+                            </span>
+                          </div>
+                          {/* Classification flags */}
+                          <div className="flex items-center gap-3 text-[9px]">
+                            {/* Error type */}
+                            <span className={`px-1.5 py-0.5 rounded font-medium ${
+                              err.isAnomaly ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {err.isAnomaly ? 'Judgemental' : 'Factual'}
+                            </span>
+                            {err.isFraud && (
+                              <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium flex items-center gap-0.5">
+                                <AlertOctagon className="h-2.5 w-2.5" /> Fraud concern
+                              </span>
+                            )}
+                            {err.isIsolated && (
+                              <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">Isolated</span>
+                            )}
+                            {!err.isIsolated && (
+                              <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-medium">Systemic</span>
+                            )}
+                          </div>
+                          {/* Explanation */}
+                          {err.explanation && (
+                            <div className="text-[10px] text-slate-600 bg-slate-50 rounded px-2 py-1 italic">
+                              {err.explanation}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Control / TM flags */}
+                {(conclusionData.controlRelianceConcern || conclusionData.extrapolationExceedsTM) && (
+                  <div className="flex gap-3 text-[10px]">
+                    {conclusionData.controlRelianceConcern && (
+                      <span className="px-2 py-1 rounded bg-amber-50 border border-amber-200 text-amber-700 font-medium">
+                        Control reliance concern
+                      </span>
+                    )}
+                    {conclusionData.extrapolationExceedsTM && (
+                      <span className="px-2 py-1 rounded bg-red-50 border border-red-200 text-red-700 font-medium">
+                        Exceeds Tolerable Misstatement
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* Auditor Notes */}
                 <div>
@@ -230,6 +397,7 @@ export function TestResultsPanel({
                 signedBy={conclusionData.status !== 'pending' ? 'System' : undefined}
                 signedAt={undefined}
                 canSign={false}
+                isStale={false}
                 onToggle={() => {}}
               />
               {/* Reviewer dot */}
@@ -238,6 +406,7 @@ export function TestResultsPanel({
                 signedBy={conclusionData.reviewedByName}
                 signedAt={conclusionData.reviewedAt}
                 canSign={userRole === 'Manager' || userRole === 'RI'}
+                isStale={isSignOffStale('reviewer')}
                 onToggle={() => handleSignOff(conclusionData.reviewedByName ? 'unreview' : 'review')}
               />
               {/* RI dot */}
@@ -246,6 +415,7 @@ export function TestResultsPanel({
                 signedBy={conclusionData.riSignedByName}
                 signedAt={conclusionData.riSignedAt}
                 canSign={userRole === 'RI'}
+                isStale={isSignOffStale('ri')}
                 onToggle={() => handleSignOff(conclusionData.riSignedByName ? 'ri_unsignoff' : 'ri_signoff')}
               />
             </div>
@@ -256,13 +426,14 @@ export function TestResultsPanel({
   );
 }
 
-// ─── Sign-Off Dot ───
+// ─── Sign-Off Dot with Stale Detection ───
 
-function SignOffDot({ label, signedBy, signedAt, canSign, onToggle }: {
+function SignOffDot({ label, signedBy, signedAt, canSign, isStale, onToggle }: {
   label: string;
   signedBy?: string;
   signedAt?: string;
   canSign: boolean;
+  isStale: boolean;
   onToggle: () => void;
 }) {
   const isSigned = !!signedBy;
@@ -274,18 +445,25 @@ function SignOffDot({ label, signedBy, signedAt, canSign, onToggle }: {
         onClick={canSign ? onToggle : undefined}
         disabled={!canSign}
         className={`w-6 h-6 rounded-full border-2 transition-colors ${
-          isSigned ? 'bg-green-500 border-green-500' :
+          isSigned && !isStale ? 'bg-green-500 border-green-500' :
+          isSigned && isStale ? 'bg-white border-green-500 ring-2 ring-orange-400 ring-offset-1' :
           canSign ? 'border-green-400 hover:bg-green-50 cursor-pointer' :
           'border-slate-300 cursor-default'
         }`}
-        title={isSigned ? `${signedBy} — ${dateStr}` : canSign ? `Click to sign as ${label}` : `${label} sign-off`}
+        title={
+          isSigned && isStale ? `${signedBy} — ${dateStr} (STALE: data changed after sign-off)` :
+          isSigned ? `${signedBy} — ${dateStr}` :
+          canSign ? `Click to sign as ${label}` : `${label} sign-off`
+        }
       >
-        {isSigned && <CheckCircle2 className="h-3.5 w-3.5 text-white mx-auto" />}
+        {isSigned && !isStale && <CheckCircle2 className="h-3.5 w-3.5 text-white mx-auto" />}
+        {isSigned && isStale && <CheckCircle2 className="h-3.5 w-3.5 text-orange-400 mx-auto" />}
       </button>
       <div className="text-[8px] text-slate-500 text-center leading-tight">
         <div className="font-medium">{label}</div>
-        {isSigned && <div className="text-green-600">{signedBy}</div>}
+        {isSigned && <div className={isStale ? 'text-orange-500' : 'text-green-600'}>{signedBy}</div>}
         {isSigned && dateStr && <div className="text-slate-400">{dateStr}</div>}
+        {isStale && <div className="text-orange-500 font-medium">Stale</div>}
       </div>
     </div>
   );
@@ -296,8 +474,10 @@ function SignOffDot({ label, signedBy, signedAt, canSign, onToggle }: {
 function DocumentSummaryOutput({ data }: { data: any }) {
   const findings = data?.analysis?.flaggedItems || data?.flaggedItems || data?.findings || [];
   const summary = data?.analysis?.summary || data?.summary || '';
+  const keyTerms = data?.analysis?.keyTerms || data?.keyTerms || [];
+  const missingInfo = data?.analysis?.missingInformation || data?.missingInformation || [];
 
-  if (findings.length === 0 && !summary) {
+  if (findings.length === 0 && !summary && keyTerms.length === 0 && missingInfo.length === 0) {
     return <div className="text-xs text-slate-400 text-center py-2">No findings from this test.</div>;
   }
 
@@ -309,8 +489,40 @@ function DocumentSummaryOutput({ data }: { data: any }) {
           {summary}
         </div>
       )}
+
+      {/* Key Terms — DocSummary pattern */}
+      {keyTerms.length > 0 && (
+        <div className="border rounded overflow-hidden">
+          <div className="bg-indigo-50 px-3 py-1.5 border-b">
+            <span className="text-[10px] font-bold text-indigo-700 uppercase">Key Commercial Terms</span>
+          </div>
+          <table className="w-full text-[10px]">
+            <thead>
+              <tr className="bg-slate-50 border-b">
+                <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Term</th>
+                <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Value</th>
+                <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Clause</th>
+              </tr>
+            </thead>
+            <tbody>
+              {keyTerms.map((kt: any, i: number) => (
+                <tr key={i} className="border-b border-slate-50">
+                  <td className="px-2 py-1 text-slate-700 font-medium">{kt.term}</td>
+                  <td className="px-2 py-1 text-slate-600">{kt.value}</td>
+                  <td className="px-2 py-1 text-slate-500 font-mono text-[9px]">{kt.clauseReference || kt.clause || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Findings */}
       {findings.length > 0 && (
         <div className="border rounded overflow-hidden">
+          <div className="bg-amber-50 px-3 py-1.5 border-b">
+            <span className="text-[10px] font-bold text-amber-700 uppercase">Findings</span>
+          </div>
           <table className="w-full text-[10px]">
             <thead>
               <tr className="bg-slate-100 border-b">
@@ -321,14 +533,39 @@ function DocumentSummaryOutput({ data }: { data: any }) {
               </tr>
             </thead>
             <tbody>
-              {findings.map((f: any, i: number) => (
-                <tr key={i} className={`border-b border-slate-50 ${f.riskLevel === 'high' ? 'bg-red-50' : f.riskLevel === 'medium' ? 'bg-amber-50' : ''}`}>
-                  <td className="px-2 py-1 text-slate-700">{f.description || f.area || f.accountNumber || `Item ${i + 1}`}</td>
-                  <td className="px-2 py-1 text-slate-600">{f.reason || f.finding || f.detail || ''}</td>
-                  <td className="px-2 py-1 text-right font-mono text-slate-700">{f.amount != null ? `£${Number(f.amount).toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : '—'}</td>
+              {findings.map((fi: any, i: number) => (
+                <tr key={i} className={`border-b border-slate-50 ${fi.riskLevel === 'high' ? 'bg-red-50' : fi.riskLevel === 'medium' ? 'bg-amber-50' : ''}`}>
+                  <td className="px-2 py-1 text-slate-700">{fi.description || fi.area || fi.accountNumber || `Item ${i + 1}`}</td>
+                  <td className="px-2 py-1 text-slate-600">{fi.reason || fi.finding || fi.detail || ''}</td>
+                  <td className="px-2 py-1 text-right font-mono text-slate-700">{fi.amount != null ? `£${Number(fi.amount).toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : '—'}</td>
                   <td className="px-2 py-1 text-center">
-                    {f.riskLevel && <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${f.riskLevel === 'high' ? 'bg-red-100 text-red-700' : f.riskLevel === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>{f.riskLevel}</span>}
+                    {fi.riskLevel && <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${fi.riskLevel === 'high' ? 'bg-red-100 text-red-700' : fi.riskLevel === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>{fi.riskLevel}</span>}
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Missing Information — DocSummary pattern */}
+      {missingInfo.length > 0 && (
+        <div className="border rounded overflow-hidden">
+          <div className="bg-orange-50 px-3 py-1.5 border-b">
+            <span className="text-[10px] font-bold text-orange-700 uppercase">Missing Information</span>
+          </div>
+          <table className="w-full text-[10px]">
+            <thead>
+              <tr className="bg-slate-50 border-b">
+                <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Missing Item</th>
+                <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Why This Is Expected</th>
+              </tr>
+            </thead>
+            <tbody>
+              {missingInfo.map((mi: any, i: number) => (
+                <tr key={i} className="border-b border-slate-50">
+                  <td className="px-2 py-1 text-slate-700 font-medium">{mi.item}</td>
+                  <td className="px-2 py-1 text-slate-600">{mi.reason}</td>
                 </tr>
               ))}
             </tbody>
@@ -384,10 +621,17 @@ function ThreeSectionOutput({ data }: { data: any }) {
   );
 }
 
-function SpreadsheetOutput({ engagementId, executionId, data }: { engagementId: string; executionId: string | null; data: any }) {
+function SpreadsheetOutput({ engagementId, executionId, data, onSave, savedData }: {
+  engagementId: string;
+  executionId: string | null;
+  data: any;
+  onSave?: (data: { rows: string[][]; columns: string[] }) => void;
+  savedData?: { rows: string[][]; columns: string[] };
+}) {
   const [rows, setRows] = useState<string[][]>(() => {
+    // Priority: saved data from DB > execution output > empty
+    if (savedData?.rows) return savedData.rows;
     if (data?.spreadsheetData?.rows) return data.spreadsheetData.rows;
-    // Initialize from execution output data
     const items = data?.dataTable || data?.allTransactions || [];
     if (items.length === 0) return Array.from({ length: 10 }, () => Array(5).fill(''));
     const cols = Object.keys(items[0]);
@@ -395,6 +639,7 @@ function SpreadsheetOutput({ engagementId, executionId, data }: { engagementId: 
   });
 
   const [columns, setColumns] = useState<string[]>(() => {
+    if (savedData?.columns) return savedData.columns;
     if (data?.spreadsheetData?.columns) return data.spreadsheetData.columns;
     const items = data?.dataTable || data?.allTransactions || [];
     if (items.length > 0) return Object.keys(items[0]).slice(0, 10);
@@ -402,6 +647,8 @@ function SpreadsheetOutput({ engagementId, executionId, data }: { engagementId: 
   });
 
   const [editCell, setEditCell] = useState<{ r: number; c: number } | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   function evaluateFormula(formula: string): string {
     if (!formula.startsWith('=')) return formula;
@@ -441,7 +688,6 @@ function SpreadsheetOutput({ engagementId, executionId, data }: { engagementId: 
         const cond = ifMatch[1].trim();
         const trueVal = ifMatch[2].trim();
         const falseVal = ifMatch[3].trim();
-        // Simple comparison: A1>100
         const compMatch = cond.match(/^([A-Z])(\d+)\s*(>|<|>=|<=|=|!=)\s*(.+)$/i);
         if (compMatch) {
           const col = compMatch[1].toUpperCase().charCodeAt(0) - 65;
@@ -453,7 +699,7 @@ function SpreadsheetOutput({ engagementId, executionId, data }: { engagementId: 
           return result ? trueVal : falseVal;
         }
       }
-      // Cell reference arithmetic: A1+B1, A1*2, etc.
+      // Cell reference arithmetic
       let resolved = expr.replace(/([A-Z])(\d+)/gi, (_, col, row) => {
         const c = col.toUpperCase().charCodeAt(0) - 65;
         const r = parseInt(row) - 1;
@@ -478,20 +724,56 @@ function SpreadsheetOutput({ engagementId, executionId, data }: { engagementId: 
       next[r][c] = val;
       return next;
     });
+    setDirty(true);
+    setSaveStatus('idle');
   }
 
-  function addRow() { setRows(prev => [...prev, Array(columns.length).fill('')]); }
+  function addRow() { setRows(prev => [...prev, Array(columns.length).fill('')]); setDirty(true); }
   function addCol() {
     const nextLetter = String.fromCharCode(65 + columns.length);
     setColumns(prev => [...prev, nextLetter]);
     setRows(prev => prev.map(r => [...r, '']));
+    setDirty(true);
+  }
+
+  async function handleSave() {
+    if (!onSave) return;
+    setSaveStatus('saving');
+    onSave({ rows, columns });
+    setDirty(false);
+    setSaveStatus('saved');
+    setTimeout(() => setSaveStatus('idle'), 2000);
+  }
+
+  // Auto-save on blur after changes (debounced)
+  function handleCellBlur() {
+    setEditCell(null);
+    if (dirty && onSave) {
+      const timeout = setTimeout(() => {
+        onSave({ rows, columns });
+        setDirty(false);
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      }, 1000);
+      return () => clearTimeout(timeout);
+    }
   }
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-1">
+      <div className="flex gap-1 items-center">
         <button onClick={addRow} className="text-[9px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Row</button>
         <button onClick={addCol} className="text-[9px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Column</button>
+        {onSave && (
+          <>
+            <button onClick={handleSave} disabled={!dirty} className={`text-[9px] px-2 py-0.5 rounded ml-auto ${
+              dirty ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-slate-50 text-slate-400'
+            }`}>
+              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : 'Save'}
+            </button>
+            {dirty && <span className="text-[8px] text-amber-500">Unsaved changes</span>}
+          </>
+        )}
       </div>
       <div className="border rounded overflow-auto max-h-[400px]">
         <table className="text-[10px] border-collapse">
@@ -514,7 +796,7 @@ function SpreadsheetOutput({ engagementId, executionId, data }: { engagementId: 
                       value={editCell?.r === ri && editCell?.c === ci ? (rows[ri]?.[ci] || '') : getCellDisplay(ri, ci)}
                       onChange={e => updateCell(ri, ci, e.target.value)}
                       onFocus={() => setEditCell({ r: ri, c: ci })}
-                      onBlur={() => setEditCell(null)}
+                      onBlur={handleCellBlur}
                       className="w-full px-1.5 py-0.5 text-[10px] border-0 focus:outline-none focus:bg-blue-50"
                     />
                   </td>

@@ -2179,14 +2179,24 @@ export async function resumeExecution(executionId: string, externalData?: any): 
     });
 
     // Advance to next node — use updatedContext so sampling results / external data are available to next step
-    const nextNodeId = getNextNodeId(flow, execution.currentNodeId);
+    let nextNodeId = getNextNodeId(flow, execution.currentNodeId);
+    // Dead-end inside a loop body? Bounce back to the forEach/loopUntil node
+    if (!nextNodeId && execution.loopState) {
+      const ls = execution.loopState as any;
+      if (ls.nodeId) nextNodeId = ls.nodeId;
+    }
     await prisma.testExecution.update({
       where: { id: executionId },
       data: { status: 'running', currentNodeId: nextNodeId || null, pauseReason: null, pauseRefId: null, context: updatedContext as any },
     });
   } else {
     // Resume without new data — just advance
-    const nextNodeId = execution.currentNodeId ? getNextNodeId(flow, execution.currentNodeId) : null;
+    let nextNodeId = execution.currentNodeId ? getNextNodeId(flow, execution.currentNodeId) : null;
+    // Dead-end inside a loop body? Bounce back to the forEach/loopUntil node
+    if (!nextNodeId && execution.loopState) {
+      const ls = execution.loopState as any;
+      if (ls.nodeId) nextNodeId = ls.nodeId;
+    }
     await prisma.testExecution.update({
       where: { id: executionId },
       data: { status: 'running', currentNodeId: nextNodeId || null, pauseReason: null, pauseRefId: null },
