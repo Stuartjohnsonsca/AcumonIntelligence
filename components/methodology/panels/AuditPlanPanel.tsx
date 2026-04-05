@@ -508,12 +508,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
 
-      // Risk-based filtering:
-      // - AR items: skip all substantive tests (will get AR tests later — TBD)
-      // - Area of Focus: get full tests but NOT significant-risk-only tests
-      // - Significant Risk: get all tests including significant-risk-only tests
-      if (riskClassification === 'AR') continue; // AR items don't get substantive tests
-      if (riskClassification === 'Area of Focus' && test.significantRisk) continue; // Skip sig-risk-only tests
+      // Risk-based filtering (only when riskClassification is set):
+      // - null: no RMM data — show all tests (no filtering)
+      // - AR: skip all substantive tests (AR tests only — TBD)
+      // - Area of Focus: full tests but NOT significant-risk-only tests
+      // - Significant Risk: all tests including significant-risk-only tests
+      if (riskClassification === 'AR') continue;
+      if (riskClassification === 'Area of Focus' && test.significantRisk) continue;
 
       const tt = testTypes.find(t => t.code === test.testTypeCode);
       const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
@@ -850,28 +851,40 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             </thead>
             <tbody>
               {filteredRows.map(row => {
-                // Match RMM by lineItem or fsLevel
-                const rmmMatch = rmmItems.find(r =>
-                  r.lineItem.toLowerCase() === (row.fsLevel || activeLevel || row.fsNoteLevel || '').toLowerCase() ||
-                  (r.fsLevel && r.fsLevel.toLowerCase() === (activeLevel || '').toLowerCase())
-                );
-                // The active tab level (e.g. "Revenue") is the primary FS level for test matching
+                // Match RMM by lineItem or fsLevel — try multiple name variants
+                const rowFsLevel = (row.fsLevel || '').toLowerCase().trim();
+                const canonRowLevel = (canonicalLevel(row) || '').toLowerCase().trim();
+                const activeLevelLower = (activeLevel || '').toLowerCase().trim();
+                const rowNote = (row.fsNoteLevel || '').toLowerCase().trim();
+
+                const rmmMatch = rmmItems.find(r => {
+                  const li = r.lineItem.toLowerCase().trim();
+                  const rfl = (r.fsLevel || '').toLowerCase().trim();
+                  // Match on any of: row fsLevel, canonical level, active tab level, or fsNote
+                  return li === rowFsLevel || li === canonRowLevel || li === activeLevelLower || li === rowNote
+                    || rfl === rowFsLevel || rfl === canonRowLevel || rfl === activeLevelLower;
+                });
+
+                // The active tab level is the primary FS level for test matching
                 const effectiveFsLevel = activeLevel || rmmMatch?.fsLevel || row.fsLevel;
                 const effectiveFsNote = activeNote || rmmMatch?.fsNote || row.fsNoteLevel;
                 const effectiveStatement = activeStatement || rmmMatch?.fsStatement;
-                // Determine risk classification from the admin table
+
+                // Determine risk classification from admin table.
+                // If no RMM match found, show tests without risk filtering (null = show all).
                 const rowClassification = rmmMatch?.overallRisk
                   ? (riskClassificationTable?.[rmmMatch.overallRisk] || (
                       rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High' ? 'Significant Risk'
                       : rmmMatch.overallRisk === 'Medium' ? 'Area of Focus' : 'AR'
                     ))
-                  : 'AR';
+                  : null; // null = no RMM data, don't filter by risk
                 const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement, rowClassification);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rowClassification === 'Significant Risk';
                 const isAoF = rowClassification === 'Area of Focus';
                 const isAR = rowClassification === 'AR';
+                const noRmm = rowClassification === null;
                 const isMerged = !!row.originalAccountCode && row.accountCode !== row.originalAccountCode;
                 // Use ALL tb rows for merged totals (not filtered — filtered excludes zero rows)
                 const mergedGroupRows = isMerged ? tbRows.filter(r => r.accountCode === row.accountCode) : [];
