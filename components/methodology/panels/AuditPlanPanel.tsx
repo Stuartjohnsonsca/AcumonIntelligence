@@ -539,38 +539,67 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     return STATEMENT_ORDER.filter(s => set.has(s)).concat(Array.from(set).filter(s => !STATEMENT_ORDER.includes(s)));
   }, [tbRows, requiresCashFlow]);
 
+  // Map TB fsLevel values to the firm's canonical FS Line names.
+  // If a TB row's fsLevel doesn't exactly match an FS Line, find the closest match.
+  const fsLevelMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    const fsLineNames = fsLinesList.map(fl => fl.name.toLowerCase().trim());
+    for (const row of tbRows) {
+      if (!row.fsLevel || map[row.fsLevel]) continue;
+      const lower = row.fsLevel.toLowerCase().trim();
+      // Exact match
+      const exact = fsLinesList.find(fl => fl.name.toLowerCase().trim() === lower);
+      if (exact) { map[row.fsLevel] = exact.name; continue; }
+      // Fuzzy: check if any FS Line contains this or vice versa
+      const fuzzy = fsLinesList.find(fl => {
+        const fln = fl.name.toLowerCase().trim();
+        return fln.includes(lower) || lower.includes(fln);
+      });
+      if (fuzzy) { map[row.fsLevel] = fuzzy.name; continue; }
+      // No match — use as-is
+      map[row.fsLevel] = row.fsLevel;
+    }
+    return map;
+  }, [tbRows, fsLinesList]);
+
+  // Get the canonical FS Level for a TB row
+  function canonicalLevel(row: { fsLevel?: string | null }): string {
+    return row.fsLevel ? (fsLevelMap[row.fsLevel] || row.fsLevel) : '';
+  }
+
   const levels = useMemo(() => {
     if (!activeStatement) return [];
     const levelAmounts: Record<string, number> = {};
     for (const row of tbRows) {
       if (row.fsStatement === activeStatement && row.fsLevel) {
-        levelAmounts[row.fsLevel] = (levelAmounts[row.fsLevel] || 0) + Math.abs(Number(row.currentYear) || 0);
+        const canon = canonicalLevel(row);
+        levelAmounts[canon] = (levelAmounts[canon] || 0) + Math.abs(Number(row.currentYear) || 0);
       }
     }
     // Only include levels with monetary value or significant risk, sorted by statutory order
     return Object.keys(levelAmounts)
       .filter(l => levelAmounts[l] > 0 || significantRiskItems.has(l))
       .sort((a, b) => getStatutoryPosition(framework || 'FRS102', activeStatement, a) - getStatutoryPosition(framework || 'FRS102', activeStatement, b));
-  }, [tbRows, activeStatement, significantRiskItems]);
+  }, [tbRows, activeStatement, significantRiskItems, fsLevelMap]);
 
   // Notes — only for 3-level statements (Balance Sheet), filtered by value/risk
   const notes = useMemo(() => {
     if (!activeLevel || !THREE_LEVEL_STATEMENTS.has(activeStatement)) return [];
     const noteAmounts: Record<string, number> = {};
     for (const row of tbRows) {
-      if (row.fsStatement === activeStatement && row.fsLevel === activeLevel && row.fsNoteLevel) {
+      if (row.fsStatement === activeStatement && canonicalLevel(row) === activeLevel && row.fsNoteLevel) {
         noteAmounts[row.fsNoteLevel] = (noteAmounts[row.fsNoteLevel] || 0) + Math.abs(Number(row.currentYear) || 0);
       }
     }
     return Object.keys(noteAmounts)
       .filter(n => noteAmounts[n] > 0 || significantRiskItems.has(n))
       .sort((a, b) => getStatutoryPosition(framework || 'FRS102', activeStatement, a) - getStatutoryPosition(framework || 'FRS102', activeStatement, b));
-  }, [tbRows, activeStatement, activeLevel, significantRiskItems, framework]);
+  }, [tbRows, activeStatement, activeLevel, significantRiskItems, framework, fsLevelMap]);
 
   const filteredRows = useMemo(() => {
     return tbRows.filter(row => {
       if (row.fsStatement !== activeStatement) return false;
-      if (activeLevel && row.fsLevel && row.fsLevel !== activeLevel) return false;
+      if (activeLevel && row.fsLevel && canonicalLevel(row) !== activeLevel) return false;
       if (activeNote && row.fsNoteLevel && row.fsNoteLevel !== activeNote) return false;
       // Must have monetary value (CY or PY non-zero)
       const cy = Number(row.currentYear) || 0;
