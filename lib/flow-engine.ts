@@ -269,6 +269,85 @@ function parseAccountingDate(raw: any): string {
   return s; // Return raw if nothing works
 }
 
+// ─── Require Prior Evidence ───
+// Gate node: checks that extracted/stored data exists for the given evidenceTag.
+// If found, passes the data through to the next node.
+// If NOT found, FAILS the test with a clear prerequisite error message.
+async function handleRequirePriorEvidence(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  const evidenceTag = node.data.evidenceTag || node.data.executionDef?.evidenceTag;
+  if (!evidenceTag) {
+    return { action: 'error', errorMessage: 'require_prior_evidence node requires an evidenceTag' };
+  }
+
+  console.log(`[flow-engine] Checking prerequisite evidence: tag="${evidenceTag}"`);
+
+  // First check AuditDocument library (from store_extracted_bank_data)
+  const docs = await prisma.auditDocument.findMany({
+    where: {
+      engagementId,
+      mappedItems: { path: ['evidenceTag'], equals: evidenceTag },
+    },
+    select: { id: true, documentName: true, storagePath: true, containerName: true },
+  });
+
+  if (docs.length > 0) {
+    // Load the stored data from each document
+    const { downloadBlob } = await import('@/lib/azure-blob');
+    const allRows: any[] = [];
+    for (const doc of docs) {
+      try {
+        const buffer = await downloadBlob(doc.storagePath, doc.containerName || 'upload-inbox');
+        const parsed = JSON.parse(buffer.toString('utf-8'));
+        if (parsed.rows && Array.isArray(parsed.rows)) {
+          allRows.push(...parsed.rows);
+        }
+      } catch (err) {
+        console.warn(`[flow-engine] Failed to load document ${doc.id}:`, (err as Error).message);
+      }
+    }
+
+    console.log(`[flow-engine] Prerequisite met: ${docs.length} documents, ${allRows.length} rows for tag="${evidenceTag}"`);
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: {
+        evidenceFound: true,
+        evidenceTag,
+        dataTable: allRows,
+        transactionCount: allRows.length,
+        documentCount: docs.length,
+        documents: docs.map(d => ({ id: d.id, name: d.documentName })),
+      },
+    };
+  }
+
+  // Fallback: check portal uploads (from use_prior_evidence pattern)
+  const portalRequests = await prisma.portalRequest.findMany({
+    where: { engagementId, evidenceTag, status: { in: ['responded', 'verified', 'committed'] } },
+    select: { id: true },
+  });
+
+  if (portalRequests.length > 0) {
+    // Evidence has been uploaded but not yet extracted/stored
+    return {
+      action: 'error',
+      errorMessage: `Prerequisite incomplete: Bank statements have been uploaded (tag: "${evidenceTag}") but not yet extracted and stored. Run the "Extract Bank Statement Data" test first.`,
+    };
+  }
+
+  // Nothing found at all
+  return {
+    action: 'error',
+    errorMessage: `Prerequisite not met: No data found for tag "${evidenceTag}". The prerequisite test (e.g. BS In Year Review + Extract Bank Statement Data) must be completed first.`,
+  };
+}
+
 // ─── Use Prior Evidence ───
 // Looks up already-uploaded evidence by evidenceTag from prior portal requests.
 // Avoids re-requesting documents the client has already provided.
@@ -1775,7 +1854,9 @@ export async function processNextNode(executionId: string): Promise<void> {
         case 'action':
         default:
           // Check for system-level input types that bypass AI/Client/Team routing
-          if (currentNode.data?.inputType === 'use_prior_evidence') {
+          if (currentNode.data?.inputType === 'require_prior_evidence') {
+            result = await handleRequirePriorEvidence(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'use_prior_evidence') {
             result = await handleUsePriorEvidence(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'bank_statement_extract') {
             result = await handleBankStatementExtract(flow, currentNode, ctx, executionId, execution.engagementId);
