@@ -1630,6 +1630,7 @@ model AuditEngagement {
   hardCloseDate         DateTime? @map("hard_close_date")
   isGroupAudit          Boolean   @default(false) @map("is_group_audit")
   tbViewMode            String    @default("fs_line") @map("tb_view_mode") // fs_line | tb_account
+  tbXeroSummary         Json?     @map("tb_xero_summary") // Raw accounting system TB totals for verification
   planCreated           Boolean   @default(false) @map("plan_created")
   createdById           String    @map("created_by_id")
   startedAt             DateTime? @map("started_at")

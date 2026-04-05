@@ -144,6 +144,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         const beforeFilter = tbRows.length;
         tbRows = tbRows.filter(r => r.currentYear !== 0 || r.priorYear !== 0);
 
+        // Compute raw Xero TB totals for verification display
+        let xeroCyTotal = 0, xeroPyTotal = 0;
+        for (const [, entry] of currentTB) xeroCyTotal += (entry.debit - entry.credit);
+        for (const [, entry] of priorTB) xeroPyTotal += (entry.debit - entry.credit);
+
+        // Store Xero summary on engagement for verification in the TB tab
+        await prisma.auditEngagement.update({
+          where: { id: engagementId },
+          data: {
+            tbXeroSummary: {
+              source: connection.system,
+              cyDate: currentYearDate,
+              pyDate: priorYearDate,
+              cyTotal: Math.round(xeroCyTotal * 100) / 100,
+              pyTotal: Math.round(xeroPyTotal * 100) / 100,
+              cyEntries: currentTB.size,
+              pyEntries: priorTB.size,
+              importedAt: new Date().toISOString(),
+            },
+          },
+        });
+
         debugInfo = `Accounts: ${accounts.length}, matched TB: ${matched}, rows before filter: ${beforeFilter}, after: ${tbRows.length}`;
         console.log(`[TB Import] ${debugInfo}`);
         break;

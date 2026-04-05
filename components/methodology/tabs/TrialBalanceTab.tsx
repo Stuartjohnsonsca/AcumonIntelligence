@@ -157,11 +157,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   );
 
   // Create a set of blank rows for paste-ready spreadsheet
+  const [xeroSummary, setXeroSummary] = useState<{ cyTotal: number; pyTotal: number; source: string; cyDate: string; pyDate: string } | null>(null);
+
   function createBlankRows(count: number): TBRow[] {
     return Array.from({ length: count }, (_, i) => ({
       id: '', accountCode: '', description: '', category: null,
       currentYear: null, priorYear: null, fsNoteLevel: null,
-      fsLevel: null, fsStatement: null, groupName: null,
+      fsLevel: null, fsStatement: null, groupName: null, aiConfidence: null,
       sortOrder: i,
     }));
   }
@@ -181,6 +183,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           setRows(loaded);
           setInitialRows(loaded);
         }
+      }
+      // Load Xero summary for verification
+      const engRes = await fetch(`/api/engagements/${engagementId}`);
+      if (engRes.ok) {
+        const engData = await engRes.json();
+        if (engData.tbXeroSummary) setXeroSummary(engData.tbXeroSummary);
       }
     } catch (err) { console.error('Failed to load:', err); }
     finally { setLoading(false); }
@@ -623,6 +631,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             const ls = showCategory ? 3 : 2;
             const rc = 'text-right px-2 py-px text-[10px]';
             const lc = `text-right pr-2 py-px text-[10px] text-slate-400`;
+            const xc = 'text-right px-2 py-px text-[10px] text-purple-600'; // Xero column style
+            const src = xeroSummary?.source || 'Xero';
             return (
               <thead>
                 <tr><th colSpan={ls} className={lc}>Revenue</th><th className={`${rc} text-slate-600`}>{f(cyRev)}</th><th className={`${rc} text-slate-600`}>{f(pyRev)}</th><th colSpan={10} /></tr>
@@ -636,6 +646,22 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   <th className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(pyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${pyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></th>
                   <th colSpan={10} />
                 </tr>
+                {xeroSummary && (
+                  <tr className="border-b border-slate-200 bg-purple-50/30">
+                    <th colSpan={ls} className="text-right pr-2 py-px text-[10px] font-medium text-purple-600">{src} Total</th>
+                    <th className="text-right px-2 py-px text-[10px] font-medium text-purple-700">{f(xeroSummary.cyTotal)}</th>
+                    <th className="text-right px-2 py-px text-[10px] font-medium text-purple-700">{f(xeroSummary.pyTotal)}</th>
+                    <th colSpan={10} />
+                  </tr>
+                )}
+                {xeroSummary && (Math.abs(cyTotal - xeroSummary.cyTotal) > 0.01 || Math.abs(pyTotal - xeroSummary.pyTotal) > 0.01) && (
+                  <tr className="border-b border-red-200 bg-red-50/30">
+                    <th colSpan={ls} className="text-right pr-2 py-px text-[10px] font-bold text-red-600">Difference</th>
+                    <th className="text-right px-2 py-px text-[10px] font-bold text-red-700">{f(cyTotal - xeroSummary.cyTotal)}</th>
+                    <th className="text-right px-2 py-px text-[10px] font-bold text-red-700">{f(pyTotal - xeroSummary.pyTotal)}</th>
+                    <th colSpan={10} />
+                  </tr>
+                )}
               </thead>
             );
           })()}
