@@ -18,6 +18,7 @@ const SCOPES = [
   'accounting.settings.read',
   'accounting.contacts.read',
   'accounting.attachments.read',
+  'accounting.reports.trialbalance.read',
 ].join(' ');
 
 // ─── PKCE ────────────────────────────────────────────────────────────────────
