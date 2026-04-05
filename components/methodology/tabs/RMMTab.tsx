@@ -92,9 +92,14 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
     { enabled: JSON.stringify(rows) !== JSON.stringify(initialRows) }
   );
 
+  const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
+
   const loadData = useCallback(async () => {
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/rmm`);
+      const [res, rcRes] = await Promise.all([
+        fetch(`/api/engagements/${engagementId}/rmm`),
+        fetch('/api/methodology-admin/risk-tables?tableType=riskClassification'),
+      ]);
       if (res.ok) {
         const json = await res.json();
         const loaded = (json.rows || []).map((r: RMMRow) => ({
@@ -105,6 +110,10 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
         }));
         setRows(loaded);
         setInitialRows(loaded);
+      }
+      if (rcRes.ok) {
+        const rcData = await rcRes.json();
+        if (rcData.table?.data) setRiskClassificationTable(rcData.table.data);
       }
     } catch (err) { console.error('Failed to load:', err); }
     finally { setLoading(false); }
@@ -613,11 +622,17 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         {row.overallRisk || '—'}
                       </span>
                     </td>
-                    {/* Significant Risk */}
+                    {/* Risk Classification */}
                     <td className="px-1 py-1 text-center align-top">
-                      {(row.overallRisk === 'High' || row.overallRisk === 'Very High') && (
-                        <span className="text-red-500 text-sm" title="Significant Risk">✓</span>
-                      )}
+                      {(() => {
+                        if (!row.overallRisk) return null;
+                        const classification = riskClassificationTable?.[row.overallRisk]
+                          || (row.overallRisk === 'High' || row.overallRisk === 'Very High' ? 'Significant Risk'
+                            : row.overallRisk === 'Medium' ? 'Area of Focus' : null);
+                        if (classification === 'Significant Risk') return <span className="inline-block w-3 h-3 rounded-full bg-green-500 cursor-help" title="Significant Risk" />;
+                        if (classification === 'Area of Focus') return <span className="inline-block w-3 h-3 rounded-full bg-orange-400 cursor-help" title="Area of Focus" />;
+                        return null;
+                      })()}
                     </td>
                     {/* Notes — free text */}
                     <td className="px-2 py-1 align-top">

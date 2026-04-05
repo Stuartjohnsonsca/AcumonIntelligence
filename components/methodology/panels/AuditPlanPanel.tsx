@@ -273,6 +273,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
   const [activeExecution, setActiveExecution] = useState<string | null>(null);
   const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'>>({});
+  const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
   const [dbConclusions, setDbConclusions] = useState<any[]>([]);
   const [errorFooterOpen, setErrorFooterOpen] = useState(true);
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
@@ -335,13 +336,14 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes] = await Promise.all([
+        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes, rcRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}/test-allocations`),
           fetch('/api/methodology-admin/test-types'),
           fetch(`/api/engagements/${engagementId}/permanent-file`),
           fetch(`/api/engagements/${engagementId}/test-conclusions`),
+          fetch('/api/methodology-admin/risk-tables?tableType=riskClassification'),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
@@ -395,6 +397,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           }
           setTestConclusions(conc);
         }
+        // Load risk classification table
+        if (rcRes.ok) {
+          const rcData = await rcRes.json();
+          if (rcData.table?.data) setRiskClassificationTable(rcData.table.data);
+        }
       } catch (err) { console.error('Failed to load:', err); }
       setLoading(false);
     }
@@ -433,7 +440,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   }
 
   // Find tests for a row — tries allocation-based lookup first, falls back to name matching
-  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
+  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string, riskClassification?: string | null): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] {
     const searchTerms = [fsLevel, fsNote].filter(Boolean).map(s => s!.toLowerCase().trim());
 
     // Deduplicate by test ID across all matching allocations
@@ -461,6 +468,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     for (const test of matchedTestsMap.values()) {
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
+
+      // Risk-based filtering:
+      // - AR items: skip all substantive tests (will get AR tests later — TBD)
+      // - Area of Focus: get full tests but NOT significant-risk-only tests
+      // - Significant Risk: get all tests including significant-risk-only tests
+      if (riskClassification === 'AR') continue; // AR items don't get substantive tests
+      if (riskClassification === 'Area of Focus' && test.significantRisk) continue; // Skip sig-risk-only tests
 
       const tt = testTypes.find(t => t.code === test.testTypeCode);
       const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
@@ -749,10 +763,19 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 const effectiveFsLevel = activeLevel || rmmMatch?.fsLevel || row.fsLevel;
                 const effectiveFsNote = activeNote || rmmMatch?.fsNote || row.fsNoteLevel;
                 const effectiveStatement = activeStatement || rmmMatch?.fsStatement;
-                const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement);
+                // Determine risk classification from the admin table
+                const rowClassification = rmmMatch?.overallRisk
+                  ? (riskClassificationTable?.[rmmMatch.overallRisk] || (
+                      rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High' ? 'Significant Risk'
+                      : rmmMatch.overallRisk === 'Medium' ? 'Area of Focus' : 'AR'
+                    ))
+                  : 'AR';
+                const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement, rowClassification);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
-                const isSig = rmmMatch && (rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High');
+                const isSig = rowClassification === 'Significant Risk';
+                const isAoF = rowClassification === 'Area of Focus';
+                const isAR = rowClassification === 'AR';
                 const isMerged = !!row.originalAccountCode && row.accountCode !== row.originalAccountCode;
                 // Use ALL tb rows for merged totals (not filtered — filtered excludes zero rows)
                 const mergedGroupRows = isMerged ? tbRows.filter(r => r.accountCode === row.accountCode) : [];
@@ -780,7 +803,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         </td>
                       </tr>
                     )}
-                    <tr className={`border-b border-slate-100 hover:bg-slate-50 ${tests.length > 0 ? 'cursor-pointer' : ''} ${isSig ? 'bg-red-50/20' : ''} ${isMerged ? 'bg-blue-50/20' : ''}`}
+                    <tr className={`border-b border-slate-100 hover:bg-slate-50 ${tests.length > 0 ? 'cursor-pointer' : ''} ${isSig ? 'bg-red-50/20' : isAoF ? 'bg-orange-50/20' : ''} ${isMerged ? 'bg-blue-50/20' : ''}`}
                       onClick={() => tests.length > 0 && toggleRmmExpand(rowKey)}>
                       <td className="text-center px-0.5" onClick={e => { e.stopPropagation(); toggleMergeSelect(row.id); }}>
                         {!isMerged && (
@@ -805,8 +828,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       </td>
                       <td className="px-0.5 py-px">
                         {rmmMatch?.overallRisk && (
-                          <span className={`text-[7px] px-0.5 py-0 rounded font-medium ${isSig ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>
-                            {rmmMatch.overallRisk}
+                          <span className={`text-[7px] px-0.5 py-0 rounded font-medium ${
+                            isSig ? 'bg-red-100 text-red-700' : isAoF ? 'bg-orange-100 text-orange-700' : 'bg-green-50 text-green-600'
+                          }`}>
+                            {isAR ? 'AR' : rowClassification}
                           </span>
                         )}
                       </td>

@@ -51,6 +51,33 @@ export function lookupOverallRisk(
   return row[controlRisk as ControlRiskLevel] || null;
 }
 
+// Risk Classification — maps Overall Risk → test allocation category
+export type RiskClassification = 'Significant Risk' | 'Area of Focus' | 'AR';
+
+export interface RiskClassificationTable {
+  matrix: Record<string, RiskClassification>;
+}
+
+// Default: High/Very High = Significant Risk, Medium = Area of Focus, everything else = AR
+const DEFAULT_RISK_CLASSIFICATION: RiskClassificationTable = {
+  matrix: {
+    'Remote': 'AR',
+    'Low': 'AR',
+    'Medium': 'Area of Focus',
+    'High': 'Significant Risk',
+    'Very High': 'Significant Risk',
+  },
+};
+
+export function lookupRiskClassification(
+  overallRisk: RiskLevel | string | null,
+  customTable?: RiskClassificationTable | null
+): RiskClassification | null {
+  if (!overallRisk) return null;
+  const table = customTable || DEFAULT_RISK_CLASSIFICATION;
+  return table.matrix[overallRisk] || null;
+}
+
 /** Get CSS background color class for a risk level */
 export function riskColor(level: string | null | undefined): string {
   switch (level) {

@@ -51,6 +51,7 @@ export default async function FirmAssumptionsPage() {
         initialConfidenceLevel={samplingConfig?.confidenceLevel ?? 95}
         initialConfidenceTable={samplingConfig?.confidenceFactorTable as any || null}
         initialSpecialistRoles={specialistRoles}
+        initialRiskClassification={tablesMap.riskClassification || null}
       />
     </div>
   );

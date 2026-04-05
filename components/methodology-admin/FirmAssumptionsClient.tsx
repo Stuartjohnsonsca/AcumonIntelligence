@@ -24,12 +24,22 @@ interface Props {
   initialMaterialityRange?: { benchmark: string; low: number; high: number }[];
   initialMaterialityRounding?: number;
   initialTechnicalTeam?: { email: string; members: { name: string; email: string; role: string }[] };
+  initialRiskClassification?: Record<string, RiskClassification> | null;
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
 const MAGNITUDES: Magnitude[] = ['Remote', 'Low', 'Medium', 'High', 'Very High'];
 const RISK_LEVELS: RiskLevel[] = ['Remote', 'Low', 'Medium', 'High', 'Very High'];
 const CONTROL_RISK_LEVELS: ControlRiskLevel[] = ['Not Tested', 'Effective', 'Not Effective', 'Partially Effective'];
+
+const CLASSIFICATION_OPTIONS = ['Significant Risk', 'Area of Focus', 'AR'] as const;
+type RiskClassification = typeof CLASSIFICATION_OPTIONS[number];
+
+const CLASSIFICATION_COLORS: Record<string, string> = {
+  'Significant Risk': 'bg-red-200 text-red-900',
+  'Area of Focus': 'bg-orange-100 text-orange-800',
+  'AR': 'bg-green-50 text-green-700',
+};
 
 const RISK_COLORS: Record<string, string> = {
   'Remote': 'bg-white text-slate-700',
@@ -94,6 +104,7 @@ export function FirmAssumptionsClient({
   initialConfidenceLevel,
   initialConfidenceTable,
   initialSpecialistRoles,
+  initialRiskClassification,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -111,6 +122,12 @@ export function FirmAssumptionsClient({
   const [specialistRoles, setSpecialistRoles] = useState<string[]>(
     Array.isArray(initialSpecialistRoles) ? initialSpecialistRoles : ['EQR', 'Valuations', 'Ethics', 'Technical']
   );
+  const [riskClassification, setRiskClassification] = useState<Record<string, RiskClassification>>(() => {
+    const init = initialRiskClassification;
+    return (init && typeof init === 'object') ? init : {
+      'Remote': 'AR', 'Low': 'AR', 'Medium': 'Area of Focus', 'High': 'Significant Risk', 'Very High': 'Significant Risk',
+    };
+  });
   const [newRole, setNewRole] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -167,6 +184,7 @@ export function FirmAssumptionsClient({
             tables: {
               inherent: inherentRisk,
               control: controlRisk,
+              riskClassification,
               assertions,
               specialistRoles: { roles: specialistRoles },
             },
@@ -305,6 +323,51 @@ export function FirmAssumptionsClient({
                     })}
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Risk Classification Table — maps Overall Risk → test allocation category */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('riskClassification')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Risk Classification (Test Allocation)</h2>
+          {expandedSections.riskClassification ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.riskClassification && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">Determines which tests are allocated based on the Overall Risk from the Control Risk Table above. <strong>Significant Risk</strong> and <strong>Area of Focus</strong> items receive full substantive tests. <strong>AR</strong> items receive Analytical Review only.</p>
+            <table className="border-collapse">
+              <thead>
+                <tr>
+                  <th className="border border-slate-300 p-2 bg-slate-100 text-sm font-medium text-left min-w-[120px]">Overall Risk Level</th>
+                  <th className="border border-slate-300 p-2 bg-slate-100 text-sm font-medium text-center min-w-[180px]">Classification</th>
+                </tr>
+              </thead>
+              <tbody>
+                {RISK_LEVELS.map(level => {
+                  const val = riskClassification[level] || 'AR';
+                  return (
+                    <tr key={level}>
+                      <td className={`border border-slate-300 p-2 text-sm font-medium ${RISK_COLORS[level] || ''}`}>{level}</td>
+                      <td className={`border border-slate-300 p-1 ${CLASSIFICATION_COLORS[val] || ''}`}>
+                        <select
+                          value={val}
+                          onChange={e => { setRiskClassification(prev => ({ ...prev, [level]: e.target.value as RiskClassification })); setSaved(false); }}
+                          className="w-full text-sm border-0 bg-transparent focus:ring-1 focus:ring-blue-500 rounded p-1 cursor-pointer"
+                        >
+                          {CLASSIFICATION_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
