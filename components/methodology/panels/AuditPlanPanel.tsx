@@ -851,18 +851,25 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             </thead>
             <tbody>
               {filteredRows.map(row => {
-                // Match RMM by lineItem or fsLevel — try multiple name variants
+                // Match RMM to this TB row.
+                // RMM lineItem is the account description (e.g. "Barclays Current Account").
+                // Match by: description, account code, or FS level from TBCYvPY.
+                const rowDesc = (row.description || '').toLowerCase().trim();
+                const rowCode = (row.accountCode || '').toLowerCase().trim();
                 const rowFsLevel = (row.fsLevel || '').toLowerCase().trim();
                 const canonRowLevel = (canonicalLevel(row) || '').toLowerCase().trim();
                 const activeLevelLower = (activeLevel || '').toLowerCase().trim();
-                const rowNote = (row.fsNoteLevel || '').toLowerCase().trim();
 
                 const rmmMatch = rmmItems.find(r => {
                   const li = r.lineItem.toLowerCase().trim();
+                  // Direct match: RMM lineItem is the account description or code
+                  if (li === rowDesc || li === rowCode) return true;
+                  // FS level match: RMM lineItem matches the FS level
+                  if (li === rowFsLevel || li === canonRowLevel || li === activeLevelLower) return true;
+                  // RMM has its own fsLevel set
                   const rfl = (r.fsLevel || '').toLowerCase().trim();
-                  // Match on any of: row fsLevel, canonical level, active tab level, or fsNote
-                  return li === rowFsLevel || li === canonRowLevel || li === activeLevelLower || li === rowNote
-                    || rfl === rowFsLevel || rfl === canonRowLevel || rfl === activeLevelLower;
+                  if (rfl && (rfl === rowFsLevel || rfl === canonRowLevel || rfl === activeLevelLower)) return true;
+                  return false;
                 });
 
                 // The active tab level is the primary FS level for test matching
