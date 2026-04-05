@@ -61,6 +61,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [starting, setStarting] = useState(false);
   const [completing, setCompleting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const continueRef = useRef(false);
 
   // Section collapse state
   const [progressOpen, setProgressOpen] = useState(false);
@@ -203,15 +204,18 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           if (pollRef.current) clearInterval(pollRef.current);
           setFindingsOpen(true);
         }
-        // Auto-continue: if execution is still 'running' but updatedAt is stale (>5s ago),
-        // the engine hit its time budget mid-loop. Trigger continuation.
+        // Auto-continue: if execution is still 'running' but updatedAt is stale (>30s ago),
+        // the engine may have timed out mid-processing. Trigger ONE continuation.
         if (data.execution.status === 'running') {
           const updated = new Date(data.execution.updatedAt).getTime();
-          if (Date.now() - updated > 5000) {
+          const staleSecs = (Date.now() - updated) / 1000;
+          // Only auto-continue if stale for >30s AND we haven't sent one recently
+          if (staleSecs > 30 && !continueRef.current) {
+            continueRef.current = true;
             fetch(`/api/engagements/${engagementId}/test-execution/${execId}`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ action: 'continue' }),
-            }).catch(() => {});
+            }).catch(() => {}).finally(() => { setTimeout(() => { continueRef.current = false; }, 30000); });
           }
         }
       } catch {}

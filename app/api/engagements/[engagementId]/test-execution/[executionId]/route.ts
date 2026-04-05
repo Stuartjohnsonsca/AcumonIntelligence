@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { resumeExecution, processNextNode } from '@/lib/flow-engine';
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // GET: Full execution detail with node runs
 export async function GET(req: NextRequest, { params }: { params: Promise<{ engagementId: string; executionId: string }> }) {
