@@ -422,7 +422,8 @@ async function handleUsePriorEvidence(
 
 // ─── Bank Statement PDF Extractor ───
 // Downloads uploaded bank statement PDFs and extracts transactions via AI.
-// Looks for uploads in previous node output (from use_prior_evidence) or context.
+// Processes ONE PDF per invocation and saves progress. If the server times out,
+// the next resume picks up from where it left off. Handles large PDFs (50+ pages).
 async function handleBankStatementExtract(
   flow: FlowData,
   node: FlowNode,
@@ -446,68 +447,120 @@ async function handleBankStatementExtract(
     };
   }
 
-  const { downloadBlob } = await import('@/lib/azure-blob');
-  const { extractBankStatementFromBase64 } = await import('@/lib/ai-extractor');
+  // Check for saved progress from a previous invocation (resume after timeout)
+  const existingOutput = ctx.nodes[node.id];
+  const completedFiles: Set<string> = new Set(existingOutput?.completedFiles || []);
+  const statements: any[] = existingOutput?.statements || [];
+  const allTransactions: any[] = existingOutput?.allTransactions || [];
+  let totalTokens = existingOutput?.aiTokensUsed || 0;
 
-  const statements: any[] = [];
-  const allTransactions: any[] = [];
-  let totalTokens = 0;
+  // Find the next unprocessed PDF
+  const pendingUploads = uploads.filter(u => {
+    const fname = (u.fileName || '').toLowerCase();
+    return (fname.endsWith('.pdf') || fname.endsWith('.png') || fname.endsWith('.jpg') || fname.endsWith('.jpeg'))
+      && !completedFiles.has(u.fileName);
+  });
 
-  for (const upload of uploads) {
-    const fname = (upload.fileName || '').toLowerCase();
-    if (!fname.endsWith('.pdf') && !fname.endsWith('.png') && !fname.endsWith('.jpg') && !fname.endsWith('.jpeg')) {
-      console.log(`[flow-engine] Skipping non-PDF/image file: ${upload.fileName}`);
-      continue;
-    }
-
-    try {
-      const buffer = await downloadBlob(upload.storagePath, upload.containerName || 'upload-inbox');
-      const base64 = buffer.toString('base64');
-      const mimeType = fname.endsWith('.pdf') ? 'application/pdf'
-        : fname.endsWith('.png') ? 'image/png' : 'image/jpeg';
-
-      console.log(`[flow-engine] Extracting bank statement: ${upload.fileName} (${buffer.length} bytes)`);
-      const result = await extractBankStatementFromBase64(base64, mimeType, upload.fileName);
-
-      statements.push({
-        fileName: upload.fileName,
-        bankName: result.bankName,
-        sortCode: result.sortCode,
-        accountNumber: result.accountNumber,
-        statementDate: result.statementDate,
-        openingBalance: result.openingBalance,
-        closingBalance: result.closingBalance,
-        currency: result.currency,
-        transactionCount: result.transactions.length,
-      });
-
-      // Add file reference to each transaction for traceability
-      for (const txn of result.transactions) {
-        allTransactions.push({ ...txn, sourceFile: upload.fileName, accountNumber: result.accountNumber });
-      }
-
-      totalTokens += (result.usage?.totalTokens || 0);
-      console.log(`[flow-engine] Extracted ${result.transactions.length} transactions from ${upload.fileName}`);
-    } catch (err) {
-      console.error(`[flow-engine] Failed to extract ${upload.fileName}:`, (err as Error).message);
-      statements.push({ fileName: upload.fileName, error: (err as Error).message, transactionCount: 0 });
-    }
+  if (pendingUploads.length === 0) {
+    // All files processed — move to next node
+    console.log(`[flow-engine] Bank statement extract complete: ${statements.length} files, ${allTransactions.length} total transactions`);
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: {
+        extracted: true, statements, allTransactions,
+        transactionCount: allTransactions.length, fileCount: statements.length,
+        dataTable: allTransactions, aiTokensUsed: totalTokens,
+        completedFiles: [...completedFiles],
+      },
+    };
   }
 
-  console.log(`[flow-engine] Bank statement extract complete: ${statements.length} files, ${allTransactions.length} total transactions`);
+  // Process ONE PDF this invocation
+  const upload = pendingUploads[0];
+  console.log(`[flow-engine] Processing PDF ${completedFiles.size + 1}/${uploads.length}: ${upload.fileName} (${pendingUploads.length} remaining)`);
 
+  try {
+    const { downloadBlob } = await import('@/lib/azure-blob');
+    const { extractBankStatementFromBase64 } = await import('@/lib/ai-extractor');
+
+    const buffer = await downloadBlob(upload.storagePath, upload.containerName || 'upload-inbox');
+    const fname = (upload.fileName || '').toLowerCase();
+    const base64 = buffer.toString('base64');
+    const mimeType = fname.endsWith('.pdf') ? 'application/pdf'
+      : fname.endsWith('.png') ? 'image/png' : 'image/jpeg';
+
+    // Count pages for logging
+    let pageCount = 1;
+    if (fname.endsWith('.pdf')) {
+      try {
+        const pdfParse = await import('pdf-parse');
+        const parsed = await pdfParse.default(buffer);
+        pageCount = parsed.numpages || 1;
+      } catch { /* ignore */ }
+    }
+    console.log(`[flow-engine] Extracting: ${upload.fileName} (${buffer.length} bytes, ${pageCount} pages)`);
+
+    const result = await extractBankStatementFromBase64(base64, mimeType, upload.fileName);
+
+    statements.push({
+      fileName: upload.fileName, bankName: result.bankName, sortCode: result.sortCode,
+      accountNumber: result.accountNumber, statementDate: result.statementDate,
+      openingBalance: result.openingBalance, closingBalance: result.closingBalance,
+      currency: result.currency, transactionCount: result.transactions.length, pageCount,
+    });
+
+    for (const txn of result.transactions) {
+      allTransactions.push({ ...txn, sourceFile: upload.fileName, accountNumber: result.accountNumber });
+    }
+
+    totalTokens += (result.usage?.totalTokens || 0);
+    completedFiles.add(upload.fileName);
+    console.log(`[flow-engine] Extracted ${result.transactions.length} transactions from ${upload.fileName} (${pageCount} pages)`);
+  } catch (err) {
+    console.error(`[flow-engine] Failed to extract ${upload.fileName}:`, (err as Error).message);
+    statements.push({ fileName: upload.fileName, error: (err as Error).message, transactionCount: 0 });
+    completedFiles.add(upload.fileName); // Mark as done even on error so we don't retry forever
+  }
+
+  // Save progress to execution context
+  const progressOutput = {
+    extracted: false, // not done yet
+    statements, allTransactions,
+    transactionCount: allTransactions.length, fileCount: completedFiles.size,
+    dataTable: allTransactions, aiTokensUsed: totalTokens,
+    completedFiles: [...completedFiles],
+    progress: `${completedFiles.size}/${uploads.length} files processed`,
+  };
+
+  // Save to DB so progress survives timeout
+  await prisma.testExecution.update({
+    where: { id: executionId },
+    data: {
+      context: { ...ctx, nodes: { ...ctx.nodes, [node.id]: progressOutput } } as any,
+    },
+  });
+
+  // Check if more files remain
+  if (completedFiles.size < uploads.filter(u => {
+    const f = (u.fileName || '').toLowerCase();
+    return f.endsWith('.pdf') || f.endsWith('.png') || f.endsWith('.jpg') || f.endsWith('.jpeg');
+  }).length) {
+    // More PDFs to process — loop back to this same node
+    console.log(`[flow-engine] ${completedFiles.size}/${uploads.length} done, continuing to next PDF...`);
+    return {
+      action: 'continue',
+      nextNodeId: node.id, // come back to this node for the next PDF
+      output: progressOutput,
+    };
+  }
+
+  // All done
+  console.log(`[flow-engine] All PDFs processed: ${statements.length} files, ${allTransactions.length} transactions`);
   return {
     action: 'continue',
     nextNodeId: getNextNodeId(flow, node.id),
-    output: {
-      extracted: true,
-      statements,
-      allTransactions,
-      transactionCount: allTransactions.length,
-      fileCount: statements.length,
-      dataTable: allTransactions, // alias for downstream forEach/AI nodes
-      aiTokensUsed: totalTokens,
-    },
+    output: { ...progressOutput, extracted: true },
   };
 }
 
