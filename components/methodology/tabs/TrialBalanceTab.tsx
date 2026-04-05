@@ -53,6 +53,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [rows, setRows] = useState<TBRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
+  const [importing, setImporting] = useState(false);
   const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
 
   // Sync when parent changes (e.g. Opening tab toggle)
@@ -79,7 +80,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const { saving, lastSaved, error } = useAutoSave(
     `/api/engagements/${engagementId}/trial-balance`,
     { rows },
-    { enabled: JSON.stringify(rows) !== JSON.stringify(initialRows) }
+    { enabled: !importing && JSON.stringify(rows) !== JSON.stringify(initialRows) }
   );
 
   // Create a set of blank rows for paste-ready spreadsheet
@@ -267,7 +268,6 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   // AI classify all rows at once
   const [aiAllLoading, setAiAllLoading] = useState(false);
   const [aiAllProgress, setAiAllProgress] = useState('');
-  const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
 
   async function handleAiClassifyAll() {
@@ -468,9 +468,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 const res = await fetch(`/api/engagements/${engagementId}/trial-balance/import-accounting`, { method: 'POST' });
                 const data = await res.json();
                 if (res.ok) {
-                  const importedRows = data.rows || [];
-                  setRows(importedRows);
-                  setInitialRows(importedRows);
+                  // Reload from DB to get authoritative state (avoids race with auto-save)
+                  const reloadRes = await fetch(`/api/engagements/${engagementId}/trial-balance`);
+                  const reloadData = reloadRes.ok ? await reloadRes.json() : data;
+                  const finalRows = reloadData.rows || data.rows || [];
+                  setRows(finalRows);
+                  setInitialRows(finalRows);
                   setImportResult(`Imported ${data.imported} accounts from ${data.orgName || data.source}${data.updated ? `, updated ${data.updated} balances` : ''}${data.skipped ? ` (${data.skipped} already existed)` : ''}${data.debug ? ` [${data.debug}]` : ''}`);
                 } else {
                   setImportResult(`Import failed: ${data.error}`);
