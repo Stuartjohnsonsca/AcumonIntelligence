@@ -553,23 +553,46 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           <button
             onClick={async () => {
               setImporting(true);
+              setImportResult('Starting import...');
               try {
-                const res = await fetch(`/api/engagements/${engagementId}/trial-balance/import-accounting`, { method: 'POST' });
+                const res = await fetch(`/api/engagements/${engagementId}/trial-balance/import-accounting`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({}),
+                });
                 const data = await res.json();
-                if (res.ok) {
-                  // Reload from DB to get authoritative state (avoids race with auto-save)
-                  const reloadRes = await fetch(`/api/engagements/${engagementId}/trial-balance`);
-                  const reloadData = reloadRes.ok ? await reloadRes.json() : data;
-                  const finalRows = reloadData.rows || data.rows || [];
-                  setRows(finalRows);
-                  setInitialRows(finalRows);
-                  setImportResult(`Imported ${data.imported} accounts from ${data.orgName || data.source}${data.updated ? `, updated ${data.updated} balances` : ''}${data.skipped ? ` (${data.skipped} already existed)` : ''}${data.debug ? ` [${data.debug}]` : ''}`);
-                } else {
-                  setImportResult(`Import failed: ${data.error}`);
-                }
+                if (!res.ok) { setImportResult(`Import failed: ${data.error}`); setImporting(false); return; }
+                const { taskId } = data;
+
+                // Poll for completion — server does the work
+                const poll = async () => {
+                  try {
+                    const pollRes = await fetch(`/api/engagements/${engagementId}/trial-balance/import-accounting`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ action: 'poll', taskId }),
+                    });
+                    if (!pollRes.ok) { setTimeout(poll, 3000); return; }
+                    const pd = await pollRes.json();
+                    if (pd.status === 'running') {
+                      setImportResult(pd.progress?.message || 'Importing...');
+                      setTimeout(poll, 2000);
+                    } else if (pd.status === 'completed') {
+                      const r = pd.result || {};
+                      setImportResult(`Imported ${r.imported || 0} accounts from ${r.orgName || r.source || 'accounting system'}${r.updated ? `, updated ${r.updated} balances` : ''} [${r.debug || ''}]`);
+                      await loadData(); // Reload from DB
+                      setImporting(false);
+                    } else {
+                      setImportResult(`Import failed: ${pd.error || 'Unknown error'}`);
+                      setImporting(false);
+                    }
+                  } catch { setTimeout(poll, 3000); }
+                };
+                setTimeout(poll, 2000);
               } catch (err: any) {
                 setImportResult(`Import failed: ${err.message}`);
-              } finally { setImporting(false); }
+                setImporting(false);
+              }
             }}
             disabled={importing}
             className="text-xs px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 disabled:opacity-50 font-medium"
