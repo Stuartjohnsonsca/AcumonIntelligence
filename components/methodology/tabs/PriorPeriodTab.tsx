@@ -75,16 +75,46 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
     loadData();
   }
 
+  const [reviewProgress, setReviewProgress] = useState<string | null>(null);
+
   async function runAIReview(docKey: string, documentName: string) {
     setReviewing(docKey);
+    setReviewProgress('Starting...');
     try {
       const res = await fetch(`/api/engagements/${engagementId}/prior-period`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'ai_review', docKey, documentName }),
       });
-      if (res.ok) { const json = await res.json(); setPoints(prev => ({ ...prev, [docKey]: json.points })); }
+      if (!res.ok) { setReviewProgress('Failed to start'); setReviewing(null); return; }
+      const { taskId } = await res.json();
+      if (!taskId) { setReviewing(null); return; }
+
+      // Poll for completion
+      for (let i = 0; i < 120; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const pollRes = await fetch(`/api/engagements/${engagementId}/prior-period`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'poll_task', taskId }),
+        });
+        if (!pollRes.ok) continue;
+        const pollData = await pollRes.json();
+
+        if (pollData.progress?.message) setReviewProgress(pollData.progress.message);
+
+        if (pollData.status === 'completed') {
+          if (pollData.result?.points) {
+            setPoints(prev => ({ ...prev, [pollData.result.docKey || docKey]: pollData.result.points }));
+          }
+          loadData(); // Refresh all data including summaries
+          break;
+        }
+        if (pollData.status === 'error') {
+          setReviewProgress(`Error: ${pollData.error}`);
+          break;
+        }
+      }
     } catch (err) { console.error('AI review failed:', err); }
-    finally { setReviewing(null); }
+    finally { setReviewing(null); setReviewProgress(null); }
   }
 
   async function updatePoints(docKey: string, updatedPoints: ReviewPoint[]) {
@@ -213,7 +243,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                 {isReviewable && isLinked && (
                   <button onClick={() => runAIReview(doc.key, doc.documentName || doc.label)} disabled={isReview}
                     className="text-xs px-3 py-1 bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 disabled:opacity-50">
-                    {isReview ? '⏳ Reviewing...' : docPoints.length > 0 ? '🔄 Re-review' : '🤖 AI Review'}
+                    {isReview ? `⏳ ${reviewProgress || 'Reviewing...'}` : docPoints.length > 0 ? '🔄 Re-review' : '🤖 AI Review'}
                   </button>
                 )}
               </div>

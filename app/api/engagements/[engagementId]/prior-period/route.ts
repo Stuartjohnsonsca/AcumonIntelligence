@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getPermanentFileSignOffs, handlePermanentFileSignOff, handlePermanentFileUnsignOff } from '@/lib/signoff-handler';
@@ -104,7 +104,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     return NextResponse.json({ success: true });
   }
 
-  // AI review — generates structured points
+  // AI review — background task
   if (body.action === 'ai_review') {
     const { docKey, documentName } = body;
     if (!docKey || !REVIEWABLE_DOCS.includes(docKey)) return NextResponse.json({ error: 'Invalid doc for review' }, { status: 400 });
@@ -112,12 +112,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const apiKey = process.env.TOGETHER_API_KEY;
     if (!apiKey) return NextResponse.json({ error: 'AI not configured' }, { status: 503 });
 
+    // Create background task and return immediately
+    const task = await prisma.backgroundTask.create({
+      data: { userId: session.user.id, type: 'ai-review', status: 'running', progress: { phase: 'starting', message: 'Reading document...' } as any },
+    });
+
+    after(async () => {
+      const updateProgress = (progress: any) => prisma.backgroundTask.update({ where: { id: task.id }, data: { progress } });
+      try {
+
     const prompts: Record<string, string> = {
       pp_letter_of_comment: `You are reviewing a prior period Letter of Comment (Management Letter). List each key point as a separate numbered item. For each point include: the finding/recommendation, management's response if any, and current status. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Aim for 5-10 points covering control deficiencies, recommendations, and outstanding items.`,
       pp_letter_of_representation: `You are reviewing a prior period Letter of Representation. List each key representation as a separate numbered item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover representations about: fraud awareness, going concern, related party transactions, completeness of information, compliance with laws, subsequent events. Aim for 6-10 points.`,
       pp_financial_statements: `You are reviewing the prior period Financial Statements, focusing on the Audit Opinion. List each key finding as a separate item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover: opinion type (unqualified/qualified/adverse/disclaimer), emphasis of matter paragraphs, key audit matters, going concern assessment, material uncertainties. Aim for 4-8 points.`,
     };
 
+    await updateProgress({ phase: 'reading', message: 'Reading document...' });
     // Try to get actual document content
     let documentContent = '';
     try {
@@ -147,6 +157,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     }
 
     try {
+      await updateProgress({ phase: 'analysing', message: 'AI is reviewing the document...' });
       const userMessage = documentContent
         ? `Document: "${documentName || docKey}"\n\nDocument Content:\n${documentContent}\n\nBased on the above document content, provide a structured review. Return ONLY valid JSON array.`
         : `Document: "${documentName || docKey}"\n\nProvide a structured review based on standard audit practice for this type of prior period document. Return ONLY valid JSON array.`;
@@ -196,11 +207,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       summaries[docKey] = content;
       await setData(engagementId, SUMMARIES_KEY, summaries);
 
-      return NextResponse.json({ points: pointsWithStatus });
-    } catch (err) {
-      console.error('AI review failed:', err);
-      return NextResponse.json({ error: 'AI review failed' }, { status: 500 });
-    }
+        await prisma.backgroundTask.update({
+          where: { id: task.id },
+          data: { status: 'completed', result: { points: pointsWithStatus, docKey } as any },
+        });
+      } catch (err: any) {
+        console.error('AI review failed:', err);
+        await prisma.backgroundTask.update({
+          where: { id: task.id },
+          data: { status: 'error', error: err.message || 'AI review failed' },
+        });
+      }
+    }); // end after()
+
+    return NextResponse.json({ taskId: task.id });
+  }
+
+  // Poll background task status
+  if (body.action === 'poll_task') {
+    const tsk = await prisma.backgroundTask.findUnique({ where: { id: body.taskId } });
+    if (!tsk) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    return NextResponse.json({
+      status: tsk.status,
+      progress: tsk.progress,
+      result: tsk.status === 'completed' ? tsk.result : undefined,
+      error: tsk.error,
+    });
   }
 
   // Update points (checkboxes, sign-offs)

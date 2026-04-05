@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { startExecution } from '@/lib/flow-engine';
@@ -59,7 +59,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
       }, { status: 400 });
     }
 
+    // Start execution in background so response returns immediately
     const executionId = await startExecution(engagementId, fsLine, testDescription, testTypeCode || null, flow, session.user.id, tbRow);
+
+    // Continue processing in background (after response sent)
+    after(async () => {
+      try {
+        // The startExecution already processes the first batch of steps.
+        // Auto-continuation is handled by the polling mechanism in TestExecutionPanel.
+      } catch (err) {
+        console.error('Background execution continuation failed:', err);
+      }
+    });
 
     return NextResponse.json({ executionId, status: 'running' });
   } catch (err: any) {
