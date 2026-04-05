@@ -258,6 +258,26 @@ function dayBefore(d: string | null | undefined): string {
   return dt.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+// Common aliases for FS line name matching (TB category → FS Line name)
+const FS_LINE_ALIASES: Record<string, string[]> = {
+  'cash and bank': ['cash and cash equivalents', 'cash at bank', 'bank', 'cash & bank', 'cash'],
+  'cash and cash equivalents': ['cash and bank', 'cash at bank', 'bank', 'cash & bank', 'cash'],
+  'cash at bank': ['cash and bank', 'cash and cash equivalents', 'bank', 'cash & bank', 'cash'],
+  'fixed assets': ['property plant and equipment', 'ppe', 'tangible assets', 'tangible fixed assets', 'non-current assets'],
+  'tangible fixed assets': ['fixed assets', 'property plant and equipment', 'ppe'],
+  'current assets': ['other current assets', 'debtors', 'receivables'],
+  'debtors': ['current assets', 'receivables', 'trade debtors'],
+  'current liabilities': ['creditors', 'payables', 'other current liabilities'],
+  'creditors': ['current liabilities', 'payables', 'trade creditors'],
+  'long term liabilities': ['non-current liabilities', 'long-term liabilities', 'borrowings'],
+  'cost of sales': ['cost of goods sold', 'cogs', 'direct costs'],
+  'administrative expenses': ['overheads', 'admin expenses', 'operating expenses'],
+  'stock': ['inventory', 'inventories'],
+  'inventory': ['stock', 'inventories'],
+  'capital & reserves': ['equity', 'share capital', 'shareholders funds'],
+  'equity': ['capital & reserves', 'shareholders funds'],
+};
+
 export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
@@ -445,19 +465,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
     // Deduplicate by test ID across all matching allocations
     const matchedTestsMap = new Map<string, AllocationEntry['test']>();
-
-    // Common aliases for FS line name matching (TB category → FS Line name)
-    const FS_LINE_ALIASES: Record<string, string[]> = {
-      'cash and bank': ['cash and cash equivalents', 'cash at bank', 'bank', 'cash & bank', 'cash'],
-      'cash and cash equivalents': ['cash and bank', 'cash at bank', 'bank', 'cash & bank', 'cash'],
-      'fixed assets': ['property plant and equipment', 'ppe', 'tangible assets', 'non-current assets'],
-      'current assets': ['other current assets', 'debtors', 'receivables'],
-      'current liabilities': ['creditors', 'payables', 'other current liabilities'],
-      'long term liabilities': ['non-current liabilities', 'long-term liabilities', 'borrowings'],
-      'cost of sales': ['cost of goods sold', 'cogs', 'direct costs'],
-      'administrative expenses': ['overheads', 'admin expenses', 'operating expenses'],
-      'stock': ['inventory', 'inventories'],
-    };
 
     if (searchTerms.length > 0) {
       const matchingFsLineIds = new Set<string>();
