@@ -55,22 +55,61 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState<Record<string, Set<string>>>({});
+  const [openFilter, setOpenFilter] = useState<string | null>(null);
 
-  // Compute filtered rows based on active column filters
+  // Compute unique values per column for filter dropdowns
+  const columnValues = useMemo(() => {
+    const cols: Record<string, Set<string>> = {};
+    const fields = ['accountCode', 'description', 'category', 'currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement', 'groupName'];
+    for (const f of fields) cols[f] = new Set<string>();
+    for (const row of rows) {
+      for (const f of fields) {
+        const v = String((row as any)[f] ?? '').trim();
+        if (v) cols[f].add(v);
+      }
+    }
+    return cols;
+  }, [rows]);
+
+  // Compute filtered rows based on active column filters (multi-select)
   const filteredRows = useMemo(() => {
-    const activeFilters = Object.entries(filters).filter(([, v]) => v);
+    const activeFilters = Object.entries(filters).filter(([, vals]) => vals.size > 0);
     if (activeFilters.length === 0) return rows;
     return rows.filter(row => {
-      for (const [field, value] of activeFilters) {
-        const cellVal = String((row as any)[field] ?? '').toLowerCase();
-        if (!cellVal.includes(value.toLowerCase())) return false;
+      for (const [field, allowed] of activeFilters) {
+        const cellVal = String((row as any)[field] ?? '').trim();
+        if (!allowed.has(cellVal)) return false;
       }
       return true;
     });
   }, [rows, filters]);
 
-  const hasActiveFilters = Object.values(filters).some(v => v);
+  const hasActiveFilters = Object.values(filters).some(v => v.size > 0);
+
+  function toggleFilterValue(field: string, value: string) {
+    setFilters(prev => {
+      const current = new Set(prev[field] || []);
+      if (current.has(value)) current.delete(value);
+      else current.add(value);
+      return { ...prev, [field]: current };
+    });
+  }
+
+  function clearColumnFilter(field: string) {
+    setFilters(prev => ({ ...prev, [field]: new Set<string>() }));
+  }
+
+  // Close filter dropdown when clicking outside
+  useEffect(() => {
+    if (!openFilter) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.filter-dropdown') && !target.closest('button')) setOpenFilter(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [openFilter]);
 
   // Sync when parent changes (e.g. Opening tab toggle)
   useEffect(() => {
@@ -593,22 +632,45 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               {isGroupAudit && <th className="text-left px-2 py-2 text-slate-500 font-medium">Group Name</th>}
               <th className="w-8"></th>
             </tr>
-            {/* Filter row */}
+            {/* Filter row — dropdown arrows with checkbox options */}
             <tr className="bg-slate-50 border-b border-slate-200">
-              {['accountCode', 'description', ...(showCategory ? ['category'] : []), 'currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement', ...(isGroupAudit ? ['groupName'] : [])].map(field => (
-                <th key={field} className="px-1 py-1">
-                  <input
-                    type="text"
-                    value={filters[field] || ''}
-                    onChange={e => setFilters(prev => ({ ...prev, [field]: e.target.value }))}
-                    placeholder="Filter..."
-                    className="w-full text-[10px] px-1.5 py-0.5 border border-slate-200 rounded bg-white text-slate-600 placeholder:text-slate-300 focus:outline-none focus:border-blue-300"
-                  />
-                </th>
-              ))}
-              <th className="px-1 py-1">
+              {['accountCode', 'description', ...(showCategory ? ['category'] : []), 'currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement', ...(isGroupAudit ? ['groupName'] : [])].map(field => {
+                const vals = [...(columnValues[field] || [])].sort();
+                const activeCount = filters[field]?.size || 0;
+                return (
+                  <th key={field} className="px-1 py-0.5 relative">
+                    <button
+                      onClick={() => setOpenFilter(openFilter === field ? null : field)}
+                      className={`text-[10px] px-1 py-0.5 rounded hover:bg-slate-200 ${activeCount ? 'text-blue-600 font-bold' : 'text-slate-400'}`}
+                      title={activeCount ? `${activeCount} selected` : 'Filter'}
+                    >
+                      ▼{activeCount ? ` (${activeCount})` : ''}
+                    </button>
+                    {openFilter === field && vals.length > 0 && (
+                      <div className="filter-dropdown absolute left-0 top-full z-30 bg-white border border-slate-200 rounded-md shadow-lg mt-0.5 max-h-48 overflow-y-auto min-w-[120px] max-w-[220px]">
+                        <div className="sticky top-0 bg-white border-b border-slate-100 px-2 py-1 flex gap-1">
+                          <button onClick={() => { setFilters(prev => ({ ...prev, [field]: new Set(vals) })); }} className="text-[9px] text-blue-500 hover:underline">All</button>
+                          <button onClick={() => clearColumnFilter(field)} className="text-[9px] text-red-400 hover:underline">None</button>
+                        </div>
+                        {vals.map(v => (
+                          <label key={v} className="flex items-center gap-1.5 px-2 py-0.5 hover:bg-slate-50 cursor-pointer text-[10px] text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={filters[field]?.has(v) || false}
+                              onChange={() => toggleFilterValue(field, v)}
+                              className="w-3 h-3 rounded"
+                            />
+                            <span className="truncate">{v}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </th>
+                );
+              })}
+              <th className="px-1 py-0.5">
                 {hasActiveFilters && (
-                  <button onClick={() => setFilters({})} className="text-[9px] text-red-400 hover:text-red-600" title="Clear all filters">✕</button>
+                  <button onClick={() => { setFilters({}); setOpenFilter(null); }} className="text-[9px] text-red-400 hover:text-red-600" title="Clear all filters">✕</button>
                 )}
               </th>
             </tr>
