@@ -1781,7 +1781,7 @@ export async function processNextNode(executionId: string): Promise<void> {
             result = await handleBankStatementExtract(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'process_bank_data') {
             result = await handleProcessBankData(flow, currentNode, ctx, executionId, execution.engagementId);
-          } else if (currentNode.data?.inputType === 'store_extracted_data') {
+          } else if (currentNode.data?.inputType === 'store_extracted_bank_data') {
             result = await handleStoreExtractedData(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'accounting_extract') {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
