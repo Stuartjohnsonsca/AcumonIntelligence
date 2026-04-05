@@ -101,7 +101,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
               fsStatement: statementMap[a.Type] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
             };
           })
-          .filter((r: any) => r.accountCode);
+          .filter((r: any) => r.accountCode && (r.currentYear !== 0 || r.priorYear !== 0));
 
         // Include accounts from TB reports that aren't in the chart of accounts
         for (const [accountId, entry] of currentTB) {
