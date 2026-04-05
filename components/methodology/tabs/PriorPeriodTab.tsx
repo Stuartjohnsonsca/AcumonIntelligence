@@ -230,10 +230,10 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                       onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
-                        // Create document record
+                        // Create document record — tag with section name for filtering
                         const createRes = await fetch(`/api/engagements/${engagementId}/documents`, {
                           method: 'POST', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ action: 'request', documentName: file.name }),
+                          body: JSON.stringify({ action: 'request', documentName: `${doc.label} — ${file.name}`, mappedItems: [doc.key] }),
                         });
                         if (!createRes.ok) return;
                         const { document: newDoc } = await createRes.json();
@@ -262,10 +262,19 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                   <button onClick={() => setLinking(null)} className="text-xs text-slate-400 hover:text-slate-600 ml-auto">Cancel</button>
                 </div>
                 {/* Or select from existing */}
-                {repoDocs.length > 0 && (
+                {(() => {
+                  // Filter: show docs tagged for this section, or untagged docs not linked elsewhere
+                  const linkedDocIds = new Set(Object.values(data).filter(v => typeof v === 'string' && v.startsWith('doc:')).map(v => (v as string).replace('doc:', '')));
+                  const sectionDocs = repoDocs.filter(rd => {
+                    const tags = rd.mappedItems as string[] | null;
+                    if (tags && tags.includes(doc.key)) return true; // Tagged for this section
+                    if (!tags || tags.length === 0) return !linkedDocIds.has(rd.id); // Untagged and not linked elsewhere
+                    return false;
+                  });
+                  return sectionDocs.length > 0 && (
                   <div className="max-h-32 overflow-auto">
                     <p className="text-[10px] text-slate-400 mb-1">Or select from repository:</p>
-                    {repoDocs.map(rd => (
+                    {sectionDocs.map(rd => (
                       <button key={rd.id} onClick={() => linkDocument(doc.key, rd.id)}
                         className="w-full text-left px-3 py-2 text-xs rounded hover:bg-blue-50 flex items-center justify-between border border-slate-100 mb-1">
                         <span className="text-slate-700">{rd.documentName}</span>
@@ -273,7 +282,8 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                       </button>
                     ))}
                   </div>
-                )}
+                  );
+                })()}
               </div>
             )}
 
