@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
 import { EngagementTabs } from '@/components/methodology/EngagementTabs';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { AuditType } from '@/types/methodology';
@@ -28,6 +29,8 @@ function formatDate(dateStr: string): string {
 
 export function AuditEngagementPage({ auditType }: Props) {
   const { data: session } = useSession();
+  const searchParams = useSearchParams();
+  const autoOpenAttempted = useRef(false);
 
   // Client selection
   const [clients, setClients] = useState<ClientOption[]>([]);
@@ -69,6 +72,60 @@ export function AuditEngagementPage({ auditType }: Props) {
     }
     loadClients();
   }, []);
+
+  // Auto-open engagement from URL params (e.g. after Xero OAuth redirect)
+  useEffect(() => {
+    if (autoOpenAttempted.current || clientsLoading || clients.length === 0) return;
+    const urlClientId = searchParams.get('clientId');
+    const urlPeriodId = searchParams.get('periodId');
+    const urlTab = searchParams.get('tab');
+    if (!urlClientId || !urlPeriodId) return;
+    autoOpenAttempted.current = true;
+
+    const client = clients.find(c => c.id === urlClientId);
+    if (!client) return;
+
+    setClientId(urlClientId);
+    setClientName(client.clientName);
+
+    // Load periods then auto-open
+    (async () => {
+      setPeriodsLoading(true);
+      try {
+        const res = await fetch(`/api/clients/${urlClientId}/periods`);
+        if (res.ok) {
+          const data = await res.json();
+          const loadedPeriods = data.periods || data || [];
+          setPeriods(loadedPeriods);
+          const period = loadedPeriods.find((p: PeriodOption) => p.id === urlPeriodId);
+          if (period) {
+            setSelectedPeriodId(urlPeriodId);
+            setPeriodLabel(`${formatDate(period.startDate)} \u2013 ${formatDate(period.endDate)}`);
+            // Auto-open the engagement
+            setLoading(true);
+            const checkRes = await fetch(`/api/engagements?clientId=${encodeURIComponent(urlClientId)}&periodId=${encodeURIComponent(urlPeriodId)}&auditType=${encodeURIComponent(auditType)}`);
+            if (checkRes.ok) {
+              const checkData = await checkRes.json();
+              if (checkData.engagement) {
+                setEngagement(checkData.engagement);
+              }
+            }
+            setLoading(false);
+          }
+        }
+      } catch (err) {
+        console.error('Auto-open engagement failed:', err);
+      } finally {
+        setPeriodsLoading(false);
+      }
+      // Clean URL params
+      const url = new URL(window.location.href);
+      url.searchParams.delete('clientId');
+      url.searchParams.delete('periodId');
+      url.searchParams.delete('xeroConnected');
+      window.history.replaceState({}, '', url.pathname + (urlTab ? `?tab=${urlTab}` : ''));
+    })();
+  }, [clientsLoading, clients, searchParams, auditType]);
 
   // Load periods when client changes
   const loadPeriods = useCallback(async (cId: string) => {

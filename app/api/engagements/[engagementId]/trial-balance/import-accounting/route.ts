@@ -1,4 +1,4 @@
-import { NextResponse, after } from 'next/server';
+import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getAccounts, getTrialBalanceReport } from '@/lib/xero';
@@ -32,12 +32,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     return NextResponse.json({ error: `${connection.system} connection expired. Please reconnect.` }, { status: 400 });
   }
 
-  // Create background task
-  const task = await prisma.backgroundTask.create({
-    data: { userId: session.user.id, clientId: engagement.clientId, type: 'tb-import', status: 'running', progress: { message: 'Connecting to accounting system...' } as any },
-  });
-
-  after(async () => {
   try {
     let tbRows: { accountCode: string; description: string; currentYear: number; priorYear: number; category?: string }[] = [];
 
@@ -193,7 +187,4 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     console.error('TB import error:', err);
     return NextResponse.json({ error: `Import failed: ${err.message}` }, { status: 500 });
   }
-  });
-
-  return NextResponse.json({ taskId: task.id });
 }

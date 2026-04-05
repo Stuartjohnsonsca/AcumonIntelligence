@@ -144,7 +144,11 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   function handleRenewConnection() {
     // For Xero (OAuth), redirect directly with returnUrl so user comes back here
     if (connection?.system?.toLowerCase() === 'xero') {
-      const returnUrl = encodeURIComponent(window.location.pathname + window.location.search);
+      // Include engagement context so the page auto-opens the right engagement on return
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', 'opening');
+      url.searchParams.set('periodId', engagement.periodId);
+      const returnUrl = encodeURIComponent(url.pathname + url.search);
       window.location.href = `/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${returnUrl}`;
       return;
     }
@@ -455,7 +459,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
             <p className="text-xs text-slate-400 mb-3">Connect to your client's accounting system to import trial balance data and automate evidence gathering.</p>
             <div className="flex items-center gap-2">
               <a
-                href={`/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${encodeURIComponent(window.location.pathname)}`}
+                href={`/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${encodeURIComponent(window.location.pathname + '?tab=opening&periodId=' + engagement.periodId)}`}
                 className="inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-[#13B5EA] text-white rounded-md hover:bg-[#0e9fd0] font-medium"
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.41 15.41L7.17 14l1.41-1.41L11 15.17l4.59-4.59L17 12l-6.41 6.41z"/></svg>
