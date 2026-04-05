@@ -441,7 +441,9 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 const res = await fetch(`/api/engagements/${engagementId}/trial-balance/import-accounting`, { method: 'POST' });
                 const data = await res.json();
                 if (res.ok) {
-                  setRows(data.rows || []);
+                  const importedRows = data.rows || [];
+                  setRows(importedRows);
+                  setInitialRows(importedRows);
                   setImportResult(`Imported ${data.imported} accounts from ${data.orgName || data.source}${data.updated ? `, updated ${data.updated} balances` : ''}${data.skipped ? ` (${data.skipped} already existed)` : ''}`);
                 } else {
                   setImportResult(`Import failed: ${data.error}`);

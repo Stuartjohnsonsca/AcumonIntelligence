@@ -242,7 +242,7 @@ export async function getAccounts(clientId: string, maxRetries?: number): Promis
 // ─── Trial Balance Report ────────────────────────────────────────────────────
 
 export interface XeroTBEntry {
-  accountCode: string;
+  accountId: string;
   accountName: string;
   debit: number;
   credit: number;
@@ -250,7 +250,7 @@ export interface XeroTBEntry {
 
 /**
  * Fetch trial balance report from Xero as of a given date.
- * Returns a Map keyed by account code with debit/credit amounts.
+ * Returns a Map keyed by Xero AccountID with debit/credit amounts.
  * Gracefully returns empty map if the scope is missing (403).
  */
 export async function getTrialBalanceReport(
@@ -290,20 +290,33 @@ export async function getTrialBalanceReport(
   const report = data.Reports?.[0];
   if (!report?.Rows) return result;
 
+  // Log one sample row to verify cell structure
+  const firstSection = report.Rows.find((r: any) => r.RowType === 'Section');
+  const sampleRow = firstSection?.Rows?.find((r: any) => r.RowType === 'Row');
+  if (sampleRow) {
+    console.log(`[Xero] TB sample row for ${date}: ${JSON.stringify(sampleRow).slice(0, 600)}`);
+  }
+
   for (const section of report.Rows) {
-    // Sections contain nested rows; top-level rows are headers/summaries
     const rows = section.RowType === 'Section' ? (section.Rows ?? []) : [];
     for (const row of rows) {
       if (row.RowType !== 'Row') continue;
       const cells = row.Cells ?? [];
-      if (cells.length < 4) continue;
-      const code = (cells[0]?.Value ?? '').trim();
-      if (!code) continue; // skip section totals
-      result.set(code, {
-        accountCode: code,
-        accountName: (cells[1]?.Value ?? '').trim(),
-        debit: parseFloat(cells[2]?.Value) || 0,
-        credit: parseFloat(cells[3]?.Value) || 0,
+      if (cells.length < 3) continue;
+
+      // Cell 0: Account name (with AccountID in Attributes)
+      // Cell 1: Debit amount
+      // Cell 2: Credit amount
+      const accountCell = cells[0];
+      const accountId = accountCell?.Attributes?.find((a: any) => a.Id === 'account')?.Value
+        ?? accountCell?.Attributes?.[0]?.Value ?? '';
+      if (!accountId) continue; // skip section totals
+
+      result.set(accountId, {
+        accountId,
+        accountName: (accountCell?.Value ?? '').trim(),
+        debit: parseFloat(cells[1]?.Value) || 0,
+        credit: parseFloat(cells[2]?.Value) || 0,
       });
     }
   }

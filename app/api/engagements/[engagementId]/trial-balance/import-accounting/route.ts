@@ -81,15 +81,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           'INVENTORY': 'Balance Sheet', 'PREPAYMENT': 'Balance Sheet',
         };
 
-        // Map accounts with balances from TB reports
-        const accountCodes = new Set<string>();
+        // Match TB report amounts to accounts by AccountID
+        const processedAccountIds = new Set<string>();
         tbRows = accounts
           .filter((a: any) => a.Status === 'ACTIVE')
           .map((a: any) => {
             const code = a.Code || '';
-            if (code) accountCodes.add(code);
-            const cy = currentTB.get(code);
-            const py = priorTB.get(code);
+            const accountId = a.AccountID || '';
+            if (accountId) processedAccountIds.add(accountId);
+            const cy = currentTB.get(accountId);
+            const py = priorTB.get(accountId);
             return {
               accountCode: code,
               description: a.Name || '',
@@ -103,21 +104,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           .filter((r: any) => r.accountCode);
 
         // Include accounts from TB reports that aren't in the chart of accounts
-        for (const [code, entry] of currentTB) {
-          if (accountCodes.has(code)) continue;
-          const py = priorTB.get(code);
+        for (const [accountId, entry] of currentTB) {
+          if (processedAccountIds.has(accountId)) continue;
+          const py = priorTB.get(accountId);
           tbRows.push({
-            accountCode: code,
+            accountCode: entry.accountName, // No code available, use name
             description: entry.accountName,
             currentYear: entry.debit - entry.credit,
             priorYear: py ? py.debit - py.credit : 0,
           });
-          accountCodes.add(code);
+          processedAccountIds.add(accountId);
         }
-        for (const [code, entry] of priorTB) {
-          if (accountCodes.has(code)) continue;
+        for (const [accountId, entry] of priorTB) {
+          if (processedAccountIds.has(accountId)) continue;
           tbRows.push({
-            accountCode: code,
+            accountCode: entry.accountName,
             description: entry.accountName,
             currentYear: 0,
             priorYear: entry.debit - entry.credit,
