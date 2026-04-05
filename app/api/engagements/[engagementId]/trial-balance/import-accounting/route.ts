@@ -132,7 +132,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
               fsStatement: statementMap[accountType] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
             };
           })
-          .filter((r: any) => r.accountCode && (r.currentYear !== 0 || r.priorYear !== 0));
+          .filter((r: any) => r.accountCode);
 
         console.log(`[TB Import] Matching: ${matchedById} by ID, ${matchedByName} by name, ${unmatched} unmatched. Result: ${tbRows.length} rows with balances`);
 
