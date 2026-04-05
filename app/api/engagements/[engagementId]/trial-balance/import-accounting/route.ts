@@ -39,11 +39,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     let debugInfo = '';
 
     // Compute dates for TB report
+    // Xero returns cumulative P&L from its financial year start, so we need
+    // 4 TB snapshots to isolate single-period P&L figures:
+    //   CY P&L = TB@cyEnd - TB@cyPLBase
+    //   PY P&L = TB@pyEnd - TB@pyPLBase
+    // Balance sheet items are point-in-time and don't need subtraction.
     const formatDate = (d: Date) => d.toISOString().split('T')[0];
-    const currentYearDate = formatDate(engagement.period.endDate);
-    const priorDate = new Date(engagement.period.startDate);
-    priorDate.setDate(priorDate.getDate() - 1);
-    const priorYearDate = formatDate(priorDate);
+
+    const cyEndDate = formatDate(engagement.period.endDate);              // e.g. 2025-03-31
+
+    const cyPLBaseRaw = new Date(engagement.period.startDate);
+    cyPLBaseRaw.setDate(cyPLBaseRaw.getDate() - 1);
+    const cyPLBaseDate = formatDate(cyPLBaseRaw);                         // e.g. 2025-02-28
+
+    const pyEndDate = cyPLBaseDate;                                       // PY end = CY P&L base
+
+    // Mirror the period back using calendar month arithmetic to compute PY P&L base.
+    // We subtract the same year/month offset from pyEnd as exists between cyPLBase and cyEnd,
+    // then use end-of-month to handle varying month lengths correctly.
+    // e.g. CY 1/3→31/3 (1 month): pyEnd=28/2, go back 1 month → end of Jan = 31/1
+    // e.g. CY 1/1→31/3 (3 months): pyEnd=31/12, go back 3 months → end of Sep = 30/9
+    const periodStart = new Date(engagement.period.startDate);
+    const periodEnd = new Date(engagement.period.endDate);
+    const monthSpan = (periodEnd.getFullYear() - periodStart.getFullYear()) * 12
+      + periodEnd.getMonth() - periodStart.getMonth() + 1;
+
+    // PY period start = periodStart minus monthSpan months.
+    // PY P&L base = that date minus 1 day (end of month before PY period).
+    const pyPeriodStart = new Date(Date.UTC(
+      periodStart.getUTCFullYear(),
+      periodStart.getUTCMonth() - monthSpan,
+      periodStart.getUTCDate()
+    ));
+    pyPeriodStart.setUTCDate(pyPeriodStart.getUTCDate() - 1);
+    const pyPLBaseDate = formatDate(pyPeriodStart);                       // e.g. 2025-01-31
+
+    console.log(`[TB Import] Dates — CY end: ${cyEndDate}, CY P&L base: ${cyPLBaseDate}, PY end: ${pyEndDate}, PY P&L base: ${pyPLBaseDate}, period months: ${monthSpan}`);
 
     switch (connection.system.toLowerCase()) {
       case 'xero': {
@@ -59,12 +90,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           xeroAuth = await getValidAccessToken(engagement.clientId);
           accounts = await getAccounts(engagement.clientId, undefined, xeroAuth);
         }
-        console.log(`[TB Import] Got ${accounts.length} accounts, fetching TB reports...`);
-        const [currentTB, priorTB] = await Promise.all([
-          getTrialBalanceReport(engagement.clientId, currentYearDate, xeroAuth),
-          getTrialBalanceReport(engagement.clientId, priorYearDate, xeroAuth),
+        console.log(`[TB Import] Got ${accounts.length} accounts, fetching 4 TB reports...`);
+        const [cyEndTB, cyPLBaseTB, pyEndTB, pyPLBaseTB] = await Promise.all([
+          getTrialBalanceReport(engagement.clientId, cyEndDate, xeroAuth),
+          getTrialBalanceReport(engagement.clientId, cyPLBaseDate, xeroAuth),
+          getTrialBalanceReport(engagement.clientId, pyEndDate, xeroAuth),
+          getTrialBalanceReport(engagement.clientId, pyPLBaseDate, xeroAuth),
         ]);
-        console.log(`[TB Import] TB reports: CY=${currentTB.size} entries, PY=${priorTB.size} entries`);
+        console.log(`[TB Import] TB reports: CY end=${cyEndTB.size}, CY P&L base=${cyPLBaseTB.size}, PY end=${pyEndTB.size}, PY P&L base=${pyPLBaseTB.size}`);
 
         // Xero account types → FS categories
         const typeMap: Record<string, string> = {
@@ -95,14 +128,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           'INVENTORY': 'Balance Sheet', 'PREPAYMENT': 'Balance Sheet',
         };
 
-        // Build name-based fallback maps for TB report matching
-        const currentTBByName = new Map<string, typeof currentTB extends Map<string, infer V> ? V : never>();
-        for (const [, entry] of currentTB) currentTBByName.set(entry.accountName.toLowerCase(), entry);
-        const priorTBByName = new Map<string, typeof priorTB extends Map<string, infer V> ? V : never>();
-        for (const [, entry] of priorTB) priorTBByName.set(entry.accountName.toLowerCase(), entry);
+        // ── Build lookup from chart of accounts (ALL accounts, not just ACTIVE) ──
+        // Keyed by AccountID for direct match, plus name-based fallback
+        const accountById = new Map<string, any>();
+        const accountByName = new Map<string, any>();
+        for (const a of accounts) {
+          if (a.AccountID) accountById.set(a.AccountID, a);
+          if (a.Name) accountByName.set(a.Name.toLowerCase(), a);
+        }
 
         console.log(`[TB Import] Chart of accounts: ${accounts.length} total, ${accounts.filter((a: any) => a.Status === 'ACTIVE').length} active`);
-        console.log(`[TB Import] TB report entries — CY: ${currentTB.size}, PY: ${priorTB.size}`);
 
         // Credit-normal account types: use credit - debit so values are positive
         const creditNormalTypes = new Set(['REVENUE', 'OTHERINCOME', 'CURRLIAB', 'TERMLIAB', 'EQUITY']);
@@ -113,66 +148,119 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             : entry.debit - entry.credit;  // Assets/expenses: positive when debit balance
         }
 
-        // Match TB report amounts to accounts by AccountID, falling back to name
-        let matchedById = 0, matchedByName = 0, unmatched = 0;
-        const processedAccountIds = new Set<string>();
-        tbRows = accounts
-          .filter((a: any) => a.Status === 'ACTIVE')
-          .map((a: any) => {
-            const code = a.Code || '';
-            const accountId = a.AccountID || '';
-            const accountType = a.Type || '';
-            if (accountId) processedAccountIds.add(accountId);
+        // ── Collect ALL unique account IDs across ALL 4 TB reports ──
+        // This is TB-report-driven: every account with any balance in any period is included.
+        const allAccountIds = new Set<string>();
+        for (const tb of [cyEndTB, cyPLBaseTB, pyEndTB, pyPLBaseTB]) {
+          for (const accountId of tb.keys()) allAccountIds.add(accountId);
+        }
+        console.log(`[TB Import] Unique account IDs across all 4 TB reports: ${allAccountIds.size}`);
 
-            // Try matching by AccountID first, then by name
-            let cy = currentTB.get(accountId);
-            let py = priorTB.get(accountId);
-            if (cy || py) { matchedById++; }
-            else {
-              const nameLower = (a.Name || '').toLowerCase();
-              cy = currentTBByName.get(nameLower) || undefined;
-              py = priorTBByName.get(nameLower) || undefined;
-              if (cy || py) matchedByName++;
-              else unmatched++;
+        // ── Build rows: iterate every TB account, enrich with chart of accounts metadata ──
+        // Track imbalance so we can add a balancing "Profit/Loss for Period" equity line.
+        // Debit-normal accounts contribute positively, credit-normal accounts negatively.
+        let cyImbalance = 0, pyImbalance = 0;
+        let matchedById = 0, matchedByName = 0, noMetadata = 0;
+
+        for (const accountId of allAccountIds) {
+          // Look up chart-of-accounts metadata by AccountID, then by name
+          let acct = accountById.get(accountId);
+          if (!acct) {
+            // Try name-based fallback using the account name from whichever TB has this entry
+            const tbEntry = cyEndTB.get(accountId) || pyEndTB.get(accountId)
+              || cyPLBaseTB.get(accountId) || pyPLBaseTB.get(accountId);
+            if (tbEntry) {
+              acct = accountByName.get(tbEntry.accountName.toLowerCase());
+              if (acct) matchedByName++;
             }
+            if (!acct) noMetadata++;
+          } else {
+            matchedById++;
+          }
 
-            return {
-              accountCode: code,
-              description: a.Name || '',
-              currentYear: netBalance(cy, accountType),
-              priorYear: netBalance(py, accountType),
-              category: accountType,
-              fsLevel: typeMap[accountType] || a.Class || '',
-              fsStatement: statementMap[accountType] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
-            };
-          })
-          .filter((r: any) => r.accountCode);
+          const accountType = acct?.Type || '';
+          const accountName = acct?.Name
+            || cyEndTB.get(accountId)?.accountName
+            || pyEndTB.get(accountId)?.accountName
+            || cyPLBaseTB.get(accountId)?.accountName
+            || pyPLBaseTB.get(accountId)?.accountName
+            || accountId;
 
-        debugInfo = `Accounts: ${accounts.length}, TB CY: ${currentTB.size}, TB PY: ${priorTB.size}, ID: ${matchedById}, name: ${matchedByName}, unmatched: ${unmatched}, rows: ${tbRows.length}`;
-        console.log(`[TB Import] ${debugInfo}`);
+          // Use Code if available, otherwise AccountID as the code (never blank)
+          const accountCode = acct?.Code || accountId;
 
-        // Include accounts from TB reports that aren't in the chart of accounts
-        // (no account type available, so use absolute value of whichever column has the amount)
-        for (const [accountId, entry] of currentTB) {
-          if (processedAccountIds.has(accountId)) continue;
-          const py = priorTB.get(accountId);
+          const isPnL = accountType ? statementMap[accountType] === 'Profit & Loss' : false;
+
+          // BS: point-in-time at period end. P&L: subtract base to isolate period.
+          const cyEnd = cyEndTB.get(accountId);
+          const cyBase = cyPLBaseTB.get(accountId);
+          const pyEnd = pyEndTB.get(accountId);
+          const pyBase = pyPLBaseTB.get(accountId);
+
+          const cyAmount = isPnL
+            ? netBalance(cyEnd, accountType) - netBalance(cyBase, accountType)
+            : netBalance(cyEnd, accountType);
+          const pyAmount = isPnL
+            ? netBalance(pyEnd, accountType) - netBalance(pyBase, accountType)
+            : netBalance(pyEnd, accountType);
+
+          // Track imbalance: debit-normal adds, credit-normal subtracts
+          if (creditNormalTypes.has(accountType)) {
+            cyImbalance -= cyAmount;
+            pyImbalance -= pyAmount;
+          } else {
+            cyImbalance += cyAmount;
+            pyImbalance += pyAmount;
+          }
+
           tbRows.push({
-            accountCode: entry.accountName,
-            description: entry.accountName,
-            currentYear: entry.debit || entry.credit,
-            priorYear: py ? (py.debit || py.credit) : 0,
-          });
-          processedAccountIds.add(accountId);
+            accountCode,
+            description: accountName,
+            currentYear: cyAmount,
+            priorYear: pyAmount,
+            category: typeMap[accountType] || accountType || undefined,
+            fsLevel: typeMap[accountType] || acct?.Class || '',
+            fsStatement: statementMap[accountType] || (acct?.Class === 'ASSET' || acct?.Class === 'LIABILITY' || acct?.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
+          } as any);
         }
-        for (const [accountId, entry] of priorTB) {
-          if (processedAccountIds.has(accountId)) continue;
+
+        // Also include active chart-of-accounts entries with zero balances
+        // (ensures the full chart is represented even for accounts with no activity)
+        const includedIds = new Set(allAccountIds);
+        for (const a of accounts) {
+          if (a.Status !== 'ACTIVE') continue;
+          if (!a.AccountID || includedIds.has(a.AccountID)) continue;
+          const accountCode = a.Code || a.AccountID;
           tbRows.push({
-            accountCode: entry.accountName,
-            description: entry.accountName,
+            accountCode,
+            description: a.Name || '',
             currentYear: 0,
-            priorYear: entry.debit || entry.credit,
-          });
+            priorYear: 0,
+            category: typeMap[a.Type] || a.Type || undefined,
+            fsLevel: typeMap[a.Type] || a.Class || '',
+            fsStatement: statementMap[a.Type] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
+          } as any);
+          includedIds.add(a.AccountID);
         }
+
+        // ── Add balancing "Profit/Loss for Period" equity line ──
+        // When P&L is stripped to a single period, the BS still reflects full cumulative
+        // equity. This line bridges the gap so the TB always totals zero.
+        if (cyImbalance !== 0 || pyImbalance !== 0) {
+          tbRows.push({
+            accountCode: 'PL-PERIOD',
+            description: 'Profit/Loss for Period',
+            currentYear: cyImbalance,   // credit-normal: stored positive = credit balance
+            priorYear: pyImbalance,
+            category: 'Equity',
+            fsLevel: 'Equity',
+            fsStatement: 'Balance Sheet',
+          } as any);
+          console.log(`[TB Import] Added Profit/Loss for Period — CY: ${cyImbalance}, PY: ${pyImbalance}`);
+        }
+
+        debugInfo = `Accounts: ${accounts.length}, TB unique IDs: ${allAccountIds.size}, matched by ID: ${matchedById}, by name: ${matchedByName}, no metadata: ${noMetadata}, total rows: ${tbRows.length}`;
+        console.log(`[TB Import] ${debugInfo}`);
         break;
       }
       default:
