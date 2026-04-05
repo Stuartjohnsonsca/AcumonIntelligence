@@ -432,6 +432,263 @@ async function handleBankStatementExtract(
   };
 }
 
+// ─── Process Bank Data ───
+// Merges multi-page statement data per account, flattens headers into every row,
+// trims to engagement period, and translates foreign currency via FX rates.
+async function handleProcessBankData(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  console.log(`[flow-engine] Processing bank data for "${node.data.label}"`);
+
+  // Get raw extracted data from previous node
+  const prevNodeId = getPreviousNodeId(flow, node.id);
+  const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
+  const rawStatements: any[] = prevOutput?.statements || [];
+  const rawTransactions: any[] = prevOutput?.allTransactions || prevOutput?.dataTable || [];
+
+  if (rawTransactions.length === 0) {
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: { processed: false, message: 'No transaction data from previous node', dataTable: [], transactionCount: 0 },
+    };
+  }
+
+  // Get engagement period for trimming
+  const periodStart = ctx.engagement.periodStart; // YYYY-MM-DD
+  const periodEnd = ctx.engagement.periodEnd;
+
+  // Look up functional currency from Permanent File
+  let functionalCurrency = 'GBP'; // default
+  try {
+    const engagement = await prisma.auditEngagement.findUnique({
+      where: { id: engagementId },
+      select: { id: true },
+    });
+    if (engagement) {
+      const pfData = await prisma.auditPermanentFileData.findMany({
+        where: { engagementId },
+      });
+      for (const pf of pfData) {
+        const answers = pf.data as any;
+        if (answers && typeof answers === 'object') {
+          // Search for functional currency in permanent file answers
+          for (const [key, val] of Object.entries(answers)) {
+            if (key.toLowerCase().includes('functional') && key.toLowerCase().includes('currency') && typeof val === 'string' && val.length <= 5) {
+              functionalCurrency = val.toUpperCase();
+              break;
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[flow-engine] Failed to look up functional currency:`, (err as Error).message);
+  }
+  console.log(`[flow-engine] Functional currency: ${functionalCurrency}`);
+
+  // Look up FX provider from firm settings
+  let fxProvider = 'frankfurter';
+  try {
+    const execution = await prisma.testExecution.findUnique({
+      where: { id: executionId },
+      select: { firmId: true },
+    });
+    if (execution?.firmId) {
+      const fxSetting = await prisma.methodologyRiskTable.findUnique({
+        where: { firmId_tableType: { firmId: execution.firmId, tableType: 'fxProvider' } },
+      });
+      if (fxSetting?.data && (fxSetting.data as any).provider) {
+        fxProvider = (fxSetting.data as any).provider;
+      }
+    }
+  } catch { /* use default */ }
+
+  // FX rate cache to avoid duplicate API calls for same currency+date
+  const fxCache = new Map<string, number>();
+
+  async function getFxRate(fromCurrency: string, toCurrency: string, date: string): Promise<number> {
+    if (fromCurrency === toCurrency) return 1;
+    const cacheKey = `${fromCurrency}_${toCurrency}_${date}`;
+    if (fxCache.has(cacheKey)) return fxCache.get(cacheKey)!;
+
+    let rate = 1;
+    if (fxProvider === 'manual') {
+      // Manual mode — no automatic lookup, rate stays 1
+      fxCache.set(cacheKey, rate);
+      return rate;
+    }
+
+    try {
+      // Use frankfurter.app directly (server-side, no need for internal API call)
+      const url = `https://api.frankfurter.app/${date}?from=${fromCurrency}&to=${toCurrency}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.rates?.[toCurrency]) {
+          rate = data.rates[toCurrency];
+        }
+      }
+    } catch (err) {
+      console.warn(`[flow-engine] FX rate lookup failed for ${fromCurrency}→${toCurrency} on ${date}:`, (err as Error).message);
+    }
+
+    fxCache.set(cacheKey, rate);
+    return rate;
+  }
+
+  // Process transactions: flatten headers, trim to period, FX translate
+  const processedRows: any[] = [];
+  let trimmedCount = 0;
+
+  for (const txn of rawTransactions) {
+    // Trim: skip transactions outside the engagement period
+    if (txn.date && periodStart && periodEnd) {
+      if (txn.date < periodStart || txn.date > periodEnd) {
+        trimmedCount++;
+        continue;
+      }
+    }
+
+    const currency = (txn.currency || '').toUpperCase() || functionalCurrency;
+    const fxRate = await getFxRate(currency, functionalCurrency, txn.date || periodEnd);
+
+    processedRows.push({
+      date: txn.date,
+      description: txn.description || '',
+      reference: txn.reference || '',
+      debit: txn.debit || 0,
+      credit: txn.credit || 0,
+      balance: txn.balance || 0,
+      bank: txn.bankName || txn.bank || '',
+      accountHolder: txn.accountHolder || '',
+      sortCode: txn.sortCode || '',
+      accountNumber: txn.accountNumber || '',
+      currency,
+      tbAccountCode: txn.tbAccountCode || txn.sourceFile || '',
+      functionalCurrency,
+      fxRate,
+      debitFC: Math.round((txn.debit || 0) * fxRate * 100) / 100,
+      creditFC: Math.round((txn.credit || 0) * fxRate * 100) / 100,
+      balanceFC: Math.round((txn.balance || 0) * fxRate * 100) / 100,
+    });
+  }
+
+  console.log(`[flow-engine] Processed ${processedRows.length} transactions (trimmed ${trimmedCount} outside period ${periodStart} to ${periodEnd}), ${fxCache.size} FX lookups`);
+
+  return {
+    action: 'continue',
+    nextNodeId: getNextNodeId(flow, node.id),
+    output: {
+      processed: true,
+      dataTable: processedRows,
+      transactionCount: processedRows.length,
+      trimmedCount,
+      functionalCurrency,
+      fxProvider,
+      fxRatesUsed: Object.fromEntries(fxCache),
+      statements: rawStatements,
+    },
+  };
+}
+
+// ─── Store Extracted Data ───
+// Persists processed data to AuditDocument library for reuse by other tests.
+async function handleStoreExtractedData(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  const evidenceTag = node.data.evidenceTag || node.data.executionDef?.evidenceTag || 'extracted_data';
+  console.log(`[flow-engine] Storing extracted data as AuditDocument, tag="${evidenceTag}"`);
+
+  // Get data from previous node
+  const prevNodeId = getPreviousNodeId(flow, node.id);
+  const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
+  const dataTable = prevOutput?.dataTable || [];
+  const statements = prevOutput?.statements || [];
+
+  if (dataTable.length === 0) {
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: { stored: false, message: 'No data to store', documentCount: 0 },
+    };
+  }
+
+  // Group transactions by account number for separate documents
+  const byAccount = new Map<string, any[]>();
+  for (const row of dataTable) {
+    const key = row.accountNumber || row.tbAccountCode || 'unknown';
+    if (!byAccount.has(key)) byAccount.set(key, []);
+    byAccount.get(key)!.push(row);
+  }
+
+  const documentIds: string[] = [];
+
+  for (const [accountKey, rows] of byAccount) {
+    const firstRow = rows[0];
+    const docName = `${evidenceTag} — ${accountKey} ${firstRow.bank || ''} ${firstRow.accountHolder || ''}`.trim();
+
+    // Store as JSON blob in Azure
+    const jsonData = JSON.stringify({ rows, metadata: { evidenceTag, accountKey, transactionCount: rows.length, functionalCurrency: firstRow.functionalCurrency } });
+    const blobName = `extracted-data/${engagementId}/${evidenceTag}/${accountKey}.json`;
+
+    try {
+      const { uploadToInbox } = await import('@/lib/azure-blob');
+      await uploadToInbox(blobName, Buffer.from(jsonData, 'utf-8'), 'application/json');
+
+      // Create or update AuditDocument
+      const existing = await prisma.auditDocument.findFirst({
+        where: { engagementId, documentName: docName },
+      });
+
+      if (existing) {
+        await prisma.auditDocument.update({
+          where: { id: existing.id },
+          data: { storagePath: blobName, containerName: 'upload-inbox', uploadedDate: new Date(), mappedItems: { evidenceTag, rows: rows.length } as any },
+        });
+        documentIds.push(existing.id);
+      } else {
+        const doc = await prisma.auditDocument.create({
+          data: {
+            engagementId,
+            documentName: docName,
+            storagePath: blobName,
+            containerName: 'upload-inbox',
+            uploadedDate: new Date(),
+            mappedItems: { evidenceTag, rows: rows.length } as any,
+          },
+        });
+        documentIds.push(doc.id);
+      }
+    } catch (err) {
+      console.error(`[flow-engine] Failed to store document for ${accountKey}:`, (err as Error).message);
+    }
+  }
+
+  console.log(`[flow-engine] Stored ${documentIds.length} documents for tag="${evidenceTag}"`);
+
+  return {
+    action: 'continue',
+    nextNodeId: getNextNodeId(flow, node.id),
+    output: {
+      stored: true,
+      evidenceTag,
+      documentCount: documentIds.length,
+      documentIds,
+      totalRows: dataTable.length,
+      accountCount: byAccount.size,
+    },
+  };
+}
+
 // ─── Accounting System Extractor ───
 // Calls the connected accounting system API directly (no AI)
 async function handleAccountingExtract(
@@ -1522,6 +1779,10 @@ export async function processNextNode(executionId: string): Promise<void> {
             result = await handleUsePriorEvidence(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'bank_statement_extract') {
             result = await handleBankStatementExtract(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'process_bank_data') {
+            result = await handleProcessBankData(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'store_extracted_data') {
+            result = await handleStoreExtractedData(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'accounting_extract') {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'ai') {

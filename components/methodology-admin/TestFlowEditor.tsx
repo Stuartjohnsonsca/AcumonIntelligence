@@ -76,6 +76,8 @@ const INPUT_TYPES = [
   { value: 'ai_analysis', label: 'AI Analysis' },
   { value: 'accounting_extract', label: 'Accounting System Extract' },
   { value: 'bank_statement_extract', label: 'Bank Statement PDF Extract' },
+  { value: 'process_bank_data', label: 'Process Bank Data (merge, trim, FX)' },
+  { value: 'store_extracted_data', label: 'Store Extracted Data (to document library)' },
   { value: 'use_prior_evidence', label: 'Use Prior Evidence (by tag)' },
 ];
 
@@ -1135,7 +1137,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                     </div>
 
                     {/* Evidence Tag — shown for portal_request and use_prior_evidence */}
-                    {(editInputType === 'use_prior_evidence' || editInputType === 'portal_request') && (
+                    {(editInputType === 'use_prior_evidence' || editInputType === 'portal_request' || editInputType === 'store_extracted_data') && (
                       <div>
                         <label className="text-[10px] font-medium text-slate-500 uppercase">Evidence Tag</label>
                         <p className="text-[9px] text-slate-400">

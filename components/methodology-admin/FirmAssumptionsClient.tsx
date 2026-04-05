@@ -25,6 +25,7 @@ interface Props {
   initialMaterialityRounding?: number;
   initialTechnicalTeam?: { email: string; members: { name: string; email: string; role: string }[] };
   initialRiskClassification?: Record<string, RiskClassification> | null;
+  initialFxProvider?: string | null;
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -105,6 +106,7 @@ export function FirmAssumptionsClient({
   initialConfidenceTable,
   initialSpecialistRoles,
   initialRiskClassification,
+  initialFxProvider,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -128,6 +130,7 @@ export function FirmAssumptionsClient({
       'Remote': 'AR', 'Low': 'AR', 'Medium': 'Area of Focus', 'High': 'Significant Risk', 'Very High': 'Significant Risk',
     };
   });
+  const [fxProvider, setFxProvider] = useState<string>(initialFxProvider || 'frankfurter');
   const [newRole, setNewRole] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -185,6 +188,7 @@ export function FirmAssumptionsClient({
               inherent: inherentRisk,
               control: controlRisk,
               riskClassification,
+              fxProvider: { provider: fxProvider },
               assertions,
               specialistRoles: { roles: specialistRoles },
             },
@@ -370,6 +374,42 @@ export function FirmAssumptionsClient({
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      {/* FX Rate Provider */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('fxProvider')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">FX Rate Provider</h2>
+          {expandedSections.fxProvider ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.fxProvider && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">Select the provider used for historical date-specific exchange rates when translating foreign currency transactions into the functional currency.</p>
+            <select
+              value={fxProvider}
+              onChange={e => { setFxProvider(e.target.value); setSaved(false); }}
+              className="w-full max-w-md text-sm border rounded px-3 py-2 bg-white"
+            >
+              <option value="frankfurter">Frankfurter (ECB rates — free, no key required)</option>
+              <option value="exchangerate_api">ExchangeRate-API (free tier, key required)</option>
+              <option value="fixer">Fixer.io (ECB rates — free tier, key required)</option>
+              <option value="wise">Wise / TransferWise (market rates — key required)</option>
+              <option value="manual">Manual Entry (no automatic lookup)</option>
+            </select>
+            {fxProvider === 'frankfurter' && (
+              <p className="text-xs text-green-600 mt-2">European Central Bank reference rates. Updated daily. No API key needed.</p>
+            )}
+            {(fxProvider === 'exchangerate_api' || fxProvider === 'fixer' || fxProvider === 'wise') && (
+              <p className="text-xs text-amber-600 mt-2">This provider requires an API key. Configure it in your environment variables.</p>
+            )}
+            {fxProvider === 'manual' && (
+              <p className="text-xs text-slate-500 mt-2">FX rates will need to be entered manually during test execution.</p>
+            )}
           </div>
         )}
       </div>
