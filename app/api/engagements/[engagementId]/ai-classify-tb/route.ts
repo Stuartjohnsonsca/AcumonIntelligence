@@ -99,7 +99,26 @@ Given trial balance account descriptions, classify each into:
 - fsLevel: The aggregated FS line item it belongs to (e.g. "Debtors", "Revenue", "Fixed Assets")
 - fsStatement: Which financial statement (exactly one of: "Profit & Loss", "Balance Sheet", "Cash Flow Statement")
 
-Rules:
+CRITICAL — Accounting System Type OVERRIDES description:
+When a "Type" field is provided from the accounting system, it is the AUTHORITATIVE classification.
+The account description/name may be misleading — always trust the Type over the description.
+Key Type mappings:
+- Type: BANK → ALWAYS "Cash at Bank", fsStatement "Balance Sheet" — regardless of description (e.g. "Modulr - Staff Wages" with Type BANK is a bank account, NOT a staff cost)
+- Type: REVENUE → ALWAYS Revenue, fsStatement "Profit & Loss"
+- Type: DIRECTCOSTS → ALWAYS Cost of Sales, fsStatement "Profit & Loss"
+- Type: EXPENSE or OVERHEADS → ALWAYS Expenses/Administrative Expenses, fsStatement "Profit & Loss"
+- Type: FIXED → ALWAYS Fixed Assets, fsStatement "Balance Sheet"
+- Type: CURRENT → ALWAYS Current Assets (Debtors), fsStatement "Balance Sheet"
+- Type: CURRLIAB → ALWAYS Current Liabilities (Creditors), fsStatement "Balance Sheet"
+- Type: TERMLIAB → ALWAYS Non-Current Liabilities, fsStatement "Balance Sheet"
+- Type: EQUITY → ALWAYS Capital & Reserves, fsStatement "Balance Sheet"
+- Type: OTHERINCOME → ALWAYS Other Income, fsStatement "Profit & Loss"
+- Type: INVENTORY → ALWAYS Stock/Inventory, fsStatement "Balance Sheet"
+- Type: PREPAYMENT → ALWAYS Prepayments (Debtors), fsStatement "Balance Sheet"
+- Type: DEPRECIATN → ALWAYS Depreciation, fsStatement "Profit & Loss"
+Also: accounts with NO account code (null/empty) are typically bank accounts in Xero.
+
+Additional description-based rules (only when Type is not provided):
 - Sales, revenue, turnover, fees, commissions, rebilled services → fsLevel "Revenue", fsStatement "Profit & Loss"
 - Cost of sales, direct costs, materials → fsLevel "Cost of Sales", fsStatement "Profit & Loss"
 - Wages, salaries, NI, pensions, staff costs → fsLevel "Staff Costs" or "Administrative Expenses", fsStatement "Profit & Loss"
