@@ -446,11 +446,33 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     // Deduplicate by test ID across all matching allocations
     const matchedTestsMap = new Map<string, AllocationEntry['test']>();
 
+    // Common aliases for FS line name matching (TB category → FS Line name)
+    const FS_LINE_ALIASES: Record<string, string[]> = {
+      'cash and bank': ['cash and cash equivalents', 'cash at bank', 'bank', 'cash & bank', 'cash'],
+      'cash and cash equivalents': ['cash and bank', 'cash at bank', 'bank', 'cash & bank', 'cash'],
+      'fixed assets': ['property plant and equipment', 'ppe', 'tangible assets', 'non-current assets'],
+      'current assets': ['other current assets', 'debtors', 'receivables'],
+      'current liabilities': ['creditors', 'payables', 'other current liabilities'],
+      'long term liabilities': ['non-current liabilities', 'long-term liabilities', 'borrowings'],
+      'cost of sales': ['cost of goods sold', 'cogs', 'direct costs'],
+      'administrative expenses': ['overheads', 'admin expenses', 'operating expenses'],
+      'stock': ['inventory', 'inventories'],
+    };
+
     if (searchTerms.length > 0) {
       const matchingFsLineIds = new Set<string>();
       for (const fl of fsLinesList) {
         const flName = fl.name.toLowerCase().trim();
-        if (searchTerms.some(term => flName === term)) {
+        if (searchTerms.some(term => {
+          if (flName === term) return true; // exact match
+          // Check aliases: does the TB term have aliases that match the FS line?
+          const aliases = FS_LINE_ALIASES[term] || [];
+          if (aliases.includes(flName)) return true;
+          // Reverse: does the FS line name have aliases that match the TB term?
+          const reverseAliases = FS_LINE_ALIASES[flName] || [];
+          if (reverseAliases.includes(term)) return true;
+          return false;
+        })) {
           matchingFsLineIds.add(fl.id);
         }
       }
