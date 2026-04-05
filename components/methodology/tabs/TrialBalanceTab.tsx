@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 
 interface Props {
@@ -60,6 +60,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [openFilter, setOpenFilter] = useState<string | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [showDifferences, setShowDifferences] = useState(false);
 
   // Compute unique values per column for filter dropdowns
   const columnValues = useMemo(() => {
@@ -582,6 +583,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           >
             📤 Export CSV
           </button>
+          <button
+            onClick={() => setShowDifferences(!showDifferences)}
+            className={`text-xs px-3 py-1 rounded font-medium ${showDifferences ? 'bg-red-100 text-red-700 border border-red-300' : 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'}`}
+          >
+            {showDifferences ? '✕ Close Differences' : '⚠ Differences'}
+          </button>
         </div>
       </div>
 
@@ -591,6 +598,83 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           <button onClick={() => setImportResult(null)} className="ml-2 text-slate-400 hover:text-slate-600">×</button>
         </div>
       )}
+
+      {/* Differences panel */}
+      {showDifferences && (() => {
+        const xPnlCats = new Set(['Revenue', 'Cost of Sales', 'Expenses', 'Administrative Expenses', 'Other Income', 'Depreciation']);
+        const xRevCats = new Set(['Revenue', 'Other Income']);
+
+        // Find rows where Xero P&L/BS classification disagrees with FS Statement
+        const isXeroPnl = (r: TBRow) => xPnlCats.has(r.category || '');
+        const isFsPnl = (r: TBRow) => r.fsStatement === 'Profit & Loss';
+        const diffRows = rows.filter(r => {
+          if (!r.category || !r.fsStatement) return false;
+          return isXeroPnl(r) !== isFsPnl(r);
+        });
+
+        // Group by Xero category
+        const byXeroCat: Record<string, TBRow[]> = {};
+        for (const r of diffRows) {
+          const cat = r.category || 'Uncategorised';
+          if (!byXeroCat[cat]) byXeroCat[cat] = [];
+          byXeroCat[cat].push(r);
+        }
+
+        const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
+
+        return (
+          <div className="border border-red-200 rounded-lg mb-2 bg-red-50/30 p-3">
+            <h4 className="text-xs font-semibold text-red-700 mb-2">Classification Differences — {diffRows.length} row{diffRows.length !== 1 ? 's' : ''} where {xeroSummary?.source || 'Xero'} and FS disagree</h4>
+            {diffRows.length === 0 ? (
+              <p className="text-xs text-green-600">No differences — all rows agree between {xeroSummary?.source || 'Xero'} and FS classification.</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-red-200">
+                    <th className="text-left px-2 py-1 text-red-600 font-medium">Account Code</th>
+                    <th className="text-left px-2 py-1 text-red-600 font-medium">Description</th>
+                    <th className="text-left px-2 py-1 text-purple-600 font-medium">{xeroSummary?.source || 'Xero'} Category</th>
+                    <th className="text-right px-2 py-1 text-purple-600 font-medium">{xeroSummary?.source || 'Xero'} Amt</th>
+                    <th className="text-left px-2 py-1 text-blue-600 font-medium">FS Level</th>
+                    <th className="text-left px-2 py-1 text-blue-600 font-medium">FS Statement</th>
+                    <th className="text-right px-2 py-1 text-blue-600 font-medium">FS Amt</th>
+                    <th className="text-right px-2 py-1 text-red-600 font-medium">Difference</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(byXeroCat).map(([cat, catRows]) => (
+                    <Fragment key={cat}>
+                      <tr className="bg-purple-50/50">
+                        <td colSpan={3} className="px-2 py-1 text-[10px] font-semibold text-purple-700">{cat}</td>
+                        <td className="text-right px-2 py-1 text-[10px] font-semibold text-purple-700">{f(catRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0))}</td>
+                        <td colSpan={2}></td>
+                        <td className="text-right px-2 py-1 text-[10px] font-semibold text-blue-700">{f(catRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0))}</td>
+                        <td></td>
+                      </tr>
+                      {catRows.map(r => {
+                        const cyAmt = Number(r.currentYear) || 0;
+                        // The "difference" is the amount — it's in one group but not the other
+                        return (
+                          <tr key={r.id || r.accountCode} className="border-b border-red-100 hover:bg-red-50/50">
+                            <td className="px-2 py-0.5 font-mono text-slate-600">{r.accountCode}</td>
+                            <td className="px-2 py-0.5 text-slate-700">{r.description}</td>
+                            <td className="px-2 py-0.5 text-purple-600">{r.category}</td>
+                            <td className="text-right px-2 py-0.5 text-purple-700">{f(cyAmt)}</td>
+                            <td className="px-2 py-0.5 text-blue-600">{r.fsLevel || '—'}</td>
+                            <td className="px-2 py-0.5 text-blue-600">{r.fsStatement || '—'}</td>
+                            <td className="text-right px-2 py-0.5 text-blue-700">{f(cyAmt)}</td>
+                            <td className="text-right px-2 py-0.5 font-semibold text-red-600">{f(cyAmt)}</td>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Summary comparison table */}
       {(() => {

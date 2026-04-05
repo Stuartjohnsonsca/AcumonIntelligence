@@ -540,22 +540,42 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   }, [tbRows, requiresCashFlow]);
 
   // Map TB fsLevel values to the firm's canonical FS Line names.
-  // If a TB row's fsLevel doesn't exactly match an FS Line, find the closest match.
+  // Uses keyword overlap to match e.g. "Cash at Bank" → "Cash and Cash Equivalents"
   const fsLevelMap = useMemo(() => {
     const map: Record<string, string> = {};
-    const fsLineNames = fsLinesList.map(fl => fl.name.toLowerCase().trim());
+    const stopWords = new Set(['and', 'at', 'the', 'of', 'in', '&']);
+    function keywords(s: string): Set<string> {
+      return new Set(s.toLowerCase().split(/[\s\-\/]+/).filter(w => w.length > 1 && !stopWords.has(w)));
+    }
+    function overlapScore(a: Set<string>, b: Set<string>): number {
+      let overlap = 0;
+      for (const w of a) if (b.has(w)) overlap++;
+      return overlap === 0 ? 0 : overlap / Math.max(a.size, b.size);
+    }
+
     for (const row of tbRows) {
       if (!row.fsLevel || map[row.fsLevel]) continue;
       const lower = row.fsLevel.toLowerCase().trim();
-      // Exact match
+      // Exact match first
       const exact = fsLinesList.find(fl => fl.name.toLowerCase().trim() === lower);
       if (exact) { map[row.fsLevel] = exact.name; continue; }
-      // Fuzzy: check if any FS Line contains this or vice versa
-      const fuzzy = fsLinesList.find(fl => {
-        const fln = fl.name.toLowerCase().trim();
-        return fln.includes(lower) || lower.includes(fln);
+      // Keyword overlap — find best match
+      const rowKw = keywords(row.fsLevel);
+      let bestMatch = '';
+      let bestScore = 0;
+      for (const fl of fsLinesList) {
+        const flKw = keywords(fl.name);
+        const score = overlapScore(rowKw, flKw);
+        if (score > bestScore) { bestScore = score; bestMatch = fl.name; }
+      }
+      // Accept if at least 50% keyword overlap
+      if (bestScore >= 0.5 && bestMatch) { map[row.fsLevel] = bestMatch; continue; }
+      // Check aliases from FS_LINE_ALIASES
+      const aliasMatch = fsLinesList.find(fl => {
+        const aliases = FS_LINE_ALIASES[lower] || [];
+        return aliases.includes(fl.name.toLowerCase().trim());
       });
-      if (fuzzy) { map[row.fsLevel] = fuzzy.name; continue; }
+      if (aliasMatch) { map[row.fsLevel] = aliasMatch.name; continue; }
       // No match — use as-is
       map[row.fsLevel] = row.fsLevel;
     }
