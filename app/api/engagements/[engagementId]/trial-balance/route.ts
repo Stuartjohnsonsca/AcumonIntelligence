@@ -85,6 +85,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     return NextResponse.json({ success: true });
   }
 
+  // Delete a specific TB row by ID
+  if (body.action === 'delete') {
+    const { rowId } = body as { action: string; rowId: string };
+    if (!rowId) return NextResponse.json({ error: 'rowId required' }, { status: 400 });
+    await prisma.auditTBRow.deleteMany({ where: { id: rowId, engagementId } });
+    const rows = await prisma.auditTBRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' } });
+    return NextResponse.json({ rows, deleted: 1 });
+  }
+
   // Merge account codes: set originalAccountCode (preserve real code), update accountCode to merged code
   if (body.action === 'merge') {
     const { rowIds, mergedCode } = body as { action: string; rowIds: string[]; mergedCode: string };

@@ -10,6 +10,7 @@ interface Props {
   onShowCategoryChange?: (show: boolean) => void;
   periodEndDate?: string | null;
   periodStartDate?: string | null;
+  userRole?: string;
 }
 
 function formatDateDDMMYYYY(dateStr: string | null | undefined): string {
@@ -48,7 +49,7 @@ interface FsItem {
   statement: string;
 }
 
-export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCategory: initialShowCategory = true, onShowCategoryChange, periodEndDate, periodStartDate }: Props) {
+export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCategory: initialShowCategory = true, onShowCategoryChange, periodEndDate, periodStartDate, userRole }: Props) {
   const [rows, setRows] = useState<TBRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
@@ -145,8 +146,22 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     setRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
   }
 
-  function removeRow(index: number) {
+  const canDeleteRows = userRole === 'RI' || userRole === 'Manager';
+
+  async function removeRow(index: number) {
+    const row = rows[index];
     setRows(prev => prev.filter((_, i) => i !== index));
+    if (row?.id) {
+      try {
+        await fetch(`/api/engagements/${engagementId}/trial-balance`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', rowId: row.id }),
+        });
+      } catch (err) {
+        console.error('Failed to delete TB row:', err);
+      }
+    }
   }
 
   // When FS Note is selected, auto-populate FS Level (from parent) and FS Statement
@@ -635,9 +650,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     <input type="text" value={row.groupName || ''} onChange={e => updateRow(i, 'groupName', e.target.value || null)} className={txtCls} />
                   </td>
                 )}
-                <td className="px-2 py-0.5">
-                  <button onClick={() => removeRow(i)} className="text-red-400 hover:text-red-600">×</button>
-                </td>
+                {canDeleteRows && (
+                  <td className="px-2 py-0.5">
+                    <button onClick={() => removeRow(i)} className="text-red-400 hover:text-red-600">×</button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

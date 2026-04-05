@@ -212,7 +212,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'continuance':
         return <ContinuanceTab engagementId={engagement.id} />;
       case 'tb':
-        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} showCategory={tbShowCategory} onShowCategoryChange={setTbShowCategory} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />;
+        return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} showCategory={tbShowCategory} onShowCategoryChange={setTbShowCategory} periodEndDate={periodEndDate} periodStartDate={periodStartDate} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'materiality':
         return <MaterialityTab engagementId={engagement.id} currentUserId={currentUserId} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'par':
