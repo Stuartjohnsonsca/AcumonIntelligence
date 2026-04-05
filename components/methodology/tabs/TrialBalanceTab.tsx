@@ -801,13 +801,18 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     </div>
                   )}
                 </td>
-                {/* FS Level — read-only, auto-populated from FS Note */}
+                {/* FS Level — editable, can be set by AI or manually */}
                 <td className="px-2 py-0.5">
-                  <span className="text-xs text-slate-600 px-1 py-0.5 block">{row.fsLevel || ''}</span>
+                  <input type="text" value={row.fsLevel || ''} onChange={e => updateRow(i, 'fsLevel', e.target.value || null)} className={txtCls} placeholder="FS Level" list="fsLevelList" />
                 </td>
-                {/* FS Statement — read-only, auto-populated from FS Level */}
+                {/* FS Statement — editable dropdown */}
                 <td className="px-2 py-0.5">
-                  <span className="text-xs text-slate-600 px-1 py-0.5 block">{row.fsStatement || ''}</span>
+                  <select value={row.fsStatement || ''} onChange={e => updateRow(i, 'fsStatement', e.target.value || null)} className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5">
+                    <option value="">—</option>
+                    <option value="Profit & Loss">Profit & Loss</option>
+                    <option value="Balance Sheet">Balance Sheet</option>
+                    <option value="Cash Flow Statement">Cash Flow Statement</option>
+                  </select>
                 </td>
                 {/* AI Confidence */}
                 <td className="px-2 py-0.5 text-center">
@@ -852,6 +857,9 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             })()}
           </tbody>
         </table>
+        <datalist id="fsLevelList">
+          {fsLevels.map((l, li) => <option key={`fsl-${li}`} value={l.name} />)}
+        </datalist>
       </div>
 
       <div className="mt-2 text-xs text-slate-400">
