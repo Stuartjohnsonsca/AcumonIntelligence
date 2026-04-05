@@ -16,7 +16,6 @@ const SCOPES = [
   'accounting.banktransactions.read',
   'accounting.manualjournals.read',
   'accounting.settings.read',
-  'accounting.reports.read',
   'accounting.contacts.read',
   'accounting.attachments.read',
 ].join(' ');
