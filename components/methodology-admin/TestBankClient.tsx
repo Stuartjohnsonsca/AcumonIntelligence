@@ -92,6 +92,8 @@ type TopTab = 'test-allocations' | 'test-bank' | 'test-actions' | 'grid-view';
 export function TestBankClient({ firmId, initialTestTypes, initialTests, initialFsLines, initialIndustries, initialAllocations, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
   const [topTab, setTopTab] = useState<TopTab>('test-allocations');
+  const [testBankSearch, setTestBankSearch] = useState('');
+  const [testActionsSearch, setTestActionsSearch] = useState('');
   const [testTypes, setTestTypes] = useState(initialTestTypes);
   const [tests, setTests] = useState(initialTests);
   const [fsLines] = useState(initialFsLines);
@@ -467,6 +469,17 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
             </div>
           </div>
           {uploadResult && <div className={`text-sm px-4 py-2 rounded-lg whitespace-pre-wrap ${uploadResult.includes('failed') || uploadResult.includes('rejected') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>{uploadResult}</div>}
+          <div className="relative mb-2">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              value={testBankSearch}
+              onChange={e => setTestBankSearch(e.target.value)}
+              placeholder="Search tests by name or description..."
+              className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-300"
+            />
+            {testBankSearch && <button onClick={() => setTestBankSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
+          </div>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-100 border-b">
@@ -479,7 +492,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 <th className="w-20 px-3 py-2"></th>
               </tr></thead>
               <tbody>
-                {tests.map((test, i) => {
+                {tests.filter(t => !testBankSearch || t.name.toLowerCase().includes(testBankSearch.toLowerCase()) || (t.description || '').toLowerCase().includes(testBankSearch.toLowerCase())).map((test, i) => {
                   const tt = testTypes.find(t => t.code === test.testTypeCode);
                   const hasFlow = !!test.flow?.nodes?.length;
                   return (
@@ -506,6 +519,17 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
         <div className="border rounded-lg p-4">
           <h3 className="text-sm font-semibold text-slate-800 mb-3">Test Actions ({testTypes.length})</h3>
           <p className="text-xs text-slate-500 mb-4">Define reusable audit actions with execution definitions.</p>
+          <div className="relative mb-2">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              value={testActionsSearch}
+              onChange={e => setTestActionsSearch(e.target.value)}
+              placeholder="Search actions by name..."
+              className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-300"
+            />
+            {testActionsSearch && <button onClick={() => setTestActionsSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
+          </div>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-100 border-b">
@@ -516,7 +540,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 <th className="w-20 px-3 py-2"></th>
               </tr></thead>
               <tbody>
-                {testTypes.map(tt => (
+                {testTypes.filter(tt => !testActionsSearch || tt.name.toLowerCase().includes(testActionsSearch.toLowerCase()) || (tt.codeSection || '').toLowerCase().includes(testActionsSearch.toLowerCase())).map(tt => (
                   <React.Fragment key={tt.id}>
                     <tr className="border-b border-slate-50 hover:bg-slate-50/50 group">
                       {editingTestType === tt.id ? (<>
