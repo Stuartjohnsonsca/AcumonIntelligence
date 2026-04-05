@@ -260,14 +260,21 @@ export async function getTrialBalanceReport(
   const result = new Map<string, XeroTBEntry>();
   const { accessToken, tenantId } = auth || await getValidAccessToken(clientId);
 
-  const res = await xeroFetchWithRetry(
-    `${XERO_API_BASE}/Reports/TrialBalance?date=${date}`,
-    {
-      Authorization: `Bearer ${accessToken}`,
-      'Xero-Tenant-Id': tenantId,
-      Accept: 'application/json',
-    },
-  );
+  let res: Response;
+  try {
+    res = await xeroFetchWithRetry(
+      `${XERO_API_BASE}/Reports/TrialBalance?date=${date}`,
+      {
+        Authorization: `Bearer ${accessToken}`,
+        'Xero-Tenant-Id': tenantId,
+        Accept: 'application/json',
+      },
+    );
+  } catch (err) {
+    // xeroFetchWithRetry throws on 401 — treat as missing scope/permission
+    console.warn(`[Xero] Reports/TrialBalance error for date ${date}:`, (err as Error).message);
+    return result;
+  }
 
   if (res.status === 403) {
     console.warn('[Xero] 403 on Reports/TrialBalance — missing accounting.reports.read scope. Reconnect Xero to grant.');
