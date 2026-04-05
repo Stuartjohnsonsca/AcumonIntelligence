@@ -118,7 +118,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       pp_financial_statements: `You are reviewing the prior period Financial Statements, focusing on the Audit Opinion. List each key finding as a separate item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover: opinion type (unqualified/qualified/adverse/disclaimer), emphasis of matter paragraphs, key audit matters, going concern assessment, material uncertainties. Aim for 4-8 points.`,
     };
 
+    // Try to get actual document content
+    let documentContent = '';
     try {
+      const links = await getData(engagementId, LINKS_KEY) as Record<string, string>;
+      const linkedDocId = links[docKey];
+      if (linkedDocId) {
+        const doc = await prisma.auditDocument.findUnique({ where: { id: linkedDocId } });
+        if (doc?.storagePath) {
+          const { downloadBlob } = await import('@/lib/azure-blob');
+          const buffer = await downloadBlob(doc.storagePath, process.env.AZURE_STORAGE_CONTAINER_INBOX || 'upload-inbox');
+          // For PDFs, extract text; for other files, use raw text
+          if (doc.mimeType?.includes('pdf')) {
+            try {
+              const pdf = await import('pdf-parse');
+              const parsed = await pdf.default(buffer);
+              documentContent = parsed.text?.slice(0, 8000) || '';
+            } catch {
+              documentContent = buffer.toString('utf-8').slice(0, 8000);
+            }
+          } else {
+            documentContent = buffer.toString('utf-8').slice(0, 8000);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to read document content:', err);
+    }
+
+    try {
+      const userMessage = documentContent
+        ? `Document: "${documentName || docKey}"\n\nDocument Content:\n${documentContent}\n\nBased on the above document content, provide a structured review. Return ONLY valid JSON array.`
+        : `Document: "${documentName || docKey}"\n\nProvide a structured review based on standard audit practice for this type of prior period document. Return ONLY valid JSON array.`;
+
       const aiRes = await fetch('https://api.together.xyz/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -126,9 +158,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           model: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
           messages: [
             { role: 'system', content: prompts[docKey] },
-            { role: 'user', content: `Document: "${documentName || docKey}"\n\nProvide a structured review based on standard audit practice for this type of prior period document. Return ONLY valid JSON array.` },
+            { role: 'user', content: userMessage },
           ],
-          max_tokens: 1000,
+          max_tokens: 2000,
           temperature: 0.3,
         }),
       });
