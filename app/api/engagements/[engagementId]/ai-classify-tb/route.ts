@@ -117,7 +117,12 @@ ${noteItems.join('\n')}
 
 Prefer matching to existing configured items where possible. If no exact match, suggest the most appropriate name.
 
-Respond ONLY with a JSON array. Each element: { "index": <number>, "fsNoteLevel": "<string>", "fsLevel": "<string>", "fsStatement": "<string>" }
+Respond ONLY with a JSON array. Each element: { "index": <number>, "fsNoteLevel": "<string>", "fsLevel": "<string>", "fsStatement": "<string>", "confidence": <number 0-100> }
+The confidence score (0-100) reflects how certain you are about the classification:
+- 90-100: Clear, unambiguous match to a configured FS line
+- 70-89: Good match but some ambiguity
+- 50-69: Educated guess, could be wrong
+- Below 50: Very uncertain
 No other text.`;
 
   try {

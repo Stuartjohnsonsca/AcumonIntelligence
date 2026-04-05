@@ -39,6 +39,7 @@ interface TBRow {
   fsLevel: string | null;
   fsStatement: string | null;
   groupName: string | null;
+  aiConfidence: number | null;
   sortOrder: number;
 }
 
@@ -57,6 +58,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
   const [filters, setFilters] = useState<Record<string, Set<string>>>({});
   const [openFilter, setOpenFilter] = useState<string | null>(null);
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   // Compute unique values per column for filter dropdowns
   const columnValues = useMemo(() => {
@@ -72,18 +75,33 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     return cols;
   }, [rows]);
 
-  // Compute filtered rows based on active column filters (multi-select)
+  // Compute filtered and sorted rows
   const filteredRows = useMemo(() => {
     const activeFilters = Object.entries(filters).filter(([, vals]) => vals.size > 0);
-    if (activeFilters.length === 0) return rows;
-    return rows.filter(row => {
+    let result = activeFilters.length === 0 ? [...rows] : rows.filter(row => {
       for (const [field, allowed] of activeFilters) {
         const cellVal = String((row as any)[field] ?? '').trim();
         if (!allowed.has(cellVal)) return false;
       }
       return true;
     });
-  }, [rows, filters]);
+    if (sortCol) {
+      result = [...result].sort((a, b) => {
+        const av = (a as any)[sortCol] ?? '';
+        const bv = (b as any)[sortCol] ?? '';
+        const numA = typeof av === 'number' ? av : parseFloat(av);
+        const numB = typeof bv === 'number' ? bv : parseFloat(bv);
+        if (!isNaN(numA) && !isNaN(numB)) return sortDir === 'asc' ? numA - numB : numB - numA;
+        return sortDir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+      });
+    }
+    return result;
+  }, [rows, filters, sortCol, sortDir]);
+
+  function toggleSort(col: string) {
+    if (sortCol === col) { setSortDir(d => d === 'asc' ? 'desc' : 'asc'); }
+    else { setSortCol(col); setSortDir('asc'); }
+  }
 
   const hasActiveFilters = Object.values(filters).some(v => v.size > 0);
 
@@ -359,6 +377,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     fsNoteLevel: c.fsNoteLevel || updated[c.index].fsNoteLevel,
                     fsLevel: c.fsLevel || updated[c.index].fsLevel,
                     fsStatement: c.fsStatement || updated[c.index].fsStatement,
+                    aiConfidence: c.confidence ?? null,
                   };
                 }
               }
@@ -577,6 +596,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             <col style={{ width: '160px' }} />{/* FS Note */}
             <col style={{ width: '100px' }} />{/* FS Level */}
             <col style={{ width: '120px' }} />{/* FS Statement */}
+            <col style={{ width: '50px' }} />{/* AI Confidence */}
             {isGroupAudit && <col style={{ width: '112px' }} />}{/* Group */}
             <col style={{ width: '32px' }} />{/* Delete */}
           </colgroup>
@@ -621,20 +641,27 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           })()}
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
-              <th className="text-left px-2 py-2 text-slate-500 font-medium">Account Code</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium">Description</th>
-              {showCategory && <th className="text-left px-2 py-2 text-slate-500 font-medium">Category</th>}
-              <th className="text-right px-2 py-2 text-slate-500 font-medium">{formatDateDDMMYYYY(periodEndDate) || 'Period End'}</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium">{dayBefore(periodStartDate) || 'Period Start - 1'}</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium">FS Note</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium">FS Level</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium">FS Statement</th>
-              {isGroupAudit && <th className="text-left px-2 py-2 text-slate-500 font-medium">Group Name</th>}
+              {[
+                { field: 'accountCode', label: 'Account Code', align: 'left' },
+                { field: 'description', label: 'Description', align: 'left' },
+                ...(showCategory ? [{ field: 'category', label: 'Category', align: 'left' }] : []),
+                { field: 'currentYear', label: formatDateDDMMYYYY(periodEndDate) || 'Period End', align: 'right' },
+                { field: 'priorYear', label: dayBefore(periodStartDate) || 'Period Start - 1', align: 'right' },
+                { field: 'fsNoteLevel', label: 'FS Note', align: 'left' },
+                { field: 'fsLevel', label: 'FS Level', align: 'left' },
+                { field: 'fsStatement', label: 'FS Statement', align: 'left' },
+                { field: 'aiConfidence', label: 'AI %', align: 'center' },
+                ...(isGroupAudit ? [{ field: 'groupName', label: 'Group Name', align: 'left' }] : []),
+              ].map(col => (
+                <th key={col.field} className={`text-${col.align} px-2 py-2 text-slate-500 font-medium cursor-pointer hover:text-slate-700 select-none`} onClick={() => toggleSort(col.field)}>
+                  {col.label} {sortCol === col.field ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                </th>
+              ))}
               <th className="w-8"></th>
             </tr>
             {/* Filter row — dropdown arrows with checkbox options */}
             <tr className="bg-slate-50 border-b border-slate-200">
-              {['accountCode', 'description', ...(showCategory ? ['category'] : []), 'currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement', ...(isGroupAudit ? ['groupName'] : [])].map(field => {
+              {['accountCode', 'description', ...(showCategory ? ['category'] : []), 'currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement', 'aiConfidence', ...(isGroupAudit ? ['groupName'] : [])].map(field => {
                 const vals = [...(columnValues[field] || [])].sort();
                 const activeCount = filters[field]?.size || 0;
                 return (
@@ -781,6 +808,19 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 {/* FS Statement — read-only, auto-populated from FS Level */}
                 <td className="px-2 py-0.5">
                   <span className="text-xs text-slate-600 px-1 py-0.5 block">{row.fsStatement || ''}</span>
+                </td>
+                {/* AI Confidence */}
+                <td className="px-2 py-0.5 text-center">
+                  {row.aiConfidence != null && (
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                      row.aiConfidence >= 90 ? 'bg-green-100 text-green-700' :
+                      row.aiConfidence >= 70 ? 'bg-blue-100 text-blue-700' :
+                      row.aiConfidence >= 50 ? 'bg-amber-100 text-amber-700' :
+                      'bg-red-100 text-red-700'
+                    }`}>
+                      {row.aiConfidence}%
+                    </span>
+                  )}
                 </td>
                 {isGroupAudit && (
                   <td className="px-2 py-0.5">

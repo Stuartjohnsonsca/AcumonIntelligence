@@ -132,9 +132,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             description: a.Name || '',
             currentYear: cyAmount,
             priorYear: pyAmount,
+            // Category from Xero account type (informational only — not FS classification)
             category: typeMap[accountType] || accountType || undefined,
-            fsLevel: typeMap[accountType] || a.Class || '',
-            fsStatement: statementMap[accountType] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
+            // FS fields left blank — populated by AI Classification from firm taxonomy
           } as any);
         }
 
