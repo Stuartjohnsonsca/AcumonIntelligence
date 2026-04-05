@@ -142,6 +142,12 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   }
 
   function handleRenewConnection() {
+    // For Xero (OAuth), redirect directly with returnUrl so user comes back here
+    if (connection?.system?.toLowerCase() === 'xero') {
+      const returnUrl = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${returnUrl}`;
+      return;
+    }
     setShowConnectorModal(true);
   }
 

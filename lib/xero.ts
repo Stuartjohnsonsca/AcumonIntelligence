@@ -16,6 +16,7 @@ const SCOPES = [
   'accounting.banktransactions.read',
   'accounting.manualjournals.read',
   'accounting.settings.read',
+  'accounting.reports.read',
   'accounting.contacts.read',
   'accounting.attachments.read',
 ].join(' ');
@@ -236,6 +237,70 @@ export async function getAccounts(clientId: string, maxRetries?: number): Promis
   if (!res.ok) throw new Error(`Xero Accounts fetch failed (${res.status})`);
   const data = await res.json();
   return data.Accounts ?? [];
+}
+
+// ─── Trial Balance Report ────────────────────────────────────────────────────
+
+export interface XeroTBEntry {
+  accountCode: string;
+  accountName: string;
+  debit: number;
+  credit: number;
+}
+
+/**
+ * Fetch trial balance report from Xero as of a given date.
+ * Returns a Map keyed by account code with debit/credit amounts.
+ * Gracefully returns empty map if the scope is missing (403).
+ */
+export async function getTrialBalanceReport(
+  clientId: string,
+  date: string, // YYYY-MM-DD
+): Promise<Map<string, XeroTBEntry>> {
+  const result = new Map<string, XeroTBEntry>();
+  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+
+  const res = await xeroFetchWithRetry(
+    `${XERO_API_BASE}/Reports/TrialBalance?date=${date}`,
+    {
+      Authorization: `Bearer ${accessToken}`,
+      'Xero-Tenant-Id': tenantId,
+      Accept: 'application/json',
+    },
+  );
+
+  if (res.status === 403) {
+    console.warn('[Xero] 403 on Reports/TrialBalance — missing accounting.reports.read scope. Reconnect Xero to grant.');
+    return result;
+  }
+  if (!res.ok) {
+    console.warn(`[Xero] Reports/TrialBalance failed (${res.status}) for date ${date}`);
+    return result;
+  }
+
+  const data = await res.json();
+  const report = data.Reports?.[0];
+  if (!report?.Rows) return result;
+
+  for (const section of report.Rows) {
+    // Sections contain nested rows; top-level rows are headers/summaries
+    const rows = section.RowType === 'Section' ? (section.Rows ?? []) : [];
+    for (const row of rows) {
+      if (row.RowType !== 'Row') continue;
+      const cells = row.Cells ?? [];
+      if (cells.length < 4) continue;
+      const code = (cells[0]?.Value ?? '').trim();
+      if (!code) continue; // skip section totals
+      result.set(code, {
+        accountCode: code,
+        accountName: (cells[1]?.Value ?? '').trim(),
+        debit: parseFloat(cells[2]?.Value) || 0,
+        credit: parseFloat(cells[3]?.Value) || 0,
+      });
+    }
+  }
+
+  return result;
 }
 
 // ─── Tax Rates ───────────────────────────────────────────────────────────────
