@@ -3,6 +3,8 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { startExecution } from '@/lib/flow-engine';
 
+export const maxDuration = 120; // Allow up to 2 minutes for AI extraction steps
+
 // POST: Start a new test execution
 export async function POST(req: NextRequest, { params }: { params: Promise<{ engagementId: string }> }) {
   const { engagementId } = await params;
