@@ -219,17 +219,61 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
 
             {/* Document picker */}
             {linking === doc.key && (
-              <div className="border-t border-slate-200 bg-white px-4 py-3 max-h-40 overflow-auto">
-                <p className="text-xs text-slate-500 mb-2">Select from repository:</p>
-                {repoDocs.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic">No documents. Upload in Documents tab first.</p>
-                ) : repoDocs.map(rd => (
-                  <button key={rd.id} onClick={() => linkDocument(doc.key, rd.id)}
-                    className="w-full text-left px-3 py-2 text-xs rounded hover:bg-blue-50 flex items-center justify-between border border-slate-100 mb-1">
-                    <span className="text-slate-700">{rd.documentName}</span>
-                    {rd.uploadedDate && <span className="text-[10px] text-slate-400">{new Date(rd.uploadedDate).toLocaleDateString('en-GB')}</span>}
-                  </button>
-                ))}
+              <div className="border-t border-slate-200 bg-white px-4 py-3">
+                {/* Upload directly */}
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-xs text-slate-500">Upload or select:</p>
+                  <label className="inline-flex items-center gap-1 text-xs px-2.5 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 cursor-pointer font-medium">
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                    Upload File
+                    <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip" className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        // Create document record
+                        const createRes = await fetch(`/api/engagements/${engagementId}/documents`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'request', documentName: file.name }),
+                        });
+                        if (!createRes.ok) return;
+                        const { document: newDoc } = await createRes.json();
+                        // Upload file to blob storage
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        formData.append('documentId', newDoc.id);
+                        formData.append('engagementId', engagementId);
+                        const uploadRes = await fetch('/api/upload/document', { method: 'POST', body: formData });
+                        if (uploadRes.ok) {
+                          const uploadData = await uploadRes.json();
+                          await fetch(`/api/engagements/${engagementId}/documents`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'upload', documentId: newDoc.id, storagePath: uploadData.url || uploadData.path }),
+                          });
+                          // Link the newly uploaded doc
+                          linkDocument(doc.key, newDoc.id);
+                          // Refresh repo docs
+                          const rdRes = await fetch(`/api/engagements/${engagementId}/documents`);
+                          if (rdRes.ok) setRepoDocs((await rdRes.json()).documents || []);
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                  <button onClick={() => setLinking(null)} className="text-xs text-slate-400 hover:text-slate-600 ml-auto">Cancel</button>
+                </div>
+                {/* Or select from existing */}
+                {repoDocs.length > 0 && (
+                  <div className="max-h-32 overflow-auto">
+                    <p className="text-[10px] text-slate-400 mb-1">Or select from repository:</p>
+                    {repoDocs.map(rd => (
+                      <button key={rd.id} onClick={() => linkDocument(doc.key, rd.id)}
+                        className="w-full text-left px-3 py-2 text-xs rounded hover:bg-blue-50 flex items-center justify-between border border-slate-100 mb-1">
+                        <span className="text-slate-700">{rd.documentName}</span>
+                        {rd.uploadedDate && <span className="text-[10px] text-slate-400">{new Date(rd.uploadedDate).toLocaleDateString('en-GB')}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
