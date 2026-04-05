@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch } from 'lucide-react';
 import { TestExecutionPanel } from './TestExecutionPanel';
+import { TestResultsPanel } from './TestResultsPanel';
 import { ExecutionFlowViewer } from './ExecutionFlowViewer';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
 import { assertionShortLabel } from '@/types/methodology';
@@ -1068,6 +1069,24 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 assertions={(test as any).assertions || []}
                                 onClose={() => setActiveExecution(null)}
                                 onConclusionChange={(c) => setTestConclusions(prev => ({ ...prev, [testKey]: c }))}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                        {/* Results Panel — shown for completed tests with results */}
+                        {isExecutionOpen && conc && conc !== 'pending' && !test.isIngest && (
+                          <tr>
+                            <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-white">
+                              <TestResultsPanel
+                                engagementId={engagementId}
+                                executionId={null}
+                                testDescription={test.description}
+                                fsLine={activeLevel || activeStatement}
+                                accountCode={row.accountCode}
+                                outputFormat={test.outputFormat || 'three_section_no_sampling'}
+                                conclusion={conc}
+                                executionStatus="completed"
+                                executionOutput={null}
                               />
                             </td>
                           </tr>
