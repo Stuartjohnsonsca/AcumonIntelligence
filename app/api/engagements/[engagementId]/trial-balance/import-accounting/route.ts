@@ -102,13 +102,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
         console.log(`[TB Import] Chart of accounts: ${accounts.length} total, ${accounts.filter((a: any) => a.Status === 'ACTIVE').length} active`);
 
-        // Credit-normal account types: use credit - debit so values are positive
-        const creditNormalTypes = new Set(['REVENUE', 'OTHERINCOME', 'CURRLIAB', 'TERMLIAB', 'EQUITY']);
-        function netBalance(entry: { debit: number; credit: number } | undefined, accountType: string): number {
+        // TB sign convention: debit = positive, credit = negative.
+        // This ensures the TB always totals to zero (sum of all debits = sum of all credits).
+        function netBalance(entry: { debit: number; credit: number } | undefined): number {
           if (!entry) return 0;
-          return creditNormalTypes.has(accountType)
-            ? entry.credit - entry.debit   // Revenue/liabilities/equity: positive when credit balance
-            : entry.debit - entry.credit;  // Assets/expenses: positive when debit balance
+          return entry.debit - entry.credit;
         }
 
         // ── Chart-of-accounts-driven: import EVERY account, look up exact TB values ──
@@ -126,8 +124,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
           if (cy || py) matched++;
 
-          const cyAmount = netBalance(cy, accountType);
-          const pyAmount = netBalance(py, accountType);
+          const cyAmount = netBalance(cy);
+          const pyAmount = netBalance(py);
 
           tbRows.push({
             accountCode,
