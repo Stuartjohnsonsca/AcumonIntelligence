@@ -90,6 +90,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         console.log(`[TB Import] Chart of accounts: ${accounts.length} total, ${accounts.filter((a: any) => a.Status === 'ACTIVE').length} active`);
         console.log(`[TB Import] TB report entries — CY: ${currentTB.size}, PY: ${priorTB.size}`);
 
+        // Credit-normal account types: use credit - debit so values are positive
+        const creditNormalTypes = new Set(['REVENUE', 'OTHERINCOME', 'CURRLIAB', 'TERMLIAB', 'EQUITY']);
+        function netBalance(entry: { debit: number; credit: number } | undefined, accountType: string): number {
+          if (!entry) return 0;
+          return creditNormalTypes.has(accountType)
+            ? entry.credit - entry.debit   // Revenue/liabilities/equity: positive when credit balance
+            : entry.debit - entry.credit;  // Assets/expenses: positive when debit balance
+        }
+
         // Match TB report amounts to accounts by AccountID, falling back to name
         let matchedById = 0, matchedByName = 0, unmatched = 0;
         const processedAccountIds = new Set<string>();
@@ -98,6 +107,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           .map((a: any) => {
             const code = a.Code || '';
             const accountId = a.AccountID || '';
+            const accountType = a.Type || '';
             if (accountId) processedAccountIds.add(accountId);
 
             // Try matching by AccountID first, then by name
@@ -115,11 +125,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             return {
               accountCode: code,
               description: a.Name || '',
-              currentYear: cy ? cy.debit - cy.credit : 0,
-              priorYear: py ? py.debit - py.credit : 0,
-              category: a.Type || '',
-              fsLevel: typeMap[a.Type] || a.Class || '',
-              fsStatement: statementMap[a.Type] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
+              currentYear: netBalance(cy, accountType),
+              priorYear: netBalance(py, accountType),
+              category: accountType,
+              fsLevel: typeMap[accountType] || a.Class || '',
+              fsStatement: statementMap[accountType] || (a.Class === 'ASSET' || a.Class === 'LIABILITY' || a.Class === 'EQUITY' ? 'Balance Sheet' : 'Profit & Loss'),
             };
           })
           .filter((r: any) => r.accountCode && (r.currentYear !== 0 || r.priorYear !== 0));
@@ -127,14 +137,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         console.log(`[TB Import] Matching: ${matchedById} by ID, ${matchedByName} by name, ${unmatched} unmatched. Result: ${tbRows.length} rows with balances`);
 
         // Include accounts from TB reports that aren't in the chart of accounts
+        // (no account type available, so use absolute value of whichever column has the amount)
         for (const [accountId, entry] of currentTB) {
           if (processedAccountIds.has(accountId)) continue;
           const py = priorTB.get(accountId);
           tbRows.push({
             accountCode: entry.accountName,
             description: entry.accountName,
-            currentYear: entry.debit - entry.credit,
-            priorYear: py ? py.debit - py.credit : 0,
+            currentYear: entry.debit || entry.credit,
+            priorYear: py ? (py.debit || py.credit) : 0,
           });
           processedAccountIds.add(accountId);
         }
@@ -144,7 +155,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             accountCode: entry.accountName,
             description: entry.accountName,
             currentYear: 0,
-            priorYear: entry.debit - entry.credit,
+            priorYear: entry.debit || entry.credit,
           });
         }
         break;
