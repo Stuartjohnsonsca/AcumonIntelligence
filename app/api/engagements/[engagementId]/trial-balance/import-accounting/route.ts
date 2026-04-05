@@ -271,22 +271,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       return NextResponse.json({ error: 'No accounts found in accounting system' }, { status: 400 });
     }
 
-    // Get existing rows to avoid duplicates
+    // Get existing rows — match on originalAccountCode (never changes after first import)
+    // so re-imports update even if user has edited accountCode
     const existing = await prisma.auditTBRow.findMany({
       where: { engagementId },
-      select: { accountCode: true },
+      select: { id: true, accountCode: true, originalAccountCode: true },
     });
-    const existingCodes = new Set(existing.map(r => r.accountCode));
+    // Build lookup: import code → existing row (check originalAccountCode first, then accountCode)
+    const existingByOriginal = new Map<string, typeof existing[0]>();
+    const existingByCode = new Map<string, typeof existing[0]>();
+    for (const r of existing) {
+      if (r.originalAccountCode) existingByOriginal.set(r.originalAccountCode, r);
+      existingByCode.set(r.accountCode, r);
+    }
 
-    // Create new rows or update balances on existing rows
+    // Update existing rows or create new ones
     let created = 0;
     let updated = 0;
     let maxSort = existing.length;
     for (const row of tbRows) {
-      if (existingCodes.has(row.accountCode)) {
-        // Update balances on existing row (preserve user-edited metadata)
-        await prisma.auditTBRow.updateMany({
-          where: { engagementId, accountCode: row.accountCode },
+      const match = existingByOriginal.get(row.accountCode) || existingByCode.get(row.accountCode);
+      if (match) {
+        // Update balances on existing row (preserve user-edited accountCode, metadata, etc.)
+        await prisma.auditTBRow.update({
+          where: { id: match.id },
           data: {
             currentYear: row.currentYear ?? null,
             priorYear: row.priorYear ?? null,
