@@ -146,6 +146,7 @@ async function buildContext(
       clientName: engagement.client.clientName,
       periodStart: engagement.period.startDate.toISOString().split('T')[0],
       periodEnd: engagement.period.endDate.toISOString().split('T')[0],
+      periodEndPlus2M: (() => { const d = new Date(engagement.period.endDate); d.setMonth(d.getMonth() + 2); return d.toISOString().split('T')[0]; })(),
       materiality: matData.overallMateriality || 0,
       performanceMateriality: matData.performanceMateriality || 0,
       clearlyTrivial: matData.clearlyTrivial || 0,
@@ -1006,6 +1007,9 @@ async function handleForEach(
       }
     } else if (collection === 'evidence_files') {
       items = prevOutput?.parsedFiles || prevOutput?.files || [];
+    } else if (collection === 'tb_accounts') {
+      // TB account codes for the FS line — one item per account
+      items = (ctx.tb as any)?.accounts || [];
     } else {
       // Generic: try to get array data from previous node
       items = Array.isArray(prevOutput) ? prevOutput :
