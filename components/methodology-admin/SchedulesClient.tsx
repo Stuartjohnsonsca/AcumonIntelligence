@@ -232,29 +232,30 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
               {triggerSaved ? 'Saved' : 'Save'}
             </Button>
           </div>
-          <div className="p-4 space-y-2">
+          <div className="p-4 space-y-1.5">
             {actionTriggers.map((trigger, i) => (
-              <div key={i} className="flex items-center space-x-2 group">
-                <span className="text-xs text-slate-400 w-6 text-right">{i + 1}.</span>
-                <div className="flex-1 flex items-center gap-2 bg-white border border-slate-200 rounded px-3 py-2">
+              <div key={i} className="flex items-center gap-3 group">
+                <span className="text-xs text-slate-400 w-5 text-right font-mono">{i + 1}.</span>
+                <div className="flex-1 flex items-center gap-2 bg-white border border-slate-200 rounded-md px-3 py-2">
                   <Zap className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
                   <span className="text-sm text-slate-700">{trigger}</span>
                 </div>
-                <div className="opacity-0 group-hover:opacity-100 flex space-x-1 transition-opacity">
+                <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity w-16 justify-end">
                   {i > 0 && (
-                    <button onClick={() => handleReorderTrigger(i, i - 1)} className="text-slate-400 hover:text-slate-600 text-xs px-1">↑</button>
+                    <button onClick={() => handleReorderTrigger(i, i - 1)} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded">↑</button>
                   )}
                   {i < actionTriggers.length - 1 && (
-                    <button onClick={() => handleReorderTrigger(i, i + 1)} className="text-slate-400 hover:text-slate-600 text-xs px-1">↓</button>
+                    <button onClick={() => handleReorderTrigger(i, i + 1)} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded">↓</button>
                   )}
-                  <button onClick={() => handleRemoveTrigger(i)} className="text-red-400 hover:text-red-600">
-                    <X className="h-4 w-4" />
+                  <button onClick={() => handleRemoveTrigger(i)} className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded">
+                    <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
             ))}
 
-            <div className="flex items-center space-x-2 pt-2 border-t mt-3">
+            <div className="flex items-center gap-3 pt-3 border-t mt-3">
+              <span className="w-5"></span>
               <input
                 type="text"
                 value={newTrigger}
@@ -263,7 +264,7 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
                 className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 onKeyDown={(e) => e.key === 'Enter' && handleAddTrigger()}
               />
-              <Button onClick={handleAddTrigger} size="sm" variant="outline">
+              <Button onClick={handleAddTrigger} size="sm" variant="outline" className="w-16">
                 <Plus className="h-4 w-4 mr-1" /> Add
               </Button>
             </div>
