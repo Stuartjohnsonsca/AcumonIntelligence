@@ -78,7 +78,18 @@ export async function POST(
   // Build the prompt
   const rowDescriptions = rows
     .slice(0, 50)
-    .map((r: any) => `[${r.index}] Code: "${r.accountCode || ''}" | Desc: "${r.description || ''}" | Amount: ${r.currentYear ?? 'nil'}`)
+    .map((r: any) => {
+      let line = `[${r.index}] Code: "${r.accountCode || ''}" | Desc: "${r.description || ''}" | Amount: ${r.currentYear ?? 'nil'}`;
+      // Include accounting system metadata if available (e.g. Xero Type, Class)
+      if (r.sourceMetadata) {
+        const meta = r.sourceMetadata;
+        if (meta.xeroType) line += ` | Type: ${meta.xeroType}`;
+        if (meta.xeroClass) line += ` | Class: ${meta.xeroClass}`;
+        if (meta.xeroDescription) line += ` | Detail: ${meta.xeroDescription}`;
+      }
+      if (r.category) line += ` | Category: ${r.category}`;
+      return line;
+    })
     .join('\n');
 
   const systemPrompt = `You are a financial statement classification expert for UK statutory audits.

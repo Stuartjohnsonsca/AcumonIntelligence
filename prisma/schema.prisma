@@ -1937,6 +1937,7 @@ model AuditTBRow {
   fsStatement    String? @map("fs_statement")
   groupName      String? @map("group_name") // Only display for GROUP audit type
   aiConfidence   Int?    @map("ai_confidence") // 0-100 confidence of AI classification
+  sourceMetadata Json?   @map("source_metadata") // Additional data from accounting system (e.g. { xeroType, xeroClass })
   sortOrder      Int     @default(0) @map("sort_order")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)

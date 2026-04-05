@@ -135,6 +135,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             // Category from Xero account type (informational only — not FS classification)
             category: typeMap[accountType] || accountType || undefined,
             // FS fields left blank — populated by AI Classification from firm taxonomy
+            // Store additional accounting system metadata to help AI classification
+            sourceMetadata: { xeroType: accountType, xeroClass: a.Class || '', xeroDescription: a.Description || '' },
           } as any);
         }
 
@@ -181,6 +183,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           data: {
             currentYear: row.currentYear ?? null,
             priorYear: row.priorYear ?? null,
+            sourceMetadata: (row as any).sourceMetadata ?? undefined,
           },
         });
         updated++;
@@ -196,6 +199,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
             category: (row as any).category ?? null,
             fsLevel: (row as any).fsLevel ?? null,
             fsStatement: (row as any).fsStatement ?? null,
+            sourceMetadata: (row as any).sourceMetadata ?? null,
             sortOrder: ++maxSort,
           },
         });
