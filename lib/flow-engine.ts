@@ -341,6 +341,97 @@ async function handleUsePriorEvidence(
   };
 }
 
+// ─── Bank Statement PDF Extractor ───
+// Downloads uploaded bank statement PDFs and extracts transactions via AI.
+// Looks for uploads in previous node output (from use_prior_evidence) or context.
+async function handleBankStatementExtract(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  console.log(`[flow-engine] Bank statement extract for "${node.data.label}"`);
+
+  // Find uploads from previous node output or context
+  const prevNodeId = getPreviousNodeId(flow, node.id);
+  const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
+  const uploads: { id?: string; fileName: string; storagePath: string; containerName: string }[] =
+    prevOutput?.uploads || [];
+
+  if (uploads.length === 0) {
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: { extracted: false, message: 'No uploaded files found from previous node', statements: [], allTransactions: [] },
+    };
+  }
+
+  const { downloadBlob } = await import('@/lib/azure-blob');
+  const { extractBankStatementFromBase64 } = await import('@/lib/ai-extractor');
+
+  const statements: any[] = [];
+  const allTransactions: any[] = [];
+  let totalTokens = 0;
+
+  for (const upload of uploads) {
+    const fname = (upload.fileName || '').toLowerCase();
+    if (!fname.endsWith('.pdf') && !fname.endsWith('.png') && !fname.endsWith('.jpg') && !fname.endsWith('.jpeg')) {
+      console.log(`[flow-engine] Skipping non-PDF/image file: ${upload.fileName}`);
+      continue;
+    }
+
+    try {
+      const buffer = await downloadBlob(upload.storagePath, upload.containerName || 'upload-inbox');
+      const base64 = buffer.toString('base64');
+      const mimeType = fname.endsWith('.pdf') ? 'application/pdf'
+        : fname.endsWith('.png') ? 'image/png' : 'image/jpeg';
+
+      console.log(`[flow-engine] Extracting bank statement: ${upload.fileName} (${buffer.length} bytes)`);
+      const result = await extractBankStatementFromBase64(base64, mimeType, upload.fileName);
+
+      statements.push({
+        fileName: upload.fileName,
+        bankName: result.bankName,
+        sortCode: result.sortCode,
+        accountNumber: result.accountNumber,
+        statementDate: result.statementDate,
+        openingBalance: result.openingBalance,
+        closingBalance: result.closingBalance,
+        currency: result.currency,
+        transactionCount: result.transactions.length,
+      });
+
+      // Add file reference to each transaction for traceability
+      for (const txn of result.transactions) {
+        allTransactions.push({ ...txn, sourceFile: upload.fileName, accountNumber: result.accountNumber });
+      }
+
+      totalTokens += (result.usage?.totalTokens || 0);
+      console.log(`[flow-engine] Extracted ${result.transactions.length} transactions from ${upload.fileName}`);
+    } catch (err) {
+      console.error(`[flow-engine] Failed to extract ${upload.fileName}:`, (err as Error).message);
+      statements.push({ fileName: upload.fileName, error: (err as Error).message, transactionCount: 0 });
+    }
+  }
+
+  console.log(`[flow-engine] Bank statement extract complete: ${statements.length} files, ${allTransactions.length} total transactions`);
+
+  return {
+    action: 'continue',
+    nextNodeId: getNextNodeId(flow, node.id),
+    output: {
+      extracted: true,
+      statements,
+      allTransactions,
+      transactionCount: allTransactions.length,
+      fileCount: statements.length,
+      dataTable: allTransactions, // alias for downstream forEach/AI nodes
+      aiTokensUsed: totalTokens,
+    },
+  };
+}
+
 // ─── Accounting System Extractor ───
 // Calls the connected accounting system API directly (no AI)
 async function handleAccountingExtract(
@@ -1429,6 +1520,8 @@ export async function processNextNode(executionId: string): Promise<void> {
           // Check for system-level input types that bypass AI/Client/Team routing
           if (currentNode.data?.inputType === 'use_prior_evidence') {
             result = await handleUsePriorEvidence(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'bank_statement_extract') {
+            result = await handleBankStatementExtract(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'accounting_extract') {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'ai') {

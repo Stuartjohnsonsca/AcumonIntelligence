@@ -75,6 +75,7 @@ const INPUT_TYPES = [
   { value: 'evidence_match', label: 'Evidence Matching' },
   { value: 'ai_analysis', label: 'AI Analysis' },
   { value: 'accounting_extract', label: 'Accounting System Extract' },
+  { value: 'bank_statement_extract', label: 'Bank Statement PDF Extract' },
   { value: 'use_prior_evidence', label: 'Use Prior Evidence (by tag)' },
 ];
 
