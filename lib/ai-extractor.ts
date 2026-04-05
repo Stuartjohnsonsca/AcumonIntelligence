@@ -628,109 +628,148 @@ async function extractFromText(text: string, pageCount: number, fileName: string
   return parseResult(result, usedModel, fileName);
 }
 
-// Extract from scanned PDF by splitting into single-page PDFs and using vision model
+// Extract from scanned PDF by splitting each page into thirds for faster AI processing.
+// Each third is a cropped PDF sent separately to the vision model, then results are
+// merged with deduplication checks (overlapping transactions between sections).
 async function extractFromScannedPdf(pdfBuffer: Buffer, fileName: string): Promise<BankStatementResult> {
   const { PDFDocument } = await import('pdf-lib');
   const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
   const pageCount = pdfDoc.getPageCount();
-  const maxPages = Math.min(pageCount, 10);
+  const maxPages = Math.min(pageCount, 20); // Handle up to 20 pages
+  const THIRDS = 3; // Split each page into 3 vertical sections
+  const totalChunks = maxPages * THIRDS;
 
-  console.log(`[BankToTB:AI] Processing ${maxPages} pages from scanned PDF: ${fileName}`);
+  console.log(`[BankToTB:AI] Processing ${maxPages} pages × ${THIRDS} thirds = ${totalChunks} chunks from: ${fileName}`);
 
   const allTransactions: { date: string; description: string; reference: string; debit: number; credit: number; balance: number }[] = [];
   let metadata: Record<string, unknown> = {};
   let lastUsage: ReturnType<typeof extractUsageMetadata> | null = null;
   let lastModel = '';
 
+  const PDF_VISION_MODELS = [
+    'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+    ...selectModels(EXTRACTION_PRIORITIES, true).filter(m => m !== 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8'),
+  ];
+
   for (let pi = 0; pi < maxPages; pi++) {
-    // Create a single-page PDF
-    const singlePageDoc = await PDFDocument.create();
-    const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [pi]);
-    singlePageDoc.addPage(copiedPage);
-    const singlePageBytes = await singlePageDoc.save();
-    const base64Pdf = Buffer.from(singlePageBytes).toString('base64');
+    const page = pdfDoc.getPage(pi);
+    const { width, height } = page.getSize();
+    const thirdHeight = height / THIRDS;
 
-    const visionPrompt = pi === 0
-      ? BANK_STATEMENT_PROMPT
-      : `Continue extracting transactions from this bank statement page (page ${pi + 1}). Extract bankName, sortCode, accountNumber, statementDate, statementPage if visible. Return ONLY valid JSON with the same format as before.`;
+    for (let ti = 0; ti < THIRDS; ti++) {
+      const chunkNum = pi * THIRDS + ti + 1;
+      const isFirst = pi === 0 && ti === 0;
 
-    type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
-    const contentParts: ContentPart[] = [
-      { type: 'image_url', image_url: { url: `data:application/pdf;base64,${base64Pdf}` } },
-      { type: 'text', text: visionPrompt },
-    ];
+      // Create a cropped single-page PDF for this third
+      // Crop from top: third 0 = top, third 1 = middle, third 2 = bottom
+      // Add 5% overlap between sections to catch split transactions
+      const overlap = thirdHeight * 0.05;
+      const cropBottom = height - thirdHeight * (ti + 1) - (ti < THIRDS - 1 ? overlap : 0);
+      const cropTop = height - thirdHeight * ti + (ti > 0 ? overlap : 0);
 
-    // Llama-3.2-90B-Vision-Instruct-Turbo handles vision/PDF input
-    // Put it first, then fall back to other vision models
-    const PDF_VISION_MODELS = [
-      'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
-      ...selectModels(EXTRACTION_PRIORITIES, true).filter(m => m !== 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8'),
-    ];
-    let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+      const croppedDoc = await PDFDocument.create();
+      const [copiedPage] = await croppedDoc.copyPages(pdfDoc, [pi]);
+      copiedPage.setCropBox(0, Math.max(0, cropBottom), width, Math.min(height, cropTop));
+      croppedDoc.addPage(copiedPage);
+      const croppedBytes = await croppedDoc.save();
+      const base64Pdf = Buffer.from(croppedBytes).toString('base64');
 
-    for (const modelId of PDF_VISION_MODELS) {
-      try {
-        result = await retryWithBackoff(
-          () => client.chat.completions.create({
-            model: modelId,
-            messages: [{ role: 'user', content: contentParts }],
-            max_tokens: 8000,
-          }),
-          `bank-stmt:${fileName}:p${pi + 1}`,
-        );
-        lastModel = modelId;
-        console.log(`[BankToTB:AI] Vision page ${pi + 1}/${maxPages} success | file=${fileName} | model=${modelId}`);
-        break;
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        console.warn(`[BankToTB:AI] Vision model ${modelId} failed page ${pi + 1}: ${errMsg}`);
-        if (isModelUnavailableError(err)) { markModelUnavailable(modelId); continue; }
-        if (err instanceof Error && err.message.includes('400')) { continue; }
-        // Don't throw — try next model
+      const visionPrompt = isFirst
+        ? BANK_STATEMENT_PROMPT
+        : `Extract transactions from this section of a bank statement (page ${pi + 1}, section ${ti + 1}/${THIRDS}). This may be a partial view — extract whatever transactions are visible. Also extract bankName, sortCode, accountNumber if visible. Return ONLY valid JSON in the same format.`;
+
+      type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
+      const contentParts: ContentPart[] = [
+        { type: 'image_url', image_url: { url: `data:application/pdf;base64,${base64Pdf}` } },
+        { type: 'text', text: visionPrompt },
+      ];
+
+      let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+
+      for (const modelId of PDF_VISION_MODELS) {
+        try {
+          result = await retryWithBackoff(
+            () => client.chat.completions.create({
+              model: modelId,
+              messages: [{ role: 'user', content: contentParts }],
+              max_tokens: 4000,
+            }),
+            `bank-stmt:${fileName}:p${pi + 1}t${ti + 1}`,
+          );
+          lastModel = modelId;
+          console.log(`[BankToTB:AI] Chunk ${chunkNum}/${totalChunks} (p${pi + 1}s${ti + 1}) success | ${fileName} | ${modelId}`);
+          break;
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.warn(`[BankToTB:AI] ${modelId} failed chunk ${chunkNum}: ${errMsg}`);
+          if (isModelUnavailableError(err)) { markModelUnavailable(modelId); continue; }
+          if (err instanceof Error && err.message.includes('400')) { continue; }
+        }
       }
-    }
 
-    if (!result) {
-      console.warn(`[BankToTB:AI] All vision models failed for page ${pi + 1} of ${fileName} — skipping`);
-      continue;
-    }
+      if (!result) {
+        console.warn(`[BankToTB:AI] All models failed for chunk ${chunkNum} — skipping`);
+        continue;
+      }
 
-    lastUsage = extractUsageMetadata(result);
-    const text = result.choices[0]?.message?.content || '';
-    const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/) || cleaned.match(/(\{[\s\S]*\})/);
+      lastUsage = extractUsageMetadata(result);
+      const text = result.choices[0]?.message?.content || '';
+      const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/) || cleaned.match(/(\{[\s\S]*\})/);
 
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[1].trim());
-        if (pi === 0) {
-          metadata = { ...parsed };
-          delete metadata.transactions;
-        }
-        if (Array.isArray(parsed.transactions)) {
-          for (const t of parsed.transactions) {
-            allTransactions.push({
-              date: String(t.date || ''),
-              description: String(t.description || ''),
-              reference: String(t.reference || ''),
-              debit: Number(t.debit) || 0,
-              credit: Number(t.credit) || 0,
-              balance: Number(t.balance) || 0,
-            });
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1].trim());
+          if (isFirst) {
+            metadata = { ...parsed };
+            delete metadata.transactions;
+          } else if (!metadata.bankName && parsed.bankName) {
+            metadata.bankName = parsed.bankName;
+            if (parsed.sortCode) metadata.sortCode = parsed.sortCode;
+            if (parsed.accountNumber) metadata.accountNumber = parsed.accountNumber;
           }
-        }
-      } catch { /* skip malformed JSON from this page */ }
+          if (Array.isArray(parsed.transactions)) {
+            for (const t of parsed.transactions) {
+              allTransactions.push({
+                date: String(t.date || ''),
+                description: String(t.description || ''),
+                reference: String(t.reference || ''),
+                debit: Number(t.debit) || 0,
+                credit: Number(t.credit) || 0,
+                balance: Number(t.balance) || 0,
+              });
+            }
+          }
+        } catch { /* skip malformed JSON */ }
+      }
     }
   }
 
-  if (allTransactions.length === 0) {
-    throw new Error(`[bank-stmt:${fileName}] No transactions extracted from ${maxPages} pages. The PDF may be encrypted or in an unsupported format.`);
+  // Deduplicate overlapping transactions between thirds
+  // Two transactions are duplicates if they share the same date, description, and amount
+  const deduped: typeof allTransactions = [];
+  const seen = new Set<string>();
+  for (const txn of allTransactions) {
+    const key = `${txn.date}|${txn.description}|${txn.debit}|${txn.credit}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(txn);
+    }
+  }
+
+  const dupsRemoved = allTransactions.length - deduped.length;
+  if (dupsRemoved > 0) {
+    console.log(`[BankToTB:AI] Dedup: removed ${dupsRemoved} duplicate transactions from overlap between thirds`);
+  }
+
+  if (deduped.length === 0) {
+    throw new Error(`[bank-stmt:${fileName}] No transactions extracted from ${maxPages} pages (${totalChunks} chunks). The PDF may be encrypted or in an unsupported format.`);
   }
 
   const usage = lastUsage || { promptTokens: 0, completionTokens: 0, totalTokens: 0, model: lastModel, costUsd: 0 };
   usage.model = lastModel;
 
-  console.log(`[BankToTB:AI] Scanned PDF complete: ${allTransactions.length} txns from ${maxPages} pages | file=${fileName}`);
+  console.log(`[BankToTB:AI] Scanned PDF complete: ${deduped.length} txns from ${maxPages} pages (${totalChunks} chunks, ${dupsRemoved} dups removed) | ${fileName}`);
 
   return {
     bankName: (metadata.bankName as string) || null,
@@ -741,7 +780,7 @@ async function extractFromScannedPdf(pdfBuffer: Buffer, fileName: string): Promi
     openingBalance: metadata.openingBalance != null ? Number(metadata.openingBalance) : null,
     closingBalance: metadata.closingBalance != null ? Number(metadata.closingBalance) : null,
     currency: (metadata.currency as string) || null,
-    transactions: allTransactions,
+    transactions: deduped,
     usage,
   };
 }
