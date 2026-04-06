@@ -961,19 +961,28 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     tax: 0,
                     gross: item.amount || 0,
                   }))}
-                  evidenceDocs={evidence.map((ev, i) => ({
-                    sampleIndex: sampleItems.findIndex(s => s.id === ev.itemId),
-                    fileName: ev.fileName || '',
-                    docRef: ev.docRef || '',
-                    date: ev.date || '',
-                    seller: ev.seller || '',
-                    net: ev.net || 0,
-                    tax: ev.tax || 0,
-                    gross: ev.gross || 0,
-                    status: ev.status === 'uploaded' ? 'matched' as const : ev.status === 'missing' ? 'missing' as const : 'pending' as const,
-                  }))}
+                  evidenceDocs={evidence.map((ev, i) => {
+                    const si = ev.sampleIndex ?? sampleItems.findIndex(s => s.id === ev.itemId || s.ref === ev.itemId);
+                    return {
+                      sampleIndex: si >= 0 ? si : i,
+                      itemId: ev.itemId,
+                      fileName: ev.fileName || '',
+                      docRef: ev.docRef || '',
+                      date: ev.date || '',
+                      seller: ev.seller || '',
+                      description: (ev as any).description || '',
+                      net: ev.net || 0,
+                      tax: ev.tax || 0,
+                      gross: ev.gross || 0,
+                      status: ev.status === 'uploaded' ? 'matched' as const : ev.status === 'missing' ? 'missing' as const : ev.status || 'pending' as const,
+                      previewUrl: (ev as any).previewUrl || undefined,
+                      storagePath: (ev as any).storagePath || undefined,
+                      documentId: (ev as any).documentId || undefined,
+                      matchAssessment: (ev as any).matchAssessment || undefined,
+                    };
+                  })}
                   verificationResults={results.map(r => ({
-                    sampleIndex: sampleItems.findIndex(s => s.id === r.itemId),
+                    sampleIndex: r.sampleIndex ?? sampleItems.findIndex(s => s.id === r.itemId),
                     amountMatch: r.amountMatch as any,
                     dateMatch: r.dateMatch as any,
                     periodCheck: r.periodCheck as any,
@@ -1081,6 +1090,25 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     tolerableMisstatement={tolerableMisstatement}
                     onConclusionChange={(c) => onConclusionChange?.(c)}
                   />
+                )}
+
+                {/* Investigate More Items — for review_flagged tests that completed */}
+                {isReviewFlaggedTest && executionStatus === 'completed' && (
+                  <div className="border border-blue-200 rounded-lg p-3 bg-blue-50/30 space-y-2 mt-2">
+                    <div className="flex items-center gap-2">
+                      <Play className="h-4 w-4 text-blue-600" />
+                      <span className="text-sm font-medium text-blue-700">Investigate Additional Items</span>
+                    </div>
+                    <p className="text-xs text-slate-600">
+                      To investigate more items, click Reset &amp; Re-run below. You can then select additional rows from the population.
+                    </p>
+                    <button
+                      onClick={handleReset}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" /> Reset &amp; Re-run
+                    </button>
+                  </div>
                 )}
 
                 {/* Retry for failed executions */}
