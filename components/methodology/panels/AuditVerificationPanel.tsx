@@ -288,7 +288,14 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
   }
 
   const item = sampleItems[currentItemIndex];
-  const doc = item ? evidenceDocs.find(d => d.sampleIndex === currentItemIndex) : null;
+  const rawDoc = item ? evidenceDocs.find(d => d.sampleIndex === currentItemIndex) : null;
+  // Ensure preview URL exists — generate from storagePath or documentId if missing
+  const doc = rawDoc ? {
+    ...rawDoc,
+    previewUrl: rawDoc.previewUrl
+      || ((rawDoc as any).storagePath ? '/api/documents/preview?path=' + encodeURIComponent((rawDoc as any).storagePath) : undefined)
+      || ((rawDoc as any).documentId ? '/api/documents/preview?docId=' + (rawDoc as any).documentId : undefined),
+  } : null;
   const check = item ? verificationResults.find(r => r.sampleIndex === currentItemIndex) : null;
   const rowState = rowStates[currentItemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
 

@@ -214,6 +214,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           gross: evidenceGross,
           status: matchStatus,
           previewUrl,
+          storagePath: r.storagePath,
+          documentId: r.documentId,
           matchAssessment: r.matchAssessment,
           description: (inv?.LineItems || []).map((li: any) => li.Description || '').filter(Boolean).join('; ') || r.documentName || '',
         } as any);

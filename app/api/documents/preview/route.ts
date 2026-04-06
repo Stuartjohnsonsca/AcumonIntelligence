@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { generateSasUrl } from '@/lib/azure-blob';
+import { prisma } from '@/lib/db';
 
 /**
- * GET /api/documents/preview?path=documents/clientId/engId/file.pdf
+ * GET /api/documents/preview?path=...  or  ?docId=...
  * Returns a redirect to a time-limited SAS URL for the document.
  * SAS URL expires in 15 minutes.
  */
@@ -13,12 +14,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const path = req.nextUrl.searchParams.get('path');
-  if (!path) {
-    return NextResponse.json({ error: 'path parameter required' }, { status: 400 });
+  let path = req.nextUrl.searchParams.get('path');
+  const docId = req.nextUrl.searchParams.get('docId');
+  const containerName = req.nextUrl.searchParams.get('container') || 'upload-inbox';
+
+  // If docId provided, look up the storage path from the database
+  if (!path && docId) {
+    try {
+      const doc = await prisma.auditDocument.findUnique({
+        where: { id: docId },
+        select: { storagePath: true, containerName: true },
+      });
+      if (doc?.storagePath) {
+        path = doc.storagePath;
+      }
+    } catch {}
   }
 
-  const containerName = req.nextUrl.searchParams.get('container') || 'upload-inbox';
+  if (!path) {
+    return NextResponse.json({ error: 'path or docId parameter required' }, { status: 400 });
+  }
 
   try {
     const sasUrl = generateSasUrl(path, containerName, 15);
