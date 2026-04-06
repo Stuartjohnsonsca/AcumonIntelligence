@@ -745,9 +745,9 @@ export function FirmAssumptionsClient({
             {/* Add new pattern */}
             <div className="flex gap-2 items-end">
               <div className="flex-1">
-                <label className="text-[10px] text-slate-500 block mb-0.5">Keywords (e.g. bonus|incentive)</label>
+                <label className="text-[10px] text-slate-500 block mb-0.5">Keywords (plain words — comma or space separated)</label>
                 <input value={newLuPattern} onChange={e => setNewLuPattern(e.target.value)}
-                  placeholder="regex pattern" className="w-full border rounded px-2 py-1.5 text-xs font-mono" />
+                  placeholder="e.g. bonus, incentive, commission" className="w-full border rounded px-2 py-1.5 text-xs" />
               </div>
               <div className="flex-1">
                 <label className="text-[10px] text-slate-500 block mb-0.5">Category name</label>
@@ -761,7 +761,10 @@ export function FirmAssumptionsClient({
               </div>
               <button onClick={() => {
                 if (newLuPattern.trim() && newLuCategory.trim()) {
-                  setLuPatterns(prev => [...prev, { pattern: newLuPattern.trim(), category: newLuCategory.trim(), weight: newLuWeight }]);
+                  // Convert plain words to regex: "bonus, incentive, commission" → "bonus|incentive|commission"
+                  const words = newLuPattern.trim().split(/[,\s]+/).map(w => w.trim()).filter(Boolean);
+                  const regex = words.join('|');
+                  setLuPatterns(prev => [...prev, { pattern: regex, category: newLuCategory.trim(), weight: newLuWeight }]);
                   setNewLuPattern(''); setNewLuCategory(''); setNewLuWeight(15); setSaved(false);
                 }
               }} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
