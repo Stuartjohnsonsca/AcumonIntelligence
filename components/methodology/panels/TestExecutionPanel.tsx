@@ -135,17 +135,21 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
       if (step.output.selectedIndices?.length > 0) selectedIndices = step.output.selectedIndices;
     }
 
-    // Also check samplingResults from local state
+    // Also check samplingResults from local state (includes sampleItems from "Investigate" click)
     if (samplingResults?.selectedIndices?.length > 0 && selectedIndices.length === 0) {
       selectedIndices = samplingResults.selectedIndices;
     }
+    if ((samplingResults as any)?.sampleItems?.length > 0 && actualSampleItems.length === 0) {
+      actualSampleItems = (samplingResults as any).sampleItems;
+    }
 
     // Use actual sampleItems if available, otherwise fall back to index mapping
+    // Never fall through to entire population — that shows garbage before real data arrives
     const items = actualSampleItems.length > 0
       ? actualSampleItems
       : (selectedIndices.length > 0 && populationData.length > 0)
         ? selectedIndices.map(idx => populationData[idx]).filter(Boolean)
-        : (populationData.length > 0 && samplingCompleted) ? populationData : [];
+        : [];
 
     if (items.length > 0) {
       setSampleItems(items.map((item: any, i: number) => {
@@ -444,7 +448,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             executionStatus === 'running' ? 'bg-blue-100 text-blue-700' :
             executionStatus === 'failed' ? 'bg-red-100 text-red-700' :
             'bg-slate-100 text-slate-500'
-          }`}>{executionStatus === 'completed' ? 'Complete' : executionStatus === 'paused' ? `Paused${pauseReason ? ` (${pauseReason})` : ''}` : executionStatus === 'running' ? 'Running' : executionStatus === 'failed' ? 'Failed' : 'Not Started'}</span>
+          }`}>{executionStatus === 'completed' ? 'Complete' : executionStatus === 'paused' ? `Paused${pauseReason ? ` — ${pauseReason === 'portal_response' ? 'Awaiting client evidence' : pauseReason === 'sampling' ? 'Awaiting sample selection' : pauseReason === 'review_flagged' ? 'Awaiting review' : pauseReason === 'review' ? 'Awaiting review' : pauseReason.replace(/_/g, ' ')}` : ''}` : executionStatus === 'running' ? 'Running' : executionStatus === 'failed' ? 'Failed' : 'Not Started'}</span>
         </div>
         <div className="flex items-center gap-1.5">
           {(executionStatus === 'running' || executionStatus === 'paused') && (

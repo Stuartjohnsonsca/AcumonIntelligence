@@ -1005,19 +1005,30 @@ async function handleFetchEvidenceOrPortal(
 
     if (connection && new Date() <= connection.expiresAt && connection.system.toLowerCase() === 'xero' && (invoiceID || reference)) {
       try {
-        const { getInvoiceByNumber, getInvoiceById, downloadAttachment, getAttachmentsList } = await import('./xero');
+        console.log('[flow-engine] fetch_evidence_or_portal: Xero connected, looking up ' + (invoiceID ? 'ID:' + invoiceID : 'ref:' + reference));
+        const xeroLib = await import('./xero');
+        const getInvoiceByNumber = xeroLib.getInvoiceByNumber;
+        const getInvoiceById = xeroLib.getInvoiceById;
+        const downloadAttachment = xeroLib.downloadAttachment;
+        const getAttachmentsList = xeroLib.getAttachmentsList;
 
         let invoice: any = null;
 
         // 1. Best: use InvoiceID for exact match (unique, no ambiguity)
         if (invoiceID) {
           try {
+            console.log('[flow-engine] Fetching invoice by ID: ' + invoiceID);
             invoice = await getInvoiceById(engagement.clientId, invoiceID);
-          } catch { /* ID lookup failed — try by number */ }
+            if (invoice) console.log('[flow-engine] Found invoice by ID: ' + (invoice.InvoiceNumber || invoice.Reference) + ' £' + invoice.Total);
+            else console.log('[flow-engine] InvoiceID ' + invoiceID + ' returned null');
+          } catch (idErr) {
+            console.log('[flow-engine] InvoiceID lookup failed: ' + (idErr as Error).message);
+          }
         }
 
         // 2. Fallback: search by invoice number, verify by contact name
         if (!invoice && reference) {
+          console.log('[flow-engine] Trying by reference: ' + reference + ' (contact: ' + (loopItem.contact || 'unknown') + ')');
           const found = await getInvoiceByNumber(engagement.clientId, reference);
           if (found) {
             const foundContact = (found.Contact?.Name || '').toLowerCase().trim();
@@ -1188,7 +1199,7 @@ async function handleFetchEvidenceOrPortal(
           };
         }
       } catch (err) {
-        console.log(`[flow-engine] Xero invoice lookup failed for ${reference}: ${(err as Error).message}`);
+        console.error(`[flow-engine] Xero evidence retrieval FAILED for ref=${reference} invoiceID=${invoiceID}: ${(err as Error).message}\n${(err as Error).stack?.split('\n').slice(0, 3).join('\n')}`);
         // Fall through to portal request
       }
     }
