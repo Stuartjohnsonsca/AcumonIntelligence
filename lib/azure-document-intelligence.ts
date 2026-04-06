@@ -148,6 +148,27 @@ function parseAzureDIResult(result: any, fileName: string): BankStatementResult 
     }
   }
 
+  // Post-process: if dates are empty, try to extract from description or row text
+  const emptyDateCount = transactions.filter(t => !t.date).length;
+  if (emptyDateCount > 0 && emptyDateCount === transactions.length) {
+    console.log(`[AzureDI] All ${transactions.length} transactions have empty dates — attempting date inference`);
+    let lastDate = '';
+    for (const txn of transactions) {
+      // Try extracting a date pattern from the description
+      const descDateMatch = txn.description?.match(/(\d{1,2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*(\d{2,4})/i)
+        || txn.description?.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+      if (descDateMatch) {
+        txn.date = parseDate(descDateMatch[0]);
+        lastDate = txn.date;
+      } else if (lastDate) {
+        // Carry forward the last known date (many bank statements only show date on first txn of the day)
+        txn.date = lastDate;
+      }
+    }
+    const fixedCount = transactions.filter(t => t.date).length;
+    console.log(`[AzureDI] Date inference: fixed ${fixedCount}/${transactions.length} dates`);
+  }
+
   // If no table extraction worked, fall back to line-by-line text parsing
   if (transactions.length === 0 && result.content) {
     console.log(`[AzureDI] No tables found, falling back to text parsing for ${fileName}`);
@@ -195,22 +216,29 @@ function extractTableHeaders(table: any): string[] {
 }
 
 function looksLikeTransactionTable(headers: string[]): boolean {
-  const joined = headers.join(' ');
-  return (joined.includes('date') || joined.includes('transaction')) &&
-    (joined.includes('debit') || joined.includes('credit') || joined.includes('amount') || joined.includes('balance'));
+  const joined = headers.join(' ').toLowerCase();
+  const hasDate = joined.includes('date') || joined.includes('dt') || joined.includes('posted') || joined.includes('value');
+  const hasAmount = joined.includes('debit') || joined.includes('credit') || joined.includes('amount') || joined.includes('balance') || joined.includes('paid') || joined.includes('money');
+  const hasDesc = joined.includes('description') || joined.includes('detail') || joined.includes('narrative') || joined.includes('particular') || joined.includes('transaction');
+  // Need at least amount column and either date or description
+  return hasAmount && (hasDate || hasDesc);
 }
 
 function mapColumns(headers: string[]): { date?: number; description?: number; reference?: number; debit?: number; credit?: number; balance?: number; amount?: number } {
   const map: any = {};
   headers.forEach((h, i) => {
-    if (h.includes('date')) map.date = i;
+    if (h.includes('date') || h.includes('dt') || h.includes('posted') || h.includes('value')) map.date = i;
     else if (h.includes('description') || h.includes('transaction') || h.includes('details') || h.includes('narrative') || h.includes('particular')) map.description = i;
-    else if (h.includes('reference') || h.includes('ref')) map.reference = i;
-    else if (h.includes('debit') || h.includes('payment') || h.includes('money out') || h.includes('withdrawal')) map.debit = i;
-    else if (h.includes('credit') || h.includes('receipt') || h.includes('money in') || h.includes('deposit')) map.credit = i;
+    else if (h.includes('reference') || h.includes('ref') || h.includes('cheque')) map.reference = i;
+    else if (h.includes('debit') || h.includes('payment') || h.includes('money out') || h.includes('withdrawal') || h.includes('paid out')) map.debit = i;
+    else if (h.includes('credit') || h.includes('receipt') || h.includes('money in') || h.includes('deposit') || h.includes('paid in')) map.credit = i;
     else if (h.includes('balance')) map.balance = i;
     else if (h.includes('amount')) map.amount = i;
   });
+  // If no explicit date column, check if column 0 content looks like dates
+  if (map.date === undefined && map.description !== 0) {
+    map.date = 0; // Many bank statements put date in first column without a header
+  }
   return map;
 }
 
