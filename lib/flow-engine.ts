@@ -936,6 +936,7 @@ async function handleAccountingExtract(
   ctx: ExecutionContext,
   executionId: string,
   engagementId: string,
+  cutoffMode: boolean = false,
 ): Promise<NodeResult> {
   const startTime = Date.now();
 
@@ -981,13 +982,25 @@ async function handleAccountingExtract(
     }
   }
 
-  // Get date range from engagement period
-  const dateFrom = engagement.period?.startDate
-    ? new Date(engagement.period.startDate).toISOString().split('T')[0]
-    : new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
-  const dateTo = engagement.period?.endDate
-    ? new Date(engagement.period.endDate).toISOString().split('T')[0]
-    : new Date().toISOString().split('T')[0];
+  // Get date range — cutoff mode uses a narrow window around period end
+  let dateFrom: string;
+  let dateTo: string;
+  if (cutoffMode && engagement.period?.endDate) {
+    const periodEnd = new Date(engagement.period.endDate);
+    const windowStart = new Date(periodEnd);
+    windowStart.setDate(windowStart.getDate() - 14); // 2 weeks before
+    const windowEnd = new Date(periodEnd);
+    windowEnd.setDate(windowEnd.getDate() + 14); // 2 weeks after
+    dateFrom = windowStart.toISOString().split('T')[0];
+    dateTo = windowEnd.toISOString().split('T')[0];
+  } else {
+    dateFrom = engagement.period?.startDate
+      ? new Date(engagement.period.startDate).toISOString().split('T')[0]
+      : new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
+    dateTo = engagement.period?.endDate
+      ? new Date(engagement.period.endDate).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0];
+  }
 
   try {
     let populationData: any[] = [];
@@ -1035,6 +1048,7 @@ async function handleAccountingExtract(
         accountCodes,
         dateRange: { from: dateFrom, to: dateTo },
         duration,
+        ...(cutoffMode && { cutoffMode: true, periodEnd: engagement.period?.endDate?.toISOString().split('T')[0] }),
       },
     };
   } catch (err: any) {
@@ -2448,8 +2462,8 @@ export async function processNextNode(executionId: string): Promise<void> {
             result = await handleProcessBankData(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'store_extracted_bank_data') {
             result = await handleStoreExtractedData(flow, currentNode, ctx, executionId, execution.engagementId);
-          } else if (currentNode.data?.inputType === 'accounting_extract') {
-            result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'accounting_extract' || currentNode.data?.inputType === 'accounting_extract_cutoff') {
+            result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId, currentNode.data?.inputType === 'accounting_extract_cutoff');
           } else if (currentNode.data?.inputType === 'compare_bank_to_tb') {
             result = await handleCompareBankToTB(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'analyse_cut_off') {
