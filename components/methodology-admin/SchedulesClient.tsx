@@ -151,14 +151,15 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
     }
   };
 
-  async function handleAppendixSave(questions: TemplateQuestion[]) {
+  async function handleAppendixSave(questions: TemplateQuestion[], sectionMeta?: Record<string, any>) {
     const appendixKey = `${activeAppendixType}|${activeAuditType}`;
     setAppendixTemplates(prev => ({ ...prev, [appendixKey]: questions }));
-    // Preserve sectionMeta for completion templates that use structured format
+    // Use provided sectionMeta, or preserve existing if not provided
     const existingTemplate = initialTemplates.find(t => t.templateType === activeAppendixType && t.auditType === activeAuditType);
     const existingItems = existingTemplate?.items as any;
-    const hasSectionMeta = existingItems && !Array.isArray(existingItems) && existingItems.sectionMeta;
-    const items = hasSectionMeta ? { questions, sectionMeta: existingItems.sectionMeta } : questions;
+    const existingMeta = existingItems && !Array.isArray(existingItems) ? existingItems.sectionMeta : undefined;
+    const finalMeta = sectionMeta || existingMeta;
+    const items = finalMeta ? { questions, sectionMeta: finalMeta } : questions;
     await fetch('/api/methodology-admin/templates', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -321,6 +322,11 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
             templateType={activeAppendixType}
             auditType={activeAuditType}
             initialQuestions={currentAppendixQuestions}
+            initialSectionMeta={(() => {
+              const tpl = initialTemplates.find(t => t.templateType === activeAppendixType && t.auditType === activeAuditType);
+              const items = tpl?.items as any;
+              return items && !Array.isArray(items) ? items.sectionMeta : undefined;
+            })()}
             sectionOptions={currentAppendixType?.sectionDefaults || []}
             onSave={handleAppendixSave}
           />

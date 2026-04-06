@@ -1283,6 +1283,117 @@ async function handleCompareBankToTB(
   }
 }
 
+// ─── Programmatic Cut-Off Analysis ───
+
+async function handleAnalyseCutOff(
+  flow: FlowData, node: FlowNode, ctx: ExecutionContext, executionId: string, engagementId: string,
+): Promise<NodeResult> {
+  try {
+    let bankData: any[] = [];
+    for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+      const out = nodeOut as any;
+      if (!out) continue;
+      if (out.dataTable?.length > 0 && bankData.length === 0) bankData = out.dataTable;
+      if (out.populationData?.length > 0 && bankData.length === 0) bankData = out.populationData;
+    }
+    if (bankData.length === 0) return { action: 'error', errorMessage: 'No bank data found for cut-off analysis.' };
+
+    const periodEnd = (ctx.engagement as any)?.periodEnd;
+    if (!periodEnd) return { action: 'error', errorMessage: 'No period end date available.' };
+
+    const peDate = new Date(periodEnd);
+    const windowStart = new Date(peDate); windowStart.setDate(windowStart.getDate() - 7);
+    const windowEnd = new Date(peDate); windowEnd.setDate(windowEnd.getDate() + 7);
+
+    // Filter transactions in the cut-off window
+    const cutOffTxns = bankData.filter(txn => {
+      const d = txn.date ? new Date(txn.date) : null;
+      return d && d >= windowStart && d <= windowEnd;
+    });
+
+    const beforePE = cutOffTxns.filter(t => new Date(t.date) <= peDate);
+    const afterPE = cutOffTxns.filter(t => new Date(t.date) > peDate);
+    const clearlyTrivial = (ctx.engagement as any)?.clearlyTrivial || 0;
+
+    // Flag large items near cut-off
+    const flagged = cutOffTxns.filter(t => {
+      const amt = Math.abs(Number(t.debit || t.debitFC || 0)) + Math.abs(Number(t.credit || t.creditFC || 0));
+      return amt > clearlyTrivial;
+    }).map(t => ({
+      date: t.date, description: t.description,
+      amount: Number(t.debit || t.debitFC || 0) || Number(t.credit || t.creditFC || 0),
+      accountNumber: t.accountNumber, type: new Date(t.date) <= peDate ? 'before_period_end' : 'after_period_end',
+    }));
+
+    const result = flagged.length > 0 ? 'fail' : 'pass';
+    const summary = `Cut-off window: ${windowStart.toISOString().slice(0, 10)} to ${windowEnd.toISOString().slice(0, 10)}. ${beforePE.length} transactions before period end, ${afterPE.length} after. ${flagged.length} item(s) above CT (${clearlyTrivial}) flagged for review.`;
+
+    return {
+      action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
+      output: { result, summary, cutOffDate: periodEnd, transactionsBefore: beforePE.length, transactionsAfter: afterPE.length, flaggedItems: flagged, dataTable: flagged, totalInWindow: cutOffTxns.length },
+    };
+  } catch (err: any) { return { action: 'error', errorMessage: `Cut-off analysis failed: ${err.message}` }; }
+}
+
+// ─── Programmatic Large & Unusual Transaction Analysis ───
+
+async function handleAnalyseLargeUnusual(
+  flow: FlowData, node: FlowNode, ctx: ExecutionContext, executionId: string, engagementId: string,
+): Promise<NodeResult> {
+  try {
+    let bankData: any[] = [];
+    for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+      const out = nodeOut as any;
+      if (!out) continue;
+      if (out.dataTable?.length > 0 && bankData.length === 0) bankData = out.dataTable;
+      if (out.populationData?.length > 0 && bankData.length === 0) bankData = out.populationData;
+    }
+    if (bankData.length === 0) return { action: 'error', errorMessage: 'No bank data found.' };
+
+    const pm = (ctx.engagement as any)?.performanceMateriality || 0;
+    const ct = (ctx.engagement as any)?.clearlyTrivial || 0;
+    const flagged: any[] = [];
+
+    for (const txn of bankData) {
+      const debit = Math.abs(Number(txn.debit || txn.debitFC || 0));
+      const credit = Math.abs(Number(txn.credit || txn.creditFC || 0));
+      const amt = Math.max(debit, credit);
+      const reasons: string[] = [];
+
+      // Above PM
+      if (amt > pm && pm > 0) reasons.push('Above Performance Materiality');
+      // Round number
+      if (amt >= 1000 && amt % 1000 === 0) reasons.push('Round number');
+      // Weekend transaction
+      const d = txn.date ? new Date(txn.date) : null;
+      if (d && (d.getDay() === 0 || d.getDay() === 6)) reasons.push('Weekend transaction');
+      // Unusual description keywords
+      const desc = (txn.description || '').toLowerCase();
+      if (desc.includes('loan') || desc.includes('director') || desc.includes('related') || desc.includes('intercompany')) reasons.push('Potential related party');
+      if (desc.includes('refund') || desc.includes('reversal') || desc.includes('correction')) reasons.push('Reversal/correction');
+
+      if (reasons.length > 0 && amt > ct) {
+        flagged.push({
+          date: txn.date, description: txn.description, amount: amt,
+          accountNumber: txn.accountNumber, reasons: reasons.join('; '),
+          riskLevel: amt > pm ? 'high' : amt > ct ? 'medium' : 'low',
+        });
+      }
+    }
+
+    flagged.sort((a, b) => b.amount - a.amount); // Largest first
+    const highRisk = flagged.filter(f => f.riskLevel === 'high').length;
+    const result = highRisk > 0 ? 'fail' : 'pass';
+    const totalValue = flagged.reduce((s, f) => s + f.amount, 0);
+    const summary = `Analysed ${bankData.length} transactions. ${flagged.length} flagged (${highRisk} high risk). Total value flagged: £${totalValue.toFixed(2)}. PM: £${pm}, CT: £${ct}.`;
+
+    return {
+      action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
+      output: { result, summary, flaggedItems: flagged, dataTable: flagged, totalFlagged: flagged.length, highRisk, totalValueFlagged: totalValue },
+    };
+  } catch (err: any) { return { action: 'error', errorMessage: `Large & unusual analysis failed: ${err.message}` }; }
+}
+
 async function handleActionAI(
   flow: FlowData,
   node: FlowNode,
@@ -2160,6 +2271,10 @@ export async function processNextNode(executionId: string): Promise<void> {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'compare_bank_to_tb') {
             result = await handleCompareBankToTB(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'analyse_cut_off') {
+            result = await handleAnalyseCutOff(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'analyse_large_unusual') {
+            result = await handleAnalyseLargeUnusual(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'ai') {
             result = await handleActionAI(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'client') {

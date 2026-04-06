@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
-import type { TemplateQuestion, QuestionInputType } from '@/types/methodology';
+import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 
 interface Props {
   firmId: string;
@@ -11,8 +11,23 @@ interface Props {
   auditType: string;
   initialQuestions: TemplateQuestion[];
   sectionOptions: string[];
-  onSave: (questions: TemplateQuestion[]) => Promise<void>;
+  initialSectionMeta?: Record<string, TemplateSectionMeta>;
+  onSave: (questions: TemplateQuestion[], sectionMeta?: Record<string, TemplateSectionMeta>) => Promise<void>;
 }
+
+const LAYOUT_OPTIONS: { value: SectionLayout; label: string }[] = [
+  { value: 'standard', label: 'Standard (Q&A)' },
+  { value: 'table_3col', label: '3-Column Table' },
+  { value: 'table_4col', label: '4-Column Table' },
+  { value: 'table_5col', label: '5-Column Table' },
+];
+
+const LAYOUT_DEFAULT_HEADERS: Record<string, string[]> = {
+  standard: [],
+  table_4col: ['Item', 'Procedures Performed', 'Conclusion', 'WP Reference'],
+  table_3col: ['Particulars', 'Audit Team Response', 'WP Reference'],
+  table_5col: ['Particulars', 'Planning Amount', 'Final Amount', 'Comment', 'WP Reference'],
+};
 
 const INPUT_TYPE_OPTIONS: { value: QuestionInputType; label: string }[] = [
   { value: 'text', label: 'Free Text (single line)' },
@@ -26,6 +41,7 @@ const INPUT_TYPE_OPTIONS: { value: QuestionInputType; label: string }[] = [
   { value: 'date', label: 'Date picker' },
   { value: 'formula', label: 'Formula (computed)' },
   { value: 'checkbox', label: 'Checkbox' },
+  { value: 'table_row', label: 'Table Row' },
 ];
 
 function generateId(): string {
@@ -62,14 +78,16 @@ function DropdownOptionsEditor({ options, onChange }: { options: string[]; onCha
   );
 }
 
-export function AppendixTemplateEditor({ firmId, templateType, auditType, initialQuestions, sectionOptions, onSave }: Props) {
+export function AppendixTemplateEditor({ firmId, templateType, auditType, initialQuestions, sectionOptions, initialSectionMeta, onSave }: Props) {
   const [questions, setQuestions] = useState<TemplateQuestion[]>(initialQuestions);
+  const [sectionMeta, setSectionMeta] = useState<Record<string, TemplateSectionMeta>>(initialSectionMeta || {});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   // Sync questions when template type or audit type changes
   useEffect(() => {
     setQuestions(initialQuestions);
+    setSectionMeta(initialSectionMeta || {});
     setExpandedId(null);
   }, [templateType, auditType]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -174,10 +192,18 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
     });
   }
 
+  function updateSectionMeta(sectionKey: string, updates: Partial<TemplateSectionMeta>) {
+    setSectionMeta(prev => {
+      const existing = prev[sectionKey] || { key: sectionKey, label: sectionKey, layout: 'standard' as SectionLayout };
+      return { ...prev, [sectionKey]: { ...existing, ...updates } };
+    });
+    setSaved(false);
+  }
+
   async function handleSave() {
     setSaving(true);
     try {
-      await onSave(questions);
+      await onSave(questions, Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -231,6 +257,30 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                 <span className="text-xs text-slate-400 flex-shrink-0">({sorted.length})</span>
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                {/* Section Layout dropdown */}
+                <select
+                  value={sectionMeta[sectionKey]?.layout || 'standard'}
+                  onChange={e => {
+                    const layout = e.target.value as SectionLayout;
+                    updateSectionMeta(sectionKey, {
+                      layout,
+                      columnHeaders: sectionMeta[sectionKey]?.columnHeaders || LAYOUT_DEFAULT_HEADERS[layout] || [],
+                      signOff: sectionMeta[sectionKey]?.signOff ?? true,
+                    });
+                  }}
+                  onClick={e => e.stopPropagation()}
+                  className="text-[10px] border border-slate-200 rounded px-1.5 py-0.5 bg-white text-slate-600 focus:outline-none focus:border-blue-400"
+                  title="Section layout type"
+                >
+                  {LAYOUT_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                </select>
+                {/* Sign-off toggle */}
+                <label className="inline-flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" onClick={e => e.stopPropagation()}>
+                  <input type="checkbox" checked={sectionMeta[sectionKey]?.signOff !== false}
+                    onChange={e => updateSectionMeta(sectionKey, { signOff: e.target.checked })}
+                    className="w-3 h-3 rounded" />
+                  Sign-off
+                </label>
                 <button onClick={() => renameSection(sectionKey)} title="Rename section"
                   className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50">
                   <Pencil className="h-3.5 w-3.5" />
@@ -241,10 +291,27 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                 </button>
                 <button onClick={e => { e.stopPropagation(); addQuestion(sectionKey); }}
                   className="text-xs text-blue-600 hover:text-blue-700 font-medium px-2 py-1 rounded hover:bg-blue-50">
-                  + Add Question
+                  + Add {sectionMeta[sectionKey]?.layout !== 'standard' ? 'Row' : 'Question'}
                 </button>
               </div>
             </div>
+
+            {/* Column headers editor — shown for table layouts */}
+            {!isCollapsed && sectionMeta[sectionKey]?.layout && sectionMeta[sectionKey].layout !== 'standard' && (
+              <div className="px-4 py-2 bg-blue-50/30 border-b border-slate-200 flex items-center gap-2">
+                <span className="text-[10px] text-blue-600 font-medium shrink-0">Columns:</span>
+                {(sectionMeta[sectionKey]?.columnHeaders || []).map((h, hi) => (
+                  <input key={hi} value={h}
+                    onChange={e => {
+                      const headers = [...(sectionMeta[sectionKey]?.columnHeaders || [])];
+                      headers[hi] = e.target.value;
+                      updateSectionMeta(sectionKey, { columnHeaders: headers });
+                    }}
+                    className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white flex-1 min-w-[60px] focus:outline-none focus:border-blue-400"
+                  />
+                ))}
+              </div>
+            )}
 
             {/* Questions */}
             {!isCollapsed && (
