@@ -1429,7 +1429,7 @@ async function handleAnalyseCutOff(
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
-      output: { result, summary, cutOffDate: periodEnd, transactionsBefore: beforePE.length, transactionsAfter: afterPE.length, flaggedItems: flagged, dataTable: flagged, totalInWindow: cutOffTxns.length },
+      output: { result, summary, cutOffDate: periodEnd, transactionsBefore: beforePE.length, transactionsAfter: afterPE.length, flaggedItems: flagged, dataTable: bankData, populationData: bankData, totalInWindow: cutOffTxns.length },
     };
   } catch (err: any) { return { action: 'error', errorMessage: `Cut-off analysis failed: ${err.message}` }; }
 }
@@ -1539,7 +1539,9 @@ async function handleAnalyseLargeUnusual(
       output: {
         result, summary,
         flaggedItems: flagged,
-        dataTable: flagged,
+        dataTable: bankData, // Full dataset — not just flagged items
+        populationData: bankData,
+        flaggedIndices: flagged.map((f: any) => bankData.findIndex((t: any) => t.description === f.description && t.date === f.date && Math.max(Math.abs(Number(t.debit || t.debitFC || 0)), Math.abs(Number(t.credit || t.creditFC || 0))) === f.amount)),
         totalFlagged: flagged.length, highRisk, mediumRisk,
         totalValueFlagged: totalValue,
         populationSize: bankData.length,

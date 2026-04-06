@@ -434,16 +434,18 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     flowSteps.find(s => s.output?.selectedIndices?.length > 0)?.output?.selectedIndices || []
                   );
                   if (population.length === 0) return null;
-                  const cols = Object.keys(population[0]).filter(k => !k.startsWith('_')).slice(0, 8);
+                  // Show all meaningful columns — exclude internal/metadata fields
+                  const SKIP_COLS = new Set(['sourceFile', 'tbAccountCode', 'functionalCurrency', 'page', 'fxRate']);
+                  const cols = Object.keys(population[0]).filter(k => !k.startsWith('_') && !SKIP_COLS.has(k));
                   return (
                     <div className="border rounded-lg overflow-hidden">
                       <div className="px-3 py-2 bg-slate-50 border-b flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-slate-600 uppercase">Population Data ({population.length} records{selectedIdx.size > 0 ? ` — ${selectedIdx.size} sampled` : ''})</span>
-                        <span className="text-[9px] text-slate-400">Source: {popStep?.label || 'Flow step'}</span>
+                        <span className="text-[10px] font-bold text-slate-600 uppercase">Full Extracted Data ({population.length} records{selectedIdx.size > 0 ? ` — ${selectedIdx.size} sampled` : ''})</span>
+                        <span className="text-[9px] text-slate-400">Source: {popStep?.label || 'Flow step'} | {cols.length} columns</span>
                       </div>
-                      <div className="max-h-[300px] overflow-auto">
+                      <div className="max-h-[500px] overflow-auto">
                         <table className="w-full text-[9px] border-collapse">
-                          <thead className="sticky top-0">
+                          <thead className="sticky top-0 z-10">
                             <tr className="bg-slate-100 border-b">
                               <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">#</th>
                               {selectedIdx.size > 0 && <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">Sel</th>}
@@ -451,7 +453,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                             </tr>
                           </thead>
                           <tbody>
-                            {population.slice(0, 200).map((row: any, i: number) => {
+                            {population.map((row: any, i: number) => {
                               const isSampled = selectedIdx.has(i);
                               return (
                                 <tr key={i} className={`border-b border-slate-50 ${isSampled ? 'bg-green-50 font-medium' : 'hover:bg-slate-50/50'}`}>
@@ -460,14 +462,13 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                                     <td className="px-1 py-0.5 text-center">{isSampled ? <span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> : ''}</td>
                                   )}
                                   {cols.map(c => (
-                                    <td key={c} className="px-1.5 py-0.5 text-slate-600 whitespace-nowrap max-w-[150px] truncate">
+                                    <td key={c} className="px-1.5 py-0.5 text-slate-600 whitespace-nowrap max-w-[200px] truncate" title={String(row[c] ?? '')}>
                                       {typeof row[c] === 'number' ? row[c].toLocaleString('en-GB', { maximumFractionDigits: 2 }) : String(row[c] ?? '')}
                                     </td>
                                   ))}
                                 </tr>
                               );
                             })}
-                            {population.length > 200 && <tr><td colSpan={cols.length + 2} className="text-center py-1 text-slate-400 text-[8px]">...and {population.length - 200} more rows</td></tr>}
                           </tbody>
                         </table>
                       </div>

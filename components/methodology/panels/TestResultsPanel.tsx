@@ -605,31 +605,40 @@ function ThreeSectionOutput({ data }: { data: any }) {
           {conclusion}
         </div>
       )}
-      {items.length > 0 && (
-        <div className="border rounded overflow-auto max-h-[300px]">
+      {items.length > 0 && (() => {
+        const SKIP = new Set(['sourceFile', 'tbAccountCode', 'functionalCurrency', 'page', 'fxRate', '_lineItemCount']);
+        const allCols = Object.keys(items[0]).filter(k => !k.startsWith('_') && !SKIP.has(k));
+        return (
+        <div className="border rounded overflow-auto max-h-[500px]">
+          <div className="px-2 py-1 bg-slate-50 border-b text-[9px] text-slate-400">
+            Showing all {items.length} records | {allCols.length} columns
+          </div>
           <table className="w-full text-[10px]">
-            <thead className="sticky top-0">
+            <thead className="sticky top-0 z-10">
               <tr className="bg-slate-100 border-b">
-                {Object.keys(items[0]).slice(0, 8).map(key => (
+                {allCols.map(key => (
                   <th key={key} className="text-left px-2 py-1.5 font-semibold text-slate-600 whitespace-nowrap">{key}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {items.slice(0, 50).map((item: any, i: number) => (
+              {items.map((item: any, i: number) => (
                 <tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50">
-                  {Object.values(item).slice(0, 8).map((val: any, j: number) => (
-                    <td key={j} className="px-2 py-1 text-slate-600 whitespace-nowrap">{typeof val === 'number' ? val.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : String(val ?? '')}</td>
-                  ))}
+                  {allCols.map((key: string, j: number) => {
+                    const val = item[key];
+                    return (
+                      <td key={j} className="px-2 py-1 text-slate-600 whitespace-nowrap max-w-[200px] truncate" title={String(val ?? '')}>
+                        {typeof val === 'number' ? val.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : String(val ?? '')}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
-              {items.length > 50 && (
-                <tr><td colSpan={8} className="text-center py-2 text-slate-400 text-[9px]">...and {items.length - 50} more rows</td></tr>
-              )}
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
