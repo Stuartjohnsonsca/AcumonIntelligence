@@ -176,17 +176,45 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         if (!r) continue;
         const inv = r.invoice;
         const itemRef = r.reference || (sampleItems[ri]?.id) || String(ri + 1);
+        const sampleItem = sampleItems[ri];
+
+        // Parse Xero date format: /Date(1687305600000+0000)/ → readable date
+        const rawDate = inv?.Date || inv?.DueDate || '';
+        let parsedDate = rawDate;
+        if (typeof rawDate === 'string' && rawDate.includes('/Date(')) {
+          const ms = parseInt(rawDate.replace(/\/Date\((\d+)[+-]\d+\)\//, '$1'));
+          if (!isNaN(ms)) parsedDate = new Date(ms).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+
+        // Use the match assessment from the flow engine (actual comparison)
+        const evidenceGross = Number(inv?.Total || 0);
+        const sampleGross = Number(sampleItem?.gross || sampleItem?.amount || 0);
+        const amountMatches = r.amountMatches;
+        let matchStatus: 'matched' | 'partial' | 'missing' | 'pending' = 'pending';
+        if (r.evidenceRetrieved && inv) {
+          matchStatus = amountMatches ? 'matched' : 'partial'; // partial = found but amounts differ
+        } else if (r.portalRequestCreated) {
+          matchStatus = 'pending';
+        } else if (!r.found) {
+          matchStatus = 'missing';
+        }
+
+        // Build preview URL if we have a storage path
+        const previewUrl = r.storagePath ? `/api/documents/preview?path=${encodeURIComponent(r.storagePath)}` : undefined;
+
         newEvidence.push({
           itemId: itemRef,
           docRef: inv?.InvoiceNumber || inv?.Reference || r.reference || r.documentName || '',
           fileName: r.fileName || r.documentName || inv?.InvoiceNumber || '',
-          date: inv?.Date || inv?.DueDate || '',
+          date: parsedDate,
           seller: inv?.Contact?.Name || '',
           net: Number(inv?.SubTotal || 0),
           tax: Number(inv?.TotalTax || 0),
-          gross: Number(inv?.Total || 0),
-          status: r.found ? 'uploaded' as const : r.portalRequestCreated ? 'pending' as const : 'missing' as const,
-        });
+          gross: evidenceGross,
+          status: matchStatus,
+          previewUrl,
+          matchAssessment: r.matchAssessment, // AI assessment of Match/Period/Disclosure/Audit
+        } as any);
       }
     }
 

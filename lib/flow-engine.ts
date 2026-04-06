@@ -1011,13 +1011,44 @@ async function handleFetchEvidenceOrPortal(
             },
           });
 
+          // Compare evidence to the selected item
+          const sampleAmount = Number(loopItem.amount || loopItem.total || loopItem.gross || 0);
+          const evidenceAmount = Number(invoice.Total || 0);
+          const amountDiff = Math.abs(evidenceAmount - sampleAmount);
+          const amountMatches = amountDiff < 0.01 || (sampleAmount > 0 && amountDiff / sampleAmount < 0.01);
+
+          // Parse Xero date
+          let evidenceDate = '';
+          const rawDate = invoice.Date || '';
+          if (typeof rawDate === 'string' && rawDate.includes('/Date(')) {
+            const ms = parseInt(rawDate.replace(/\/Date\((\d+)[+-]\d+\)\//, '$1'));
+            if (!isNaN(ms)) evidenceDate = new Date(ms).toISOString().split('T')[0];
+          } else if (rawDate) {
+            evidenceDate = String(rawDate);
+          }
+
           return {
             action: 'continue',
             nextNodeId: getNextNodeId(flow, node.id),
             output: {
               evidenceSource: 'accounting_system',
               system: connection.system,
-              found: true,
+              found: true, // Invoice exists in Xero
+              evidenceRetrieved: true,
+              amountMatches,
+              amountDiff,
+              sampleAmount,
+              evidenceAmount,
+              evidenceDate,
+              matchAssessment: {
+                match: amountMatches ? 'pass' : 'fail',
+                period: 'pending', // Would need period end date comparison
+                disclosure: 'pending', // Would need content analysis
+                audit: 'pending', // Would need unusual item detection
+                notes: amountMatches
+                  ? 'Amount matches: sample £' + sampleAmount.toFixed(2) + ' = evidence £' + evidenceAmount.toFixed(2)
+                  : 'AMOUNT MISMATCH: sample £' + sampleAmount.toFixed(2) + ' vs evidence £' + evidenceAmount.toFixed(2) + ' (difference: £' + amountDiff.toFixed(2) + ')',
+              },
               invoice,
               reference,
               documentId: doc.id,

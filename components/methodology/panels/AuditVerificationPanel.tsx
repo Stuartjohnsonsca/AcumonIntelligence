@@ -189,9 +189,26 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
   }
 
   function getAiCheckStatus(itemIndex: number, checkKey: string): 'pass' | 'fail' | 'pending' {
+    // First check verificationResults
     const check = verificationResults.find(r => r.sampleIndex === itemIndex);
-    if (!check) return 'pending';
-    return (check as any)[checkKey] || 'pending';
+    if (check && (check as any)[checkKey] && (check as any)[checkKey] !== 'pending') {
+      return (check as any)[checkKey];
+    }
+    // Then check evidence docs for matchAssessment from the flow engine
+    const evDoc = evidenceDocs.find(d => d.sampleIndex === itemIndex);
+    if (evDoc && (evDoc as any).matchAssessment) {
+      const assessment = (evDoc as any).matchAssessment;
+      if (assessment[checkKey] && assessment[checkKey] !== 'pending') return assessment[checkKey];
+    }
+    // For 'match' check — if we have evidence, compare amounts directly
+    if (checkKey === 'match' && evDoc) {
+      const sampleItem = sampleItems[itemIndex];
+      if (sampleItem && evDoc.gross > 0) {
+        const diff = Math.abs(evDoc.gross - sampleItem.gross);
+        return diff < 0.01 ? 'pass' : 'fail';
+      }
+    }
+    return 'pending';
   }
 
   const item = sampleItems[currentItemIndex];
@@ -250,7 +267,12 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
                 <div><span className="text-slate-400">Gross:</span> <span className="font-mono font-semibold">£{fmt(doc.gross)}</span></div>
                 <div><span className="text-slate-400">Net:</span> <span className="font-mono">£{fmt(doc.net)}</span> <span className="text-slate-400 ml-2">Tax:</span> <span className="font-mono">£{fmt(doc.tax)}</span></div>
                 <div><span className="text-slate-400">Date:</span> <span className="text-slate-700">{doc.date || '—'}</span></div>
-                <div><span className="text-slate-400">Status:</span> <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${doc.status === 'matched' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{doc.status}</span></div>
+                <div><span className="text-slate-400">Status:</span> <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${doc.status === 'matched' ? 'bg-green-100 text-green-700' : doc.status === 'partial' ? 'bg-red-100 text-red-700' : doc.status === 'missing' ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700'}`}>{doc.status === 'matched' ? 'Amounts agree' : doc.status === 'partial' ? 'AMOUNTS DIFFER' : doc.status}</span></div>
+                {doc.status === 'partial' && item && (
+                  <div className="text-[9px] text-red-600 font-medium mt-1">
+                    Difference: £{fmt(Math.abs(doc.gross - item.gross))} ({item.gross > 0 ? ((Math.abs(doc.gross - item.gross) / item.gross) * 100).toFixed(1) : '?'}%)
+                  </div>
+                )}
                 {doc.previewUrl && <button onClick={() => setPreviewDoc(doc)} className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-[10px]"><Eye className="h-3 w-3" /> View Document</button>}
               </div>
             ) : (
