@@ -1449,54 +1449,102 @@ async function handleAnalyseLargeUnusual(
       if (out.populationData?.length > 0 && fullPopulation.length === 0) fullPopulation = out.populationData;
       if (out.selectedIndices?.length > 0 && selectedIndices.length === 0) selectedIndices = out.selectedIndices;
     }
-    if (fullPopulation.length === 0) return { action: 'error', errorMessage: 'No bank data found.' };
+    if (fullPopulation.length === 0) return { action: 'error', errorMessage: 'No transaction data found.' };
 
-    // Use sampled items if sampling was done, otherwise full population
     const bankData = selectedIndices.length > 0
       ? selectedIndices.map(i => fullPopulation[i]).filter(Boolean)
       : fullPopulation;
 
     const pm = (ctx.engagement as any)?.performanceMateriality || 0;
     const ct = (ctx.engagement as any)?.clearlyTrivial || 0;
+
+    // Unusual description keywords — broader patterns
+    const UNUSUAL_PATTERNS: { pattern: RegExp; category: string }[] = [
+      { pattern: /director|shareholder|owner/i, category: 'Related party — director/shareholder' },
+      { pattern: /loan|advance|lend/i, category: 'Loan/advance' },
+      { pattern: /intercompany|group|subsidiary|parent/i, category: 'Intercompany/group' },
+      { pattern: /related party/i, category: 'Related party' },
+      { pattern: /refund|reversal|correction|adjust/i, category: 'Reversal/correction' },
+      { pattern: /dividend|distribution/i, category: 'Distribution' },
+      { pattern: /settlement|legal|solicitor|court/i, category: 'Legal/settlement' },
+      { pattern: /penalty|fine|hmrc|tax/i, category: 'Tax/penalty' },
+      { pattern: /cash|atm|withdraw/i, category: 'Cash withdrawal' },
+      { pattern: /foreign|fx|transfer overseas|swift/i, category: 'Foreign/FX transfer' },
+      { pattern: /consultancy|management fee|advisory/i, category: 'Consultancy/management fee' },
+      { pattern: /donation|charity|gift/i, category: 'Donation/gift' },
+      { pattern: /insurance|claim/i, category: 'Insurance/claim' },
+      { pattern: /property|rent deposit|lease premium/i, category: 'Property/deposit' },
+    ];
+
     const flagged: any[] = [];
 
     for (const txn of bankData) {
       const debit = Math.abs(Number(txn.debit || txn.debitFC || 0));
       const credit = Math.abs(Number(txn.credit || txn.creditFC || 0));
       const amt = Math.max(debit, credit);
-      const reasons: string[] = [];
+      if (amt <= 0) continue;
 
-      // Above PM
-      if (amt > pm && pm > 0) reasons.push('Above Performance Materiality');
-      // Round number
-      if (amt >= 1000 && amt % 1000 === 0) reasons.push('Round number');
-      // Weekend transaction
-      const d = txn.date ? new Date(txn.date) : null;
-      if (d && (d.getDay() === 0 || d.getDay() === 6)) reasons.push('Weekend transaction');
-      // Unusual description keywords
+      const flags: string[] = [];
       const desc = (txn.description || '').toLowerCase();
-      if (desc.includes('loan') || desc.includes('director') || desc.includes('related') || desc.includes('intercompany')) reasons.push('Potential related party');
-      if (desc.includes('refund') || desc.includes('reversal') || desc.includes('correction')) reasons.push('Reversal/correction');
 
-      if (reasons.length > 0 && amt > ct) {
+      // Size-based flags
+      if (amt > pm && pm > 0) flags.push('Above Performance Materiality');
+      else if (amt > ct && ct > 0) flags.push('Above Clearly Trivial');
+
+      // Round number
+      if (amt >= 1000 && amt % 1000 === 0) flags.push('Round number');
+
+      // Weekend
+      const d = txn.date ? new Date(txn.date) : null;
+      if (d && !isNaN(d.getTime()) && (d.getDay() === 0 || d.getDay() === 6)) flags.push('Weekend transaction');
+
+      // Nature-based flags
+      for (const { pattern, category } of UNUSUAL_PATTERNS) {
+        if (pattern.test(txn.description || '')) { flags.push(category); break; }
+      }
+
+      // Include ALL transactions above CT with full detail, plus any with unusual flags
+      if (flags.length > 0 || amt > ct) {
         flagged.push({
-          date: txn.date, description: txn.description, amount: amt,
-          accountNumber: txn.accountNumber, reasons: reasons.join('; '),
-          riskLevel: amt > pm ? 'high' : amt > ct ? 'medium' : 'low',
+          // Full transaction detail — auditor needs to see everything
+          date: txn.date || '',
+          description: txn.description || '',
+          reference: txn.reference || '',
+          debit: debit || null,
+          credit: credit || null,
+          balance: Number(txn.balance || txn.balanceFC || 0) || null,
+          accountNumber: txn.accountNumber || '',
+          sourceFile: txn.sourceFile || '',
+          // Analysis
+          amount: amt,
+          flags: flags.join('; ') || 'Above threshold',
+          riskLevel: amt > pm ? 'high' : flags.some(f => f.includes('Related') || f.includes('director') || f.includes('Legal')) ? 'high' : 'medium',
+          // Auditor assessment (to be filled in by user)
+          auditorAssessment: '',
+          satisfactory: null,
         });
       }
     }
 
-    flagged.sort((a, b) => b.amount - a.amount); // Largest first
+    flagged.sort((a, b) => b.amount - a.amount);
     const highRisk = flagged.filter(f => f.riskLevel === 'high').length;
+    const mediumRisk = flagged.filter(f => f.riskLevel === 'medium').length;
     const result = highRisk > 0 ? 'fail' : 'pass';
-    const totalValue = flagged.reduce((s, f) => s + f.amount, 0);
+    const totalValue = flagged.reduce((s: number, f: any) => s + f.amount, 0);
     const samplingNote = selectedIndices.length > 0 ? ` (sampled ${bankData.length} from population of ${fullPopulation.length})` : ` (full population of ${bankData.length})`;
-    const summary = `Analysed ${bankData.length} transactions${samplingNote}. ${flagged.length} flagged (${highRisk} high risk). Total value flagged: £${totalValue.toFixed(2)}. PM: £${pm}, CT: £${ct}.`;
+    const summary = `Analysed ${bankData.length} transactions${samplingNote}. ${flagged.length} items flagged: ${highRisk} high risk, ${mediumRisk} medium risk. Total value: £${totalValue.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}.`;
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
-      output: { result, summary, flaggedItems: flagged, dataTable: flagged, totalFlagged: flagged.length, highRisk, totalValueFlagged: totalValue },
+      output: {
+        result, summary,
+        flaggedItems: flagged,
+        dataTable: flagged,
+        totalFlagged: flagged.length, highRisk, mediumRisk,
+        totalValueFlagged: totalValue,
+        populationSize: bankData.length,
+        populationTotal: bankData.reduce((s: number, t: any) => s + Math.max(Math.abs(Number(t.debit || t.debitFC || 0)), Math.abs(Number(t.credit || t.creditFC || 0))), 0),
+      },
     };
   } catch (err: any) { return { action: 'error', errorMessage: `Large & unusual analysis failed: ${err.message}` }; }
 }
