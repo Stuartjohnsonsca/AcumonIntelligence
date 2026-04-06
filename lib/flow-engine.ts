@@ -972,19 +972,19 @@ async function handleFetchEvidenceOrPortal(
           } catch { /* ID lookup failed — try by number */ }
         }
 
-        // 2. Fallback: search by invoice number, filtered by type (ACCREC vs ACCPAY)
+        // 2. Fallback: search by invoice number, verify by contact name
         if (!invoice && reference) {
           const found = await getInvoiceByNumber(engagement.clientId, reference);
           if (found) {
-            // Verify it's the right type (sales vs purchases) and amount is close
-            const foundType = found.Type || '';
-            const foundAmount = Number(found.Total || 0);
-            const typeMatches = !txnType || foundType === txnType;
-            const amountClose = sampleAmount === 0 || Math.abs(foundAmount - sampleAmount) / Math.max(sampleAmount, 1) < 0.1;
-            if (typeMatches && amountClose) {
+            const foundContact = (found.Contact?.Name || '').toLowerCase().trim();
+            const sampleContact = (loopItem.contact || '').toLowerCase().trim();
+            const contactMatches = !sampleContact || !foundContact || foundContact.includes(sampleContact) || sampleContact.includes(foundContact);
+
+            if (contactMatches) {
               invoice = found;
             } else {
-              console.log('[flow-engine] Invoice ' + reference + ' found but type/amount mismatch: ' + foundType + '/' + foundAmount + ' vs ' + txnType + '/' + sampleAmount);
+              console.log('[flow-engine] Invoice ' + reference + ' found but contact mismatch: "' + found.Contact?.Name + '" vs "' + loopItem.contact + '"');
+              // Don't use this invoice — wrong supplier/customer
             }
           }
         }
