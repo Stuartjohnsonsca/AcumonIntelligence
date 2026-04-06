@@ -958,9 +958,59 @@ async function handleFetchEvidenceOrPortal(
     if (connection && new Date() <= connection.expiresAt && connection.system.toLowerCase() === 'xero' && reference) {
       try {
         // Try to get the invoice from Xero by reference/invoice number
-        const { getInvoiceByNumber } = await import('./xero');
+        const { getInvoiceByNumber, downloadAttachment, getAttachmentsList } = await import('./xero');
         const invoice = await getInvoiceByNumber(engagement.clientId, reference);
         if (invoice) {
+          // Store the invoice data as an AuditDocument so it persists
+          const invoiceJson = JSON.stringify(invoice, null, 2);
+          const docName = reference + ' — ' + (invoice.Contact?.Name || 'Unknown') + ' (Xero)';
+
+          // Try to download the PDF attachment from Xero
+          let storagePath = '';
+          let mimeType = 'application/json';
+          try {
+            const attachments = await getAttachmentsList(engagement.clientId, 'Invoices', invoice.InvoiceID);
+            if (attachments && attachments.length > 0) {
+              const att = attachments[0];
+              const { uploadBlob } = await import('@/lib/azure-blob');
+              const pdfBuffer = await downloadAttachment(engagement.clientId, 'Invoices', invoice.InvoiceID, att.FileName);
+              if (pdfBuffer) {
+                storagePath = 'documents/' + engagement.clientId + '/' + engagementId + '/' + Date.now() + '_' + att.FileName;
+                await uploadBlob(storagePath, pdfBuffer, 'upload-inbox');
+                mimeType = att.MimeType || 'application/pdf';
+              }
+            }
+          } catch (attErr) {
+            console.log('[flow-engine] No PDF attachment for ' + reference + ': ' + (attErr as Error).message);
+          }
+
+          // If no PDF, store the JSON data
+          if (!storagePath) {
+            try {
+              const { uploadBlob } = await import('@/lib/azure-blob');
+              storagePath = 'documents/' + engagement.clientId + '/' + engagementId + '/' + Date.now() + '_' + reference + '.json';
+              await uploadBlob(storagePath, Buffer.from(invoiceJson), 'upload-inbox');
+            } catch (upErr) {
+              console.log('[flow-engine] Failed to store invoice JSON: ' + (upErr as Error).message);
+            }
+          }
+
+          // Create AuditDocument record
+          const doc = await prisma.auditDocument.create({
+            data: {
+              engagementId,
+              documentName: docName,
+              storagePath: storagePath || null,
+              mimeType,
+              uploadedById: 'system',
+              uploadedByName: 'Xero (' + connection.system + ')',
+              uploadedDate: new Date(),
+              verifiedOn: new Date(),
+              verifiedByName: 'System',
+              mappedItems: [executionId, reference, 'evidence'],
+            },
+          });
+
           return {
             action: 'continue',
             nextNodeId: getNextNodeId(flow, node.id),
@@ -970,7 +1020,10 @@ async function handleFetchEvidenceOrPortal(
               found: true,
               invoice,
               reference,
-              fileName: `${reference}_xero.json`,
+              documentId: doc.id,
+              documentName: docName,
+              storagePath,
+              fileName: docName,
             },
           };
         }
@@ -2656,7 +2709,17 @@ export async function processNextNode(executionId: string): Promise<void> {
         // If we're at a dead end inside a loop body, return to the forEach/loopUntil node
         if (!nextId && execution.loopState) {
           const ls = execution.loopState as any;
-          if (ls.nodeId) nextId = ls.nodeId;
+          if (ls.nodeId) {
+            nextId = ls.nodeId;
+            // Capture body node output into loop results for this iteration
+            if (nodeOutput && ls.results && Array.isArray(ls.results)) {
+              ls.results.push(nodeOutput);
+              await prisma.testExecution.update({
+                where: { id: executionId },
+                data: { loopState: ls as any },
+              });
+            }
+          }
         }
 
         // Update DB — but only every 5 steps in a loop to reduce writes
