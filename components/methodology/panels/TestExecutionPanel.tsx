@@ -225,7 +225,37 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         if (existing) {
           setExecutionId(existing.id);
           setExecutionStatus(existing.status);
-          setFlowSteps(existing.nodeRuns?.map((r: any) => ({ id: r.nodeId, label: r.label || r.nodeType, status: r.status, output: r.output, errorMessage: r.errorMessage, duration: r.duration })) || []);
+          const steps = existing.nodeRuns?.map((r: any) => ({ id: r.nodeId, label: r.label || r.nodeType, status: r.status, output: r.output, errorMessage: r.errorMessage, duration: r.duration })) || [];
+
+          // Load full execution context to get forEach loop body results
+          // (loop body node runs are skipped to reduce DB writes, but context has everything)
+          try {
+            const detailRes = await fetch(`/api/engagements/${engagementId}/test-execution/${existing.id}`);
+            if (detailRes.ok) {
+              const detail = await detailRes.json();
+              const ctx = detail.execution?.context || (detail.flowSnapshot ? null : null);
+              // Inject loop results and evidence data from context into flowSteps
+              if (ctx?.nodes) {
+                for (const [nodeId, nodeOutput] of Object.entries(ctx.nodes)) {
+                  const out = nodeOutput as any;
+                  if (!out) continue;
+                  // Add forEach body results as a virtual flow step if not already present
+                  if (out.evidenceSource || out.found !== undefined || out.documentId) {
+                    if (!steps.find((s: any) => s.id === nodeId && s.output?.evidenceSource)) {
+                      steps.push({ id: nodeId, label: 'Evidence', status: 'completed', output: out });
+                    }
+                  }
+                  // Add loop completion with results
+                  if (out.loopCompleted && out.results?.length > 0) {
+                    const existingStep = steps.find((s: any) => s.id === nodeId);
+                    if (existingStep) existingStep.output = out; // Update with full results
+                  }
+                }
+              }
+            }
+          } catch {}
+
+          setFlowSteps(steps);
           if (existing.errorMessage) setExecutionError(existing.errorMessage);
           if (existing.status === 'running' || existing.status === 'paused') startPolling(existing.id);
         }
@@ -267,7 +297,25 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         if (!res.ok) return;
         const data = await res.json();
         setExecutionStatus(data.execution.status);
-        setFlowSteps(data.flowSteps || []);
+        // Inject evidence data from execution context into flow steps
+        const steps = data.flowSteps || [];
+        const ctx = data.execution?.context;
+        if (ctx?.nodes) {
+          for (const [nodeId, nodeOutput] of Object.entries(ctx.nodes)) {
+            const out = nodeOutput as any;
+            if (!out) continue;
+            if (out.evidenceSource || out.found !== undefined || out.documentId) {
+              if (!steps.find((s: any) => s.id === nodeId && s.output?.evidenceSource)) {
+                steps.push({ id: nodeId, label: 'Evidence', status: 'completed', output: out });
+              }
+            }
+            if (out.loopCompleted && out.results?.length > 0) {
+              const existingStep = steps.find((s: any) => s.id === nodeId);
+              if (existingStep) existingStep.output = out;
+            }
+          }
+        }
+        setFlowSteps(steps);
         if (data.execution.errorMessage) setExecutionError(data.execution.errorMessage);
         if (data.execution.pauseReason) setPauseReason(data.execution.pauseReason);
         if (['completed', 'failed', 'cancelled'].includes(data.execution.status)) {
