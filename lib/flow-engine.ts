@@ -1361,14 +1361,21 @@ async function handleAnalyseCutOff(
   flow: FlowData, node: FlowNode, ctx: ExecutionContext, executionId: string, engagementId: string,
 ): Promise<NodeResult> {
   try {
-    let bankData: any[] = [];
+    let fullPopulation: any[] = [];
+    let selectedIndices: number[] = [];
     for (const [, nodeOut] of Object.entries(ctx.nodes)) {
       const out = nodeOut as any;
       if (!out) continue;
-      if (out.dataTable?.length > 0 && bankData.length === 0) bankData = out.dataTable;
-      if (out.populationData?.length > 0 && bankData.length === 0) bankData = out.populationData;
+      if (out.dataTable?.length > 0 && fullPopulation.length === 0) fullPopulation = out.dataTable;
+      if (out.populationData?.length > 0 && fullPopulation.length === 0) fullPopulation = out.populationData;
+      if (out.selectedIndices?.length > 0 && selectedIndices.length === 0) selectedIndices = out.selectedIndices;
     }
-    if (bankData.length === 0) return { action: 'error', errorMessage: 'No bank data found for cut-off analysis.' };
+    if (fullPopulation.length === 0) return { action: 'error', errorMessage: 'No bank data found for cut-off analysis.' };
+
+    // Use sampled items if sampling was done, otherwise full population
+    const bankData = selectedIndices.length > 0
+      ? selectedIndices.map(i => fullPopulation[i]).filter(Boolean)
+      : fullPopulation;
 
     const periodEnd = (ctx.engagement as any)?.periodEnd;
     if (!periodEnd) return { action: 'error', errorMessage: 'No period end date available.' };
@@ -1417,7 +1424,8 @@ async function handleAnalyseCutOff(
     }));
 
     const result = flagged.length > 0 ? 'fail' : 'pass';
-    const summary = `Cut-off window: ${windowStart.toISOString().slice(0, 10)} to ${windowEnd.toISOString().slice(0, 10)}. Analysed ${txnsWithDates.length} dated transactions. ${beforePE.length} before period end, ${afterPE.length} after. ${flagged.length} item(s) above CT (£${clearlyTrivial}) flagged for review.`;
+    const samplingNote = selectedIndices.length > 0 ? ` (sampled ${bankData.length} from population of ${fullPopulation.length})` : ` (full population of ${bankData.length})`;
+    const summary = `Cut-off window: ${windowStart.toISOString().slice(0, 10)} to ${windowEnd.toISOString().slice(0, 10)}${samplingNote}. ${txnsWithDates.length} dated transactions analysed. ${beforePE.length} before period end, ${afterPE.length} after. ${flagged.length} item(s) above CT (£${clearlyTrivial}) flagged for review.`;
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
@@ -1432,14 +1440,21 @@ async function handleAnalyseLargeUnusual(
   flow: FlowData, node: FlowNode, ctx: ExecutionContext, executionId: string, engagementId: string,
 ): Promise<NodeResult> {
   try {
-    let bankData: any[] = [];
+    let fullPopulation: any[] = [];
+    let selectedIndices: number[] = [];
     for (const [, nodeOut] of Object.entries(ctx.nodes)) {
       const out = nodeOut as any;
       if (!out) continue;
-      if (out.dataTable?.length > 0 && bankData.length === 0) bankData = out.dataTable;
-      if (out.populationData?.length > 0 && bankData.length === 0) bankData = out.populationData;
+      if (out.dataTable?.length > 0 && fullPopulation.length === 0) fullPopulation = out.dataTable;
+      if (out.populationData?.length > 0 && fullPopulation.length === 0) fullPopulation = out.populationData;
+      if (out.selectedIndices?.length > 0 && selectedIndices.length === 0) selectedIndices = out.selectedIndices;
     }
-    if (bankData.length === 0) return { action: 'error', errorMessage: 'No bank data found.' };
+    if (fullPopulation.length === 0) return { action: 'error', errorMessage: 'No bank data found.' };
+
+    // Use sampled items if sampling was done, otherwise full population
+    const bankData = selectedIndices.length > 0
+      ? selectedIndices.map(i => fullPopulation[i]).filter(Boolean)
+      : fullPopulation;
 
     const pm = (ctx.engagement as any)?.performanceMateriality || 0;
     const ct = (ctx.engagement as any)?.clearlyTrivial || 0;
@@ -1476,7 +1491,8 @@ async function handleAnalyseLargeUnusual(
     const highRisk = flagged.filter(f => f.riskLevel === 'high').length;
     const result = highRisk > 0 ? 'fail' : 'pass';
     const totalValue = flagged.reduce((s, f) => s + f.amount, 0);
-    const summary = `Analysed ${bankData.length} transactions. ${flagged.length} flagged (${highRisk} high risk). Total value flagged: £${totalValue.toFixed(2)}. PM: £${pm}, CT: £${ct}.`;
+    const samplingNote = selectedIndices.length > 0 ? ` (sampled ${bankData.length} from population of ${fullPopulation.length})` : ` (full population of ${bankData.length})`;
+    const summary = `Analysed ${bankData.length} transactions${samplingNote}. ${flagged.length} flagged (${highRisk} high risk). Total value flagged: £${totalValue.toFixed(2)}. PM: £${pm}, CT: £${ct}.`;
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
@@ -1927,6 +1943,30 @@ async function handleWait(
         },
       };
     }
+  }
+
+  // Sampling wait — pause for user to select sample from the population
+  if (waitFor === 'sampling') {
+    // Check if sampling was already done (resumed with selectedIndices)
+    if (prevOutput?.samplingDone || prevOutput?.selectedIndices?.length > 0) {
+      return {
+        action: 'continue',
+        nextNodeId: getNextNodeId(flow, node.id),
+        output: { waitingFor: 'sampling', satisfied: true, triggerType: 'sampling', selectedIndices: prevOutput.selectedIndices, sampleSize: prevOutput.sampleSize, coverage: prevOutput.coverage, ...prevOutput },
+      };
+    }
+    // Find population data from previous nodes to pass along
+    let popCount = 0;
+    for (const [, nOut] of Object.entries(ctx.nodes)) {
+      const o = nOut as any;
+      if (o?.dataTable?.length > 0) popCount = o.dataTable.length;
+      if (o?.populationData?.length > 0) popCount = o.populationData.length;
+    }
+    return {
+      action: 'pause',
+      pauseReason: 'sampling',
+      output: { waitingFor: 'sampling', triggerType: 'sampling', populationCount: popCount },
+    };
   }
 
   // If previous node output indicates completion, pass through
