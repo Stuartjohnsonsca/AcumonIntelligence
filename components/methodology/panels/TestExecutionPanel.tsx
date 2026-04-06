@@ -484,8 +484,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </div>
                 )}
 
-                {/* Sampling calculator — shown during pause or when user wants to re-run */}
-                {(isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.triggerType === 'sampling')) && (
+                {/* Sampling calculator — shown when population data exists (any test with data can sample) */}
+                {(isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0 || s.output?.triggerType === 'sampling')) && (
                   <div className="border border-teal-200 rounded-lg overflow-hidden">
                     <button
                       onClick={() => setSamplingCalcOpen(!samplingCalcOpen)}
@@ -623,7 +623,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
               </div>
               {sampleItems.length > 0 && (
                 <a
-                  href={`/tools/data-extraction?engagementId=${engagementId}&executionId=${executionId || ''}&fsLine=${encodeURIComponent(fsLine)}`}
+                  href={`/tools/data-extraction?engagementId=${engagementId}&executionId=${executionId || ''}&fsLine=${encodeURIComponent(fsLine)}${clientId ? `&clientId=${clientId}` : ''}${periodId ? `&periodId=${periodId}` : ''}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={e => e.stopPropagation()}
