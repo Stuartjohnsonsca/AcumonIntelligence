@@ -516,9 +516,16 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                               return (
                                 <tr key={i}
                                   onClick={(e) => {
-                                    if (e.ctrlKey || e.metaKey) {
-                                      // Ctrl+Click: toggle this row back to white
-                                      setInvestigateRows(prev => { const n = new Set(prev); n.delete(i); return n; });
+                                    if (e.shiftKey) {
+                                      // Shift+Click: deselect this row and all below it (red → white)
+                                      setInvestigateRows(prev => {
+                                        const n = new Set(prev);
+                                        for (let r = i; r < population.length; r++) n.delete(r);
+                                        return n;
+                                      });
+                                    } else if (e.ctrlKey || e.metaKey) {
+                                      // Ctrl+Click: toggle just this row
+                                      setInvestigateRows(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
                                     } else {
                                       // Click: select this row and all above it (red)
                                       setInvestigateRows(prev => {
