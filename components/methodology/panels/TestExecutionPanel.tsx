@@ -735,18 +735,56 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                       </thead>
                       <tbody>
                         {sampleItems.map((item, i) => {
-                          const ev = evidence.find(e => e.itemId === item.id) || { status: 'pending' as const };
+                          const ev = evidence.find(e => e.itemId === item.id || e.itemId === item.ref) || { status: 'pending' as const };
                           const res = results.find(r => r.itemId === item.id);
+                          // Determine per-row evidence gathering status from loop results
+                          const loopStep = flowSteps.find(s => s.output?.loopCompleted || s.output?.iterating);
+                          const loopResults = loopStep?.output?.results || [];
+                          const loopItemResult = loopResults[i];
+                          const isLoopRunning = executionStatus === 'running' || executionStatus === 'paused';
+                          const loopCurrentIndex = flowSteps.find(s => s.output?.iterating)?.output?.index;
+
+                          // Row status: what's happening with this item's evidence?
+                          let rowStatus = 'pending';
+                          let rowStatusLabel = 'Pending';
+                          let rowStatusClass = 'bg-slate-100 text-slate-500';
+                          if (loopItemResult?.found) {
+                            rowStatus = 'obtained';
+                            rowStatusLabel = loopItemResult.evidenceSource === 'accounting_system' ? 'From Xero' : 'Uploaded';
+                            rowStatusClass = 'bg-green-100 text-green-700';
+                          } else if (loopItemResult?.portalRequestCreated) {
+                            rowStatus = 'requested';
+                            rowStatusLabel = 'Requested (Portal)';
+                            rowStatusClass = 'bg-amber-100 text-amber-700';
+                          } else if (ev.status === 'uploaded') {
+                            rowStatus = 'obtained';
+                            rowStatusLabel = 'Evidence obtained';
+                            rowStatusClass = 'bg-green-100 text-green-700';
+                          } else if (isLoopRunning && loopCurrentIndex === i) {
+                            rowStatus = 'extracting';
+                            rowStatusLabel = 'Extracting...';
+                            rowStatusClass = 'bg-blue-100 text-blue-700 animate-pulse';
+                          } else if (isLoopRunning && loopCurrentIndex !== undefined && i < loopCurrentIndex) {
+                            rowStatus = 'done';
+                            rowStatusLabel = 'Processed';
+                            rowStatusClass = 'bg-green-100 text-green-700';
+                          }
+
                           return (
-                            <tr key={item.id} className={`border-b border-slate-100 hover:bg-blue-50/30 ${i % 2 ? 'bg-slate-50/30' : ''}`}>
+                            <tr key={item.id} className={`border-b border-slate-100 hover:bg-blue-50/30 ${
+                              rowStatus === 'extracting' ? 'bg-blue-50/30' :
+                              rowStatus === 'obtained' ? 'bg-green-50/20' :
+                              rowStatus === 'requested' ? 'bg-amber-50/20' :
+                              i % 2 ? 'bg-slate-50/30' : ''
+                            }`}>
                               <td className="px-2 py-1 text-slate-400 font-mono border-r border-slate-100">{item.ref || i + 1}</td>
                               <td className="px-2 py-1 text-slate-700 border-r border-slate-100 truncate max-w-[180px]">{item.description}</td>
                               <td className="px-2 py-1 text-right font-mono border-r border-slate-100">{fmt(item.amount)}</td>
                               <td className="px-2 py-1 text-slate-500 border-r-2 border-blue-100">{item.date || '—'}</td>
-                              <td className="px-2 py-1 text-slate-600 font-mono border-r border-slate-100">{(ev as any).docRef || '—'}</td>
-                              <td className="px-2 py-1 text-right font-mono border-r border-slate-100">{fmt((ev as any).gross)}</td>
+                              <td className="px-2 py-1 text-slate-600 font-mono border-r border-slate-100">{(ev as any).docRef || (loopItemResult?.reference || '—')}</td>
+                              <td className="px-2 py-1 text-right font-mono border-r border-slate-100">{fmt((ev as any).gross || loopItemResult?.invoice?.Total)}</td>
                               <td className="px-2 py-1 text-center border-r-2 border-green-100">
-                                <span className={`text-[8px] px-1 py-0.5 rounded-full font-medium ${ev.status === 'uploaded' ? 'bg-green-100 text-green-700' : ev.status === 'missing' ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'}`}>{ev.status}</span>
+                                <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-medium ${rowStatusClass}`} title={rowStatus === 'requested' ? 'Waiting for client to upload via portal' : ''}>{rowStatusLabel}</span>
                               </td>
                               <td className="px-2 py-1 text-center border-r border-slate-100"><ResultIcon status={res?.amountMatch || 'pending'} /></td>
                               <td className="px-2 py-1 text-center">
