@@ -204,8 +204,9 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
 
         newEvidence.push({
           itemId: itemRef,
+          sampleIndex: ri, // Map to sampleItems by position
           docRef: inv?.InvoiceNumber || inv?.Reference || r.reference || r.documentName || '',
-          fileName: r.fileName || r.documentName || inv?.InvoiceNumber || '',
+          fileName: r.fileName || r.documentName || '',
           date: parsedDate,
           seller: inv?.Contact?.Name || '',
           net: Number(inv?.SubTotal || 0),
@@ -213,7 +214,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           gross: evidenceGross,
           status: matchStatus,
           previewUrl,
-          matchAssessment: r.matchAssessment, // AI assessment of Match/Period/Disclosure/Audit
+          matchAssessment: r.matchAssessment,
+          description: (inv?.LineItems || []).map((li: any) => li.Description || '').filter(Boolean).join('; ') || r.documentName || '',
         } as any);
       }
     }

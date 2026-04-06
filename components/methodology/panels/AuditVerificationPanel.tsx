@@ -313,20 +313,30 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
             )}
           </div>
 
-          {/* RIGHT: Document Preview */}
+          {/* RIGHT: Document Preview — auto-loads when evidence has a preview URL */}
           <div className="border rounded-lg overflow-hidden">
-            <div className="bg-slate-600 text-white px-3 py-1.5 text-[10px] font-semibold">Document Preview</div>
-            {previewDoc?.previewUrl ? (
-              <iframe src={previewDoc.previewUrl} className="w-full h-[200px]" title="Preview" />
-            ) : doc?.fileName ? (
+            <div className="bg-slate-600 text-white px-3 py-1.5 text-[10px] font-semibold flex items-center justify-between">
+              Document Preview
+              {(doc?.previewUrl || previewDoc?.previewUrl) && (
+                <a href={doc?.previewUrl || previewDoc?.previewUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-slate-300 hover:text-white flex items-center gap-0.5">
+                  <ExternalLink className="h-2.5 w-2.5" /> Open
+                </a>
+              )}
+            </div>
+            {(previewDoc?.previewUrl || doc?.previewUrl) ? (
+              <iframe src={previewDoc?.previewUrl || doc?.previewUrl} className="w-full h-[250px] border-0" title="Document Preview" />
+            ) : doc ? (
               <div className="p-3 flex flex-col items-center justify-center text-slate-400 min-h-[120px]">
                 <FileText className="h-8 w-8 mb-1" />
-                <p className="text-[10px] font-medium">{doc.fileName}</p>
-                <p className="text-[9px] mt-1">Preview not available</p>
+                <p className="text-[10px] font-medium">{doc.fileName || doc.docRef}</p>
+                <p className="text-[9px] mt-1">Document obtained but preview loading...</p>
+                {doc.previewUrl === undefined && (
+                  <p className="text-[8px] text-slate-300 mt-1">Re-run the test to generate preview URLs</p>
+                )}
               </div>
             ) : (
               <div className="p-3 flex items-center justify-center text-slate-300 min-h-[120px]">
-                <p className="text-[10px]">Select an item with evidence</p>
+                <p className="text-[10px]">No evidence obtained yet</p>
               </div>
             )}
           </div>
