@@ -95,7 +95,9 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   // Paused step detection
   const pausedStep = flowSteps.find(s => s.status === 'paused');
   const isReviewFlaggedPause = pausedStep?.output?.triggerType === 'review_flagged';
-  const isSamplingPause = !isReviewFlaggedPause && (pausedStep?.output?.triggerType === 'sampling' || pausedStep?.label?.toLowerCase().includes('sampl'));
+  // Also detect review_flagged tests even when not paused (after refresh/resume) — if any step has scored data with _score field
+  const isReviewFlaggedTest = isReviewFlaggedPause || flowSteps.some(s => s.output?.dataTable?.[0]?.hasOwnProperty('_score')) || flowSteps.some(s => s.label?.includes('Review') && s.label?.includes('Flagged'));
+  const isSamplingPause = !isReviewFlaggedTest && (pausedStep?.output?.triggerType === 'sampling' || pausedStep?.label?.toLowerCase().includes('sampl'));
   const isPortalPause = !!pausedStep?.output?.portalRequestId;
   const pauseItemId = pausedStep?.output?.outstandingItemId || pausedStep?.output?.portalRequestId;
 
@@ -453,8 +455,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             <button onClick={() => setSamplingOpen(!samplingOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
               <div className="flex items-center gap-2">
                 {samplingOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
-                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">{isReviewFlaggedPause ? 'Review Flagged Items' : 'Data & Sampling'}</span>
-                {isReviewFlaggedPause && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">Review Required — Select items to investigate</span>}
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">{isReviewFlaggedTest ? 'Review Flagged Items' : 'Data & Sampling'}</span>
+                {isReviewFlaggedTest && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">Review Required — Select items to investigate</span>}
                 {isSamplingPause && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium">Action Required</span>}
               </div>
               {(() => {
@@ -564,7 +566,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                 })()}
 
                 {/* Sampling methodology details — hidden for review_flagged tests */}
-                {samplingResults && !isReviewFlaggedPause && (
+                {samplingResults && !isReviewFlaggedTest && (
                   <div className="border border-teal-200 rounded-lg p-3 bg-teal-50/30 space-y-2">
                     <div className="text-[10px] font-bold text-teal-700 uppercase">Sampling Methodology</div>
                     <div className="grid grid-cols-4 gap-2 text-[10px]">
@@ -580,7 +582,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                 )}
 
                 {/* Sampling calculator — shown when population data exists, but NOT for review_flagged tests */}
-                {!isReviewFlaggedPause && (isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0 || s.output?.triggerType === 'sampling')) && (
+                {!isReviewFlaggedTest && (isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0 || s.output?.triggerType === 'sampling')) && (
                   <div className="border border-teal-200 rounded-lg overflow-hidden">
                     <button
                       onClick={() => setSamplingCalcOpen(!samplingCalcOpen)}
