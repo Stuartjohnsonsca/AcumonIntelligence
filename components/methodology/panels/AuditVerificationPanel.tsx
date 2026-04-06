@@ -170,18 +170,46 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
       saveRowStates(updated);
       return updated;
     });
-    // Create the RI Matter or Review Point
+    // Create the RI Matter or Review Point with full context
     if (engagementId) {
-      const item = sampleItems[index];
+      const sItem = sampleItems[index];
+      const evDoc = evidenceDocs.find(d => d.sampleIndex === index);
+      const assessment = (evDoc as any)?.matchAssessment;
       const panelType = type === 'ri_matter' ? 'ri_matter' : 'review_point';
+      const itemDesc = [
+        sItem?.reference ? 'Ref: ' + sItem.reference : '',
+        sItem?.description ? sItem.description.slice(0, 60) : '',
+        sItem?.gross ? '£' + fmt(sItem.gross) : '',
+        sItem?.date || '',
+      ].filter(Boolean).join(' | ');
+      const evidenceDesc = evDoc ? [
+        'Evidence: ' + (evDoc.docRef || 'N/A'),
+        'Party: ' + (evDoc.seller || 'N/A'),
+        '£' + fmt(evDoc.gross),
+      ].filter(Boolean).join(' | ') : 'No evidence obtained';
+      const assessmentDesc = assessment?.notes || '';
+
+      // Build link back to this test screen
+      const testLink = '/tools/methodology/sme-audit?tab=rmm&exec=' + (executionId || '') + '&item=' + index;
+
       fetch(`/api/engagements/${engagementId}/audit-points`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           pointType: panelType,
-          title: `${type === 'ri_matter' ? 'RI Matter' : 'Review Point'}: ${item?.reference || item?.description?.slice(0, 40) || 'Item ' + (index + 1)}`,
-          description: actionComment,
+          title: (type === 'ri_matter' ? 'RI Matter' : 'Review Point') + ': ' + (sItem?.reference || 'Item ' + (index + 1)),
+          description: [
+            'Transaction: ' + itemDesc,
+            evidenceDesc,
+            assessmentDesc ? 'Assessment: ' + assessmentDesc : '',
+            '',
+            'Auditor comment: ' + actionComment,
+            '',
+            'View in test: ' + testLink,
+          ].filter(Boolean).join('\n'),
           fsLine,
           source: 'verification',
+          executionId,
+          testLink,
         }),
       }).catch(() => {});
     }
@@ -263,17 +291,17 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
             {doc ? (
               <div className="p-3 space-y-1.5 text-xs">
                 <div><span className="text-slate-400">Doc Ref:</span> <span className="font-mono text-slate-800">{doc.docRef}</span></div>
-                <div><span className="text-slate-400">Seller:</span> <span className="text-slate-700">{doc.seller}</span></div>
+                <div><span className="text-slate-400">Party:</span> <span className="text-slate-700">{doc.seller}</span></div>
+                <div><span className="text-slate-400">Description:</span> <span className="text-slate-700 text-[10px]">{doc.fileName || '—'}</span></div>
                 <div><span className="text-slate-400">Gross:</span> <span className="font-mono font-semibold">£{fmt(doc.gross)}</span></div>
                 <div><span className="text-slate-400">Net:</span> <span className="font-mono">£{fmt(doc.net)}</span> <span className="text-slate-400 ml-2">Tax:</span> <span className="font-mono">£{fmt(doc.tax)}</span></div>
                 <div><span className="text-slate-400">Date:</span> <span className="text-slate-700">{doc.date || '—'}</span></div>
-                <div><span className="text-slate-400">Status:</span> <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${doc.status === 'matched' ? 'bg-green-100 text-green-700' : doc.status === 'partial' ? 'bg-red-100 text-red-700' : doc.status === 'missing' ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700'}`}>{doc.status === 'matched' ? 'Amounts agree' : doc.status === 'partial' ? 'AMOUNTS DIFFER' : doc.status}</span></div>
                 {doc.status === 'partial' && item && (
-                  <div className="text-[9px] text-red-600 font-medium mt-1">
-                    Difference: £{fmt(Math.abs(doc.gross - item.gross))} ({item.gross > 0 ? ((Math.abs(doc.gross - item.gross) / item.gross) * 100).toFixed(1) : '?'}%)
+                  <div className="text-[9px] text-red-600 font-medium mt-1 bg-red-50 rounded px-2 py-1">
+                    Amount difference: £{fmt(Math.abs(doc.gross - item.gross))} ({item.gross > 0 ? ((Math.abs(doc.gross - item.gross) / item.gross) * 100).toFixed(1) : '?'}%)
                   </div>
                 )}
-                {doc.previewUrl && <button onClick={() => setPreviewDoc(doc)} className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-[10px]"><Eye className="h-3 w-3" /> View Document</button>}
+                {doc.previewUrl && <button onClick={() => setPreviewDoc(doc)} className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-[10px] mt-1"><Eye className="h-3 w-3" /> View Document</button>}
               </div>
             ) : (
               <div className="p-3 flex flex-col items-center justify-center text-slate-400 min-h-[120px]">
@@ -347,6 +375,22 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
                 );
               })}
             </div>
+            {/* Assessment notes from the system */}
+            {(() => {
+              const evDoc = evidenceDocs.find(d => d.sampleIndex === currentItemIndex);
+              const notes = (evDoc as any)?.matchAssessment?.notes;
+              if (!notes) return null;
+              return (
+                <div className="mt-2 text-[10px] text-slate-600 bg-slate-50 rounded px-3 py-2 border">
+                  <span className="font-bold text-slate-500">System assessment: </span>
+                  {notes.split('\n').map((line: string, li: number) => (
+                    <span key={li} className={line.includes('MISMATCH') || line.includes('AUDIT') || line.includes('DISCLOSURE') ? 'text-red-600 font-medium' : ''}>
+                      {line}{li < notes.split('\n').length - 1 ? ' | ' : ''}
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
