@@ -517,6 +517,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     // Get all tests allocated to the matched FS Lines
     const matchedTestsMap = new Map<string, AllocationEntry['test']>();
     for (const a of allocations) {
+      if (!a.test) continue; // Guard against deleted tests
       if (matchingFsLineIds.has(a.fsLineId) && !matchedTestsMap.has(a.test.id)) {
         matchedTestsMap.set(a.test.id, a.test);
       }
@@ -877,7 +878,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map(row => {
+              {filteredRows.filter(Boolean).map(row => {
+                if (!row) return null;
                 // Match RMM to this TB row.
                 // RMM lineItem is the account description (e.g. "Barclays Current Account").
                 // Match by: description, account code, or FS level from TBCYvPY.
@@ -979,7 +981,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         )}
                       </td>
                     </tr>
-                    {isExp && tests.map((test, ti) => {
+                    {isExp && tests.filter(Boolean).map((test, ti) => {
+                      if (!test?.description) return null;
                       const testKey = `${rowKey}::${test.description}`;
                       const isApplicable = !excludedTests.has(testKey);
                       const isExecutionOpen = activeExecution === testKey;
