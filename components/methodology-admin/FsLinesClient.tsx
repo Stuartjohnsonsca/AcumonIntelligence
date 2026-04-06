@@ -57,6 +57,11 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
   const [editCategory, setEditCategory] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
+  const [taxonomyFramework, setTaxonomyFramework] = useState('FRS102');
+  const [populating, setPopulating] = useState(false);
+  const [taxonomyItems, setTaxonomyItems] = useState<{ name: string; label: string; fsCategory: string; depth: number }[]>([]);
+  const [taxonomySearch, setTaxonomySearch] = useState('');
+  const [loadingTaxonomy, setLoadingTaxonomy] = useState(false);
   const fsLineFileRef = useRef<HTMLInputElement>(null);
   const mappingFileRef = useRef<HTMLInputElement>(null);
   const sortedNonMandatory = useMemo(() => {
@@ -99,6 +104,61 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
         const { fsLine } = await res.json();
         setFsLines(prev => [...prev, fsLine]);
         setNewName(''); setShowAdd(false);
+      }
+    } finally { setSaving(false); }
+  }
+
+  async function populateFromTaxonomy() {
+    if (!confirm(`This will replace existing non-mandatory FS lines with items from the ${taxonomyFramework} taxonomy. Test allocations may be affected. Continue?`)) return;
+    setPopulating(true);
+    setUploadResult(null);
+    try {
+      const res = await fetch('/api/methodology-admin/fs-lines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'populate_from_taxonomy', framework: taxonomyFramework }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setUploadResult(`Taxonomy populated: ${data.created} created, ${data.deleted} replaced from ${data.framework}`);
+        // Reload FS lines
+        const reload = await fetch('/api/methodology-admin/fs-lines');
+        if (reload.ok) {
+          const { fsLines: newLines } = await reload.json();
+          setFsLines(newLines);
+        }
+      } else {
+        setUploadResult(`Taxonomy populate failed: ${data.error}`);
+      }
+    } catch (err: any) {
+      setUploadResult(`Taxonomy populate failed: ${err.message}`);
+    } finally { setPopulating(false); }
+  }
+
+  async function loadTaxonomyItems() {
+    setLoadingTaxonomy(true);
+    try {
+      const res = await fetch(`/api/methodology-admin/fs-lines?action=taxonomy_items&framework=${taxonomyFramework}`);
+      if (res.ok) {
+        const data = await res.json();
+        setTaxonomyItems(data.items || []);
+      }
+    } finally { setLoadingTaxonomy(false); }
+  }
+
+  async function addFromTaxonomy(item: { name: string; fsCategory: string; depth: number }) {
+    setSaving(true);
+    try {
+      const lineType = item.depth <= 1 ? 'fs_line_item' : 'note_item';
+      const res = await fetch('/api/methodology-admin/fs-lines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: item.name, lineType, fsCategory: item.fsCategory }),
+      });
+      if (res.ok) {
+        const { fsLine } = await res.json();
+        setFsLines(prev => [...prev, fsLine]);
+        setTaxonomyItems(prev => prev.filter(t => t.name !== item.name)); // Remove from picker
       }
     } finally { setSaving(false); }
   }
@@ -259,8 +319,19 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading...' : 'Upload'}
               </button>
               <input ref={fsLineFileRef} type="file" accept=".xlsx,.xls" onChange={handleFsLineUpload} className="hidden" />
-              <button onClick={() => setShowAdd(true)} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                + Add FS Line
+              <select value={taxonomyFramework} onChange={e => setTaxonomyFramework(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600">
+                <option value="FRS102">FRS 102</option>
+                <option value="IFRS">IFRS</option>
+                <option value="FRS101">FRS 101</option>
+                <option value="Charities">Charities</option>
+              </select>
+              <button onClick={populateFromTaxonomy} disabled={populating}
+                className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50">
+                {populating ? 'Populating...' : 'Populate from Taxonomy'}
+              </button>
+              <button onClick={() => { setShowAdd(true); loadTaxonomyItems(); }} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                + Add from Taxonomy
               </button>
             </>
           )}
@@ -288,46 +359,47 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
         </div>
       )}
 
-      {/* Add form */}
+      {/* Add from Taxonomy picker */}
       {showAdd && view === 'list' && (
-        <div className="border border-blue-200 bg-blue-50/50 rounded-lg p-4 flex items-end gap-3">
-          <div className="flex-1">
-            <label className="text-xs text-slate-500 block mb-1">Name</label>
-            <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addFsLine()}
-              placeholder="e.g. Revenue, Trade Debtors..."
-              className="w-full border border-slate-300 rounded px-3 py-2 text-sm" autoFocus />
+        <div className="border border-blue-200 bg-blue-50/50 rounded-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-700">Add FS Line from {taxonomyFramework} Taxonomy</h3>
+            <button onClick={() => { setShowAdd(false); setTaxonomySearch(''); }} className="text-sm text-slate-500 hover:text-slate-700">Cancel</button>
           </div>
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">Type</label>
-            <select value={newLineType} onChange={e => setNewLineType(e.target.value)}
-              className="border border-slate-300 rounded px-3 py-2 text-sm">
-              {LINE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">FS Category</label>
-            <select value={newCategory} onChange={e => setNewCategory(e.target.value)}
-              className="border border-slate-300 rounded px-3 py-2 text-sm">
-              {FS_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-          </div>
-          {newLineType === 'note_item' && (
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Parent FS Line</label>
-              <select value={newParentId} onChange={e => setNewParentId(e.target.value)}
-                className="border border-slate-300 rounded px-3 py-2 text-sm min-w-[160px]">
-                <option value="">— None —</option>
-                {fsLines.filter(l => l.lineType === 'fs_line_item' && l.isActive).map(l => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
-                ))}
-              </select>
-            </div>
+          {loadingTaxonomy && <p className="text-xs text-slate-400 animate-pulse">Loading taxonomy items...</p>}
+          {!loadingTaxonomy && taxonomyItems.length === 0 && (
+            <p className="text-xs text-slate-400">No taxonomy items loaded. Click "Add from Taxonomy" again to fetch.</p>
           )}
-          <button onClick={addFsLine} disabled={saving || !newName.trim()}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50">
-            {saving ? 'Adding...' : 'Add'}
-          </button>
-          <button onClick={() => setShowAdd(false)} className="px-3 py-2 text-sm text-slate-500 hover:text-slate-700">Cancel</button>
+          {taxonomyItems.length > 0 && (
+            <>
+              <input
+                value={taxonomySearch}
+                onChange={e => setTaxonomySearch(e.target.value)}
+                placeholder="Search taxonomy items..."
+                className="w-full border border-slate-300 rounded px-3 py-2 text-sm"
+                autoFocus
+              />
+              <div className="max-h-[300px] overflow-auto border rounded divide-y divide-slate-100">
+                {taxonomyItems
+                  .filter(item => !taxonomySearch || item.name.toLowerCase().includes(taxonomySearch.toLowerCase()))
+                  .filter(item => !fsLines.some(f => f.name.toLowerCase() === item.name.toLowerCase()))
+                  .slice(0, 50)
+                  .map((item, i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-1.5 hover:bg-blue-50 cursor-pointer"
+                      onClick={() => addFromTaxonomy(item)}>
+                      <span className={`text-[8px] px-1 py-0 rounded ${
+                        item.fsCategory === 'pnl' ? 'bg-green-100 text-green-700' :
+                        item.fsCategory === 'balance_sheet' ? 'bg-blue-100 text-blue-700' :
+                        item.fsCategory === 'cashflow' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'
+                      }`}>{item.fsCategory === 'pnl' ? 'P&L' : item.fsCategory === 'balance_sheet' ? 'BS' : item.fsCategory === 'cashflow' ? 'CF' : 'Notes'}</span>
+                      <span className="text-sm text-slate-700 flex-1">{item.name}</span>
+                      <span className="text-[9px] text-slate-400">{item.depth <= 1 ? 'Line Item' : 'Note Item'}</span>
+                      <span className="text-xs text-blue-600">+ Add</span>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 

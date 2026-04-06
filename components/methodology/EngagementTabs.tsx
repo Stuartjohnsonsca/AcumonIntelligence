@@ -22,6 +22,7 @@ import { CommunicationTab } from './tabs/CommunicationTab';
 import { ReviewPointsPanel } from './panels/ReviewPointsPanel';
 import { ManagementPointPanel } from './panels/ManagementPointPanel';
 import { RIMattersPanel } from './panels/RIMattersPanel';
+import { CompletionPanel } from './panels/CompletionPanel';
 
 interface Props {
   engagement: EngagementData;
@@ -118,6 +119,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [tbShowCategory, setTbShowCategory] = useState(true);
   const [showAuditPlan, setShowAuditPlan] = useState(false);
+  const [showCompletion, setShowCompletion] = useState(false);
   const [planCreated, setPlanCreated] = useState(false);
 
   // Check if plan was previously created
@@ -261,6 +263,19 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         <button onClick={() => setOpenPanel('ri_matter')} className="px-2.5 py-1 text-[10px] font-medium bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition-colors">
           RI Matters
         </button>
+        <div className="flex-1" />
+        {!isPreStart && (
+          <button
+            onClick={() => { setShowCompletion(!showCompletion); if (!showCompletion) setShowAuditPlan(false); }}
+            className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
+              showCompletion
+                ? 'bg-green-600 text-white'
+                : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+            }`}
+          >
+            {showCompletion ? 'Exit Completion' : 'Completion'}
+          </button>
+        )}
       </div>
 
       {/* Panel modals */}
@@ -277,8 +292,42 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         <RIMattersPanel engagementId={engagement.id} userId={currentUserId} onClose={() => setOpenPanel(null)} />
       )}
 
-      {/* When Audit Plan is open: split layout with vertical sidebar */}
-      {showAuditPlan ? (
+      {/* When Completion is open: split layout with vertical sidebar (left) + completion tabs (right) */}
+      {showCompletion ? (
+        <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px]">
+          {/* Left sidebar: audit plan tabs (collapsed) */}
+          <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
+            {visibleTabs.map(tab => {
+              const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => { switchTab(tab.key); setShowCompletion(false); }}
+                  className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                >
+                  {label}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => { setShowAuditPlan(true); setShowCompletion(false); }}
+              className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 text-blue-600 hover:bg-blue-50"
+            >
+              Audit Plan
+            </button>
+          </div>
+          {/* Main area: Completion Panel */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <CompletionPanel
+              engagementId={engagement.id}
+              clientId={engagement.clientId}
+              userRole={teamMembers.find(m => m.userId === currentUserId)?.role}
+              userId={currentUserId}
+              onClose={() => setShowCompletion(false)}
+            />
+          </div>
+        </div>
+      ) : showAuditPlan ? (
         <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px]">
           {/* Left sidebar: all tabs as vertical list */}
           <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
