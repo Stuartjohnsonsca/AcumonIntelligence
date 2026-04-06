@@ -1125,8 +1125,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                             </td>
                           </tr>
                         )}
-                        {/* Results Panel — shown for completed tests with results OR completed executions */}
-                        {isExecutionOpen && hasResults && (
+                        {/* Results Panel — shown for completed tests with results (not for ranked_flagged which shows in execution panel) */}
+                        {isExecutionOpen && hasResults && test.outputFormat !== 'ranked_flagged' && (
                           <tr>
                             <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-white">
                               <TestResultsPanel
