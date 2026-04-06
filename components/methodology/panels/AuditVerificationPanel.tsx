@@ -7,7 +7,7 @@ import { getVerificationChecks, type VerificationCheck as VCheck } from '@/types
 interface SampleRow {
   index: number;
   reference: string;
-  customer: string;
+  customer: string; // Also used as "Description" for bank statement data
   description: string;
   date: string;
   net: number;
@@ -173,7 +173,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
               {/* Blue */}
               <th className="px-2 py-1 text-left border-r border-slate-200 w-8">#</th>
               <th className="px-2 py-1 text-left border-r border-slate-200 w-16">Ref</th>
-              <th className="px-2 py-1 text-left border-r border-slate-200">Customer</th>
+              <th className="px-2 py-1 text-left border-r border-slate-200">Description</th>
               <th className="px-2 py-1 text-right border-r border-slate-200 w-20">Gross</th>
               <th className="px-2 py-1 text-left border-r-2 border-blue-200 w-16">Date</th>
               {/* Green */}
@@ -257,7 +257,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
                 <div>
                   <div className="text-[10px] font-bold text-blue-600 uppercase mb-1">Sample Item</div>
                   <div className="space-y-0.5">
-                    <div><span className="text-slate-400">Customer:</span> <span className="text-slate-700">{item?.customer}</span></div>
+                    <div><span className="text-slate-400">Description:</span> <span className="text-slate-700">{item?.customer}</span></div>
                     <div><span className="text-slate-400">Ref:</span> <span className="font-mono text-slate-700">{item?.reference}</span></div>
                     <div><span className="text-slate-400">Net:</span> <span className="font-mono">£{fmt(item?.net)}</span> <span className="text-slate-400">VAT:</span> <span className="font-mono">£{fmt(item?.tax)}</span> <span className="text-slate-400">Gross:</span> <span className="font-mono font-semibold">£{fmt(item?.gross)}</span></div>
                   </div>

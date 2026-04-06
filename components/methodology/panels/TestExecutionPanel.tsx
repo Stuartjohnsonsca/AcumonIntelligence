@@ -131,14 +131,21 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         ? selectedIndices.map(idx => populationData[idx]).filter(Boolean)
         : populationData;
 
-      setSampleItems(items.map((item: any, i: number) => ({
-        id: item.invoiceNumber || item.InvoiceNumber || item.reference || item.Reference || String(i + 1),
-        ref: item.invoiceNumber || item.InvoiceNumber || item.reference || item.Reference || String(i + 1),
-        description: item.contact || item.Contact || item.description || item.Description || item.ContactName || '',
-        amount: Number(item.amount || item.Amount || item.total || item.Total || item.lineAmount || item.LineAmount || 0),
-        date: item.date || item.Date || '',
-        reference: item.reference || item.Reference || item.invoiceNumber || item.InvoiceNumber || '',
-      })));
+      setSampleItems(items.map((item: any, i: number) => {
+        // Resolve amount: try amount/total first, then debit/credit for bank statements
+        const amount = Number(item.amount || item.Amount || item.total || item.Total || item.lineAmount || item.LineAmount || 0)
+          || Number(item.debit || item.debitFC || 0)
+          || Number(item.credit || item.creditFC || 0)
+          || Number(item.gross || item.Gross || 0);
+        return {
+          id: item.invoiceNumber || item.InvoiceNumber || item.reference || item.Reference || item.accountNumber || String(i + 1),
+          ref: item.invoiceNumber || item.InvoiceNumber || item.reference || item.Reference || item.accountNumber || String(i + 1),
+          description: item.description || item.Description || item.contact || item.Contact || item.ContactName || item.narrative || '',
+          amount,
+          date: item.date || item.Date || '',
+          reference: item.reference || item.Reference || item.invoiceNumber || item.InvoiceNumber || item.accountNumber || '',
+        };
+      }));
     }
   }, [flowSteps, samplingCompleted, samplingResults]);
 

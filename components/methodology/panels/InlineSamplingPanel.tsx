@@ -55,11 +55,12 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
   const [creatingEng, setCreatingEng] = useState(false);
 
   // Config
-  const [method, setMethod] = useState('random');
-  const [sampleSizeMode, setSampleSizeMode] = useState<'fixed' | 'calculator'>('fixed');
+  const [method, setMethod] = useState('MUS');
+  const [sampleSizeMode, setSampleSizeMode] = useState<'fixed' | 'calculator'>('calculator');
   const [fixedSampleSize, setFixedSampleSize] = useState(25);
   const [confidence, setConfidence] = useState(0.95);
   const [errorMetric, setErrorMetric] = useState('net_signed');
+  const [expectedErrorRate, setExpectedErrorRate] = useState(0); // 0-100%
 
   // Column mapping + aggregation
   const [showMapping, setShowMapping] = useState(false);
@@ -143,14 +144,18 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
   const columns = populationData.length > 0 ? Object.keys(populationData[0]) : [];
   useEffect(() => {
     if (columns.length === 0) return;
-    // Auto-detect amount column
+    // Auto-detect amount column (prefer debit for bank statements, then amount/gross/total)
     if (!amountColumn) {
-      const amtCol = columns.find(c => /amount|gross|net|value|total|balance/i.test(c));
+      const amtCol = columns.find(c => /^debit$/i.test(c))
+        || columns.find(c => /^debitFC$/i.test(c))
+        || columns.find(c => /amount|gross|net|value|total/i.test(c))
+        || columns.find(c => /balance/i.test(c));
       if (amtCol) setAmountColumn(amtCol);
     }
-    // Auto-detect ID column
+    // Auto-detect ID column (prefer description for bank, then reference/number)
     if (!idColumn) {
-      const idCol = columns.find(c => /id|ref|reference|number|invoice|transaction/i.test(c));
+      const idCol = columns.find(c => /description|narrative/i.test(c))
+        || columns.find(c => /id|ref|reference|number|invoice|transaction/i.test(c));
       if (idCol) setIdColumn(idCol);
       else if (columns[0]) setIdColumn(columns[0]);
     }
@@ -158,7 +163,11 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
 
   const populationCount = populationData.length;
   const populationTotal = populationData.reduce((s, row) => {
-    const val = amountColumn ? parseFloat(String(row[amountColumn] || 0)) : 0;
+    let val = amountColumn ? parseFloat(String(row[amountColumn] || 0)) : 0;
+    // For bank data: if amount is 0 and we have debit/credit fields, use whichever is non-zero
+    if ((isNaN(val) || val === 0) && (row.debit || row.debitFC || row.credit || row.creditFC)) {
+      val = Math.abs(parseFloat(String(row.debit || row.debitFC || 0))) || Math.abs(parseFloat(String(row.credit || row.creditFC || 0)));
+    }
     return s + (isNaN(val) ? 0 : Math.abs(val));
   }, 0);
 
@@ -279,24 +288,44 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
           </div>
         </div>
 
-        {/* Size + Error Metric + Confidence */}
+        {/* Statistical Sampling Parameters */}
         <div className="col-span-3 space-y-2">
           <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Sample Size</label>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Sample Size Determination</label>
             <div className="flex gap-0.5 mb-1.5 bg-slate-100 rounded p-0.5">
-              <button onClick={() => setSampleSizeMode('fixed')} className={`flex-1 px-1.5 py-0.5 text-[9px] font-medium rounded ${sampleSizeMode === 'fixed' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Fixed</button>
-              <button onClick={() => setSampleSizeMode('calculator')} className={`flex-1 px-1.5 py-0.5 text-[9px] font-medium rounded ${sampleSizeMode === 'calculator' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Auto</button>
+              <button onClick={() => setSampleSizeMode('calculator')} className={`flex-1 px-1.5 py-0.5 text-[9px] font-medium rounded ${sampleSizeMode === 'calculator' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Statistical</button>
+              <button onClick={() => setSampleSizeMode('fixed')} className={`flex-1 px-1.5 py-0.5 text-[9px] font-medium rounded ${sampleSizeMode === 'fixed' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Manual</button>
             </div>
             {sampleSizeMode === 'fixed' && (
               <input type="number" min={1} max={populationCount || 999} value={fixedSampleSize} onChange={e => setFixedSampleSize(parseInt(e.target.value) || 1)}
                 className="w-full border rounded px-2 py-1 text-sm" />
             )}
+            {sampleSizeMode === 'calculator' && (
+              <div className="text-[9px] text-teal-600 bg-teal-50 rounded px-2 py-1">
+                Size determined by: Confidence × Tolerable Misstatement ÷ Population Value
+              </div>
+            )}
           </div>
           <div>
-            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Confidence</label>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Confidence Level</label>
             <select value={confidence} onChange={e => setConfidence(parseFloat(e.target.value))} className="w-full border rounded px-1.5 py-1 text-xs bg-white">
-              <option value={0.90}>90%</option><option value={0.95}>95%</option><option value={0.99}>99%</option>
+              <option value={0.80}>80% (Low)</option>
+              <option value={0.90}>90% (Moderate)</option>
+              <option value={0.95}>95% (High — Default)</option>
+              <option value={0.99}>99% (Very High)</option>
             </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Expected Error Rate (%)</label>
+            <input type="number" min={0} max={100} step={0.5} value={expectedErrorRate}
+              onChange={e => setExpectedErrorRate(parseFloat(e.target.value) || 0)}
+              className="w-full border rounded px-1.5 py-1 text-xs" placeholder="0 = no errors expected" />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Tolerable Misstatement</label>
+            <div className="border rounded px-1.5 py-1 text-xs bg-slate-50 font-mono">
+              {materialityData.tolerableMisstatement ? `£${Number(materialityData.tolerableMisstatement).toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : 'Not set'}
+            </div>
           </div>
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">Error Metric</label>
