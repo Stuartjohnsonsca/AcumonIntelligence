@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { ChevronDown, ChevronRight, FileText, Eye, CheckCircle2, XCircle, Clock, AlertTriangle, X, Loader2, ExternalLink, Upload } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { ChevronDown, ChevronRight, ChevronLeft, FileText, Eye, CheckCircle2, XCircle, Clock, AlertTriangle, X, Loader2, ExternalLink, Upload, Send, Flag } from 'lucide-react';
 import { getVerificationChecks, type VerificationCheck as VCheck } from '@/types/methodology';
 
 interface SampleRow {
   index: number;
   reference: string;
-  customer: string; // Also used as "Description" for bank statement data
+  customer: string;
   description: string;
   date: string;
   net: number;
@@ -39,11 +39,27 @@ interface VerificationCheck {
   difference?: number;
 }
 
+// Per-check user confirmation state
+interface CheckConfirmation {
+  status: 'pass' | 'fail';
+  userName: string;
+  timestamp: string;
+}
+
+// Per-row state
+interface RowState {
+  checks: Record<string, CheckConfirmation | null>; // key = check column key
+  action: 'none' | 'ri_matter' | 'review_point' | null;
+  actionComment: string;
+  reviewerSignOff: { userName: string; timestamp: string } | null;
+  riSignOff: { userName: string; timestamp: string } | null;
+}
+
 interface Props {
   engagementId?: string;
   executionId?: string;
   fsLine?: string;
-  assertions?: string[];  // Test assertions — drives which verification columns show
+  assertions?: string[];
   sampleItems: SampleRow[];
   evidenceDocs: EvidenceDoc[];
   verificationResults: VerificationCheck[];
@@ -57,386 +73,334 @@ function fmt(n: number | null | undefined): string {
   return n < 0 ? `(${f})` : f;
 }
 
-/**
- * VerificationCircle — the core interaction element for each check column.
- *
- * States:
- * - hollow green circle: AI assessed as agreeing (not yet confirmed by user)
- * - hollow red circle: AI assessed as not agreeing
- * - solid green circle: user confirmed agreement (name + timestamp)
- * - solid red circle: user confirmed disagreement (name + timestamp)
- * - grey circle: AI could not assess (insufficient evidence)
- *
- * Clicks:
- * - 1st click on hollow: makes solid (confirms AI assessment, records name+timestamp)
- * - 2nd click on solid: switches colour (green→red or red→green, updates name+timestamp)
- */
-function VerificationCircle({ aiStatus, userStatus, userName, timestamp, onClick }: {
-  aiStatus: 'pass' | 'fail' | 'pending'; // AI's assessment
-  userStatus?: 'pass' | 'fail' | null; // User's override (null = not confirmed)
-  userName?: string;
-  timestamp?: string;
-  onClick?: () => void;
-}) {
-  const isConfirmed = userStatus != null;
-  const effectiveStatus = userStatus ?? aiStatus;
-  const isGreen = effectiveStatus === 'pass';
-  const isRed = effectiveStatus === 'fail';
-  const isPending = aiStatus === 'pending' && !isConfirmed;
-
-  const dateStr = timestamp ? new Date(timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) + ' ' + new Date(timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
-  const title = isPending ? 'Not assessed — insufficient evidence'
-    : isConfirmed ? `${isGreen ? 'Agrees' : 'Does not agree'} — confirmed by ${userName} on ${dateStr}`
-    : `AI assessment: ${isGreen ? 'Agrees' : 'Does not agree'} — click to confirm`;
-
-  return (
-    <button
-      onClick={onClick}
-      className="w-4 h-4 rounded-full border-2 transition-all cursor-pointer hover:scale-110"
-      style={{
-        borderColor: isPending ? '#cbd5e1' : isGreen ? '#22c55e' : '#ef4444',
-        backgroundColor: isPending ? 'transparent' : isConfirmed ? (isGreen ? '#22c55e' : '#ef4444') : 'transparent',
-      }}
-      title={title}
-    />
-  );
-}
-
-// Legacy check icon for backward compat
-function CheckIcon({ status }: { status: string }) {
-  if (status === 'pass') return <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />;
-  if (status === 'fail') return <XCircle className="h-3.5 w-3.5 text-red-500" />;
-  return <Clock className="h-3.5 w-3.5 text-slate-300" />;
-}
-
 export function AuditVerificationPanel({ engagementId, executionId, fsLine, assertions, sampleItems, evidenceDocs, verificationResults, onRowClick }: Props) {
-  // Determine verification columns from test assertions
   const verificationColumns = useMemo(() => getVerificationChecks(assertions || []), [assertions]);
-  const [selectedRow, setSelectedRow] = useState<number | null>(null);
+  const [currentItemIndex, setCurrentItemIndex] = useState(0);
   const [previewDoc, setPreviewDoc] = useState<EvidenceDoc | null>(null);
-  const [extractionJobId, setExtractionJobId] = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; status: string }[]>([]);
+  const [extractionJobId, setExtractionJobId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    const newFiles: { name: string; status: string }[] = [];
-    try {
-      for (const file of Array.from(files)) {
-        newFiles.push({ name: file.name, status: 'uploading' });
-        setUploadedFiles(prev => [...prev, { name: file.name, status: 'uploading' }]);
-        const formData = new FormData();
-        formData.append('file', file);
-        if (extractionJobId) formData.append('jobId', extractionJobId);
-        if (engagementId) formData.append('engagementId', engagementId);
-        if (executionId) formData.append('executionId', executionId);
-        if (fsLine) formData.append('fsLine', fsLine);
-        const res = await fetch('/api/tools/extraction/upload', { method: 'POST', body: formData });
-        if (res.ok) {
-          setUploadedFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'extracted' } : f));
-        } else {
-          setUploadedFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'failed' } : f));
-        }
-      }
-    } catch {
-      // Handle error
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  }
+  // Per-row state (persisted to DB via auto-save)
+  const [rowStates, setRowStates] = useState<Record<number, RowState>>({});
+  const [actionModalRow, setActionModalRow] = useState<{ index: number; type: 'ri_matter' | 'review_point' } | null>(null);
+  const [actionComment, setActionComment] = useState('');
 
-  // Auto-create or load extraction session on mount
+  // Auto-create extraction session
   useEffect(() => {
     if (!engagementId) return;
     setSessionLoading(true);
     fetch(`/api/engagements/${engagementId}/extraction-session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ testExecutionId: executionId, fsLine }),
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.job?.id) setExtractionJobId(data.job.id); })
-      .catch(() => {})
-      .finally(() => setSessionLoading(false));
+    }).then(r => r.ok ? r.json() : null).then(data => { if (data?.job?.id) setExtractionJobId(data.job.id); }).catch(() => {}).finally(() => setSessionLoading(false));
   }, [engagementId, executionId]);
 
-  const passCount = verificationResults.filter(r => r.overallResult === 'pass').length;
-  const failCount = verificationResults.filter(r => r.overallResult === 'fail').length;
-  const pendingCount = sampleItems.length - passCount - failCount;
+  // Load saved row states from DB
+  useEffect(() => {
+    if (!engagementId || !executionId) return;
+    fetch(`/api/engagements/${engagementId}/test-conclusions?executionId=${executionId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.conclusions?.[0]?.followUpData?.rowStates) {
+          setRowStates(data.conclusions[0].followUpData.rowStates);
+        }
+      }).catch(() => {});
+  }, [engagementId, executionId]);
 
-  function handleRowClick(idx: number) {
-    setSelectedRow(selectedRow === idx ? null : idx);
-    onRowClick?.(idx);
-    const doc = evidenceDocs.find(d => d.sampleIndex === idx);
-    if (doc?.previewUrl) setPreviewDoc(doc);
+  // Save row states to DB
+  const saveRowStates = useCallback(async (states: Record<number, RowState>) => {
+    if (!engagementId || !executionId) return;
+    try {
+      await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ executionId, fsLine, testDescription: '', followUpData: { rowStates: states } }),
+      });
+    } catch {}
+  }, [engagementId, executionId, fsLine]);
+
+  function handleCheckClick(itemIndex: number, checkKey: string) {
+    setRowStates(prev => {
+      const row = prev[itemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
+      const current = row.checks[checkKey];
+      const aiStatus = getAiCheckStatus(itemIndex, checkKey);
+
+      let newStatus: 'pass' | 'fail';
+      if (!current) {
+        // First click: confirm AI assessment
+        newStatus = aiStatus === 'fail' ? 'fail' : 'pass';
+      } else {
+        // Subsequent click: toggle
+        newStatus = current.status === 'pass' ? 'fail' : 'pass';
+      }
+
+      const updated = {
+        ...prev,
+        [itemIndex]: {
+          ...row,
+          checks: { ...row.checks, [checkKey]: { status: newStatus, userName: 'Current User', timestamp: new Date().toISOString() } },
+        },
+      };
+      saveRowStates(updated);
+      return updated;
+    });
+  }
+
+  function handleAction(itemIndex: number, actionType: 'none' | 'ri_matter' | 'review_point') {
+    if (actionType === 'none') {
+      setRowStates(prev => {
+        const row = prev[itemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
+        const updated = { ...prev, [itemIndex]: { ...row, action: 'none' as const, actionComment: '' } };
+        saveRowStates(updated);
+        return updated;
+      });
+    } else {
+      setActionModalRow({ index: itemIndex, type: actionType });
+      setActionComment('');
+    }
+  }
+
+  function submitAction() {
+    if (!actionModalRow) return;
+    const { index, type } = actionModalRow;
+    setRowStates(prev => {
+      const row = prev[index] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
+      const updated = { ...prev, [index]: { ...row, action: type, actionComment } };
+      saveRowStates(updated);
+      return updated;
+    });
+    // Create the RI Matter or Review Point
+    if (engagementId) {
+      const item = sampleItems[index];
+      const panelType = type === 'ri_matter' ? 'ri_matter' : 'review_point';
+      fetch(`/api/engagements/${engagementId}/audit-points`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pointType: panelType,
+          title: `${type === 'ri_matter' ? 'RI Matter' : 'Review Point'}: ${item?.reference || item?.description?.slice(0, 40) || 'Item ' + (index + 1)}`,
+          description: actionComment,
+          fsLine,
+          source: 'verification',
+        }),
+      }).catch(() => {});
+    }
+    setActionModalRow(null);
+  }
+
+  function getAiCheckStatus(itemIndex: number, checkKey: string): 'pass' | 'fail' | 'pending' {
+    const check = verificationResults.find(r => r.sampleIndex === itemIndex);
+    if (!check) return 'pending';
+    return (check as any)[checkKey] || 'pending';
+  }
+
+  const item = sampleItems[currentItemIndex];
+  const doc = item ? evidenceDocs.find(d => d.sampleIndex === currentItemIndex) : null;
+  const check = item ? verificationResults.find(r => r.sampleIndex === currentItemIndex) : null;
+  const rowState = rowStates[currentItemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
+
+  if (sampleItems.length === 0) {
+    return <div className="p-8 text-center text-sm text-slate-400">No sample items to verify</div>;
   }
 
   return (
-    <div className="flex border rounded-lg overflow-hidden bg-white" style={{ minHeight: 400 }}>
-      {/* LEFT: Three-section spreadsheet (75%) */}
-      <div className="flex-1 overflow-auto">
-        {/* Session + Summary bar */}
-        <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-b text-xs">
-          <div className="flex items-center gap-4">
-            <span className="text-slate-500">{sampleItems.length} items</span>
-            <span className="text-green-600 font-medium">{passCount} passed</span>
-          {failCount > 0 && <span className="text-red-600 font-medium">{failCount} failed</span>}
-          {pendingCount > 0 && <span className="text-slate-400">{pendingCount} pending</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            {sessionLoading && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
-            {extractionJobId && (
-              <a href={`/tools/data-extraction?jobId=${extractionJobId}`} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800">
-                Open in Data Extraction <ExternalLink className="h-3 w-3" />
-              </a>
-            )}
-            {extractionJobId && <span className="text-[9px] text-slate-300 font-mono">{extractionJobId.slice(0, 8)}</span>}
-          </div>
+    <div className="space-y-3">
+      {/* Item Navigator */}
+      <div className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+        <button onClick={() => setCurrentItemIndex(Math.max(0, currentItemIndex - 1))} disabled={currentItemIndex === 0}
+          className="p-1 rounded hover:bg-slate-200 disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button>
+        <div className="flex items-center gap-2">
+          {sampleItems.map((_, i) => (
+            <button key={i} onClick={() => setCurrentItemIndex(i)}
+              className={`w-6 h-6 rounded-full text-[9px] font-bold flex items-center justify-center transition-colors ${
+                i === currentItemIndex ? 'bg-blue-600 text-white' :
+                rowStates[i]?.action === 'none' ? 'bg-green-100 text-green-700 border border-green-300' :
+                rowStates[i]?.action ? 'bg-amber-100 text-amber-700 border border-amber-300' :
+                'bg-white text-slate-500 border border-slate-300 hover:border-blue-400'
+              }`}>
+              {i + 1}
+            </button>
+          ))}
         </div>
-
-        <table className="w-full text-xs border-collapse">
-          <thead className="sticky top-0 z-10">
-            {/* Section headers */}
-            <tr>
-              <th colSpan={5} className="bg-blue-600 text-white text-[10px] font-semibold px-2 py-1 text-left border-r-2 border-white cursor-help" title="Transactions selected for testing from the trial balance or accounting system. These are the items the auditor needs evidence for.">
-                Sample Request (from TB)
-              </th>
-              <th colSpan={4} className="bg-green-600 text-white text-[10px] font-semibold px-2 py-1 text-left border-r-2 border-white cursor-help" title="Supporting documents obtained from the accounting system (Xero), uploaded by the client via portal, or manually uploaded. Each document is matched to a sample item.">
-                Client Evidence (uploaded)
-              </th>
-              <th colSpan={verificationColumns.length + 1} className="bg-amber-600 text-white text-[10px] font-semibold px-2 py-1 text-left cursor-help" title="Automated and manual verification checks comparing the sample request to the evidence. Each column tests a specific audit assertion. Green tick = pass, Red cross = fail.">
-                Audit Verification
-              </th>
-            </tr>
-            {/* Column sub-headers */}
-            <tr className="bg-slate-100 border-b text-[10px] text-slate-600 font-semibold">
-              {/* Blue — Sample Request */}
-              <th className="px-2 py-1 text-left border-r border-slate-200 w-8 cursor-help" title="Row number in the sample">#</th>
-              <th className="px-2 py-1 text-left border-r border-slate-200 w-16 cursor-help" title="Invoice number or transaction reference from the accounting system">Ref</th>
-              <th className="px-2 py-1 text-left border-r border-slate-200 cursor-help" title="Transaction description or contact name from the ledger">Description</th>
-              <th className="px-2 py-1 text-right border-r border-slate-200 w-20 cursor-help" title="Gross amount of the transaction as recorded in the trial balance / ledger">Gross</th>
-              <th className="px-2 py-1 text-left border-r-2 border-blue-200 w-16 cursor-help" title="Transaction date as recorded in the accounting system">Date</th>
-              {/* Green — Client Evidence */}
-              <th className="px-2 py-1 text-left border-r border-slate-200 w-16 cursor-help" title="Document reference from the supporting evidence (invoice, contract, etc.)">Doc</th>
-              <th className="px-2 py-1 text-left border-r border-slate-200 cursor-help" title="Supplier or counterparty name from the evidence document">Seller</th>
-              <th className="px-2 py-1 text-right border-r border-slate-200 w-20 cursor-help" title="Gross amount per the evidence document — compared against the sample amount">Gross</th>
-              <th className="px-2 py-1 text-center border-r-2 border-green-200 w-14 cursor-help" title="Evidence status: obtained from Xero, uploaded by client, requested via portal, or pending">Status</th>
-              {/* Amber — standard 4 verification columns */}
-              {verificationColumns.map((col, ci) => (
-                <th key={col.key} className={`px-2 py-1 text-center cursor-help ${ci < verificationColumns.length - 1 ? 'border-r border-slate-200' : ''} w-14`} title={col.description}>
-                  {col.shortLabel}
-                </th>
-              ))}
-              <th className="px-2 py-1 text-center w-14 cursor-help" title="Overall verification result: Pass if all checks satisfied, Fail if any material discrepancy found">Result</th>
-              <th className="px-2 py-1 text-center w-16 cursor-help" title="Actions: tick (no action needed), send to RI Matters, or send to Review Point">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sampleItems.map((item, i) => {
-              const doc = evidenceDocs.find(d => d.sampleIndex === i);
-              const check = verificationResults.find(r => r.sampleIndex === i);
-              const isSelected = selectedRow === i;
-              return (
-                <tr
-                  key={i}
-                  onClick={() => handleRowClick(i)}
-                  className={`border-b border-slate-100 cursor-pointer transition-colors ${
-                    isSelected ? 'bg-blue-50 border-l-2 border-l-blue-500' :
-                    check?.overallResult === 'fail' ? 'bg-red-50/30 hover:bg-red-50/50' :
-                    check?.overallResult === 'pass' ? 'hover:bg-green-50/30' :
-                    'hover:bg-slate-50'
-                  }`}
-                >
-                  {/* Blue: Sample */}
-                  <td className="px-2 py-1.5 text-slate-400 font-mono border-r border-slate-100">{i + 1}</td>
-                  <td className="px-2 py-1.5 text-slate-700 font-mono border-r border-slate-100">{item.reference}</td>
-                  <td className="px-2 py-1.5 text-slate-700 border-r border-slate-100 truncate max-w-[150px]">{item.customer}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-slate-800 border-r border-slate-100">{fmt(item.gross)}</td>
-                  <td className="px-2 py-1.5 text-slate-500 border-r-2 border-blue-100">{item.date || '—'}</td>
-                  {/* Green: Evidence */}
-                  <td className="px-2 py-1.5 text-slate-600 font-mono border-r border-slate-100">{doc?.docRef || '—'}</td>
-                  <td className="px-2 py-1.5 text-slate-600 border-r border-slate-100 truncate max-w-[120px]">{doc?.seller || '—'}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-slate-800 border-r border-slate-100">{doc ? fmt(doc.gross) : '—'}</td>
-                  <td className="px-2 py-1.5 text-center border-r-2 border-green-100">
-                    {doc ? (
-                      <span className={`text-[8px] px-1 py-0.5 rounded-full font-medium ${
-                        doc.status === 'matched' ? 'bg-green-100 text-green-700' :
-                        doc.status === 'partial' ? 'bg-amber-100 text-amber-700' :
-                        doc.status === 'missing' ? 'bg-red-100 text-red-600' :
-                        'bg-slate-100 text-slate-500'
-                      }`}>{doc.status}</span>
-                    ) : <span className="text-[8px] text-slate-300">—</span>}
-                  </td>
-                  {/* Amber: 4 standard verification columns with circle interaction */}
-                  {verificationColumns.map(col => {
-                    const checkResult = (check as any)?.[col.key] || 'pending';
-                    return (
-                      <td key={col.key} className="px-2 py-1.5 text-center border-r border-slate-100">
-                        <VerificationCircle
-                          aiStatus={checkResult}
-                          userStatus={null}
-                          onClick={() => {/* TODO: implement user click state management */}}
-                        />
-                      </td>
-                    );
-                  })}
-                  <td className="px-2 py-1.5 text-center border-r border-slate-100">
-                    {check?.overallResult === 'pass' && <span className="text-[8px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">PASS</span>}
-                    {check?.overallResult === 'fail' && <span className="text-[8px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">FAIL</span>}
-                    {(!check || check.overallResult === 'pending') && <span className="text-[8px] text-slate-300">—</span>}
-                  </td>
-                  {/* Action buttons */}
-                  <td className="px-1 py-1.5 text-center">
-                    <div className="flex items-center gap-0.5 justify-center">
-                      <button className="p-0.5 rounded hover:bg-green-50" title="No action needed">
-                        <CheckCircle2 className="h-3 w-3 text-green-400 hover:text-green-600" />
-                      </button>
-                      <button className="p-0.5 rounded hover:bg-red-50" title="Send to RI Matters">
-                        <span className="text-[7px] font-bold text-red-400 hover:text-red-600">RI</span>
-                      </button>
-                      <button className="p-0.5 rounded hover:bg-amber-50" title="Send to Review Point">
-                        <span className="text-[7px] font-bold text-amber-400 hover:text-amber-600">RP</span>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {sampleItems.length === 0 && (
-              <tr><td colSpan={10 + verificationColumns.length} className="px-4 py-8 text-center text-sm text-slate-400">No sample items to verify yet</td></tr>
-            )}
-          </tbody>
-        </table>
-
-        {/* Selected row detail — shows AI notes and difference */}
-        {selectedRow !== null && (() => {
-          const check = verificationResults.find(r => r.sampleIndex === selectedRow);
-          const item = sampleItems[selectedRow];
-          const doc = evidenceDocs.find(d => d.sampleIndex === selectedRow);
-          if (!check && !doc) return null;
-          return (
-            <div className="border-t bg-slate-50 px-4 py-3">
-              <div className="grid grid-cols-2 gap-4 text-xs">
-                <div>
-                  <div className="text-[10px] font-bold text-blue-600 uppercase mb-1">Sample Item</div>
-                  <div className="space-y-0.5">
-                    <div><span className="text-slate-400">Description:</span> <span className="text-slate-700">{item?.customer}</span></div>
-                    <div><span className="text-slate-400">Ref:</span> <span className="font-mono text-slate-700">{item?.reference}</span></div>
-                    <div><span className="text-slate-400">Net:</span> <span className="font-mono">£{fmt(item?.net)}</span> <span className="text-slate-400">VAT:</span> <span className="font-mono">£{fmt(item?.tax)}</span> <span className="text-slate-400">Gross:</span> <span className="font-mono font-semibold">£{fmt(item?.gross)}</span></div>
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold text-green-600 uppercase mb-1">Evidence Document</div>
-                  {doc ? (
-                    <div className="space-y-0.5">
-                      <div><span className="text-slate-400">File:</span> <span className="text-slate-700">{doc.fileName}</span></div>
-                      <div><span className="text-slate-400">Seller:</span> <span className="text-slate-700">{doc.seller}</span></div>
-                      <div><span className="text-slate-400">Net:</span> <span className="font-mono">£{fmt(doc.net)}</span> <span className="text-slate-400">VAT:</span> <span className="font-mono">£{fmt(doc.tax)}</span> <span className="text-slate-400">Gross:</span> <span className="font-mono font-semibold">£{fmt(doc.gross)}</span></div>
-                      {check?.difference != null && check.difference !== 0 && (
-                        <div className="mt-1 text-red-600 font-medium">Difference: £{fmt(check.difference)}</div>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-slate-400 italic">No evidence uploaded</p>
-                  )}
-                  {check?.aiNotes && (
-                    <div className="mt-2 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
-                      <div className="text-[9px] font-bold text-amber-600 uppercase">AI Notes</div>
-                      <p className="text-[11px] text-amber-800">{check.aiNotes}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        <button onClick={() => setCurrentItemIndex(Math.min(sampleItems.length - 1, currentItemIndex + 1))} disabled={currentItemIndex >= sampleItems.length - 1}
+          className="p-1 rounded hover:bg-slate-200 disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
       </div>
 
-      {/* RIGHT: Document Preview Panel (25%) */}
-      <div className="w-72 shrink-0 border-l bg-slate-50 flex flex-col">
-        <div className="px-3 py-2 border-b bg-slate-100">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Document Preview</span>
-        </div>
-        {previewDoc ? (
-          <div className="flex-1 flex flex-col">
-            <div className="px-3 py-2 border-b">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-700 truncate">{previewDoc.fileName}</span>
-                <button onClick={() => setPreviewDoc(null)} className="text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>
-              </div>
-              <div className="text-[10px] text-slate-400 mt-0.5">
-                {previewDoc.seller} &middot; £{fmt(previewDoc.gross)}
-              </div>
+      {item && (
+        <div className="grid grid-cols-3 gap-3">
+          {/* LEFT: Sample Item */}
+          <div className="border rounded-lg overflow-hidden">
+            <div className="bg-blue-600 text-white px-3 py-1.5 text-[10px] font-semibold">Sample Request</div>
+            <div className="p-3 space-y-1.5 text-xs">
+              <div><span className="text-slate-400">Ref:</span> <span className="font-mono text-slate-800">{item.reference}</span></div>
+              <div><span className="text-slate-400">Description:</span> <span className="text-slate-700">{item.description || item.customer}</span></div>
+              <div><span className="text-slate-400">Gross:</span> <span className="font-mono font-semibold">£{fmt(item.gross)}</span></div>
+              <div><span className="text-slate-400">Net:</span> <span className="font-mono">£{fmt(item.net)}</span> <span className="text-slate-400 ml-2">Tax:</span> <span className="font-mono">£{fmt(item.tax)}</span></div>
+              <div><span className="text-slate-400">Date:</span> <span className="text-slate-700">{item.date || '—'}</span></div>
             </div>
-            {previewDoc.previewUrl ? (
-              <iframe src={previewDoc.previewUrl} className="flex-1 w-full" title="Document preview" />
+          </div>
+
+          {/* MIDDLE: Evidence */}
+          <div className="border rounded-lg overflow-hidden">
+            <div className="bg-green-600 text-white px-3 py-1.5 text-[10px] font-semibold">Client Evidence</div>
+            {doc ? (
+              <div className="p-3 space-y-1.5 text-xs">
+                <div><span className="text-slate-400">Doc Ref:</span> <span className="font-mono text-slate-800">{doc.docRef}</span></div>
+                <div><span className="text-slate-400">Seller:</span> <span className="text-slate-700">{doc.seller}</span></div>
+                <div><span className="text-slate-400">Gross:</span> <span className="font-mono font-semibold">£{fmt(doc.gross)}</span></div>
+                <div><span className="text-slate-400">Net:</span> <span className="font-mono">£{fmt(doc.net)}</span> <span className="text-slate-400 ml-2">Tax:</span> <span className="font-mono">£{fmt(doc.tax)}</span></div>
+                <div><span className="text-slate-400">Date:</span> <span className="text-slate-700">{doc.date || '—'}</span></div>
+                <div><span className="text-slate-400">Status:</span> <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${doc.status === 'matched' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{doc.status}</span></div>
+                {doc.previewUrl && <button onClick={() => setPreviewDoc(doc)} className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-[10px]"><Eye className="h-3 w-3" /> View Document</button>}
+              </div>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-slate-300">
-                <div className="text-center">
-                  <FileText className="h-12 w-12 mx-auto mb-2" />
-                  <p className="text-xs">Preview not available</p>
-                  <p className="text-[10px] mt-1">Document uploaded but no preview URL</p>
-                </div>
+              <div className="p-3 flex flex-col items-center justify-center text-slate-400 min-h-[120px]">
+                <FileText className="h-6 w-6 mb-1" />
+                <p className="text-[10px]">No evidence yet</p>
+                <button onClick={() => fileInputRef.current?.click()} className="mt-2 text-[9px] text-blue-600 hover:text-blue-800">Upload</button>
+                <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.jpg,.png,.doc,.docx" />
               </div>
             )}
           </div>
-        ) : (
-          <div className="flex-1 flex flex-col">
-            {/* Document upload area */}
-            <div className="p-4 flex-1 flex flex-col items-center justify-center">
-              <div className="w-full border-2 border-dashed border-slate-300 rounded-lg p-6 text-center hover:border-blue-400 hover:bg-blue-50/30 transition-colors cursor-pointer"
-                onClick={() => fileInputRef.current?.click()}>
-                <FileText className="h-8 w-8 mx-auto mb-2 text-slate-300" />
-                <p className="text-xs font-medium text-slate-500">Click to select files</p>
-                <p className="text-[10px] text-slate-400 mt-1">PDF, images, or ZIP files</p>
+
+          {/* RIGHT: Document Preview */}
+          <div className="border rounded-lg overflow-hidden">
+            <div className="bg-slate-600 text-white px-3 py-1.5 text-[10px] font-semibold">Document Preview</div>
+            {previewDoc?.previewUrl ? (
+              <iframe src={previewDoc.previewUrl} className="w-full h-[200px]" title="Preview" />
+            ) : doc?.fileName ? (
+              <div className="p-3 flex flex-col items-center justify-center text-slate-400 min-h-[120px]">
+                <FileText className="h-8 w-8 mb-1" />
+                <p className="text-[10px] font-medium">{doc.fileName}</p>
+                <p className="text-[9px] mt-1">Preview not available</p>
               </div>
-              <input ref={fileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.zip" className="hidden"
-                onChange={handleFileUpload} />
-              {uploading && (
-                <div className="mt-3 flex items-center gap-2 text-xs text-blue-600">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading & extracting...
-                </div>
-              )}
-              {uploadedFiles.length > 0 && (
-                <div className="mt-3 w-full space-y-1">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase">Uploaded Documents</div>
-                  {uploadedFiles.map((f, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs text-slate-600 bg-white rounded border border-slate-200 px-2 py-1">
-                      <FileText className="h-3 w-3 text-green-500 flex-shrink-0" />
-                      <span className="truncate flex-1">{f.name}</span>
-                      <span className="text-[9px] text-slate-400">{f.status}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+            ) : (
+              <div className="p-3 flex items-center justify-center text-slate-300 min-h-[120px]">
+                <p className="text-[10px]">Select an item with evidence</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Verification Checks */}
+      {item && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="bg-amber-600 text-white px-3 py-1.5 text-[10px] font-semibold">Audit Verification</div>
+          <div className="p-3">
+            <div className="grid grid-cols-4 gap-3">
+              {verificationColumns.map(col => {
+                const aiStatus = getAiCheckStatus(currentItemIndex, col.key);
+                const userConfirm = rowState.checks[col.key];
+                const effectiveStatus = userConfirm?.status ?? (aiStatus !== 'pending' ? aiStatus : null);
+
+                return (
+                  <div key={col.key} className="text-center space-y-1.5">
+                    <div className="text-[10px] font-bold text-slate-600 cursor-help" title={col.description}>{col.label}</div>
+                    <button
+                      onClick={() => handleCheckClick(currentItemIndex, col.key)}
+                      className="w-8 h-8 rounded-full border-2 mx-auto flex items-center justify-center transition-all hover:scale-110"
+                      style={{
+                        borderColor: aiStatus === 'pending' && !userConfirm ? '#cbd5e1' : (effectiveStatus === 'pass' ? '#22c55e' : '#ef4444'),
+                        backgroundColor: userConfirm ? (userConfirm.status === 'pass' ? '#22c55e' : '#ef4444') : 'transparent',
+                      }}
+                      title={
+                        !userConfirm && aiStatus === 'pending' ? 'Not assessed — click to set'
+                        : !userConfirm ? `AI: ${aiStatus === 'pass' ? 'Agrees' : 'Issue found'} — click to confirm`
+                        : `${userConfirm.status === 'pass' ? 'Agrees' : 'Issue'} — ${userConfirm.userName} ${new Date(userConfirm.timestamp).toLocaleDateString('en-GB')} — click to toggle`
+                      }
+                    >
+                      {userConfirm && (
+                        userConfirm.status === 'pass'
+                          ? <CheckCircle2 className="h-4 w-4 text-white" />
+                          : <XCircle className="h-4 w-4 text-white" />
+                      )}
+                    </button>
+                    {userConfirm && (
+                      <div className="text-[8px] text-slate-400">
+                        {userConfirm.userName}<br />{new Date(userConfirm.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Quick stats */}
-        <div className="px-3 py-2 border-t bg-slate-100 space-y-1">
-          <div className="flex justify-between text-[10px]">
-            <span className="text-slate-400">Evidence uploaded</span>
-            <span className="font-medium text-slate-700">{evidenceDocs.filter(d => d.status !== 'missing' && d.status !== 'pending').length}/{sampleItems.length}</span>
+      {/* Actions + Sign-off */}
+      {item && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="px-3 py-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-slate-600 uppercase">Action:</span>
+              <button onClick={() => handleAction(currentItemIndex, 'none')}
+                className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'none' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-green-50'}`}>
+                <CheckCircle2 className="h-3 w-3" /> No action needed
+              </button>
+              <button onClick={() => handleAction(currentItemIndex, 'ri_matter')}
+                className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'ri_matter' ? 'bg-red-100 text-red-700 border border-red-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-red-50'}`}>
+                <Flag className="h-3 w-3" /> RI Matter
+              </button>
+              <button onClick={() => handleAction(currentItemIndex, 'review_point')}
+                className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'review_point' ? 'bg-amber-100 text-amber-700 border border-amber-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-amber-50'}`}>
+                <Send className="h-3 w-3" /> Review Point
+              </button>
+            </div>
+            {/* Reviewer + RI sign-off */}
+            <div className="flex items-center gap-3">
+              <button className={`flex flex-col items-center gap-0.5 ${rowState.reviewerSignOff ? '' : 'opacity-60 hover:opacity-100'}`}
+                title={rowState.reviewerSignOff ? `Reviewed by ${rowState.reviewerSignOff.userName}` : 'Click to sign as Reviewer'}>
+                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${rowState.reviewerSignOff ? 'bg-green-500 border-green-500' : 'border-slate-300'}`}>
+                  {rowState.reviewerSignOff && <CheckCircle2 className="h-3 w-3 text-white" />}
+                </div>
+                <span className="text-[7px] text-slate-500">Reviewer</span>
+              </button>
+              <button className={`flex flex-col items-center gap-0.5 ${rowState.riSignOff ? '' : 'opacity-60 hover:opacity-100'}`}
+                title={rowState.riSignOff ? `RI signed by ${rowState.riSignOff.userName}` : 'Click to sign as RI'}>
+                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${rowState.riSignOff ? 'bg-green-500 border-green-500' : 'border-slate-300'}`}>
+                  {rowState.riSignOff && <CheckCircle2 className="h-3 w-3 text-white" />}
+                </div>
+                <span className="text-[7px] text-slate-500">RI</span>
+              </button>
+            </div>
           </div>
-          <div className="flex justify-between text-[10px]">
-            <span className="text-slate-400">Verified</span>
-            <span className="font-medium text-green-600">{passCount}</span>
-          </div>
-          {failCount > 0 && (
-            <div className="flex justify-between text-[10px]">
-              <span className="text-slate-400">Exceptions</span>
-              <span className="font-medium text-red-600">{failCount}</span>
+          {rowState.actionComment && (
+            <div className="px-3 pb-2 text-[10px] text-slate-600 bg-slate-50 border-t">
+              <span className="text-slate-400">Comment:</span> {rowState.actionComment}
             </div>
           )}
         </div>
-      </div>
+      )}
+
+      {/* Action Modal — comment input for RI Matter / Review Point */}
+      {actionModalRow && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center" onClick={() => setActionModalRow(null)}>
+          <div className="bg-white rounded-lg shadow-xl p-4 w-96 space-y-3" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-slate-800">
+              {actionModalRow.type === 'ri_matter' ? 'Send to RI Matters' : 'Create Review Point'}
+            </h3>
+            <p className="text-xs text-slate-500">
+              Item: {sampleItems[actionModalRow.index]?.reference || sampleItems[actionModalRow.index]?.description?.slice(0, 40)}
+            </p>
+            <textarea
+              value={actionComment}
+              onChange={e => setActionComment(e.target.value)}
+              placeholder="Enter your comment explaining the issue..."
+              className="w-full border rounded px-3 py-2 text-xs min-h-[80px] focus:outline-none focus:border-blue-400"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setActionModalRow(null)} className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+              <button onClick={submitAction} disabled={!actionComment.trim()}
+                className={`px-3 py-1.5 text-xs text-white rounded font-medium disabled:opacity-50 ${actionModalRow.type === 'ri_matter' ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
+                {actionModalRow.type === 'ri_matter' ? 'Send to RI' : 'Create Review Point'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
