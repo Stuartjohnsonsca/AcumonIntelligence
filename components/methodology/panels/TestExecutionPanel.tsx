@@ -480,7 +480,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] font-bold text-slate-600 uppercase">Full Extracted Data ({population.length} records{selectedIdx.size > 0 ? ` — ${selectedIdx.size} selected` : ''})</span>
                           {hasFlagAnnotations && (
-                            <span className="text-[9px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full font-medium">{flaggedCount} flagged</span>
+                            <span className="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full font-medium">{flaggedCount} flagged for review</span>
                           )}
                         </div>
                         <span className="text-[9px] text-slate-400">Source: {popStep?.label || 'Flow step'} | {cols.length} columns</span>
@@ -499,18 +499,17 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                             {population.map((row: any, i: number) => {
                               const isSampled = selectedIdx.has(i);
                               const isFlagged = !!row._flagged;
-                              const riskLevel = row._riskLevel || '';
+                              // Colours: orange = system flagged (above threshold), white = below threshold or excluded
+                              // Red = only when user actively marks for investigation (not system-assigned)
                               return (
                                 <tr key={i} className={`border-b border-slate-50 ${
-                                  isFlagged && riskLevel === 'high' ? 'bg-red-50' :
-                                  isFlagged ? 'bg-amber-50/50' :
+                                  isFlagged ? 'bg-orange-50/50' :
                                   isSampled ? 'bg-green-50 font-medium' : 'hover:bg-slate-50/50'
                                 }`}>
                                   <td className="px-1 py-0.5 text-center text-slate-400">{i + 1}</td>
                                   {(selectedIdx.size > 0 || hasFlagAnnotations) && (
                                     <td className="px-1 py-0.5 text-center">
-                                      {isFlagged && riskLevel === 'high' && <span className="w-2 h-2 rounded-full bg-red-500 inline-block" title="High risk" />}
-                                      {isFlagged && riskLevel !== 'high' && <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" title="Flagged" />}
+                                      {isFlagged && <span className="w-2 h-2 rounded-full bg-orange-400 inline-block" title={`Score: ${row._score || '?'} — flagged for review`} />}
                                       {!isFlagged && isSampled && <span className="w-2 h-2 rounded-full bg-green-500 inline-block" title="Selected" />}
                                     </td>
                                   )}
@@ -521,7 +520,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                                   ))}
                                   {hasFlagAnnotations && (
                                     <td className="px-1.5 py-0.5 text-[8px] max-w-[200px] truncate" title={row._flags || ''}>
-                                      {row._flags && <span className={`px-1 py-0 rounded ${riskLevel === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{row._flags}</span>}
+                                      {row._flags && <span className="px-1 py-0 rounded bg-orange-100 text-orange-700">{row._flags}</span>}
+                                      {row._score > 0 && <span className="text-[7px] text-slate-400 ml-1">({row._score}pts)</span>}
                                     </td>
                                   )}
                                 </tr>

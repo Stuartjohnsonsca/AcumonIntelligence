@@ -1727,8 +1727,7 @@ async function handleAnalyseLargeUnusual(
         _index: idx,
         _score: score,
         _reasons: reasons,
-        _riskLevel: score >= thresholds.highRisk ? 'high' : score >= thresholds.mediumRisk ? 'medium' : 'low',
-        _flagged: score >= thresholds.mediumRisk,
+        _flagged: score >= thresholds.mediumRisk, // Orange if above threshold, white if below. Red = user decision only.
         ...txn,
       };
     });
@@ -1737,30 +1736,31 @@ async function handleAnalyseLargeUnusual(
     scored.sort((a: any, b: any) => b._score - a._score);
 
     const flaggedItems = scored.filter((t: any) => t._flagged);
-    const highRisk = flaggedItems.filter((t: any) => t._riskLevel === 'high').length;
-    const mediumRisk = flaggedItems.filter((t: any) => t._riskLevel === 'medium').length;
     const flaggedValue = flaggedItems.reduce((s: number, t: any) => s + Math.max(Math.abs(Number(t.debit || t.debitFC || t.amount || 0)), Math.abs(Number(t.credit || t.creditFC || 0))), 0);
 
-    const result = highRisk > 0 ? 'fail' : 'pass';
-    const summary = `Scored and ranked ${allTxns.length} transactions. ${flaggedItems.length} flagged as large or unusual (${highRisk} high risk, ${mediumRisk} medium). Mean transaction: £${meanAmt.toFixed(2)}, Std Dev: £${stdDev.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}. Flagged value: £${flaggedValue.toFixed(2)}.`;
+    // No pass/fail from the system — the auditor decides. System just flags for review.
+    const result = flaggedItems.length > 0 ? 'review_required' : 'pass';
+    const summary = `Scored and ranked ${allTxns.length} transactions. ${flaggedItems.length} flagged for review (score ≥ ${thresholds.mediumRisk}). Mean: £${meanAmt.toFixed(2)}, Std Dev: £${stdDev.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}. Flagged value: £${flaggedValue.toFixed(2)}.`;
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
       output: {
         result, summary,
-        // Full population ranked by unusualness score — flagged items at top
+        // Full population ranked by unusualness score — flagged items (orange) at top
         dataTable: scored,
         populationData: scored,
         flaggedItems,
-        totalFlagged: flaggedItems.length, highRisk, mediumRisk,
+        totalFlagged: flaggedItems.length,
         totalValueFlagged: flaggedValue,
         populationSize: allTxns.length,
         populationTotal: totalValue,
+        threshold: thresholds.mediumRisk,
         statistics: { mean: meanAmt, stdDev, transactionCount: allTxns.length },
         decisionLog: [
           { step: 'Statistical analysis', result: `Population: ${allTxns.length} transactions, mean £${meanAmt.toFixed(2)}, std dev £${stdDev.toFixed(2)}` },
-          { step: 'Scoring criteria', result: 'Size (z-score vs population), timing (weekends, bank holidays), description patterns (14 categories), transaction rarity, contra entries' },
-          { step: 'Results', result: `${flaggedItems.length} items scored ≥15 points: ${highRisk} high risk (≥40), ${mediumRisk} medium risk (15-39). Ranked by composite score.` },
+          { step: 'Scoring criteria', result: `Size (z-score), timing (weekends, bank holidays), ${UNUSUAL_PATTERNS.length} description patterns, rarity, contra entries` },
+          { step: 'Threshold', result: `Items scoring ≥ ${thresholds.mediumRisk} shown as orange for review. Auditor marks red (investigate) or excludes to white.` },
+          { step: 'Results', result: `${flaggedItems.length} items above threshold, ranked by composite score.` },
         ],
       },
     };

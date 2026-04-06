@@ -690,22 +690,17 @@ export function FirmAssumptionsClient({
               The weight determines how much it contributes to the composite unusualness score. Items above the threshold are highlighted for auditor review.
             </p>
 
-            {/* Thresholds */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-medium text-slate-700 block mb-1">High Risk Threshold (score)</label>
-                <input type="number" min={1} max={200} value={luThresholds.highRisk}
-                  onChange={e => { setLuThresholds(prev => ({ ...prev, highRisk: parseInt(e.target.value) || 40 })); setSaved(false); }}
-                  className="w-full border rounded px-3 py-2 text-sm" />
-                <span className="text-[10px] text-slate-400">Items scoring at or above this are red (high risk)</span>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-700 block mb-1">Medium Risk Threshold (score)</label>
-                <input type="number" min={1} max={200} value={luThresholds.mediumRisk}
-                  onChange={e => { setLuThresholds(prev => ({ ...prev, mediumRisk: parseInt(e.target.value) || 15 })); setSaved(false); }}
-                  className="w-full border rounded px-3 py-2 text-sm" />
-                <span className="text-[10px] text-slate-400">Items scoring at or above this are amber (flagged). Below is white (not flagged).</span>
-              </div>
+            {/* Threshold */}
+            <div className="max-w-sm">
+              <label className="text-xs font-medium text-slate-700 block mb-1">Flagging Threshold (score)</label>
+              <input type="number" min={1} max={200} value={luThresholds.mediumRisk}
+                onChange={e => { setLuThresholds(prev => ({ ...prev, mediumRisk: parseInt(e.target.value) || 15 })); setSaved(false); }}
+                className="w-full border rounded px-3 py-2 text-sm" />
+              <span className="text-[10px] text-slate-400 block mt-1">
+                Items scoring at or above this appear <span className="text-orange-600 font-medium">orange</span> for auditor review.
+                Below this = white (not flagged). The auditor marks items as red (investigate) or excludes to white.
+                No red from the system — only the auditor decides.
+              </span>
             </div>
 
             {/* Pattern list */}
