@@ -464,7 +464,9 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
               <div className="p-4 space-y-3">
                 {/* Population data table — always show when we have data (even for non-sampling tests) */}
                 {(() => {
-                  const popStep = flowSteps.find(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0);
+                  // Use the LAST step with data (scored/ranked data comes after raw extract)
+                  const popSteps = flowSteps.filter(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0);
+                  const popStep = popSteps[popSteps.length - 1];
                   const population = popStep?.output?.populationData || popStep?.output?.dataTable || [];
                   const selectedIdx = new Set(
                     samplingResults?.selectedIndices ||
