@@ -374,18 +374,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         </div>
       ) : showAuditPlan ? (
         <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px] overflow-hidden">
-          {/* Left sidebar: all tabs as vertical list */}
+          {/* Left sidebar: all tabs as vertical list — no tab highlighted while on Audit Plan */}
           <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
             {visibleTabs.map(tab => {
-              const isActive = activeTab === tab.key;
               const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
               return (
                 <button
                   key={tab.key}
                   onClick={() => { switchTab(tab.key); setShowAuditPlan(false); }}
-                  className={`w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors flex items-center gap-1 ${
-                    isActive ? 'bg-blue-50 text-blue-700 border-l-2 border-l-blue-500' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-                  }`}
+                  className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors flex items-center gap-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                 >
                   {label}
                   {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
