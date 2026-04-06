@@ -267,9 +267,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         {!isPreStart && (
           <button
             onClick={() => {
-              setShowAuditPlan(!showAuditPlan);
-              if (!showAuditPlan) { setShowCompletion(false); }
-              if (!planCreated && !showAuditPlan) {
+              if (showAuditPlan) return; // Already on audit plan — do nothing
+              setShowAuditPlan(true);
+              setShowCompletion(false);
+              if (!planCreated) {
                 setPlanCreated(true);
                 fetch(`/api/engagements/${engagement.id}`, {
                   method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -277,16 +278,17 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 }).catch(() => {});
               }
             }}
+            disabled={showAuditPlan}
             className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
               showAuditPlan
-                ? 'bg-blue-600 text-white'
+                ? 'bg-slate-200 text-slate-400 cursor-default'
                 : 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100'
             }`}
           >
             <svg className="h-3 w-3 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
-            {showAuditPlan ? 'Close Plan' : 'Audit Plan'}
+            Audit Plan
           </button>
         )}
         {!isPreStart && planCreated && (
