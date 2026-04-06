@@ -15,6 +15,8 @@ interface TestAction {
 
 interface Props {
   initialActions: TestAction[];
+  isSuperAdmin?: boolean;
+  systemActionDetails?: Record<string, any>;
 }
 
 const ACTION_TYPES = [
@@ -40,13 +42,15 @@ const PRESET_ACTIONS: Omit<TestAction, 'id'>[] = [
 let counter = 0;
 function uid() { return `ta_${Date.now()}_${++counter}`; }
 
-export function TestActionsClient({ initialActions }: Props) {
+export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDetails = {} }: Props) {
   const [actions, setActions] = useState<TestAction[]>(
     initialActions.length > 0 ? initialActions : PRESET_ACTIONS.map(a => ({ ...a, id: uid() }))
   );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [expandedSystemId, setExpandedSystemId] = useState<string | null>(null);
+  const [systemDetails, setSystemDetails] = useState<Record<string, any>>({});
 
   function addAction() {
     setActions([...actions, { id: uid(), name: '', description: '', actionType: 'human', isReusable: true }]);
@@ -188,9 +192,17 @@ export function TestActionsClient({ initialActions }: Props) {
                     className="w-full text-xs border rounded px-2 py-1 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-400"
                   />
                 )}
+
+                {/* Expandable details for system actions */}
+                {isSystem && (
+                  <button onClick={() => setExpandedSystemId(expandedSystemId === action.id ? null : action.id)}
+                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium mt-1">
+                    {expandedSystemId === action.id ? '▼ Hide Details' : '▶ View Details'}
+                  </button>
+                )}
               </div>
 
-              {/* Actions — hidden for system actions */}
+              {/* Actions — not shown for system actions */}
               {!isSystem && (
                 <div className="flex items-center gap-0.5 mt-1">
                   <button onClick={() => duplicateAction(action.id)} title="Duplicate" className="p-1 hover:bg-slate-100 rounded">
@@ -202,6 +214,102 @@ export function TestActionsClient({ initialActions }: Props) {
                 </div>
               )}
             </div>
+
+            {/* Expanded system action details */}
+            {isSystem && expandedSystemId === action.id && (() => {
+              // Map system action IDs to test type codes
+              const codeMap: Record<string, string> = { sys_fetch_evidence: 'fetch_evidence_accounting', sys_large_unusual: 'large_unusual_items' };
+              const details = systemActionDetails[codeMap[action.id] || ''];
+              const execDef = details?.executionDef || {};
+              return (
+                <div className="mt-3 border-t border-indigo-200 pt-3 space-y-3">
+                  {/* Execution Definition */}
+                  {execDef.description && (
+                    <div>
+                      <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">How It Works</div>
+                      <p className="text-xs text-slate-600 bg-white rounded border border-indigo-100 px-3 py-2">{execDef.description}</p>
+                    </div>
+                  )}
+
+                  {/* Steps (for multi-step actions like Large & Unusual) */}
+                  {execDef.steps && (
+                    <div>
+                      <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">Steps</div>
+                      <div className="space-y-1.5">
+                        {execDef.steps.map((step: any, si: number) => (
+                          <div key={si} className="flex gap-2 bg-white rounded border border-indigo-100 px-3 py-2">
+                            <span className="text-[10px] font-bold text-indigo-500 shrink-0 mt-0.5">{step.step || si + 1}.</span>
+                            <div className="flex-1">
+                              <div className="text-xs font-medium text-slate-700">{step.label}</div>
+                              <div className="text-[10px] text-slate-500 mt-0.5">{step.description}</div>
+                              {step.inputType && <span className="text-[8px] px-1 py-0 bg-purple-100 text-purple-600 rounded mt-1 inline-block">{step.inputType}</span>}
+                              {step.type && <span className="text-[8px] px-1 py-0 bg-amber-100 text-amber-600 rounded mt-1 ml-1 inline-block">{step.type}: {step.waitFor}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Inputs */}
+                  {execDef.inputs && (
+                    <div>
+                      <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">Inputs</div>
+                      <div className="grid grid-cols-2 gap-1">
+                        {execDef.inputs.map((inp: any, ii: number) => (
+                          <div key={ii} className="text-[10px] bg-white rounded border border-slate-200 px-2 py-1">
+                            <span className="font-medium text-slate-700">{inp.label || inp.key}</span>
+                            {inp.source && <span className="text-slate-400 ml-1">({inp.source})</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Flag Categories (for Large & Unusual) */}
+                  {execDef.flagCategories && (
+                    <div>
+                      <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">Anomaly Detection Categories ({execDef.flagCategories.length})</div>
+                      <div className="flex flex-wrap gap-1">
+                        {execDef.flagCategories.map((cat: string, ci: number) => (
+                          <span key={ci} className="text-[9px] px-1.5 py-0.5 bg-white border border-slate-200 rounded text-slate-600">{cat}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Portal Fallback Template */}
+                  {execDef.portalFallbackTemplate && (
+                    <div>
+                      <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">Portal Fallback Template</div>
+                      <div className="bg-white rounded border border-slate-200 px-3 py-2 text-[10px]">
+                        <div><span className="text-slate-400">Subject:</span> <span className="text-slate-700">{execDef.portalFallbackTemplate.subject}</span></div>
+                        <div className="mt-1"><span className="text-slate-400">Message:</span></div>
+                        <pre className="text-slate-600 whitespace-pre-wrap mt-0.5">{execDef.portalFallbackTemplate.message}</pre>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Evidence Types */}
+                  {execDef.evidenceTypes && (
+                    <div>
+                      <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">Accepted Evidence Types</div>
+                      <div className="flex gap-1">
+                        {execDef.evidenceTypes.map((et: string, ei: number) => (
+                          <span key={ei} className="text-[9px] px-1.5 py-0.5 bg-green-50 border border-green-200 rounded text-green-700">{et}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Input Type / Output Format */}
+                  <div className="flex gap-4 text-[10px]">
+                    {execDef.inputType && <div><span className="text-slate-400">Input Type:</span> <span className="font-mono text-slate-700">{execDef.inputType}</span></div>}
+                    {execDef.outputFormat && <div><span className="text-slate-400">Output Format:</span> <span className="font-mono text-slate-700">{execDef.outputFormat}</span></div>}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           );
         })}
