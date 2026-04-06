@@ -1025,7 +1025,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                   title="Open test execution workspace"
                                 >
                                   <Play className="h-2.5 w-2.5" />
-                                  {isExecutionOpen ? 'Close' : 'Execute'}
+                                  {isExecutionOpen ? 'Close' : (dbExec || conc !== 'pending') ? 'Open' : 'Execute'}
                                 </button>
                               )}
                               {/* Conclusion dot — clickable to toggle results */}

@@ -290,7 +290,11 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   // Add loop completion with results
                   if (out.loopCompleted && out.results?.length > 0) {
                     const existingStep = steps.find((s: any) => s.id === nodeId);
-                    if (existingStep) existingStep.output = out; // Update with full results
+                    if (existingStep) existingStep.output = out;
+                  }
+                  // Restore user's row selections from review step
+                  if (out.selectedIndices && out.triggerType === 'review_flagged') {
+                    setInvestigateRows(new Set(out.selectedIndices));
                   }
                 }
               }

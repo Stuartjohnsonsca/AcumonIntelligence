@@ -2886,11 +2886,25 @@ export async function processNextNode(executionId: string): Promise<void> {
     }
   }
 
-  // Time/step budget exhausted — save final state so auto-continuation can pick up
+  // Time/step budget exhausted — save state and self-continue server-side
   await prisma.testExecution.update({
     where: { id: executionId },
     data: { context: ctx as any },
   });
+
+  // Auto-continue: schedule another processNextNode call so execution doesn't stall
+  // This means the flow keeps running server-side even if the user navigates away
+  try {
+    const { after } = await import('next/server');
+    after(async () => {
+      const check = await prisma.testExecution.findUnique({ where: { id: executionId }, select: { status: true } });
+      if (check?.status === 'running') {
+        await processNextNode(executionId);
+      }
+    });
+  } catch {
+    // 'after' not available (not in a request context) — client polling will pick up
+  }
 }
 
 export async function resumeExecution(executionId: string, externalData?: any): Promise<void> {
