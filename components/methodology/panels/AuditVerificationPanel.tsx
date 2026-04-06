@@ -252,7 +252,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
     if (checkKey === 'period') {
       if (!evDocFallback.date || evDocFallback.date === '—') return 'pending';
       // Check if description suggests costs that span multiple periods (prepayments/accruals risk)
-      const desc = ((evDocFallback as any).description || '' + ' ' + (sampleItem.description || '')).toLowerCase();
+      const desc = (((evDocFallback as any).description || '') + ' ' + (sampleItem.description || '')).toLowerCase();
       const multiPeriodKeywords = [
         'insurance', 'annual', 'yearly', 'per annum', 'p.a.',
         'rent', 'lease', 'quarterly', 'in advance', 'prepaid',
@@ -269,7 +269,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
 
     if (checkKey === 'disclosure') {
       // Scan for disclosure keywords in description/seller
-      const text = ((evDoc as any).description || '' + evDoc.seller || '').toLowerCase();
+      const text = ((evDocFallback as any).description || '' + (evDocFallback.seller || '')).toLowerCase();
       if (text.includes('director') || text.includes('related') || text.includes('loan') ||
           text.includes('legal') || text.includes('settlement') || text.includes('shareholder')) {
         return 'fail';
