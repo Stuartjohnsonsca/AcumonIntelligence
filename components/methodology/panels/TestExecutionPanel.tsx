@@ -63,6 +63,9 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const continueRef = useRef(false);
 
+  // Row selection for Large & Unusual review (click = select this + above, ctrl+click = deselect)
+  const [investigateRows, setInvestigateRows] = useState<Set<number>>(new Set());
+
   // Section collapse state
   const [progressOpen, setProgressOpen] = useState(false);
   const [samplingOpen, setSamplingOpen] = useState(true);
@@ -487,7 +490,10 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] font-bold text-slate-600 uppercase">Full Extracted Data ({population.length} records{selectedIdx.size > 0 ? ` — ${selectedIdx.size} selected` : ''})</span>
                           {hasFlagAnnotations && (
-                            <span className="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full font-medium">{flaggedCount} flagged for review</span>
+                            <span className="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full font-medium">{flaggedCount} flagged</span>
+                          )}
+                          {investigateRows.size > 0 && (
+                            <span className="text-[9px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full font-medium">{investigateRows.size} selected for investigation</span>
                           )}
                         </div>
                         <span className="text-[9px] text-slate-400">Source: {popStep?.label || 'Flow step'} | {cols.length} columns</span>
@@ -505,18 +511,34 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                             {population.map((row: any, i: number) => {
                               const isSampled = selectedIdx.has(i);
                               const isFlagged = !!row._flagged;
-                              // Colours: orange = system flagged (above threshold), white = below threshold or excluded
-                              // Red = only when user actively marks for investigation (not system-assigned)
+                              const isInvestigate = investigateRows.has(i);
+                              // Colours: red = user selected for investigation, orange = system flagged, white = not flagged
                               return (
-                                <tr key={i} className={`border-b border-slate-50 ${
+                                <tr key={i}
+                                  onClick={(e) => {
+                                    if (e.ctrlKey || e.metaKey) {
+                                      // Ctrl+Click: toggle this row back to white
+                                      setInvestigateRows(prev => { const n = new Set(prev); n.delete(i); return n; });
+                                    } else {
+                                      // Click: select this row and all above it (red)
+                                      setInvestigateRows(prev => {
+                                        const n = new Set(prev);
+                                        for (let r = 0; r <= i; r++) n.add(r);
+                                        return n;
+                                      });
+                                    }
+                                  }}
+                                  className={`border-b border-slate-50 cursor-pointer ${
+                                  isInvestigate ? 'bg-red-100' :
                                   isFlagged ? 'bg-orange-50/50' :
                                   isSampled ? 'bg-green-50 font-medium' : 'hover:bg-slate-50/50'
                                 }`}>
                                   <td className="px-1 py-0.5 text-center text-slate-400">{i + 1}</td>
-                                  {(selectedIdx.size > 0 || hasFlagAnnotations) && (
+                                  {(selectedIdx.size > 0 || hasFlagAnnotations || investigateRows.size > 0) && (
                                     <td className="px-1 py-0.5 text-center">
-                                      {isFlagged && <span className="w-2 h-2 rounded-full bg-orange-400 inline-block" title={`Score: ${row._score || '?'} — flagged for review`} />}
-                                      {!isFlagged && isSampled && <span className="w-2 h-2 rounded-full bg-green-500 inline-block" title="Selected" />}
+                                      {isInvestigate && <span className="w-2 h-2 rounded-full bg-red-500 inline-block" title="Selected for investigation" />}
+                                      {!isInvestigate && isFlagged && <span className="w-2 h-2 rounded-full bg-orange-400 inline-block" title="Flagged for review" />}
+                                      {!isInvestigate && !isFlagged && isSampled && <span className="w-2 h-2 rounded-full bg-green-500 inline-block" title="Selected" />}
                                     </td>
                                   )}
                                   {cols.map(c => (
@@ -623,12 +645,12 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                       Select the items you want to investigate (they will be sent for evidence gathering), then click continue.
                     </p>
                     <button
-                      onClick={() => handleSamplingDone()}
-                      disabled={completing}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50"
+                      onClick={() => handleSamplingDone({ runId: '', selectedIndices: Array.from(investigateRows), sampleSize: investigateRows.size, coverage: 0 })}
+                      disabled={completing || investigateRows.size === 0}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
                     >
                       {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                      Confirm Review & Continue
+                      Investigate {investigateRows.size} Selected Items
                     </button>
                   </div>
                 )}
