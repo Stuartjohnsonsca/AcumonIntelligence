@@ -838,8 +838,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                 )}
 
 
-                {/* Sample items + evidence grid (when we have data) */}
-                {sampleItems.length > 0 ? (
+                {/* Sample items + evidence grid (when we have data, and not mid-transition) */}
+                {sampleItems.length > 0 && !completing ? (
                   <div className="border rounded-lg overflow-auto max-h-[400px]">
                     <table className="w-full text-xs border-collapse">
                       <thead className="sticky top-0 z-10">
