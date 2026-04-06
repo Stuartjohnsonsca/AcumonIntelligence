@@ -1680,74 +1680,97 @@ async function handleAnalyseLargeUnusual(
     const BANK_HOLIDAYS_2025 = ['2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26','2025-08-25','2025-12-25','2025-12-26'];
     const bankHolidays = new Set([...BANK_HOLIDAYS_2024, ...BANK_HOLIDAYS_2025]);
 
-    // 3. Score EVERY transaction
-    const scored = allTxns.map((txn: any, idx: number) => {
+    // 3. Score EVERY transaction — using for loop (not .map) to avoid minification issues
+    // Pre-compute majority debit direction
+    let debitCount = 0;
+    for (let i = 0; i < allTxns.length; i++) {
+      if (Math.abs(Number(allTxns[i].debit || allTxns[i].debitFC || 0)) > Math.abs(Number(allTxns[i].credit || allTxns[i].creditFC || 0))) debitCount++;
+    }
+    const majorityIsDebit = debitCount > allTxns.length / 2;
+
+    const scored: any[] = [];
+    for (let idx = 0; idx < allTxns.length; idx++) {
+      const txn = allTxns[idx];
       try {
-      const debit = Math.abs(Number(txn.debit || txn.debitFC || txn.amount || 0));
-      const credit = Math.abs(Number(txn.credit || txn.creditFC || 0));
-      const amt = Math.max(debit, credit);
-      const desc = (txn.description || '').toLowerCase();
-      const descKey = desc.trim().slice(0, 50);
+        const debitAmt = Math.abs(Number(txn.debit || txn.debitFC || txn.amount || 0));
+        const creditAmt = Math.abs(Number(txn.credit || txn.creditFC || 0));
+        const amt = Math.max(debitAmt, creditAmt);
 
-      let score = 0;
-      const reasons: string[] = [];
+        // Copy all txn fields to result
+        const row: any = {};
+        const txnKeys = Object.keys(txn);
+        for (let ki = 0; ki < txnKeys.length; ki++) row[txnKeys[ki]] = txn[txnKeys[ki]];
 
-      // Financial threshold — items below this are too small to consider
-      if (financialThreshold > 0 && amt < financialThreshold) {
-        const belowResult: any = { _index: idx, _score: 0, _reasons: [], _flagged: false, _belowThreshold: true };
-        for (const k of Object.keys(txn)) belowResult[k] = txn[k];
-        return belowResult;
-      }
+        row._index = idx;
 
-      // Size scoring — how large relative to the population
-      if (amt > 0 && stdDev > 0) {
-        const zScore = (amt - meanAmt) / stdDev;
-        if (zScore > 3) { score += sizeW.extreme3Sigma; reasons.push(`Extreme outlier (${zScore.toFixed(1)}σ)`); }
-        else if (zScore > 2) { score += sizeW.outlier2Sigma; reasons.push(`Statistical outlier (${zScore.toFixed(1)}σ)`); }
-        else if (zScore > 1) { score += sizeW.aboveAvg1Sigma; reasons.push(`Above average (${zScore.toFixed(1)}σ)`); }
-      }
-      if (amt > pm && pm > 0) { score += sizeW.abovePM; reasons.push('Above Performance Materiality'); }
-      else if (amt > ct && ct > 0) { score += sizeW.aboveCT; reasons.push('Above Clearly Trivial'); }
+        // Financial threshold — items below this are too small to consider
+        if (financialThreshold > 0 && amt < financialThreshold) {
+          row._score = 0; row._reasons = []; row._flagged = false; row._belowThreshold = true;
+          scored.push(row);
+          continue;
+        }
 
-      // Round number
-      if (amt >= 1000 && amt % 1000 === 0) { score += otherW.roundThousands; reasons.push('Round number (£' + amt.toLocaleString() + ')'); }
-      if (amt >= 100 && amt % 100 === 0 && amt % 1000 !== 0) { score += otherW.roundHundreds; reasons.push('Round hundreds'); }
+        let score = 0;
+        const reasons: string[] = [];
 
-      // Timing — weekend, bank holiday
-      const txnDate = txn.date ? new Date(txn.date) : null;
-      if (txnDate && !isNaN(txnDate.getTime())) {
-        if (txnDate.getDay() === 0 || txnDate.getDay() === 6) { score += timingW.weekend; reasons.push('Weekend transaction'); }
-        const dateStr = txnDate.toISOString().split('T')[0];
-        if (bankHolidays.has(dateStr)) { score += timingW.bankHoliday; reasons.push('Bank holiday transaction'); }
-      }
+        // Size scoring
+        if (amt > 0 && stdDev > 0) {
+          const zScore = (amt - meanAmt) / stdDev;
+          if (zScore > 3) { score += sizeW.extreme3Sigma; reasons.push('Extreme outlier (' + zScore.toFixed(1) + '\u03C3)'); }
+          else if (zScore > 2) { score += sizeW.outlier2Sigma; reasons.push('Statistical outlier (' + zScore.toFixed(1) + '\u03C3)'); }
+          else if (zScore > 1) { score += sizeW.aboveAvg1Sigma; reasons.push('Above average (' + zScore.toFixed(1) + '\u03C3)'); }
+        }
+        if (amt > pm && pm > 0) { score += sizeW.abovePM; reasons.push('Above Performance Materiality'); }
+        else if (amt > ct && ct > 0) { score += sizeW.aboveCT; reasons.push('Above Clearly Trivial'); }
 
-      // Description / nature patterns
-      for (const { pattern, category, weight } of UNUSUAL_PATTERNS) {
-        if (pattern.test(txn.description || '')) { score += weight; reasons.push(category); }
-      }
+        // Round number
+        if (amt >= 1000 && amt % 1000 === 0) { score += otherW.roundThousands; reasons.push('Round number'); }
+        if (amt >= 100 && amt % 100 === 0 && amt % 1000 !== 0) { score += otherW.roundHundreds; reasons.push('Round hundreds'); }
 
-      // Rarity — one-off transactions score higher than recurring
-      const freq = descFreq.get(descKey) || 1;
-      if (freq === 1) { score += otherW.oneOff; reasons.push('One-off transaction (unique description)'); }
-      else if (freq <= 3) { score += otherW.infrequent; reasons.push(`Infrequent (${freq} occurrences)`); }
+        // Timing — weekend, bank holiday
+        if (txn.date) {
+          try {
+            const txnDateObj = new Date(txn.date);
+            if (!isNaN(txnDateObj.getTime())) {
+              const dayOfWeek = txnDateObj.getDay();
+              if (dayOfWeek === 0 || dayOfWeek === 6) { score += timingW.weekend; reasons.push('Weekend transaction'); }
+              const isoDate = txnDateObj.toISOString().split('T')[0];
+              if (bankHolidays.has(isoDate)) { score += timingW.bankHoliday; reasons.push('Bank holiday transaction'); }
+            }
+          } catch { /* invalid date — skip timing scoring */ }
+        }
 
-      // Contra entries — opposite to the majority flow
-      if (amt > ct) {
-        const isDebit = debit > credit;
-        const majorityDebit = amounts.length > 0 && allTxns.filter(t => Math.abs(Number(t.debit || t.debitFC || 0)) > Math.abs(Number(t.credit || t.creditFC || 0))).length > allTxns.length / 2;
-        if (isDebit !== majorityDebit) { score += otherW.contraEntry; reasons.push('Contra entry (opposite to majority flow)'); }
-      }
+        // Description / nature patterns
+        const descText = txn.description || '';
+        for (let pi = 0; pi < UNUSUAL_PATTERNS.length; pi++) {
+          const pat = UNUSUAL_PATTERNS[pi];
+          if (pat.pattern.test(descText)) { score += pat.weight; reasons.push(pat.category); }
+        }
 
-      const txnResult: any = { _index: idx, _score: score, _reasons: reasons, _flagged: score >= thresholds.mediumRisk };
-      for (const k of Object.keys(txn)) txnResult[k] = txn[k];
-      return txnResult;
+        // Rarity
+        const descLower = (txn.description || '').toLowerCase().trim().slice(0, 50);
+        const freq = descFreq.get(descLower) || 1;
+        if (freq === 1) { score += otherW.oneOff; reasons.push('One-off transaction'); }
+        else if (freq <= 3) { score += otherW.infrequent; reasons.push('Infrequent (' + freq + ')'); }
+
+        // Contra entries
+        if (amt > ct) {
+          const txnIsDebit = debitAmt > creditAmt;
+          if (txnIsDebit !== majorityIsDebit) { score += otherW.contraEntry; reasons.push('Contra entry'); }
+        }
+
+        row._score = score;
+        row._reasons = reasons;
+        row._flagged = score >= thresholds.mediumRisk;
+        scored.push(row);
       } catch (scoreErr) {
-        // If scoring fails for one transaction, don't kill the whole analysis
-        const fallback: any = { _index: idx, _score: 0, _reasons: ['Scoring error'], _flagged: false, _error: String(scoreErr) };
-        for (const k of Object.keys(txn)) fallback[k] = txn[k];
-        return fallback;
+        const errRow: any = {};
+        const txnKeys = Object.keys(txn);
+        for (let ki = 0; ki < txnKeys.length; ki++) errRow[txnKeys[ki]] = txn[txnKeys[ki]];
+        errRow._index = idx; errRow._score = 0; errRow._reasons = ['Scoring error: ' + String(scoreErr)]; errRow._flagged = false;
+        scored.push(errRow);
       }
-    });
+    }
 
     // 4. Sort by score (highest first) — this IS the output, ranked by unusualness
     scored.sort((a: any, b: any) => b._score - a._score);
