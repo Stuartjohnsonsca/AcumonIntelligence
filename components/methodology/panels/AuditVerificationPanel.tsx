@@ -245,9 +245,21 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
     }
 
     if (checkKey === 'period') {
-      // Check if evidence date seems reasonable (basic check — is it a valid date?)
       if (!evDoc.date || evDoc.date === '—') return 'pending';
-      return 'pass'; // Can't fully check period without engagement dates on client
+      // Check if description suggests costs that span multiple periods (prepayments/accruals risk)
+      const desc = ((evDoc as any).description || '' + ' ' + (sampleItem.description || '')).toLowerCase();
+      const multiPeriodKeywords = [
+        'insurance', 'annual', 'yearly', 'per annum', 'p.a.',
+        'rent', 'lease', 'quarterly', 'in advance', 'prepaid',
+        'subscription', 'licence', 'license', 'membership',
+        'retainer', 'service charge', 'maintenance contract',
+        'support contract', '12 month', '12-month', 'twelve month',
+        'deposit', 'warranty', 'guarantee',
+      ];
+      for (var ki = 0; ki < multiPeriodKeywords.length; ki++) {
+        if (desc.includes(multiPeriodKeywords[ki])) return 'fail'; // Likely spans periods — needs accrual/prepayment check
+      }
+      return 'pass';
     }
 
     if (checkKey === 'disclosure') {

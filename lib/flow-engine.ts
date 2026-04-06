@@ -1065,6 +1065,7 @@ async function handleFetchEvidenceOrPortal(
           var matchResult: 'pass' | 'fail' = (amountMatches && contactMatches) ? 'pass' : 'fail';
 
           // Period: is the evidence date in the correct accounting period?
+          // Also check if description suggests costs spanning multiple periods
           var periodEnd = ctx.engagement?.periodEnd ? new Date(ctx.engagement.periodEnd) : null;
           var periodStart = ctx.engagement?.periodStart ? new Date(ctx.engagement.periodStart) : null;
           var periodResult: 'pass' | 'fail' | 'pending' = 'pending';
@@ -1073,6 +1074,14 @@ async function handleFetchEvidenceOrPortal(
             periodResult = inPeriod ? 'pass' : 'fail';
           } else if (evidenceDateObj && periodEnd) {
             periodResult = evidenceDateObj <= periodEnd ? 'pass' : 'fail';
+          }
+          // Check for multi-period costs (prepayments/accruals risk)
+          var multiPeriodWords = ['insurance', 'annual', 'yearly', 'per annum', 'rent', 'lease', 'quarterly', 'in advance', 'prepaid', 'subscription', 'licence', 'license', 'membership', 'retainer', 'service charge', 'maintenance contract', 'support contract', '12 month', 'deposit', 'warranty'];
+          for (var mpi = 0; mpi < multiPeriodWords.length; mpi++) {
+            if (invDesc.includes(multiPeriodWords[mpi]) || description.toLowerCase().includes(multiPeriodWords[mpi])) {
+              periodResult = 'fail'; // Likely spans periods
+              break;
+            }
           }
 
           // Disclosure: check for related party, unusual terms, large amounts relative to materiality

@@ -113,7 +113,7 @@ export const STANDARD_VERIFICATION_COLUMNS: VerificationCheck[] = [
     key: 'period',
     label: 'Period',
     shortLabel: 'Period',
-    description: 'Does the item indicate any risk to the correct allocation period? Checks whether the transaction date and evidence date fall within the correct accounting period.',
+    description: 'Does the item indicate any risk to the correct allocation period? Checks transaction date, and whether the description suggests costs spanning multiple periods (insurance, rent, subscriptions, retainers, service contracts).',
     priority: 2,
   },
   {
@@ -125,9 +125,9 @@ export const STANDARD_VERIFICATION_COLUMNS: VerificationCheck[] = [
   },
   {
     key: 'audit',
-    label: 'Audit',
-    shortLabel: 'Audit',
-    description: 'Does the evidence indicate that the item falls outside of normal audit procedures and needs a special check? E.g. unusual terms, complex arrangements, fraud indicators.',
+    label: 'Other Concerns',
+    shortLabel: 'Other',
+    description: 'Does the evidence indicate any other concerns? E.g. unusual terms, complex arrangements, fraud indicators, voided transactions, credit notes, cash payments.',
     priority: 4,
   },
 ];
