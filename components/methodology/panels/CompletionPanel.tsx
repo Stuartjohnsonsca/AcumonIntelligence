@@ -26,11 +26,11 @@ interface Props {
 }
 
 const COMPLETION_TABS = [
-  { key: 'summary-memo', label: 'Audit Summary Memo', icon: FileText, templateType: 'audit_summary_memo' },
-  { key: 'update-procedures', label: 'Update Procedures', icon: ClipboardList, templateType: 'update_procedures' },
-  { key: 'completion-checklist', label: 'Completion Checklist', icon: CheckSquare, templateType: 'completion_checklist' },
+  { key: 'summary-memo', label: 'Audit Summary Memo', icon: FileText, templateType: 'audit_summary_memo_questions' },
+  { key: 'update-procedures', label: 'Update Procedures', icon: ClipboardList, templateType: 'update_procedures_questions' },
+  { key: 'completion-checklist', label: 'Completion Checklist', icon: CheckSquare, templateType: 'completion_checklist_questions' },
   { key: 'test-summary', label: 'Test Summary Results', icon: BarChart3, templateType: null },
-  { key: 'overall-review', label: 'Overall Review of FS', icon: Eye, templateType: 'overall_review_fs' },
+  { key: 'overall-review', label: 'Overall Review of FS', icon: Eye, templateType: 'overall_review_fs_questions' },
   { key: 'fs-review', label: 'FS Review', icon: FileText, templateType: null },
   { key: 'error-schedule', label: 'Error Schedule', icon: AlertTriangle, templateType: null },
 ] as const;
@@ -97,49 +97,70 @@ export function CompletionPanel({ engagementId, clientId, userRole, userId, onCl
 // ─── Template Schedule Sub-component ───
 
 function TemplateScheduleTab({ engagementId, templateType, title }: { engagementId: string; templateType: string; title: string }) {
-  const [items, setItems] = useState<{ id: string; question: string; answer: string; notes: string }[]>([]);
+  const [items, setItems] = useState<{ id: string; question: string; answer: string; notes: string; section?: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saveDebounce, setSaveDebounce] = useState<NodeJS.Timeout | null>(null);
 
-  // Load template and data
+  // Load template questions from methodology-admin templates, then overlay engagement-specific answers
   useState(() => {
     (async () => {
       try {
-        // Try to load existing data
-        const dataRes = await fetch(`/api/engagements/${engagementId}/completion?templateType=${templateType}`);
-        if (dataRes.ok) {
-          const data = await dataRes.json();
-          if (data.items?.length > 0) {
-            setItems(data.items);
-            setLoading(false);
-            return;
-          }
-        }
-        // Load template questions
+        // 1. Load template questions (configured in Schedules admin)
         const tplRes = await fetch(`/api/methodology-admin/templates?templateType=${templateType}&auditType=ALL`);
+        let questions: any[] = [];
         if (tplRes.ok) {
           const tplData = await tplRes.json();
-          const questions = tplData.questions || tplData.items || [];
-          setItems(questions.map((q: any, i: number) => ({
+          // Templates from SchedulesClient store TemplateQuestion[] in items
+          const raw = tplData.template?.items || tplData.items || tplData.questions || [];
+          questions = (Array.isArray(raw) ? raw : []).map((q: any, i: number) => ({
             id: q.id || `q-${i}`,
-            question: q.questionText || q.question || q.text || `Item ${i + 1}`,
+            question: q.questionText || q.question || q.text || q.label || `Item ${i + 1}`,
+            section: q.section || '',
             answer: '',
             notes: '',
-          })));
+          }));
         }
+
+        // 2. Overlay engagement-specific answers if they exist
+        try {
+          const dataRes = await fetch(`/api/engagements/${engagementId}/permanent-file?section=${templateType}`);
+          if (dataRes.ok) {
+            const data = await dataRes.json();
+            const answers = data.answers || data.data || {};
+            // Match answers by question ID or index
+            for (const q of questions) {
+              if (answers[q.id]) {
+                q.answer = answers[q.id].answer || answers[q.id] || '';
+                q.notes = answers[q.id].notes || '';
+              }
+            }
+          }
+        } catch {} // No engagement data yet — fine
+
+        setItems(questions.length > 0 ? questions : []);
       } catch {} finally { setLoading(false); }
     })();
   });
 
   async function saveItem(index: number, field: 'answer' | 'notes', value: string) {
-    setItems(prev => prev.map((item, i) => i === index ? { ...item, [field]: value } : item));
-    // Auto-save
-    try {
-      await fetch(`/api/engagements/${engagementId}/completion`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ templateType, items: items.map((item, i) => i === index ? { ...item, [field]: value } : item) }),
-      });
-    } catch {}
+    const updated = items.map((item, i) => i === index ? { ...item, [field]: value } : item);
+    setItems(updated);
+    // Debounced auto-save
+    if (saveDebounce) clearTimeout(saveDebounce);
+    const timeout = setTimeout(async () => {
+      try {
+        const answers: Record<string, any> = {};
+        for (const item of updated) {
+          answers[item.id] = { answer: item.answer, notes: item.notes };
+        }
+        await fetch(`/api/engagements/${engagementId}/permanent-file`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'save_data', section: templateType, data: answers }),
+        });
+      } catch {}
+    }, 1000);
+    setSaveDebounce(timeout);
   }
 
   if (loading) return <div className="p-6 text-center text-xs text-slate-400 animate-pulse">Loading {title}...</div>;
@@ -149,7 +170,7 @@ function TemplateScheduleTab({ engagementId, templateType, title }: { engagement
       <div className="p-6 text-center text-slate-400 space-y-2">
         <FileText className="h-8 w-8 mx-auto text-slate-300" />
         <p className="text-sm">No template configured for "{title}"</p>
-        <p className="text-xs">Add a template in Methodology Admin → Template Documents with type "{templateType}"</p>
+        <p className="text-xs">Add questions in Methodology Admin → Audit Methodology → Schedules → "{title}" tab</p>
       </div>
     );
   }
