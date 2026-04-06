@@ -425,20 +425,36 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
               </button>
             </div>
             {/* Reviewer + RI sign-off */}
-            <div className="flex items-center gap-3">
-              <button className={`flex flex-col items-center gap-0.5 ${rowState.reviewerSignOff ? '' : 'opacity-60 hover:opacity-100'}`}
-                title={rowState.reviewerSignOff ? `Reviewed by ${rowState.reviewerSignOff.userName}` : 'Click to sign as Reviewer'}>
-                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${rowState.reviewerSignOff ? 'bg-green-500 border-green-500' : 'border-slate-300'}`}>
-                  {rowState.reviewerSignOff && <CheckCircle2 className="h-3 w-3 text-white" />}
+            <div className="flex items-center gap-4">
+              <button onClick={() => {
+                setRowStates(prev => {
+                  const row = prev[currentItemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
+                  const updated = { ...prev, [currentItemIndex]: { ...row, reviewerSignOff: row.reviewerSignOff ? null : { userName: 'Current User', timestamp: new Date().toISOString() } } };
+                  saveRowStates(updated);
+                  return updated;
+                });
+              }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${rowState.reviewerSignOff ? '' : 'hover:opacity-100'}`}
+                title={rowState.reviewerSignOff ? `Reviewed by ${rowState.reviewerSignOff.userName} — click to unsign` : 'Click to sign as Reviewer'}>
+                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${rowState.reviewerSignOff ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
+                  {rowState.reviewerSignOff && <CheckCircle2 className="h-3.5 w-3.5 text-white" />}
                 </div>
-                <span className="text-[7px] text-slate-500">Reviewer</span>
+                <span className="text-[8px] font-bold text-slate-600">Reviewer</span>
+                {rowState.reviewerSignOff && <span className="text-[7px] text-green-600">{rowState.reviewerSignOff.userName}</span>}
               </button>
-              <button className={`flex flex-col items-center gap-0.5 ${rowState.riSignOff ? '' : 'opacity-60 hover:opacity-100'}`}
-                title={rowState.riSignOff ? `RI signed by ${rowState.riSignOff.userName}` : 'Click to sign as RI'}>
-                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${rowState.riSignOff ? 'bg-green-500 border-green-500' : 'border-slate-300'}`}>
-                  {rowState.riSignOff && <CheckCircle2 className="h-3 w-3 text-white" />}
+              <button onClick={() => {
+                setRowStates(prev => {
+                  const row = prev[currentItemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
+                  const updated = { ...prev, [currentItemIndex]: { ...row, riSignOff: row.riSignOff ? null : { userName: 'Current User', timestamp: new Date().toISOString() } } };
+                  saveRowStates(updated);
+                  return updated;
+                });
+              }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${rowState.riSignOff ? '' : 'hover:opacity-100'}`}
+                title={rowState.riSignOff ? `RI signed by ${rowState.riSignOff.userName} — click to unsign` : 'Click to sign as RI'}>
+                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${rowState.riSignOff ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
+                  {rowState.riSignOff && <CheckCircle2 className="h-3.5 w-3.5 text-white" />}
                 </div>
-                <span className="text-[7px] text-slate-500">RI</span>
+                <span className="text-[8px] font-bold text-slate-600">RI</span>
+                {rowState.riSignOff && <span className="text-[7px] text-green-600">{rowState.riSignOff.userName}</span>}
               </button>
             </div>
           </div>
