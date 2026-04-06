@@ -7,6 +7,7 @@ import { TestResultsPanel } from './TestResultsPanel';
 import { ExecutionFlowViewer } from './ExecutionFlowViewer';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
 import { AnalyticalReviewPanel } from './AnalyticalReviewPanel';
+import { PayrollTestPanel } from './PayrollTestPanel';
 import { assertionShortLabel } from '@/types/methodology';
 
 interface TBRow {
@@ -1079,8 +1080,19 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                             </td>
                           </tr>
                         )}
+                        {/* Payroll Workpaper — for payroll_workpaper output format */}
+                        {isExecutionOpen && test.outputFormat === 'payroll_workpaper' && (
+                          <tr>
+                            <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-white">
+                              <PayrollTestPanel
+                                engagementId={engagementId}
+                                fsLine={activeLevel || activeStatement}
+                              />
+                            </td>
+                          </tr>
+                        )}
                         {/* Results Panel — shown for completed tests with results */}
-                        {isExecutionOpen && conc && conc !== 'pending' && !test.isIngest && (
+                        {isExecutionOpen && conc && conc !== 'pending' && !test.isIngest && test.outputFormat !== 'payroll_workpaper' && (
                           <tr>
                             <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-white">
                               <TestResultsPanel

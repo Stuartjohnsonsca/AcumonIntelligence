@@ -1663,6 +1663,7 @@ model AuditEngagement {
   errorScheduleItems   AuditErrorSchedule[]
   auditPoints          AuditPoint[]
   analyticalReviews    AuditAnalyticalReview[]
+  payrollTests         AuditPayrollTest[]
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -2514,6 +2515,47 @@ model AuditAnalyticalReview {
   @@index([engagementId])
   @@index([engagementId, fsLine])
   @@map("audit_analytical_reviews")
+}
+
+model AuditPayrollTest {
+  id               String    @id @default(uuid())
+  engagementId     String    @map("engagement_id")
+  fsLine           String    @map("fs_line")
+  status           String    @default("pending") // pending | in_progress | completed | reviewed | signed_off
+
+  // Ingested payroll data (monthly summaries parsed from CSV/Excel)
+  payrollData      Json?     @map("payroll_data") @db.JsonB // { months: [{ period, gross, tax, eeNI, erNI, eePension, erPension, studentLoan, otherDed, netPay, ... }] }
+
+  // Lead schedule (account codes mapped to TB)
+  leadSchedule     Json?     @map("lead_schedule") @db.JsonB // { rows: [{ accountCode, accountName, cyBalance, adjustment, finalCY, pyBalance, variance, pct, wpRef }] }
+
+  // Reconciliation grids
+  payrollRecon     Json?     @map("payroll_recon") @db.JsonB // { months: [{ period, gross, salSacrifice, tax, eeNI, hscLevy, studentLoan, eePension, netDed, pensionRefund, netPerReport, netPerCalc, diff, erNI, erPension, bankNetPay }], reconToTB: [...] }
+  hmrcRecon        Json?     @map("hmrc_recon") @db.JsonB // { months: [{ period, paye, studentLoan, erNI, eeNI, other, total, bankDate, bankAmount, bankName, diff, notes }] }
+  pensionsRecon    Json?     @map("pensions_recon") @db.JsonB // { months: [{ period, eePension, erPension, totalPension, bankDate, bankAmount, bankName, diff, notes }] }
+
+  // Joiners & Leavers
+  joiners          Json?     @db.JsonB // [{ name, contractSeen, startMonth, annualSalary, monthlySalary, firstFullMonthPayroll, diff, notes }]
+  leavers          Json?     @db.JsonB // [{ name, p45Seen, lastMonthPaid, lastMonthP45, diff, notes, terminationChecks: {...} }]
+
+  // Holiday pay & accruals
+  holidayPay       Json?     @map("holiday_pay") @db.JsonB // { calculation, liability, accrual, notes }
+
+  // Errors and conclusion
+  errors           Json?     @db.JsonB // [{ description, amount, type, section }]
+  conclusion       String?   // green | orange | red
+  auditorNotes     String?   @map("auditor_notes") @db.Text
+
+  // Sign-offs
+  signOffs         Json?     @map("sign_offs") @db.JsonB
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  engagement       AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@unique([engagementId, fsLine])
+  @@index([engagementId])
+  @@map("audit_payroll_tests")
 }
 
 model AuditErrorSchedule {
