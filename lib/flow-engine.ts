@@ -1039,21 +1039,69 @@ async function handleFetchEvidenceOrPortal(
             },
           });
 
-          // Compare evidence to the selected item
-          const sampleAmount = Number(loopItem.amount || loopItem.total || loopItem.gross || 0);
-          const evidenceAmount = Number(invoice.Total || 0);
-          const amountDiff = Math.abs(evidenceAmount - sampleAmount);
-          const amountMatches = amountDiff < 0.01 || (sampleAmount > 0 && amountDiff / sampleAmount < 0.01);
+          // ─── Full assessment of evidence vs sample ───
+          var sampleAmt = Number(loopItem.amount || loopItem.total || loopItem.gross || 0);
+          var evidenceAmt = Number(invoice.Total || 0);
+          var amtDiff = Math.abs(evidenceAmt - sampleAmt);
+          var amountMatches = amtDiff < 0.01 || (sampleAmt > 0 && amtDiff / sampleAmt < 0.01);
 
           // Parse Xero date
-          let evidenceDate = '';
-          const rawDate = invoice.Date || '';
+          var evidenceDate = '';
+          var evidenceDateObj: Date | null = null;
+          var rawDate = invoice.Date || '';
           if (typeof rawDate === 'string' && rawDate.includes('/Date(')) {
-            const ms = parseInt(rawDate.replace(/\/Date\((\d+)[+-]\d+\)\//, '$1'));
-            if (!isNaN(ms)) evidenceDate = new Date(ms).toISOString().split('T')[0];
+            var ms = parseInt(rawDate.replace(/\/Date\((\d+)[+-]\d+\)\//, '$1'));
+            if (!isNaN(ms)) { evidenceDateObj = new Date(ms); evidenceDate = evidenceDateObj.toISOString().split('T')[0]; }
           } else if (rawDate) {
             evidenceDate = String(rawDate);
+            evidenceDateObj = new Date(rawDate);
           }
+
+          // Match: amount + description + contact name
+          var sampleContact = (loopItem.contact || '').toLowerCase();
+          var evidenceContact = (invoice.Contact?.Name || '').toLowerCase();
+          var contactMatches = !sampleContact || !evidenceContact || sampleContact.includes(evidenceContact) || evidenceContact.includes(sampleContact);
+          var descriptionReasonable = true; // Can't reliably compare descriptions programmatically
+          var matchResult: 'pass' | 'fail' = (amountMatches && contactMatches) ? 'pass' : 'fail';
+
+          // Period: is the evidence date in the correct accounting period?
+          var periodEnd = ctx.engagement?.periodEnd ? new Date(ctx.engagement.periodEnd) : null;
+          var periodStart = ctx.engagement?.periodStart ? new Date(ctx.engagement.periodStart) : null;
+          var periodResult: 'pass' | 'fail' | 'pending' = 'pending';
+          if (evidenceDateObj && periodEnd && periodStart) {
+            var inPeriod = evidenceDateObj >= periodStart && evidenceDateObj <= periodEnd;
+            periodResult = inPeriod ? 'pass' : 'fail';
+          } else if (evidenceDateObj && periodEnd) {
+            periodResult = evidenceDateObj <= periodEnd ? 'pass' : 'fail';
+          }
+
+          // Disclosure: check for related party, unusual terms, large amounts relative to materiality
+          var pm = Number(ctx.engagement?.performanceMateriality || 0);
+          var disclosureFlags: string[] = [];
+          var invDesc = (invoice.LineItems || []).map((li: any) => (li.Description || '').toLowerCase()).join(' ');
+          var allText = (invDesc + ' ' + (invoice.Reference || '') + ' ' + (invoice.Contact?.Name || '')).toLowerCase();
+          if (allText.includes('director') || allText.includes('related') || allText.includes('shareholder')) disclosureFlags.push('Related party');
+          if (allText.includes('loan') || allText.includes('advance')) disclosureFlags.push('Loan/advance');
+          if (allText.includes('legal') || allText.includes('settlement') || allText.includes('litigation')) disclosureFlags.push('Legal/contingent');
+          if (evidenceAmt > pm && pm > 0) disclosureFlags.push('Above PM');
+          var disclosureResult: 'pass' | 'fail' | 'pending' = disclosureFlags.length > 0 ? 'fail' : 'pass';
+
+          // Audit: does this need special procedures?
+          var auditFlags: string[] = [];
+          if (!amountMatches) auditFlags.push('Amount mismatch requires investigation');
+          if (!contactMatches) auditFlags.push('Contact mismatch — possible wrong document');
+          if (invoice.Status === 'VOIDED') auditFlags.push('Invoice is VOIDED');
+          if (allText.includes('credit note') || allText.includes('reversal')) auditFlags.push('Credit note/reversal');
+          if (allText.includes('cash') || allText.includes('manual')) auditFlags.push('Cash/manual transaction');
+          var auditResult: 'pass' | 'fail' | 'pending' = auditFlags.length > 0 ? 'fail' : 'pass';
+
+          var assessmentNotes: string[] = [];
+          if (!amountMatches) assessmentNotes.push('AMOUNT MISMATCH: sample £' + sampleAmt.toFixed(2) + ' vs evidence £' + evidenceAmt.toFixed(2) + ' (diff £' + amtDiff.toFixed(2) + ')');
+          if (!contactMatches) assessmentNotes.push('CONTACT MISMATCH: sample "' + loopItem.contact + '" vs evidence "' + invoice.Contact?.Name + '"');
+          if (periodResult === 'fail') assessmentNotes.push('PERIOD: evidence date ' + evidenceDate + ' may be outside audit period');
+          if (disclosureFlags.length > 0) assessmentNotes.push('DISCLOSURE: ' + disclosureFlags.join(', '));
+          if (auditFlags.length > 0) assessmentNotes.push('AUDIT: ' + auditFlags.join(', '));
+          if (assessmentNotes.length === 0) assessmentNotes.push('All checks passed — amount, contact, period agree.');
 
           return {
             action: 'continue',
@@ -1061,21 +1109,21 @@ async function handleFetchEvidenceOrPortal(
             output: {
               evidenceSource: 'accounting_system',
               system: connection.system,
-              found: true, // Invoice exists in Xero
+              found: true,
               evidenceRetrieved: true,
               amountMatches,
-              amountDiff,
-              sampleAmount,
-              evidenceAmount,
+              amountDiff: amtDiff,
+              sampleAmount: sampleAmt,
+              evidenceAmount: evidenceAmt,
               evidenceDate,
               matchAssessment: {
-                match: amountMatches ? 'pass' : 'fail',
-                period: 'pending', // Would need period end date comparison
-                disclosure: 'pending', // Would need content analysis
-                audit: 'pending', // Would need unusual item detection
-                notes: amountMatches
-                  ? 'Amount matches: sample £' + sampleAmount.toFixed(2) + ' = evidence £' + evidenceAmount.toFixed(2)
-                  : 'AMOUNT MISMATCH: sample £' + sampleAmount.toFixed(2) + ' vs evidence £' + evidenceAmount.toFixed(2) + ' (difference: £' + amountDiff.toFixed(2) + ')',
+                match: matchResult,
+                period: periodResult,
+                disclosure: disclosureResult,
+                audit: auditResult,
+                notes: assessmentNotes.join('\n'),
+                disclosureFlags,
+                auditFlags,
               },
               invoice,
               reference,
