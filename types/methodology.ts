@@ -310,7 +310,7 @@ export const MATERIALITY_BENCHMARKS = [
 
 // ─── Template Question Types (for dynamic form rendering) ──────────────────
 
-export type QuestionInputType = 'text' | 'textarea' | 'yesno' | 'yes_only' | 'dropdown' | 'number' | 'currency' | 'date' | 'formula' | 'checkbox' | 'yna';
+export type QuestionInputType = 'text' | 'textarea' | 'yesno' | 'yes_only' | 'dropdown' | 'number' | 'currency' | 'date' | 'formula' | 'checkbox' | 'yna' | 'table_row';
 
 export interface TemplateQuestion {
   id: string;
@@ -327,6 +327,30 @@ export interface TemplateQuestion {
   validationDecimals?: number;
   conditionalOn?: { questionId: string; value: string };
   mergedWith?: string;
+  isBold?: boolean; // For conclusion/header rows in tables
+}
+
+export type SectionLayout = 'standard' | 'table_4col' | 'table_3col' | 'table_5col';
+
+export interface TemplateSectionMeta {
+  key: string;
+  label: string;
+  layout: SectionLayout;
+  columnHeaders?: string[];
+  signOff?: boolean; // Whether section has Preparer/Reviewer/RI sign-off
+}
+
+export const DEFAULT_COLUMN_HEADERS: Record<SectionLayout, string[]> = {
+  standard: [],
+  table_4col: ['Item', 'Procedures Performed', 'Conclusion', 'WP Reference'],
+  table_3col: ['Particulars', 'Audit Team Response', 'WP Reference'],
+  table_5col: ['Particulars', 'Planning Amount', 'Final Amount', 'Comment', 'WP Reference'],
+};
+
+/** Template data stored in MethodologyTemplate.items for completion schedules */
+export interface CompletionTemplateData {
+  questions: TemplateQuestion[];
+  sectionMeta: Record<string, TemplateSectionMeta>;
 }
 
 // ─── Materiality Benchmark Ranges (from Appendix E) ────────────────────────
