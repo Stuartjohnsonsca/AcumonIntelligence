@@ -2237,7 +2237,7 @@ async function handleWait(
       return {
         action: 'continue',
         nextNodeId: getNextNodeId(flow, node.id),
-        output: { waitingFor: 'sampling', satisfied: true, triggerType: 'sampling', selectedIndices: prevOutput.selectedIndices, sampleSize: prevOutput.sampleSize, coverage: prevOutput.coverage, ...prevOutput },
+        output: { waitingFor: 'sampling', satisfied: true, triggerType: 'sampling', selectedIndices: prevOutput.selectedIndices, sampleSize: prevOutput.sampleSize, coverage: prevOutput.coverage, samplingDone: true },
       };
     }
     // Find population data from previous nodes to pass along
@@ -2261,7 +2261,7 @@ async function handleWait(
       return {
         action: 'continue',
         nextNodeId: getNextNodeId(flow, node.id),
-        output: { waitingFor: 'review_flagged', satisfied: true, triggerType: 'review_flagged', selectedIndices: prevOutput.selectedIndices, ...prevOutput },
+        output: { waitingFor: 'review_flagged', satisfied: true, triggerType: 'review_flagged', selectedIndices: prevOutput.selectedIndices, sampleSize: prevOutput.sampleSize },
       };
     }
     // Pause and show the ranked flagged results for auditor review
