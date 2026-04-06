@@ -158,36 +158,36 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
           <thead className="sticky top-0 z-10">
             {/* Section headers */}
             <tr>
-              <th colSpan={5} className="bg-blue-600 text-white text-[10px] font-semibold px-2 py-1 text-left border-r-2 border-white">
+              <th colSpan={5} className="bg-blue-600 text-white text-[10px] font-semibold px-2 py-1 text-left border-r-2 border-white cursor-help" title="Transactions selected for testing from the trial balance or accounting system. These are the items the auditor needs evidence for.">
                 Sample Request (from TB)
               </th>
-              <th colSpan={4} className="bg-green-600 text-white text-[10px] font-semibold px-2 py-1 text-left border-r-2 border-white">
+              <th colSpan={4} className="bg-green-600 text-white text-[10px] font-semibold px-2 py-1 text-left border-r-2 border-white cursor-help" title="Supporting documents obtained from the accounting system (Xero), uploaded by the client via portal, or manually uploaded. Each document is matched to a sample item.">
                 Client Evidence (uploaded)
               </th>
-              <th colSpan={verificationColumns.length + 1} className="bg-amber-600 text-white text-[10px] font-semibold px-2 py-1 text-left">
+              <th colSpan={verificationColumns.length + 1} className="bg-amber-600 text-white text-[10px] font-semibold px-2 py-1 text-left cursor-help" title="Automated and manual verification checks comparing the sample request to the evidence. Each column tests a specific audit assertion. Green tick = pass, Red cross = fail.">
                 Audit Verification
               </th>
             </tr>
             {/* Column sub-headers */}
             <tr className="bg-slate-100 border-b text-[10px] text-slate-600 font-semibold">
-              {/* Blue */}
-              <th className="px-2 py-1 text-left border-r border-slate-200 w-8">#</th>
-              <th className="px-2 py-1 text-left border-r border-slate-200 w-16">Ref</th>
-              <th className="px-2 py-1 text-left border-r border-slate-200">Description</th>
-              <th className="px-2 py-1 text-right border-r border-slate-200 w-20">Gross</th>
-              <th className="px-2 py-1 text-left border-r-2 border-blue-200 w-16">Date</th>
-              {/* Green */}
-              <th className="px-2 py-1 text-left border-r border-slate-200 w-16">Doc</th>
-              <th className="px-2 py-1 text-left border-r border-slate-200">Seller</th>
-              <th className="px-2 py-1 text-right border-r border-slate-200 w-20">Gross</th>
-              <th className="px-2 py-1 text-center border-r-2 border-green-200 w-14">Status</th>
-              {/* Amber — dynamic from assertions */}
+              {/* Blue — Sample Request */}
+              <th className="px-2 py-1 text-left border-r border-slate-200 w-8 cursor-help" title="Row number in the sample">#</th>
+              <th className="px-2 py-1 text-left border-r border-slate-200 w-16 cursor-help" title="Invoice number or transaction reference from the accounting system">Ref</th>
+              <th className="px-2 py-1 text-left border-r border-slate-200 cursor-help" title="Transaction description or contact name from the ledger">Description</th>
+              <th className="px-2 py-1 text-right border-r border-slate-200 w-20 cursor-help" title="Gross amount of the transaction as recorded in the trial balance / ledger">Gross</th>
+              <th className="px-2 py-1 text-left border-r-2 border-blue-200 w-16 cursor-help" title="Transaction date as recorded in the accounting system">Date</th>
+              {/* Green — Client Evidence */}
+              <th className="px-2 py-1 text-left border-r border-slate-200 w-16 cursor-help" title="Document reference from the supporting evidence (invoice, contract, etc.)">Doc</th>
+              <th className="px-2 py-1 text-left border-r border-slate-200 cursor-help" title="Supplier or counterparty name from the evidence document">Seller</th>
+              <th className="px-2 py-1 text-right border-r border-slate-200 w-20 cursor-help" title="Gross amount per the evidence document — compared against the sample amount">Gross</th>
+              <th className="px-2 py-1 text-center border-r-2 border-green-200 w-14 cursor-help" title="Evidence status: obtained from Xero, uploaded by client, requested via portal, or pending">Status</th>
+              {/* Amber — dynamic verification checks from assertions */}
               {verificationColumns.map((col, ci) => (
-                <th key={col.key} className={`px-2 py-1 text-center ${ci < verificationColumns.length - 1 ? 'border-r border-slate-200' : ''} w-12`} title={col.description}>
+                <th key={col.key} className={`px-2 py-1 text-center cursor-help ${ci < verificationColumns.length - 1 ? 'border-r border-slate-200' : ''} w-12`} title={col.description}>
                   {col.shortLabel}
                 </th>
               ))}
-              <th className="px-2 py-1 text-center w-14">Result</th>
+              <th className="px-2 py-1 text-center w-14 cursor-help" title="Overall verification result: Pass if all checks satisfied, Fail if any material discrepancy found">Result</th>
             </tr>
           </thead>
           <tbody>
