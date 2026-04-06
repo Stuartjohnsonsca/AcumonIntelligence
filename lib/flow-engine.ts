@@ -2107,7 +2107,7 @@ async function handleWait(
       return {
         action: 'continue',
         nextNodeId: getNextNodeId(flow, node.id),
-        output: { waitingFor: 'sampling', satisfied: true, triggerType: 'sampling', selectedIndices: prevOutput.selectedIndices, sampleSize: prevOutput.sampleSize, coverage: prevOutput.coverage, samplingDone: true },
+        output: { waitingFor: 'sampling', satisfied: true, triggerType: 'sampling', selectedIndices: prevOutput.selectedIndices, sampleSize: prevOutput.sampleSize, coverage: prevOutput.coverage, samplingDone: true, sampleItems: prevOutput.sampleItems },
       };
     }
     // Find population data from previous nodes to pass along
@@ -2131,7 +2131,7 @@ async function handleWait(
       return {
         action: 'continue',
         nextNodeId: getNextNodeId(flow, node.id),
-        output: { waitingFor: 'review_flagged', satisfied: true, triggerType: 'review_flagged', selectedIndices: prevOutput.selectedIndices, sampleSize: prevOutput.sampleSize },
+        output: { waitingFor: 'review_flagged', satisfied: true, triggerType: 'review_flagged', selectedIndices: prevOutput.selectedIndices, sampleSize: prevOutput.sampleSize, sampleItems: prevOutput.sampleItems },
       };
     }
     // Pause and show the ranked flagged results for auditor review
@@ -2200,21 +2200,28 @@ async function handleForEach(
     const prevOutput = prevNodeId ? ctx.nodes[prevNodeId] : null;
 
     if (collection === 'sample_items') {
-      // From sampling results — resolve selectedIndices against populationData
-      // Search all nodes for population data and sampling results
+      // From sampling/review results — resolve selectedIndices against populationData
+      // Use the LAST node's populationData (scored/ranked data, not raw extract)
       let populationData: any[] = [];
       let selectedIndices: number[] = [];
 
       for (const [, nodeOut] of Object.entries(ctx.nodes)) {
         const out = nodeOut as any;
         if (!out) continue;
-        if (out.populationData?.length > 0 && populationData.length === 0) populationData = out.populationData;
-        if (out.dataTable?.length > 0 && populationData.length === 0) populationData = out.dataTable;
-        if (out.selectedIndices?.length > 0 && selectedIndices.length === 0) selectedIndices = out.selectedIndices;
+        // Keep overwriting — we want the LAST (most processed) population
+        if (out.populationData?.length > 0) populationData = out.populationData;
+        else if (out.dataTable?.length > 0) populationData = out.dataTable;
+        if (out.selectedIndices?.length > 0) selectedIndices = out.selectedIndices;
         if (out.sampleItems?.length > 0 && items.length === 0) items = out.sampleItems;
       }
 
-      if (selectedIndices.length > 0 && populationData.length > 0) {
+      // Check if previous node passed actual sampleItems (preferred over index mapping)
+      for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+        const out = nodeOut as any;
+        if (out?.sampleItems?.length > 0) items = out.sampleItems;
+      }
+
+      if (items.length === 0 && selectedIndices.length > 0 && populationData.length > 0) {
         // Map indices to actual row objects
         items = selectedIndices.map((idx: number) => populationData[idx]).filter(Boolean);
       } else if (items.length === 0 && populationData.length > 0) {

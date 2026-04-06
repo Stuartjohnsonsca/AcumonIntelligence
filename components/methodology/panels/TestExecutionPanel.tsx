@@ -683,14 +683,12 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     </p>
                     <button
                       onClick={() => {
-                        // Map displayed row positions back to original indices using _index field
+                        // Get the actual items from the scored population (not just indices)
                         const popStepsForIdx = flowSteps.filter(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0);
                         const popData = popStepsForIdx[popStepsForIdx.length - 1]?.output?.populationData || popStepsForIdx[popStepsForIdx.length - 1]?.output?.dataTable || [];
-                        const originalIndices = Array.from(investigateRows).map(displayIdx => {
-                          const row = popData[displayIdx];
-                          return row?._index != null ? row._index : displayIdx;
-                        });
-                        handleSamplingDone({ runId: '', selectedIndices: originalIndices, sampleSize: originalIndices.length, coverage: 0 });
+                        const selectedItems = Array.from(investigateRows).map(displayIdx => popData[displayIdx]).filter(Boolean);
+                        // Pass both indices and actual items so the forEach can use either
+                        handleSamplingDone({ runId: '', selectedIndices: Array.from(investigateRows), sampleSize: selectedItems.length, coverage: 0, sampleItems: selectedItems } as any);
                       }}
                       disabled={completing || investigateRows.size === 0}
                       className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
@@ -831,17 +829,37 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             )}
           </div>
 
-          {/* SECTION 4: Findings & Conclusions (collapsible) */}
+          {/* SECTION 4: Findings & Conclusions (collapsible) — only show when evidence has been obtained */}
+          {(() => {
+            const hasEvidence = evidence.length > 0 && evidence.some(e => e.status === 'uploaded');
+            const allEvidenceObtained = sampleItems.length > 0 && evidence.length >= sampleItems.length && evidence.every(e => e.status === 'uploaded');
+            const canConclude = allEvidenceObtained;
+            return (
           <div>
             <button onClick={() => setFindingsOpen(!findingsOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
               <div className="flex items-center gap-2">
                 {findingsOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
                 <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Findings & Conclusions</span>
-                {conclusion !== 'pending' && <div className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />}
+                {!hasEvidence && sampleItems.length > 0 && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Awaiting evidence — cannot conclude</span>}
+                {hasEvidence && !allEvidenceObtained && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{evidence.filter(e => e.status === 'uploaded').length}/{sampleItems.length} evidence obtained</span>}
+                {canConclude && conclusion !== 'pending' && <div className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />}
               </div>
-              {failCount > 0 && <span className="text-[9px] text-red-500 font-medium">{failCount} exception{failCount !== 1 ? 's' : ''}</span>}
+              {!canConclude && <span className="text-[9px] text-amber-600 font-medium">Evidence required before conclusion</span>}
+              {canConclude && failCount > 0 && <span className="text-[9px] text-red-500 font-medium">{failCount} exception{failCount !== 1 ? 's' : ''}</span>}
             </button>
-            {findingsOpen && (
+            {findingsOpen && !canConclude && (
+              <div className="p-4">
+                <div className="text-center py-6 text-slate-400">
+                  <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-amber-400" />
+                  <p className="text-sm font-medium text-amber-700">Cannot conclude — evidence not yet obtained for all items</p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {evidence.filter(e => e.status === 'uploaded').length} of {sampleItems.length} items have evidence.
+                    Obtain evidence for all selected items before recording findings.
+                  </p>
+                </div>
+              </div>
+            )}
+            {findingsOpen && canConclude && (
               <div className="p-4 space-y-3">
                 {/* Summary KPIs */}
                 <div className="grid grid-cols-6 gap-3 text-center">
@@ -912,6 +930,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
               </div>
             )}
           </div>
+            );
+          })()}
         </div>
       )}
     </div>
