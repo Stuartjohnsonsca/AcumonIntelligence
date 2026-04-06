@@ -266,6 +266,31 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         <div className="flex-1" />
         {!isPreStart && (
           <button
+            onClick={() => {
+              setShowAuditPlan(!showAuditPlan);
+              if (!showAuditPlan) { setShowCompletion(false); }
+              if (!planCreated && !showAuditPlan) {
+                setPlanCreated(true);
+                fetch(`/api/engagements/${engagement.id}`, {
+                  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ planCreated: true }),
+                }).catch(() => {});
+              }
+            }}
+            className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
+              showAuditPlan
+                ? 'bg-blue-600 text-white'
+                : 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100'
+            }`}
+          >
+            <svg className="h-3 w-3 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+            {showAuditPlan ? 'Close Plan' : 'Audit Plan'}
+          </button>
+        )}
+        {!isPreStart && planCreated && (
+          <button
             onClick={() => { setShowCompletion(!showCompletion); if (!showCompletion) setShowAuditPlan(false); }}
             className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
               showCompletion
@@ -400,27 +425,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               endpoint={signOffEndpoint}
               title={signOffTitle}
               teamMembers={teamMembers}
-              headerActions={activeTab === 'rmm' ? (
-                <button
-                  onClick={() => {
-                    setShowAuditPlan(true);
-                    if (!planCreated) {
-                      setPlanCreated(true);
-                      // Save flag to engagement
-                      fetch(`/api/engagements/${engagement.id}`, {
-                        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ planCreated: true }),
-                      }).catch(() => {});
-                    }
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors mr-3"
-                >
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                  </svg>
-                  Open Plan
-                </button>
-              ) : undefined}
+              headerActions={undefined}
             >
               <TabErrorBoundary tabName={signOffTitle}>{renderTabContent()}</TabErrorBoundary>
             </SignOffHeader>
