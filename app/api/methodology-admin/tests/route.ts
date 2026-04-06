@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
       framework: framework || 'ALL',
       significantRisk: resolvedCategory === 'Significant Risk', // Keep in sync for backward compat
       category: resolvedCategory,
-      outputFormat: outputFormat || null,
+      outputFormat: outputFormat || 'three_section_no_sampling',
       isIngest: isIngest || false,
       flow: flow || null,
     },
@@ -76,7 +76,7 @@ export async function PATCH(req: NextRequest) {
     data.category = updates.category;
     data.significantRisk = updates.category === 'Significant Risk'; // Keep in sync
   }
-  if (updates.outputFormat !== undefined) data.outputFormat = updates.outputFormat || null;
+  if (updates.outputFormat !== undefined) data.outputFormat = updates.outputFormat || 'three_section_no_sampling';
   if (updates.isIngest !== undefined) data.isIngest = updates.isIngest;
   if (updates.flow !== undefined) data.flow = updates.flow;
   if (updates.sortOrder !== undefined) data.sortOrder = updates.sortOrder;

@@ -631,7 +631,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 </div>
                 <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={testForm.isIngest} onChange={e => setTestForm(prev => ({ ...prev, isIngest: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-slate-500" /><span className="text-sm text-slate-700">Ingest / Prerequisite</span></label>
               </div>
-              <div><label className="text-xs font-medium text-slate-600 block mb-1">Results Display</label><select value={testForm.outputFormat} onChange={e => setTestForm(prev => ({ ...prev, outputFormat: e.target.value }))} className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white">
+              <div><label className="text-xs font-medium text-slate-600 block mb-1">Results Display <span className="text-red-500">*</span></label><select value={testForm.outputFormat} onChange={e => setTestForm(prev => ({ ...prev, outputFormat: e.target.value }))} className={`w-full border rounded-md px-2 py-2 text-sm bg-white ${!testForm.outputFormat ? 'border-red-300' : 'border-slate-300'}`} required>
                 <optgroup label="Standard Displays">
                   <option value="three_section_sampling">Sample & Verify (3-pane with sampling)</option>
                   <option value="three_section_no_sampling">Data Table (3-pane without sampling)</option>
@@ -648,7 +648,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
             </div>
             <div className="flex items-center justify-end gap-2 mt-6">
               <Button onClick={() => setTestModalOpen(false)} size="sm" variant="outline">Cancel</Button>
-              <Button onClick={handleSaveTest} size="sm" disabled={saving || !testForm.name.trim()} className="bg-blue-600 hover:bg-blue-700">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}{editingTest ? 'Update' : 'Create'}</Button>
+              <Button onClick={handleSaveTest} size="sm" disabled={saving || !testForm.name.trim() || !testForm.outputFormat} className="bg-blue-600 hover:bg-blue-700">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}{editingTest ? 'Update' : 'Create'}</Button>
             </div>
           </div>
         </div>
