@@ -319,7 +319,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
       {/* When Completion is open: split layout with vertical sidebar (left) + completion tabs (right) */}
       {showCompletion ? (
-        <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px]">
+        <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px] overflow-hidden">
           {/* Left sidebar: audit plan tabs (collapsed) */}
           <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
             {visibleTabs.map(tab => {
@@ -353,7 +353,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           </div>
         </div>
       ) : showAuditPlan ? (
-        <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px]">
+        <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px] overflow-hidden">
           {/* Left sidebar: all tabs as vertical list */}
           <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
             {visibleTabs.map(tab => {
@@ -379,7 +379,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             })}
           </div>
           {/* Main area: Audit Plan */}
-          <div className="flex-1 p-4 overflow-auto">
+          <div className="flex-1 min-w-0 p-4 overflow-auto">
             <TabErrorBoundary tabName="Audit Plan">
               <AuditPlanPanel engagementId={engagement.id} clientId={engagement.clientId} periodId={engagement.periodId} onClose={() => setShowAuditPlan(false)} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />
             </TabErrorBoundary>

@@ -1690,7 +1690,7 @@ async function handleAnalyseLargeUnusual(
 
       // Financial threshold — items below this are too small to consider
       if (financialThreshold > 0 && amt < financialThreshold) {
-        return { _index: idx, _score: 0, _reasons: [], _flagged: false, _belowThreshold: true, ...txn };
+        return Object.assign({ _index: idx, _score: 0, _reasons: [], _flagged: false, _belowThreshold: true }, txn);
       }
 
       // Size scoring — how large relative to the population
@@ -1732,13 +1732,12 @@ async function handleAnalyseLargeUnusual(
         if (isDebit !== majorityDebit) { score += otherW.contraEntry; reasons.push('Contra entry (opposite to majority flow)'); }
       }
 
-      return {
+      return Object.assign({
         _index: idx,
         _score: score,
         _reasons: reasons,
         _flagged: score >= thresholds.mediumRisk, // Orange if above threshold, white if below. Red = user decision only.
-        ...txn,
-      };
+      }, txn);
     });
 
     // 4. Sort by score (highest first) — this IS the output, ranked by unusualness
