@@ -1193,26 +1193,45 @@ async function handleCompareBankToTB(
 
     // 3. Extract closing balances per bank account
     // Group transactions by account number, take last balance as closing balance
-    const accountBalances = new Map<string, { accountNumber: string; closingBalance: number; transactionCount: number; lastDate: string }>();
+    // Also collect all unique identifiers from bank data for matching
+    const accountBalances = new Map<string, { accountNumber: string; closingBalance: number; transactionCount: number; lastDate: string; allIdentifiers: Set<string> }>();
     for (const txn of bankData) {
-      const accNum = txn.accountNumber || txn.tbAccountCode?.match(/AC\s*(\d+)/)?.[1] || '';
-      if (!accNum) continue;
-      const existing = accountBalances.get(accNum);
+      const accNum = txn.accountNumber || '';
+      // Also extract account number from tbAccountCode (PDF filename like "Statement 13-FEB-25 AC 70540862...")
+      const tbAccCodeMatch = (txn.tbAccountCode || '').match(/AC\s*(\d+)/i) || (txn.tbAccountCode || '').match(/(\d{6,})/);
+      const extractedAcc = tbAccCodeMatch?.[1] || '';
+      const primaryKey = accNum || extractedAcc || '';
+      if (!primaryKey) continue;
+
+      const existing = accountBalances.get(primaryKey);
       const balance = Number(txn.balance || txn.balanceFC || 0);
       const date = txn.date || '';
+
+      const identifiers = existing?.allIdentifiers || new Set<string>();
+      if (accNum) identifiers.add(accNum);
+      if (extractedAcc) identifiers.add(extractedAcc);
+      // Extract sort code if present
+      if (txn.sortCode) identifiers.add(txn.sortCode);
+      // Add account holder name
+      if (txn.accountHolder) identifiers.add(txn.accountHolder.toLowerCase());
+      // Add bank name from description
+      if (txn.bank) identifiers.add(txn.bank.toLowerCase());
+
       if (!existing || date >= existing.lastDate) {
-        accountBalances.set(accNum, {
-          accountNumber: accNum,
+        accountBalances.set(primaryKey, {
+          accountNumber: primaryKey,
           closingBalance: balance,
           transactionCount: (existing?.transactionCount || 0) + 1,
           lastDate: date,
+          allIdentifiers: identifiers,
         });
       } else if (existing) {
         existing.transactionCount++;
+        existing.allIdentifiers = identifiers;
       }
     }
 
-    // 4. Compare to TB
+    // 4. Compare to TB — smart matching using multiple identifiers
     const clearlyTrivial = (ctx.engagement as any)?.clearlyTrivial || 0;
     const results: any[] = [];
     let totalDifference = 0;
@@ -1221,10 +1240,25 @@ async function handleCompareBankToTB(
 
     for (const tbAcc of tbAccounts) {
       const tbBalance = Number(tbAcc.currentYear || 0);
-      // Try to match TB account to bank account (by code overlap or description)
-      const bankAcc = Array.from(accountBalances.values()).find(ba =>
-        tbAcc.code?.includes(ba.accountNumber) || tbAcc.description?.includes(ba.accountNumber)
-      );
+      const tbCode = (tbAcc.code || '').toLowerCase();
+      const tbDesc = (tbAcc.description || '').toLowerCase();
+      // Extract any numbers from TB description that look like account numbers (6+ digits)
+      const tbNumbers = (tbAcc.description || '').match(/\d{6,}/g) || [];
+
+      // Try multiple matching strategies
+      const bankAcc = Array.from(accountBalances.values()).find(ba => {
+        // Direct: TB code or description contains bank account number
+        if (ba.accountNumber && (tbCode.includes(ba.accountNumber) || tbDesc.includes(ba.accountNumber))) return true;
+        // Reverse: bank identifiers contain numbers found in TB description
+        for (const num of tbNumbers) {
+          if (ba.allIdentifiers.has(num)) return true;
+        }
+        // Fuzzy: bank identifiers overlap with TB description words
+        for (const ident of ba.allIdentifiers) {
+          if (ident.length > 3 && tbDesc.includes(ident)) return true;
+        }
+        return false;
+      });
 
       if (bankAcc) {
         const diff = Math.abs(tbBalance) - Math.abs(bankAcc.closingBalance);
@@ -1305,10 +1339,29 @@ async function handleAnalyseCutOff(
     const windowStart = new Date(peDate); windowStart.setDate(windowStart.getDate() - 7);
     const windowEnd = new Date(peDate); windowEnd.setDate(windowEnd.getDate() + 7);
 
+    // Check if bank data has dates
+    const txnsWithDates = bankData.filter(txn => txn.date && txn.date.toString().trim());
+    if (txnsWithDates.length === 0) {
+      // No dates in bank data — try to extract from tbAccountCode (statement filename often has date)
+      // Report this as an issue but not a failure
+      const totalDebit = bankData.reduce((s, t) => s + Math.abs(Number(t.debit || t.debitFC || 0)), 0);
+      const totalCredit = bankData.reduce((s, t) => s + Math.abs(Number(t.credit || t.creditFC || 0)), 0);
+      return {
+        action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
+        output: {
+          result: 'inconclusive',
+          summary: `Cut-off analysis could not be performed: ${bankData.length} bank transactions found but none have transaction dates. Total debits: £${totalDebit.toFixed(2)}, credits: £${totalCredit.toFixed(2)}. The bank statement data needs date fields populated for cut-off testing. Consider re-extracting bank statements with date parsing enabled.`,
+          cutOffDate: periodEnd, totalTransactions: bankData.length,
+          dataTable: [],
+          issue: 'no_dates_in_bank_data',
+        },
+      };
+    }
+
     // Filter transactions in the cut-off window
-    const cutOffTxns = bankData.filter(txn => {
-      const d = txn.date ? new Date(txn.date) : null;
-      return d && d >= windowStart && d <= windowEnd;
+    const cutOffTxns = txnsWithDates.filter(txn => {
+      const d = new Date(txn.date);
+      return d >= windowStart && d <= windowEnd;
     });
 
     const beforePE = cutOffTxns.filter(t => new Date(t.date) <= peDate);
@@ -1326,7 +1379,7 @@ async function handleAnalyseCutOff(
     }));
 
     const result = flagged.length > 0 ? 'fail' : 'pass';
-    const summary = `Cut-off window: ${windowStart.toISOString().slice(0, 10)} to ${windowEnd.toISOString().slice(0, 10)}. ${beforePE.length} transactions before period end, ${afterPE.length} after. ${flagged.length} item(s) above CT (${clearlyTrivial}) flagged for review.`;
+    const summary = `Cut-off window: ${windowStart.toISOString().slice(0, 10)} to ${windowEnd.toISOString().slice(0, 10)}. Analysed ${txnsWithDates.length} dated transactions. ${beforePE.length} before period end, ${afterPE.length} after. ${flagged.length} item(s) above CT (£${clearlyTrivial}) flagged for review.`;
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
