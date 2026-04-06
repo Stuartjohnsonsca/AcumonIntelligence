@@ -942,7 +942,11 @@ async function handleFetchEvidenceOrPortal(
   // Get the current loop item (reference, amount, etc.)
   const loopItem = ctx.loop?.currentItem || {};
   const reference = loopItem.reference || loopItem.invoiceNumber || loopItem.ref || '';
+  const invoiceID = loopItem.invoiceID || ''; // Unique Xero ID — exact match
+  const txnType = loopItem.type || ''; // ACCREC (sales) or ACCPAY (purchases)
   const description = loopItem.description || '';
+  const sampleAmount = Number(loopItem.amount || loopItem.total || loopItem.gross || 0);
+  const sampleDate = loopItem.date || '';
 
   // Try to fetch from accounting system first
   const engagement = await prisma.auditEngagement.findUnique({
@@ -955,11 +959,35 @@ async function handleFetchEvidenceOrPortal(
       where: { clientId: engagement.clientId },
     });
 
-    if (connection && new Date() <= connection.expiresAt && connection.system.toLowerCase() === 'xero' && reference) {
+    if (connection && new Date() <= connection.expiresAt && connection.system.toLowerCase() === 'xero' && (invoiceID || reference)) {
       try {
-        // Try to get the invoice from Xero by reference/invoice number
-        const { getInvoiceByNumber, downloadAttachment, getAttachmentsList } = await import('./xero');
-        const invoice = await getInvoiceByNumber(engagement.clientId, reference);
+        const { getInvoiceByNumber, getInvoiceById, downloadAttachment, getAttachmentsList } = await import('./xero');
+
+        let invoice: any = null;
+
+        // 1. Best: use InvoiceID for exact match (unique, no ambiguity)
+        if (invoiceID) {
+          try {
+            invoice = await getInvoiceById(engagement.clientId, invoiceID);
+          } catch { /* ID lookup failed — try by number */ }
+        }
+
+        // 2. Fallback: search by invoice number, filtered by type (ACCREC vs ACCPAY)
+        if (!invoice && reference) {
+          const found = await getInvoiceByNumber(engagement.clientId, reference);
+          if (found) {
+            // Verify it's the right type (sales vs purchases) and amount is close
+            const foundType = found.Type || '';
+            const foundAmount = Number(found.Total || 0);
+            const typeMatches = !txnType || foundType === txnType;
+            const amountClose = sampleAmount === 0 || Math.abs(foundAmount - sampleAmount) / Math.max(sampleAmount, 1) < 0.1;
+            if (typeMatches && amountClose) {
+              invoice = found;
+            } else {
+              console.log('[flow-engine] Invoice ' + reference + ' found but type/amount mismatch: ' + foundType + '/' + foundAmount + ' vs ' + txnType + '/' + sampleAmount);
+            }
+          }
+        }
         if (invoice) {
           // Store the invoice data as an AuditDocument so it persists
           const invoiceJson = JSON.stringify(invoice, null, 2);
@@ -1245,6 +1273,7 @@ async function handleAccountingExtract(
             date: parseAccountingDate(txn.Date),
             reference: txn.Reference || txn.InvoiceNumber || '',
             invoiceNumber: txn.InvoiceNumber || '',
+            invoiceID: (txn as any).InvoiceID || '', // Unique Xero ID for exact document retrieval
             contact: txn.Contact?.Name || '',
             description: li.Description || '',
             accountCode: li.AccountCode || '',

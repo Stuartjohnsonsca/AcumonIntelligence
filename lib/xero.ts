@@ -480,6 +480,22 @@ export async function getTransactions(
 }
 
 /**
+ * Look up a single invoice by its unique Xero InvoiceID.
+ * This is the most reliable way — no ambiguity between sales/purchases.
+ */
+export async function getInvoiceById(clientId: string, invoiceId: string): Promise<XeroTransaction | null> {
+  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+  const res = await fetch(`${XERO_API_BASE}/Invoices/${invoiceId}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, 'Xero-Tenant-Id': tenantId, Accept: 'application/json' },
+  });
+  if (res.ok) {
+    const data = await res.json();
+    if (data.Invoices?.length > 0) return data.Invoices[0];
+  }
+  return null;
+}
+
+/**
  * Look up a single invoice by invoice number or reference.
  * Returns the invoice data if found, null otherwise.
  */
