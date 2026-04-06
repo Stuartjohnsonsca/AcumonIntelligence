@@ -218,22 +218,21 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
 
   function getAiCheckStatus(itemIndex: number, checkKey: string): 'pass' | 'fail' | 'pending' {
     // First check verificationResults from the flow engine
-    const check = verificationResults.find(r => r.sampleIndex === itemIndex);
+    const check = verificationResults.find(r => r.sampleIndex === itemIndex) || verificationResults[itemIndex];
     if (check && (check as any)[checkKey] && (check as any)[checkKey] !== 'pending') {
       return (check as any)[checkKey];
     }
-    // Then check matchAssessment from evidence docs
-    const evDoc = evidenceDocs.find(d => d.sampleIndex === itemIndex);
+    // Then check matchAssessment from evidence docs — try multiple matching strategies
+    const evDoc = evidenceDocs.find(d => d.sampleIndex === itemIndex)
+      || evidenceDocs.find(d => { const si = sampleItems[itemIndex]; return si && ((d as any).itemId === (si as any).id || (d as any).itemId === si.reference); })
+      || evidenceDocs[itemIndex]; // Last resort: match by position
     if (evDoc && (evDoc as any).matchAssessment) {
       const assessment = (evDoc as any).matchAssessment;
       if (assessment[checkKey] && assessment[checkKey] !== 'pending') return assessment[checkKey];
     }
 
-    // Try matching by itemId if sampleIndex didn't find it
-    var evDocFallback = evDoc || evidenceDocs.find(d => {
-      const si = sampleItems[itemIndex];
-      return si && (d.itemId === si.id || d.itemId === si.reference || d.docRef === si.reference);
-    }) || evidenceDocs[itemIndex]; // Last resort: match by position
+    // If server assessment is pending but we have evidence, compute client-side
+    var evDocFallback = evDoc;
 
     // If server assessment is pending but we have evidence, compute client-side
     if (!evDocFallback || evDocFallback.status === 'pending' || evDocFallback.status === 'missing') return 'pending';
@@ -293,7 +292,13 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
   }
 
   const item = sampleItems[currentItemIndex];
-  const rawDoc = item ? evidenceDocs.find(d => d.sampleIndex === currentItemIndex) : null;
+  // Find evidence doc — try sampleIndex first, then by position, then by matching fields
+  const rawDoc = item ? (
+    evidenceDocs.find(d => d.sampleIndex === currentItemIndex)
+    || evidenceDocs.find(d => (d as any).itemId && ((d as any).itemId === (item as any).id || (d as any).itemId === item.reference))
+    || evidenceDocs[currentItemIndex] // fallback: match by position
+    || null
+  ) : null;
   // Ensure preview URL exists — generate from storagePath or documentId if missing
   const doc = rawDoc ? {
     ...rawDoc,
@@ -301,8 +306,23 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
       || ((rawDoc as any).storagePath ? '/api/documents/preview?path=' + encodeURIComponent((rawDoc as any).storagePath) : undefined)
       || ((rawDoc as any).documentId ? '/api/documents/preview?docId=' + (rawDoc as any).documentId : undefined),
   } : null;
-  const check = item ? verificationResults.find(r => r.sampleIndex === currentItemIndex) : null;
+  const check = item ? (
+    verificationResults.find(r => r.sampleIndex === currentItemIndex)
+    || verificationResults[currentItemIndex]
+    || null
+  ) : null;
   const rowState = rowStates[currentItemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
+
+  // Resolve SAS URL for preview iframe (redirects don't work in iframes)
+  const [resolvedPreviewUrl, setResolvedPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setResolvedPreviewUrl(null);
+    if (!doc?.previewUrl) return;
+    const jsonUrl = doc.previewUrl + (doc.previewUrl.includes('?') ? '&' : '?') + 'json=1';
+    fetch(jsonUrl).then(r => r.ok ? r.json() : null).then(data => {
+      if (data?.url) setResolvedPreviewUrl(data.url);
+    }).catch(() => {});
+  }, [doc?.previewUrl]);
 
   if (sampleItems.length === 0) {
     return <div className="p-8 text-center text-sm text-slate-400">No sample items to verify</div>;
@@ -383,16 +403,18 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
                 </a>
               )}
             </div>
-            {(previewDoc?.previewUrl || doc?.previewUrl) ? (
-              <iframe src={previewDoc?.previewUrl || doc?.previewUrl} className="w-full h-[250px] border-0" title="Document Preview" />
+            {resolvedPreviewUrl ? (
+              <iframe src={resolvedPreviewUrl} className="w-full h-[250px] border-0" title="Document Preview" />
+            ) : doc?.previewUrl ? (
+              <div className="p-3 flex flex-col items-center justify-center text-slate-400 min-h-[120px]">
+                <Loader2 className="h-6 w-6 animate-spin mb-1" />
+                <p className="text-[10px]">Loading preview...</p>
+              </div>
             ) : doc ? (
               <div className="p-3 flex flex-col items-center justify-center text-slate-400 min-h-[120px]">
                 <FileText className="h-8 w-8 mb-1" />
                 <p className="text-[10px] font-medium">{doc.fileName || doc.docRef}</p>
-                <p className="text-[9px] mt-1">Document obtained but preview loading...</p>
-                {doc.previewUrl === undefined && (
-                  <p className="text-[8px] text-slate-300 mt-1">Re-run the test to generate preview URLs</p>
-                )}
+                <p className="text-[9px] mt-1">No document file stored</p>
               </div>
             ) : (
               <div className="p-3 flex items-center justify-center text-slate-300 min-h-[120px]">

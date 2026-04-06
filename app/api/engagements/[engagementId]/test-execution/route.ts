@@ -11,13 +11,45 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
 
-  const { fsLine, testDescription, testTypeCode, flowData, tbRow } = await req.json();
+  const { fsLine, testDescription, testTypeCode, flowData, tbRow, additionalItems } = await req.json();
 
   if (!fsLine || !testDescription) {
     return NextResponse.json({ error: 'fsLine and testDescription are required' }, { status: 400 });
   }
 
   try {
+    // Additional items mode: skip scoring, go straight to evidence fetch forEach
+    if (additionalItems && Array.isArray(additionalItems) && additionalItems.length > 0) {
+      const evidenceFetchFlow = {
+        nodes: [
+          { id: 'start', type: 'start', position: { x: 0, y: 0 }, data: { label: 'Start' } },
+          { id: 'n_wait_review', type: 'wait', position: { x: 0, y: 80 }, data: { label: 'Review Items', waitFor: 'review_flagged' } },
+          { id: 'n_foreach', type: 'forEach', position: { x: 0, y: 160 }, data: { label: 'For Each Item', collection: 'sample_items' } },
+          { id: 'n_fetch_evidence', type: 'action', position: { x: 150, y: 160 }, data: { label: 'Fetch Evidence', assignee: 'system', executionDef: { type: 'fetch_evidence_or_portal' } } },
+          { id: 'end', type: 'end', position: { x: 0, y: 240 }, data: { label: 'Complete' } },
+        ],
+        edges: [
+          { id: 'e1', source: 'start', target: 'n_wait_review' },
+          { id: 'e2', source: 'n_wait_review', target: 'n_foreach' },
+          { id: 'e3', source: 'n_foreach', target: 'n_fetch_evidence', sourceHandle: 'body' },
+          { id: 'e4', source: 'n_foreach', target: 'end', sourceHandle: 'done' },
+        ],
+      };
+
+      // Pre-populate context with the additional items as sampleItems so forEach picks them up
+      const executionId = await startExecution(
+        engagementId, fsLine,
+        testDescription + ' (additional items)',
+        testTypeCode || null,
+        evidenceFetchFlow,
+        session.user.id,
+        tbRow,
+        { sampleItems: additionalItems, selectedIndices: additionalItems.map((_: any, i: number) => i), samplingDone: true },
+      );
+
+      return NextResponse.json({ executionId, status: 'running' });
+    }
+
     // If flowData is provided, use it directly. Otherwise look up from test bank.
     let flow = flowData;
 

@@ -1100,13 +1100,41 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                       <span className="text-sm font-medium text-blue-700">Investigate Additional Items</span>
                     </div>
                     <p className="text-xs text-slate-600">
-                      To investigate more items, click Reset &amp; Re-run below. You can then select additional rows from the population.
+                      Select additional items from the population table above (click rows to mark red), then click below.
+                      Previously investigated items are preserved.
                     </p>
                     <button
-                      onClick={handleReset}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                      onClick={async () => {
+                        if (investigateRows.size === 0) return;
+                        setCompleting(true);
+                        try {
+                          // Get new items from population
+                          const popStepsForIdx = flowSteps.filter(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0);
+                          const popData = popStepsForIdx[popStepsForIdx.length - 1]?.output?.populationData || popStepsForIdx[popStepsForIdx.length - 1]?.output?.dataTable || [];
+                          const newItems = Array.from(investigateRows).map(idx => popData[idx]).filter(Boolean);
+                          // Start a NEW execution for just the additional items (keeps the old one intact)
+                          const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              fsLine, testDescription, testTypeCode: testType, flowData, tbRow,
+                              additionalItems: newItems, // Server should skip scoring and go straight to evidence fetch
+                            }),
+                          });
+                          if (res.ok) {
+                            const data = await res.json();
+                            setExecutionId(data.executionId);
+                            setExecutionStatus('running');
+                            startPolling(data.executionId);
+                            setProgressOpen(true);
+                            setInvestigateRows(new Set());
+                          }
+                        } catch {} finally { setCompleting(false); }
+                      }}
+                      disabled={completing || investigateRows.size === 0}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
                     >
-                      <RotateCcw className="h-3.5 w-3.5" /> Reset &amp; Re-run
+                      {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                      Investigate {investigateRows.size} More Items
                     </button>
                   </div>
                 )}

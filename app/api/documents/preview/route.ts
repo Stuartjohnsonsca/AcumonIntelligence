@@ -37,6 +37,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const sasUrl = generateSasUrl(path, containerName, 15);
+    // Return URL as JSON so clients can use it directly (redirects fail in iframes)
+    if (req.nextUrl.searchParams.get('json') === '1') {
+      return NextResponse.json({ url: sasUrl });
+    }
     return NextResponse.redirect(sasUrl);
   } catch (err: any) {
     return NextResponse.json({ error: 'Failed to generate preview URL: ' + err.message }, { status: 500 });

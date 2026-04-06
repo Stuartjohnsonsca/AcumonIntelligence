@@ -2462,6 +2462,17 @@ async function handleWait(
 
   // Review flagged items — auditor sees ranked results, selects items to investigate
   if (waitFor === 'review_flagged') {
+    // Auto-satisfy if preloaded data exists (e.g. "Investigate More Items" with pre-selected items)
+    const preloaded = (ctx as any)._preloaded;
+    if (preloaded?.sampleItems?.length > 0) {
+      // Clear preloaded flag so it doesn't trigger again
+      delete (ctx as any)._preloaded;
+      return {
+        action: 'continue',
+        nextNodeId: getNextNodeId(flow, node.id),
+        output: { waitingFor: 'review_flagged', satisfied: true, triggerType: 'review_flagged', selectedIndices: preloaded.selectedIndices, sampleSize: preloaded.sampleItems.length, sampleItems: preloaded.sampleItems },
+      };
+    }
     // Check if auditor has confirmed their selections (resumed with selectedIndices)
     if (prevOutput?.samplingDone || prevOutput?.selectedIndices?.length > 0) {
       return {
@@ -2771,11 +2782,22 @@ export async function startExecution(
   flowData: FlowData,
   userId: string,
   tbRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote?: string | null },
+  initialNodeData?: Record<string, any>,
 ): Promise<string> {
   const eng = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
   if (!eng) throw new Error('Engagement not found');
 
   const ctx = await buildContext(engagementId, fsLine, testDescription, tbRow);
+
+  // Pre-populate node context if initial data provided (e.g. additionalItems skipping scoring)
+  if (initialNodeData) {
+    for (const [key, value] of Object.entries(initialNodeData)) {
+      (ctx as any).nodes = (ctx as any).nodes || {};
+      (ctx as any).nodes['_initial'] = { ...(ctx as any).nodes['_initial'], [key]: value };
+    }
+    // Also store at top level for wait node to find
+    Object.assign(ctx as any, { _preloaded: initialNodeData });
+  }
 
   const execution = await prisma.testExecution.create({
     data: {
