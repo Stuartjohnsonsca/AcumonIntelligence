@@ -563,8 +563,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   );
                 })()}
 
-                {/* Sampling methodology details (when sampling was performed) */}
-                {samplingResults && (
+                {/* Sampling methodology details — hidden for review_flagged tests */}
+                {samplingResults && !isReviewFlaggedPause && (
                   <div className="border border-teal-200 rounded-lg p-3 bg-teal-50/30 space-y-2">
                     <div className="text-[10px] font-bold text-teal-700 uppercase">Sampling Methodology</div>
                     <div className="grid grid-cols-4 gap-2 text-[10px]">
@@ -652,7 +652,16 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                       Select the items you want to investigate (they will be sent for evidence gathering), then click continue.
                     </p>
                     <button
-                      onClick={() => handleSamplingDone({ runId: '', selectedIndices: Array.from(investigateRows), sampleSize: investigateRows.size, coverage: 0 })}
+                      onClick={() => {
+                        // Map displayed row positions back to original indices using _index field
+                        const popStepsForIdx = flowSteps.filter(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0);
+                        const popData = popStepsForIdx[popStepsForIdx.length - 1]?.output?.populationData || popStepsForIdx[popStepsForIdx.length - 1]?.output?.dataTable || [];
+                        const originalIndices = Array.from(investigateRows).map(displayIdx => {
+                          const row = popData[displayIdx];
+                          return row?._index != null ? row._index : displayIdx;
+                        });
+                        handleSamplingDone({ runId: '', selectedIndices: originalIndices, sampleSize: originalIndices.length, coverage: 0 });
+                      }}
                       disabled={completing || investigateRows.size === 0}
                       className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
                     >
