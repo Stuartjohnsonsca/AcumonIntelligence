@@ -1648,7 +1648,10 @@ async function handleAnalyseLargeUnusual(
     // Unusual nature patterns — from firm config or defaults
     const configuredPatterns = scoringRules.descriptionPatterns || [];
     const UNUSUAL_PATTERNS: { pattern: RegExp; category: string; weight: number }[] = configuredPatterns.length > 0
-      ? configuredPatterns.map((p: any) => ({ pattern: new RegExp(p.pattern, 'i'), category: p.category, weight: p.weight }))
+      ? configuredPatterns.map((p: any) => {
+          try { return { pattern: new RegExp(p.pattern, 'i'), category: p.category, weight: p.weight }; }
+          catch { return { pattern: /^$/, category: p.category, weight: 0 }; } // Invalid regex — skip
+        })
       : [
           { pattern: /director|shareholder|owner/i, category: 'Related party — director/shareholder', weight: 30 },
           { pattern: /loan|advance|lend/i, category: 'Loan/advance', weight: 25 },
@@ -1679,6 +1682,7 @@ async function handleAnalyseLargeUnusual(
 
     // 3. Score EVERY transaction
     const scored = allTxns.map((txn: any, idx: number) => {
+      try {
       const debit = Math.abs(Number(txn.debit || txn.debitFC || txn.amount || 0));
       const credit = Math.abs(Number(txn.credit || txn.creditFC || 0));
       const amt = Math.max(debit, credit);
@@ -1690,7 +1694,9 @@ async function handleAnalyseLargeUnusual(
 
       // Financial threshold — items below this are too small to consider
       if (financialThreshold > 0 && amt < financialThreshold) {
-        return Object.assign({ _index: idx, _score: 0, _reasons: [], _flagged: false, _belowThreshold: true }, txn);
+        const belowResult: any = { _index: idx, _score: 0, _reasons: [], _flagged: false, _belowThreshold: true };
+        for (const k of Object.keys(txn)) belowResult[k] = txn[k];
+        return belowResult;
       }
 
       // Size scoring — how large relative to the population
@@ -1708,10 +1714,10 @@ async function handleAnalyseLargeUnusual(
       if (amt >= 100 && amt % 100 === 0 && amt % 1000 !== 0) { score += otherW.roundHundreds; reasons.push('Round hundreds'); }
 
       // Timing — weekend, bank holiday
-      const d = txn.date ? new Date(txn.date) : null;
-      if (d && !isNaN(d.getTime())) {
-        if (d.getDay() === 0 || d.getDay() === 6) { score += timingW.weekend; reasons.push('Weekend transaction'); }
-        const dateStr = d.toISOString().split('T')[0];
+      const txnDate = txn.date ? new Date(txn.date) : null;
+      if (txnDate && !isNaN(txnDate.getTime())) {
+        if (txnDate.getDay() === 0 || txnDate.getDay() === 6) { score += timingW.weekend; reasons.push('Weekend transaction'); }
+        const dateStr = txnDate.toISOString().split('T')[0];
         if (bankHolidays.has(dateStr)) { score += timingW.bankHoliday; reasons.push('Bank holiday transaction'); }
       }
 
@@ -1732,12 +1738,15 @@ async function handleAnalyseLargeUnusual(
         if (isDebit !== majorityDebit) { score += otherW.contraEntry; reasons.push('Contra entry (opposite to majority flow)'); }
       }
 
-      return Object.assign({
-        _index: idx,
-        _score: score,
-        _reasons: reasons,
-        _flagged: score >= thresholds.mediumRisk, // Orange if above threshold, white if below. Red = user decision only.
-      }, txn);
+      const txnResult: any = { _index: idx, _score: score, _reasons: reasons, _flagged: score >= thresholds.mediumRisk };
+      for (const k of Object.keys(txn)) txnResult[k] = txn[k];
+      return txnResult;
+      } catch (scoreErr) {
+        // If scoring fails for one transaction, don't kill the whole analysis
+        const fallback: any = { _index: idx, _score: 0, _reasons: ['Scoring error'], _flagged: false, _error: String(scoreErr) };
+        for (const k of Object.keys(txn)) fallback[k] = txn[k];
+        return fallback;
+      }
     });
 
     // 4. Sort by score (highest first) — this IS the output, ranked by unusualness
