@@ -833,8 +833,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                       <thead className="sticky top-0 z-10">
                         <tr>
                           <th colSpan={4} className="bg-blue-600 text-white text-[10px] font-semibold px-3 py-1.5 text-left border-r-2 border-white">Sample Items</th>
-                          <th colSpan={3} className="bg-green-600 text-white text-[10px] font-semibold px-3 py-1.5 text-left border-r-2 border-white">Client Evidence</th>
-                          <th colSpan={2} className="bg-amber-600 text-white text-[10px] font-semibold px-3 py-1.5 text-left">Verification</th>
+                          <th colSpan={3} className="bg-green-600 text-white text-[10px] font-semibold px-3 py-1.5 text-left">Client Evidence</th>
                         </tr>
                         <tr className="bg-slate-100 border-b text-[10px] text-slate-600 font-semibold">
                           <th className="px-2 py-1 text-left border-r border-slate-200 w-8">#</th>
@@ -843,9 +842,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                           <th className="px-2 py-1 text-left border-r-2 border-blue-200 w-16">Date</th>
                           <th className="px-2 py-1 text-left border-r border-slate-200 w-16">Doc</th>
                           <th className="px-2 py-1 text-right border-r border-slate-200 w-20">Gross</th>
-                          <th className="px-2 py-1 text-center border-r-2 border-green-200 w-14">Status</th>
-                          <th className="px-2 py-1 text-center border-r border-slate-200 w-10">Amt</th>
-                          <th className="px-2 py-1 text-center w-12">Result</th>
+                          <th className="px-2 py-1 text-center w-14">Status</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -898,14 +895,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                               <td className="px-2 py-1 text-slate-500 border-r-2 border-blue-100">{item.date || '—'}</td>
                               <td className="px-2 py-1 text-slate-600 font-mono border-r border-slate-100">{(ev as any).docRef || (loopItemResult?.reference || '—')}</td>
                               <td className="px-2 py-1 text-right font-mono border-r border-slate-100">{fmt((ev as any).gross || loopItemResult?.invoice?.Total)}</td>
-                              <td className="px-2 py-1 text-center border-r-2 border-green-100">
-                                <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-medium ${rowStatusClass}`} title={rowStatus === 'requested' ? 'Waiting for client to upload via portal' : ''}>{rowStatusLabel}</span>
-                              </td>
-                              <td className="px-2 py-1 text-center border-r border-slate-100"><ResultIcon status={res?.amountMatch || 'pending'} /></td>
                               <td className="px-2 py-1 text-center">
-                                {res?.overallResult === 'pass' && <span className="text-[8px] font-bold text-green-600 bg-green-50 px-1 py-0.5 rounded">PASS</span>}
-                                {res?.overallResult === 'fail' && <span className="text-[8px] font-bold text-red-600 bg-red-50 px-1 py-0.5 rounded">FAIL</span>}
-                                {(!res || res.overallResult === 'pending') && <span className="text-[8px] text-slate-400">—</span>}
+                                <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-medium ${rowStatusClass}`} title={rowStatus === 'requested' ? 'Waiting for client to upload via portal' : ''}>{rowStatusLabel}</span>
                               </td>
                             </tr>
                           );
@@ -984,9 +975,15 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
 
           {/* SECTION 4: Findings & Conclusions (collapsible) — only show when evidence has been obtained */}
           {(() => {
-            const hasEvidence = evidence.length > 0 && evidence.some(e => e.status === 'uploaded');
-            const allEvidenceObtained = sampleItems.length > 0 && evidence.length >= sampleItems.length && evidence.every(e => e.status === 'uploaded');
-            const canConclude = allEvidenceObtained;
+            // Evidence is obtained if status is anything other than 'pending' or 'missing'
+            const evidenceObtained = (e: any) => e.status === 'uploaded' || e.status === 'matched' || e.status === 'partial';
+            const hasEvidence = evidence.length > 0 && evidence.some(evidenceObtained);
+            // Also check loop results for evidence (may not be in evidence state yet)
+            const loopStep = flowSteps.find(s => s.output?.loopCompleted && s.output?.results?.length > 0);
+            const loopEvidenceCount = loopStep?.output?.results?.filter((r: any) => r?.found || r?.evidenceRetrieved)?.length || 0;
+            const totalEvidenceCount = Math.max(evidence.filter(evidenceObtained).length, loopEvidenceCount);
+            const allEvidenceObtained = sampleItems.length > 0 && totalEvidenceCount >= sampleItems.length;
+            const canConclude = allEvidenceObtained || executionStatus === 'completed';
             return (
           <div>
             <button onClick={() => setFindingsOpen(!findingsOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
@@ -994,7 +991,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                 {findingsOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
                 <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Findings & Conclusions</span>
                 {!hasEvidence && sampleItems.length > 0 && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Awaiting evidence — cannot conclude</span>}
-                {hasEvidence && !allEvidenceObtained && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{evidence.filter(e => e.status === 'uploaded').length}/{sampleItems.length} evidence obtained</span>}
+                {hasEvidence && !allEvidenceObtained && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{totalEvidenceCount}/{sampleItems.length} evidence obtained</span>}
                 {canConclude && conclusion !== 'pending' && <div className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />}
               </div>
               {!canConclude && <span className="text-[9px] text-amber-600 font-medium">Evidence required before conclusion</span>}
@@ -1006,7 +1003,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-amber-400" />
                   <p className="text-sm font-medium text-amber-700">Cannot conclude — evidence not yet obtained for all items</p>
                   <p className="text-xs text-slate-500 mt-1">
-                    {evidence.filter(e => e.status === 'uploaded').length} of {sampleItems.length} items have evidence.
+                    {totalEvidenceCount} of {sampleItems.length} items have evidence.
                     Obtain evidence for all selected items before recording findings.
                   </p>
                 </div>
