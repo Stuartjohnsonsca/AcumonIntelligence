@@ -205,9 +205,14 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   }
 
   async function handleStartExecution() {
+    // Full reset — re-run clears ALL previous data
     setStarting(true); setExecutionError(null); setDiagnostics([]); setFlowSteps([]);
     setSampleItems([]); setEvidence([]); setResults([]); setInvestigateRows(new Set());
     setSamplingResults(null); setSamplingCompleted(false);
+    setItemDetails({}); setPopulationSize(0);
+    setFindingsOpen(false); setVerificationOpen(true); setSamplingOpen(true);
+    setExpandedStepId(null); setPauseReason(null);
+    setExecutionId(null); setExecutionStatus('not_started');
     try {
       const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
