@@ -1621,193 +1621,40 @@ async function handleAnalyseLargeUnusual(
     const pm = (ctx.engagement as any)?.performanceMateriality || 0;
     const ct = (ctx.engagement as any)?.clearlyTrivial || 0;
 
-    // Load firm's configurable scoring rules (Methodology Admin can add/remove/adjust)
+    // Load firm's configurable scoring rules
     const engagement = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
     const scoringTable = engagement ? await prisma.methodologyRiskTable.findUnique({
       where: { firmId_tableType: { firmId: engagement.firmId, tableType: 'large_unusual_scoring' } },
     }) : null;
     const scoringRules = (scoringTable?.data || {}) as any;
 
-    // 2. Apply financial threshold — filter out items below % of PM
-    const financialPctPM = thresholds.financialPctPM ?? 5;
-    const financialThreshold = pm > 0 ? pm * (financialPctPM / 100) : 0;
+    // Use extracted scorer module (separate file to avoid minification issues)
+    const { scoreTransactions } = await import('./large-unusual-scorer');
+    const result = scoreTransactions(allTxns, pm, ct, scoringRules);
 
-    // 2b. Compute statistics for relative scoring
-    const amounts = allTxns.map(t => Math.max(Math.abs(Number(t.debit || t.debitFC || t.amount || 0)), Math.abs(Number(t.credit || t.creditFC || 0)))).filter(a => a > 0);
-    const totalValue = amounts.reduce((s, a) => s + a, 0);
-    const meanAmt = amounts.length > 0 ? totalValue / amounts.length : 0;
-    const stdDev = amounts.length > 0 ? Math.sqrt(amounts.reduce((s, a) => s + (a - meanAmt) ** 2, 0) / amounts.length) : 0;
-
-    // Build a frequency map of descriptions to detect one-off vs recurring
-    const descFreq = new Map<string, number>();
-    for (const t of allTxns) {
-      const key = (t.description || '').toLowerCase().trim().slice(0, 50);
-      descFreq.set(key, (descFreq.get(key) || 0) + 1);
-    }
-
-    // Unusual nature patterns — from firm config or defaults
-    const configuredPatterns = scoringRules.descriptionPatterns || [];
-    const UNUSUAL_PATTERNS: { pattern: RegExp; category: string; weight: number }[] = configuredPatterns.length > 0
-      ? configuredPatterns.map((p: any) => {
-          try { return { pattern: new RegExp(p.pattern, 'i'), category: p.category, weight: p.weight }; }
-          catch { return { pattern: /^$/, category: p.category, weight: 0 }; } // Invalid regex — skip
-        })
-      : [
-          { pattern: /director|shareholder|owner/i, category: 'Related party — director/shareholder', weight: 30 },
-          { pattern: /loan|advance|lend/i, category: 'Loan/advance', weight: 25 },
-          { pattern: /intercompany|group|subsidiary|parent/i, category: 'Intercompany/group', weight: 25 },
-          { pattern: /related party/i, category: 'Related party', weight: 30 },
-          { pattern: /refund|reversal|correction|adjust/i, category: 'Reversal/correction', weight: 15 },
-          { pattern: /dividend|distribution/i, category: 'Distribution', weight: 20 },
-          { pattern: /settlement|legal|solicitor|court/i, category: 'Legal/settlement', weight: 25 },
-          { pattern: /penalty|fine|hmrc|tax/i, category: 'Tax/penalty', weight: 15 },
-          { pattern: /cash|atm|withdraw/i, category: 'Cash withdrawal', weight: 20 },
-          { pattern: /foreign|fx|transfer overseas|swift/i, category: 'Foreign/FX transfer', weight: 15 },
-          { pattern: /consultancy|management fee|advisory/i, category: 'Consultancy/management fee', weight: 15 },
-          { pattern: /donation|charity|gift/i, category: 'Donation/gift', weight: 20 },
-          { pattern: /insurance|claim/i, category: 'Insurance/claim', weight: 10 },
-          { pattern: /property|rent deposit|lease premium/i, category: 'Property/deposit', weight: 15 },
-        ];
-
-    // Scoring weights from config
-    const sizeW = scoringRules.sizeScoring || { extreme3Sigma: 40, outlier2Sigma: 25, aboveAvg1Sigma: 10, abovePM: 20, aboveCT: 5 };
-    const timingW = scoringRules.timingScoring || { weekend: 15, bankHoliday: 20 };
-    const otherW = scoringRules.otherScoring || { roundThousands: 10, roundHundreds: 5, oneOff: 10, infrequent: 5, contraEntry: 10 };
-    const thresholds = scoringRules.thresholds || { highRisk: 40, mediumRisk: 15 };
-
-    // UK bank holidays
-    const BANK_HOLIDAYS_2024 = ['2024-01-01','2024-03-29','2024-04-01','2024-05-06','2024-05-27','2024-08-26','2024-12-25','2024-12-26'];
-    const BANK_HOLIDAYS_2025 = ['2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26','2025-08-25','2025-12-25','2025-12-26'];
-    const bankHolidays = new Set([...BANK_HOLIDAYS_2024, ...BANK_HOLIDAYS_2025]);
-
-    // 3. Score EVERY transaction — using for loop (not .map) to avoid minification issues
-    // Pre-compute majority debit direction
-    let debitCount = 0;
-    for (let i = 0; i < allTxns.length; i++) {
-      if (Math.abs(Number(allTxns[i].debit || allTxns[i].debitFC || 0)) > Math.abs(Number(allTxns[i].credit || allTxns[i].creditFC || 0))) debitCount++;
-    }
-    const majorityIsDebit = debitCount > allTxns.length / 2;
-
-    const scored: any[] = [];
-    for (let idx = 0; idx < allTxns.length; idx++) {
-      const txn = allTxns[idx];
-      try {
-        const debitAmt = Math.abs(Number(txn.debit || txn.debitFC || txn.amount || 0));
-        const creditAmt = Math.abs(Number(txn.credit || txn.creditFC || 0));
-        const amt = Math.max(debitAmt, creditAmt);
-
-        // Copy all txn fields to result
-        const row: any = {};
-        const txnKeys = Object.keys(txn);
-        for (let ki = 0; ki < txnKeys.length; ki++) row[txnKeys[ki]] = txn[txnKeys[ki]];
-
-        row._index = idx;
-
-        // Financial threshold — items below this are too small to consider
-        if (financialThreshold > 0 && amt < financialThreshold) {
-          row._score = 0; row._reasons = []; row._flagged = false; row._belowThreshold = true;
-          scored.push(row);
-          continue;
-        }
-
-        let score = 0;
-        const reasons: string[] = [];
-
-        // Size scoring
-        if (amt > 0 && stdDev > 0) {
-          const zScore = (amt - meanAmt) / stdDev;
-          if (zScore > 3) { score += sizeW.extreme3Sigma; reasons.push('Extreme outlier (' + zScore.toFixed(1) + '\u03C3)'); }
-          else if (zScore > 2) { score += sizeW.outlier2Sigma; reasons.push('Statistical outlier (' + zScore.toFixed(1) + '\u03C3)'); }
-          else if (zScore > 1) { score += sizeW.aboveAvg1Sigma; reasons.push('Above average (' + zScore.toFixed(1) + '\u03C3)'); }
-        }
-        if (amt > pm && pm > 0) { score += sizeW.abovePM; reasons.push('Above Performance Materiality'); }
-        else if (amt > ct && ct > 0) { score += sizeW.aboveCT; reasons.push('Above Clearly Trivial'); }
-
-        // Round number
-        if (amt >= 1000 && amt % 1000 === 0) { score += otherW.roundThousands; reasons.push('Round number'); }
-        if (amt >= 100 && amt % 100 === 0 && amt % 1000 !== 0) { score += otherW.roundHundreds; reasons.push('Round hundreds'); }
-
-        // Timing — weekend, bank holiday
-        if (txn.date) {
-          try {
-            const txnDateObj = new Date(txn.date);
-            if (!isNaN(txnDateObj.getTime())) {
-              const dayOfWeek = txnDateObj.getDay();
-              if (dayOfWeek === 0 || dayOfWeek === 6) { score += timingW.weekend; reasons.push('Weekend transaction'); }
-              const isoDate = txnDateObj.toISOString().split('T')[0];
-              if (bankHolidays.has(isoDate)) { score += timingW.bankHoliday; reasons.push('Bank holiday transaction'); }
-            }
-          } catch { /* invalid date — skip timing scoring */ }
-        }
-
-        // Description / nature patterns
-        const descText = txn.description || '';
-        for (let pi = 0; pi < UNUSUAL_PATTERNS.length; pi++) {
-          const pat = UNUSUAL_PATTERNS[pi];
-          if (pat.pattern.test(descText)) { score += pat.weight; reasons.push(pat.category); }
-        }
-
-        // Rarity
-        const descLower = (txn.description || '').toLowerCase().trim().slice(0, 50);
-        const freq = descFreq.get(descLower) || 1;
-        if (freq === 1) { score += otherW.oneOff; reasons.push('One-off transaction'); }
-        else if (freq <= 3) { score += otherW.infrequent; reasons.push('Infrequent (' + freq + ')'); }
-
-        // Contra entries
-        if (amt > ct) {
-          const txnIsDebit = debitAmt > creditAmt;
-          if (txnIsDebit !== majorityIsDebit) { score += otherW.contraEntry; reasons.push('Contra entry'); }
-        }
-
-        row._score = score;
-        row._reasons = reasons;
-        row._flagged = score >= thresholds.mediumRisk;
-        scored.push(row);
-      } catch (scoreErr) {
-        const errRow: any = {};
-        const txnKeys = Object.keys(txn);
-        for (let ki = 0; ki < txnKeys.length; ki++) errRow[txnKeys[ki]] = txn[txnKeys[ki]];
-        errRow._index = idx; errRow._score = 0; errRow._reasons = ['Scoring error: ' + String(scoreErr)]; errRow._flagged = false;
-        scored.push(errRow);
-      }
-    }
-
-    // 4. Sort by score (highest first) — this IS the output, ranked by unusualness
-    scored.sort((a: any, b: any) => b._score - a._score);
-
-    const flaggedItems = scored.filter((t: any) => t._flagged);
-    const flaggedValue = flaggedItems.reduce((s: number, t: any) => s + Math.max(Math.abs(Number(t.debit || t.debitFC || t.amount || 0)), Math.abs(Number(t.credit || t.creditFC || 0))), 0);
-
-    // No pass/fail from the system — the auditor decides. System just flags for review.
-    const belowThresholdCount = scored.filter((t: any) => t._belowThreshold).length;
-    const result = flaggedItems.length > 0 ? 'review_required' : 'pass';
-    const summary = `Scored and ranked ${allTxns.length} transactions. ${belowThresholdCount > 0 ? `${belowThresholdCount} below financial threshold (£${financialThreshold.toFixed(0)} = ${financialPctPM}% of PM) filtered out. ` : ''}${flaggedItems.length} flagged for review (score ≥ ${thresholds.mediumRisk}). Mean: £${meanAmt.toFixed(2)}, Std Dev: £${stdDev.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}.`;
+    const flaggedItems = result.scored.filter(function(t: any) { return t['_flagged']; });
+    const flaggedValue = flaggedItems.reduce(function(s: number, t: any) {
+      return s + Math.max(Math.abs(Number(t['debit'] || t['debitFC'] || t['amount'] || 0)), Math.abs(Number(t['credit'] || t['creditFC'] || 0)));
+    }, 0);
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
       output: {
-        result, summary,
-        // Full population ranked by unusualness score — flagged items (orange) at top
-        dataTable: scored,
-        populationData: scored,
-        flaggedItems,
-        totalFlagged: flaggedItems.length,
+        result: result.flaggedCount > 0 ? 'review_required' : 'pass',
+        summary: result.summary,
+        dataTable: result.scored,
+        populationData: result.scored,
+        flaggedItems: flaggedItems,
+        totalFlagged: result.flaggedCount,
         totalValueFlagged: flaggedValue,
         populationSize: allTxns.length,
-        populationTotal: totalValue,
-        threshold: thresholds.mediumRisk,
-        statistics: { mean: meanAmt, stdDev, transactionCount: allTxns.length },
-        decisionLog: [
-          { step: 'Financial threshold', result: financialThreshold > 0 ? `£${financialThreshold.toFixed(0)} (${financialPctPM}% of PM £${pm.toFixed(0)}). ${belowThresholdCount} items below this filtered out.` : 'No financial threshold applied.' },
-          { step: 'Statistical analysis', result: `Population: ${allTxns.length} transactions, mean £${meanAmt.toFixed(2)}, std dev £${stdDev.toFixed(2)}` },
-          { step: 'Scoring criteria', result: `Size (z-score), timing (weekends, bank holidays), ${UNUSUAL_PATTERNS.length} description patterns, rarity, contra entries` },
-          { step: 'Scoring threshold', result: `Items scoring ≥ ${thresholds.mediumRisk} shown as orange for review. Auditor marks red (investigate) or excludes to white.` },
-          { step: 'Results', result: `${flaggedItems.length} items above threshold, ranked by composite score.` },
-        ],
+        threshold: scoringRules?.thresholds?.mediumRisk || 15,
+        decisionLog: result.decisionLog,
       },
     };
-  } catch (err: any) { return { action: 'error', errorMessage: `Large & unusual analysis failed: ${err.message}` }; }
+  } catch (err: any) { return { action: 'error', errorMessage: 'Large & unusual analysis failed: ' + (err.message || String(err)) }; }
 }
+/* Old scoring code removed — now in lib/large-unusual-scorer.ts */
 
 async function handleActionAI(
   flow: FlowData,
