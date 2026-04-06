@@ -112,9 +112,10 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   // Report conclusion to parent
   useEffect(() => { onConclusionChange?.(conclusion); }, [conclusion]);
 
-  // Populate sampleItems from flow step outputs (after sampling completes or forEach starts)
+  // Populate sampleItems and evidence from flow step outputs
   useEffect(() => {
-    if (sampleItems.length > 0) return; // Already populated
+    // Don't skip if already populated — re-populate when flow steps change (e.g. evidence arrives)
+    // if (sampleItems.length > 0) return;
 
     // Find population data and selected indices from any step
     let populationData: any[] = [];
@@ -153,6 +154,26 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         };
       }));
     }
+
+    // Extract evidence from fetch_evidence steps (forEach body results)
+    const evidenceSteps = flowSteps.filter(s => s.output?.evidenceSource || s.output?.invoice);
+    if (evidenceSteps.length > 0) {
+      const newEvidence = evidenceSteps.map((step, i) => {
+        const inv = step.output?.invoice;
+        return {
+          itemId: step.output?.reference || String(i + 1),
+          docRef: inv?.InvoiceNumber || inv?.Reference || step.output?.reference || '',
+          fileName: step.output?.fileName || inv?.InvoiceNumber || '',
+          date: inv?.Date || inv?.DueDate || '',
+          seller: inv?.Contact?.Name || '',
+          net: Number(inv?.SubTotal || 0),
+          tax: Number(inv?.TotalTax || 0),
+          gross: Number(inv?.Total || 0),
+          status: step.output?.found ? 'uploaded' as const : 'pending' as const,
+        };
+      });
+      setEvidence(newEvidence);
+    }
   }, [flowSteps, samplingCompleted, samplingResults]);
 
   // ─── Lifecycle ───
@@ -185,6 +206,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
 
   async function handleStartExecution() {
     setStarting(true); setExecutionError(null); setDiagnostics([]); setFlowSteps([]);
+    setSampleItems([]); setEvidence([]); setResults([]); setInvestigateRows(new Set());
+    setSamplingResults(null); setSamplingCompleted(false);
     try {
       const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
