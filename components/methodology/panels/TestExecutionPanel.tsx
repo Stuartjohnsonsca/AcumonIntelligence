@@ -407,15 +407,85 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             <button onClick={() => setSamplingOpen(!samplingOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
               <div className="flex items-center gap-2">
                 {samplingOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
-                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Sampling & Evidence</span>
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Data & Sampling</span>
                 {isSamplingPause && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium">Action Required</span>}
               </div>
-              {sampleTotal > 0 && <span className="text-[9px] text-slate-400">{sampleTotal} items</span>}
+              {(() => {
+                const popStep = flowSteps.find(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0);
+                const popCount = popStep?.output?.populationData?.length || popStep?.output?.dataTable?.length || 0;
+                return popCount > 0 ? <span className="text-[9px] text-slate-400">{popCount} records loaded{sampleTotal > 0 ? `, ${sampleTotal} sampled` : ''}</span> : sampleTotal > 0 ? <span className="text-[9px] text-slate-400">{sampleTotal} items</span> : null;
+              })()}
             </button>
             {samplingOpen && (
               <div className="p-4 space-y-3">
-                {/* Sampling calculator — shown during pause, after completion, or when population data exists */}
-                {(isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0 || s.output?.triggerType === 'sampling')) && (
+                {/* Population data table — always show when we have data (even for non-sampling tests) */}
+                {(() => {
+                  const popStep = flowSteps.find(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0);
+                  const population = popStep?.output?.populationData || popStep?.output?.dataTable || [];
+                  const selectedIdx = new Set(
+                    samplingResults?.selectedIndices ||
+                    flowSteps.find(s => s.output?.selectedIndices?.length > 0)?.output?.selectedIndices || []
+                  );
+                  if (population.length === 0) return null;
+                  const cols = Object.keys(population[0]).filter(k => !k.startsWith('_')).slice(0, 8);
+                  return (
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="px-3 py-2 bg-slate-50 border-b flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-slate-600 uppercase">Population Data ({population.length} records{selectedIdx.size > 0 ? ` — ${selectedIdx.size} sampled` : ''})</span>
+                        <span className="text-[9px] text-slate-400">Source: {popStep?.label || 'Flow step'}</span>
+                      </div>
+                      <div className="max-h-[300px] overflow-auto">
+                        <table className="w-full text-[9px] border-collapse">
+                          <thead className="sticky top-0">
+                            <tr className="bg-slate-100 border-b">
+                              <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">#</th>
+                              {selectedIdx.size > 0 && <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">Sel</th>}
+                              {cols.map(c => <th key={c} className="px-1.5 py-1 text-left font-semibold text-slate-600 whitespace-nowrap">{c}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {population.slice(0, 200).map((row: any, i: number) => {
+                              const isSampled = selectedIdx.has(i);
+                              return (
+                                <tr key={i} className={`border-b border-slate-50 ${isSampled ? 'bg-green-50 font-medium' : 'hover:bg-slate-50/50'}`}>
+                                  <td className="px-1 py-0.5 text-center text-slate-400">{i + 1}</td>
+                                  {selectedIdx.size > 0 && (
+                                    <td className="px-1 py-0.5 text-center">{isSampled ? <span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> : ''}</td>
+                                  )}
+                                  {cols.map(c => (
+                                    <td key={c} className="px-1.5 py-0.5 text-slate-600 whitespace-nowrap max-w-[150px] truncate">
+                                      {typeof row[c] === 'number' ? row[c].toLocaleString('en-GB', { maximumFractionDigits: 2 }) : String(row[c] ?? '')}
+                                    </td>
+                                  ))}
+                                </tr>
+                              );
+                            })}
+                            {population.length > 200 && <tr><td colSpan={cols.length + 2} className="text-center py-1 text-slate-400 text-[8px]">...and {population.length - 200} more rows</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Sampling methodology details (when sampling was performed) */}
+                {samplingResults && (
+                  <div className="border border-teal-200 rounded-lg p-3 bg-teal-50/30 space-y-2">
+                    <div className="text-[10px] font-bold text-teal-700 uppercase">Sampling Methodology</div>
+                    <div className="grid grid-cols-4 gap-2 text-[10px]">
+                      {(samplingResults as any).method && <div><span className="text-slate-400">Method:</span> <span className="text-slate-700 font-medium">{(samplingResults as any).method}</span></div>}
+                      {samplingResults.sampleSize && <div><span className="text-slate-400">Sample Size:</span> <span className="text-slate-700 font-medium">{samplingResults.sampleSize}</span></div>}
+                      {samplingResults.coverage && <div><span className="text-slate-400">Coverage:</span> <span className="text-slate-700 font-medium">{(samplingResults.coverage * 100).toFixed(1)}%</span></div>}
+                      {(samplingResults as any).confidence && <div><span className="text-slate-400">Confidence:</span> <span className="text-slate-700 font-medium">{(samplingResults as any).confidence}%</span></div>}
+                    </div>
+                    {(samplingResults as any).planningRationale && (
+                      <div className="text-[10px] text-teal-800 bg-teal-50 rounded px-2 py-1.5 border border-teal-200">{(samplingResults as any).planningRationale}</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Sampling calculator — shown during pause or when user wants to re-run */}
+                {(isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.triggerType === 'sampling')) && (
                   <div className="border border-teal-200 rounded-lg overflow-hidden">
                     <button
                       onClick={() => setSamplingCalcOpen(!samplingCalcOpen)}
@@ -439,6 +509,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                           populationData={
                             pausedStep?.output?.populationData ||
                             flowSteps.find(s => s.output?.populationData?.length > 0)?.output?.populationData ||
+                            flowSteps.find(s => s.output?.dataTable?.length > 0)?.output?.dataTable ||
                             flowSteps.find(s => s.output?.data?.populationData?.length > 0)?.output?.data?.populationData ||
                             []
                           }
@@ -456,6 +527,23 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     )}
                   </div>
                 )}
+
+                {/* AI Analysis output — show raw analysis from AI steps */}
+                {(() => {
+                  const aiSteps = flowSteps.filter(s => s.output?.raw && s.output?.model);
+                  if (aiSteps.length === 0) return null;
+                  return aiSteps.map((step, i) => (
+                    <div key={i} className="border border-purple-200 rounded-lg overflow-hidden">
+                      <div className="px-3 py-2 bg-purple-50 border-b">
+                        <span className="text-[10px] font-bold text-purple-700 uppercase">{step.label || 'AI Analysis'}</span>
+                        {step.output?.model && <span className="text-[9px] text-purple-400 ml-2">{step.output.model}</span>}
+                      </div>
+                      <div className="px-3 py-2 text-xs text-slate-700 whitespace-pre-wrap max-h-[300px] overflow-auto leading-relaxed">
+                        {step.output.raw}
+                      </div>
+                    </div>
+                  ));
+                })()}
 
                 {/* Portal pause */}
                 {isPortalPause && (
