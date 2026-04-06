@@ -74,7 +74,9 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
     const map: Record<string, TemplateQuestion[]> = {};
     for (const t of initialTemplates) {
       if (t.templateType.endsWith('_questions')) {
-        map[`${t.templateType}|${t.auditType}`] = t.items as TemplateQuestion[];
+        // Handle both flat TemplateQuestion[] and structured { questions, sectionMeta } formats
+        const items = t.items as any;
+        map[`${t.templateType}|${t.auditType}`] = Array.isArray(items) ? items : (items?.questions || []);
       }
     }
     return map;
@@ -152,10 +154,15 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
   async function handleAppendixSave(questions: TemplateQuestion[]) {
     const appendixKey = `${activeAppendixType}|${activeAuditType}`;
     setAppendixTemplates(prev => ({ ...prev, [appendixKey]: questions }));
+    // Preserve sectionMeta for completion templates that use structured format
+    const existingTemplate = initialTemplates.find(t => t.templateType === activeAppendixType && t.auditType === activeAuditType);
+    const existingItems = existingTemplate?.items as any;
+    const hasSectionMeta = existingItems && !Array.isArray(existingItems) && existingItems.sectionMeta;
+    const items = hasSectionMeta ? { questions, sectionMeta: existingItems.sectionMeta } : questions;
     await fetch('/api/methodology-admin/templates', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ templateType: activeAppendixType, auditType: activeAuditType, items: questions }),
+      body: JSON.stringify({ templateType: activeAppendixType, auditType: activeAuditType, items }),
     });
   }
 
