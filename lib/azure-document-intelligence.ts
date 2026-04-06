@@ -201,7 +201,7 @@ function parseAzureDIResult(result: any, fileName: string): BankStatementResult 
     closingBalance,
     currency,
     transactions,
-    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, model: 'azure-di-prebuilt-layout', costUsd: 0 },
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, model: 'azure-di-prebuilt-layout', costUsd: (result.pages?.length || 1) * 0.01, pageCount: result.pages?.length || 1 },
   };
 }
 

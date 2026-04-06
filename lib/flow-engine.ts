@@ -86,7 +86,7 @@ function getAIClient(): OpenAI {
   return _aiClient;
 }
 
-async function callAI(systemPrompt: string, userPrompt: string): Promise<{ text: string; tokensUsed: number; model: string }> {
+async function callAI(systemPrompt: string, userPrompt: string, engagementId?: string): Promise<{ text: string; tokensUsed: number; model: string; promptTokens: number; completionTokens: number }> {
   const model = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
   const client = getAIClient();
   const response = await client.chat.completions.create({
@@ -98,11 +98,36 @@ async function callAI(systemPrompt: string, userPrompt: string): Promise<{ text:
     temperature: 0.3,
     max_tokens: 2000,
   });
-  return {
-    text: response.choices[0]?.message?.content || '',
-    tokensUsed: response.usage?.total_tokens || 0,
-    model,
-  };
+
+  const promptTokens = response.usage?.prompt_tokens || 0;
+  const completionTokens = response.usage?.completion_tokens || 0;
+  const totalTokens = response.usage?.total_tokens || 0;
+  // Together AI Llama 3.3 70B pricing: $0.88/1M tokens (both input and output)
+  const costUsd = (promptTokens * 0.88 + completionTokens * 0.88) / 1_000_000;
+
+  // Log usage to DB
+  if (engagementId) {
+    try {
+      const eng = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+      if (eng) {
+        await prisma.aiUsage.create({
+          data: {
+            clientId: eng.clientId,
+            userId: 'system',
+            action: 'Audit Test Execution',
+            model,
+            operation: 'ai_analysis',
+            promptTokens,
+            completionTokens,
+            totalTokens,
+            estimatedCostUsd: costUsd,
+          },
+        });
+      }
+    } catch {} // Don't fail the test if usage logging fails
+  }
+
+  return { text: response.choices[0]?.message?.content || '', tokensUsed: totalTokens, model, promptTokens, completionTokens };
 }
 
 // ─── Context Builder ───
@@ -541,6 +566,25 @@ async function handleBankStatementExtract(
             for (const txn of result.transactions) {
               allTransactions.push({ ...txn, sourceFile: u.fileName, accountNumber: result.accountNumber });
             }
+            // Log Azure DI usage
+            try {
+              const eng = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+              if (eng) {
+                await prisma.aiUsage.create({
+                  data: {
+                    clientId: eng.clientId,
+                    userId: 'system',
+                    action: 'Bank Statement Extraction',
+                    model: 'azure-di-prebuilt-layout',
+                    operation: 'document_extraction',
+                    promptTokens: 0,
+                    completionTokens: 0,
+                    totalTokens: 0,
+                    estimatedCostUsd: (result.usage?.costUsd || 0.01) * (result.usage?.pageCount || 1),
+                  },
+                });
+              }
+            } catch {}
             console.log(`[flow-engine] Azure DI: ${result.transactions.length} txns from ${u.fileName}`);
           } catch (err) {
             console.error(`[flow-engine] Azure DI failed for ${u.fileName}:`, (err as Error).message);
@@ -1468,7 +1512,7 @@ For each sample item, return a JSON array with objects containing:
 Return ONLY the JSON array, no other text.`;
 
   try {
-    const aiResult = await callAI(systemPrompt, userPrompt);
+    const aiResult = await callAI(systemPrompt, userPrompt, engagementId);
     const duration = Date.now() - startTime;
 
     let verificationResults: any[] = [];
