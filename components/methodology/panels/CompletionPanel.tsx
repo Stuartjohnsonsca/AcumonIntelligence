@@ -174,22 +174,31 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
       const conclusions = concData.conclusions || [];
       const errors = errData.items || errData.errors || [];
 
+      // Resolve materiality values (stored as overallMateriality, performanceMateriality, clearlyTrivial)
+      const omVal = mat.overallMateriality || mat.materiality || 0;
+      const pmVal = mat.performanceMateriality || mat.pm || 0;
+      const ctVal = mat.clearlyTrivial || mat.ct || 0;
+
       const autoAnswers: Record<string, any> = { ...answers };
+      let populated = 0;
 
       // Populate materiality section
       const matQs = questions.filter(q => q.sectionKey === 'Materiality');
       for (const q of matQs) {
-        if (q.questionText === 'Overall materiality') {
-          autoAnswers[`${q.id}_col1`] = mat.materiality?.toLocaleString('en-GB') || '';
-          autoAnswers[`${q.id}_col2`] = mat.materiality?.toLocaleString('en-GB') || '';
+        if (q.questionText === 'Overall materiality' && omVal) {
+          autoAnswers[`${q.id}_col1`] = Number(omVal).toLocaleString('en-GB');
+          autoAnswers[`${q.id}_col2`] = Number(omVal).toLocaleString('en-GB');
+          populated++;
         }
-        if (q.questionText === 'Performance materiality') {
-          autoAnswers[`${q.id}_col1`] = mat.performanceMateriality?.toLocaleString('en-GB') || '';
-          autoAnswers[`${q.id}_col2`] = mat.performanceMateriality?.toLocaleString('en-GB') || '';
+        if (q.questionText === 'Performance materiality' && pmVal) {
+          autoAnswers[`${q.id}_col1`] = Number(pmVal).toLocaleString('en-GB');
+          autoAnswers[`${q.id}_col2`] = Number(pmVal).toLocaleString('en-GB');
+          populated++;
         }
-        if (q.questionText === 'Clearly Trivial Threshold') {
-          autoAnswers[`${q.id}_col1`] = mat.clearlyTrivial?.toLocaleString('en-GB') || '';
-          autoAnswers[`${q.id}_col2`] = mat.clearlyTrivial?.toLocaleString('en-GB') || '';
+        if (q.questionText === 'Clearly Trivial Threshold' && ctVal) {
+          autoAnswers[`${q.id}_col1`] = Number(ctVal).toLocaleString('en-GB');
+          autoAnswers[`${q.id}_col2`] = Number(ctVal).toLocaleString('en-GB');
+          populated++;
         }
       }
 
@@ -219,7 +228,9 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
 
       setAnswers(autoAnswers);
       debounceSave(autoAnswers);
-    } catch {} finally { setAutoCompleting(false); }
+      // Brief alert so user knows what happened
+      console.log(`Auto-complete populated ${populated} fields. Mat: OM=${omVal} PM=${pmVal} CT=${ctVal}. RMM: ${rmmRows.length} rows (${sigRisks.length} sig risks, ${aofRisks.length} AoF). Conclusions: ${conclusions.length}. Errors: ${errors.length}.`);
+    } catch (err) { console.error('Auto-complete failed:', err); } finally { setAutoCompleting(false); }
   }
 
   if (loading) return <div className="p-6 text-center text-xs text-slate-400 animate-pulse">Loading {title}...</div>;

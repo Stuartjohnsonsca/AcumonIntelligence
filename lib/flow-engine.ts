@@ -1162,6 +1162,127 @@ Return ONLY the JSON array, no other text.`;
   }
 }
 
+// ─── Programmatic Bank-to-TB Comparison ───
+
+async function handleCompareBankToTB(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  try {
+    // 1. Find bank statement data from previous nodes
+    let bankData: any[] = [];
+    for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+      const out = nodeOut as any;
+      if (!out) continue;
+      if (out.dataTable?.length > 0 && bankData.length === 0) bankData = out.dataTable;
+      if (out.populationData?.length > 0 && bankData.length === 0) bankData = out.populationData;
+    }
+
+    if (bankData.length === 0) {
+      return { action: 'error', errorMessage: 'No bank statement data found. Ensure bank data is extracted before running this test.' };
+    }
+
+    // 2. Get TB data
+    const tbAccounts = (ctx.tb as any)?.accounts || [];
+    if (tbAccounts.length === 0) {
+      return { action: 'error', errorMessage: 'No trial balance data available for this FS line.' };
+    }
+
+    // 3. Extract closing balances per bank account
+    // Group transactions by account number, take last balance as closing balance
+    const accountBalances = new Map<string, { accountNumber: string; closingBalance: number; transactionCount: number; lastDate: string }>();
+    for (const txn of bankData) {
+      const accNum = txn.accountNumber || txn.tbAccountCode?.match(/AC\s*(\d+)/)?.[1] || '';
+      if (!accNum) continue;
+      const existing = accountBalances.get(accNum);
+      const balance = Number(txn.balance || txn.balanceFC || 0);
+      const date = txn.date || '';
+      if (!existing || date >= existing.lastDate) {
+        accountBalances.set(accNum, {
+          accountNumber: accNum,
+          closingBalance: balance,
+          transactionCount: (existing?.transactionCount || 0) + 1,
+          lastDate: date,
+        });
+      } else if (existing) {
+        existing.transactionCount++;
+      }
+    }
+
+    // 4. Compare to TB
+    const clearlyTrivial = (ctx.engagement as any)?.clearlyTrivial || 0;
+    const results: any[] = [];
+    let totalDifference = 0;
+    let matchCount = 0;
+    let differenceCount = 0;
+
+    for (const tbAcc of tbAccounts) {
+      const tbBalance = Number(tbAcc.currentYear || 0);
+      // Try to match TB account to bank account (by code overlap or description)
+      const bankAcc = Array.from(accountBalances.values()).find(ba =>
+        tbAcc.code?.includes(ba.accountNumber) || tbAcc.description?.includes(ba.accountNumber)
+      );
+
+      if (bankAcc) {
+        const diff = Math.abs(tbBalance) - Math.abs(bankAcc.closingBalance);
+        const absDiff = Math.abs(diff);
+        const status = absDiff <= 0.01 ? 'matched' : absDiff <= clearlyTrivial ? 'immaterial_difference' : 'material_difference';
+        results.push({
+          accountCode: tbAcc.code,
+          accountName: tbAcc.description,
+          bankAccountNumber: bankAcc.accountNumber,
+          bankBalance: bankAcc.closingBalance,
+          tbBalance,
+          difference: diff,
+          transactionCount: bankAcc.transactionCount,
+          status,
+        });
+        totalDifference += absDiff;
+        if (status === 'matched' || status === 'immaterial_difference') matchCount++;
+        else differenceCount++;
+      } else {
+        results.push({
+          accountCode: tbAcc.code,
+          accountName: tbAcc.description,
+          bankAccountNumber: null,
+          bankBalance: null,
+          tbBalance,
+          difference: null,
+          transactionCount: 0,
+          status: tbBalance === 0 ? 'zero_balance' : 'no_bank_data',
+        });
+      }
+    }
+
+    // 5. Determine overall result
+    const overallResult = differenceCount > 0 ? 'fail' : 'pass';
+    const summary = `Compared ${bankData.length} bank transactions across ${accountBalances.size} account(s) to ${tbAccounts.length} TB account(s). ${matchCount} matched, ${differenceCount} with material differences. Total absolute difference: £${totalDifference.toFixed(2)}.`;
+
+    return {
+      action: 'continue',
+      nextNodeId: getNextNodeId(flow, node.id),
+      output: {
+        result: overallResult,
+        summary,
+        comparisons: results,
+        dataTable: results,
+        bankAccountCount: accountBalances.size,
+        tbAccountCount: tbAccounts.length,
+        totalTransactions: bankData.length,
+        totalDifference,
+        matchCount,
+        differenceCount,
+        clearlyTrivialThreshold: clearlyTrivial,
+      },
+    };
+  } catch (err: any) {
+    return { action: 'error', errorMessage: `Bank-to-TB comparison failed: ${err.message}` };
+  }
+}
+
 async function handleActionAI(
   flow: FlowData,
   node: FlowNode,
@@ -1200,6 +1321,17 @@ async function handleActionAI(
 
   // Parse output based on format
   let parsedOutput: any = { raw: aiResult.text, model: aiResult.model, tokensUsed: aiResult.tokensUsed, duration };
+
+  // Detect garbage/hypothetical AI output and fail the test
+  const garbageIndicators = ["let's assume", "for simplicity", "hypothetical", "not in a usable format", "i need to clarify", "i cannot", "i don't have access", "example data"];
+  const lowerText = aiResult.text.toLowerCase();
+  if (garbageIndicators.some(indicator => lowerText.includes(indicator))) {
+    return {
+      action: 'error',
+      errorMessage: `AI did not produce a definitive result. The model was unable to process the actual data and returned hypothetical output. Test failed — needs reconfiguration or data correction.`,
+      output: parsedOutput,
+    };
+  }
 
   if (execDef.outputFormat === 'pass_fail' || execDef.outputFormat === 'pass_fail_forward') {
     const lower = aiResult.text.toLowerCase();
@@ -2026,6 +2158,8 @@ export async function processNextNode(executionId: string): Promise<void> {
             result = await handleStoreExtractedData(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'accounting_extract') {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'compare_bank_to_tb') {
+            result = await handleCompareBankToTB(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'ai') {
             result = await handleActionAI(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (assignee === 'client') {

@@ -197,6 +197,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const ctBase = ctSettings.basis === 'Performance Materiality' ? performanceMateriality : materiality;
   const clearlyTrivial = ctBase ? roundDown(ctBase * (ctSettings.pct / 100), roundingCT) : 0;
 
+  // Also save computed values to data so they're available to other components (Auto-Complete, flow engine)
+  useEffect(() => {
+    if (materiality > 0 && (data.overallMateriality !== materiality || data.performanceMateriality !== performanceMateriality || data.clearlyTrivial !== clearlyTrivial)) {
+      setData(prev => ({ ...prev, overallMateriality: materiality, performanceMateriality, clearlyTrivial }));
+    }
+  }, [materiality, performanceMateriality, clearlyTrivial]);
+
   // Prior year derived
   const pyBenchmarkPct = (getPy('benchmark_pct') as number) || 0;
   const pyMateriality = (getPy('materiality_manual') as number) || 0;
