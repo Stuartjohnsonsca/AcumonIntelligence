@@ -298,6 +298,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'>>({});
   const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
   const [dbConclusions, setDbConclusions] = useState<any[]>([]);
+  const [dbExecutions, setDbExecutions] = useState<any[]>([]);
   const [errorFooterOpen, setErrorFooterOpen] = useState(true);
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
@@ -359,7 +360,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes, rcRes] = await Promise.all([
+        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes, rcRes, execRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}/test-allocations`),
@@ -367,6 +368,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           fetch(`/api/engagements/${engagementId}/permanent-file`),
           fetch(`/api/engagements/${engagementId}/test-conclusions`),
           fetch('/api/methodology-admin/risk-tables?tableType=riskClassification'),
+          fetch(`/api/engagements/${engagementId}/test-execution`),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
@@ -419,6 +421,21 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             if (c.conclusion) conc[key] = c.conclusion;
           }
           setTestConclusions(conc);
+        }
+        // Load executions (to show results for tests that ran but have no conclusion record)
+        if (execRes.ok) {
+          const execData = await execRes.json();
+          setDbExecutions(execData.executions || []);
+          // For completed executions without a conclusion, mark them as 'green' (no errors found by default)
+          const execConcs: Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'> = {};
+          for (const exec of (execData.executions || [])) {
+            if (exec.status === 'completed' && !testConclusions[exec.testDescription]) {
+              execConcs[exec.testDescription] = 'green'; // Default: completed without errors = green
+            } else if (exec.status === 'failed') {
+              execConcs[exec.testDescription] = 'failed';
+            }
+          }
+          setTestConclusions(prev => ({ ...execConcs, ...prev })); // Existing conclusions override exec defaults
         }
         // Load risk classification table
         if (rcRes.ok) {
@@ -967,8 +984,22 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       const isApplicable = !excludedTests.has(testKey);
                       const isExecutionOpen = activeExecution === testKey;
                       const testConc = testConclusions[testKey] || testConclusions[test.description];
-                      const dbConc = dbConclusions.find(c => c.testDescription === test.description);
-                      const conc = testConc || dbConc?.conclusion || 'pending';
+                      // Match conclusion by test description AND fsLine (or account code) for correct scoping
+                      const effectiveFsLineForConc = activeLevel || activeStatement;
+                      const dbConc = dbConclusions.find(c =>
+                        c.testDescription === test.description && (
+                          c.accountCode === row.accountCode ||
+                          c.fsLine === effectiveFsLineForConc ||
+                          !c.accountCode
+                        )
+                      ) || dbConclusions.find(c => c.testDescription === test.description);
+                      // Also check for completed executions (tests that ran but have no conclusion record yet)
+                      const dbExec = dbExecutions.find(e =>
+                        e.testDescription === test.description && e.status === 'completed' && e.fsLine === effectiveFsLineForConc
+                      ) || dbExecutions.find(e => e.testDescription === test.description && e.status === 'completed');
+                      const conc = testConc || dbConc?.conclusion || (dbExec ? 'green' : 'pending');
+                      const effectiveExecId = dbConc?.executionId || dbExec?.id || null;
+                      const hasResults = (conc !== 'pending' || effectiveExecId) && !test.isIngest && test.outputFormat !== 'payroll_workpaper';
                       return (
                       <Fragment key={`${rowKey}-t${ti}`}>
                         {(() => {
@@ -997,17 +1028,20 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                   {isExecutionOpen ? 'Close' : 'Execute'}
                                 </button>
                               )}
-                              {/* Conclusion dot */}
+                              {/* Conclusion dot — clickable to toggle results */}
                               {conc !== 'pending' && (
-                                <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                                  conc === 'green' ? 'bg-green-500' :
-                                  conc === 'orange' ? 'bg-orange-500' :
-                                  conc === 'failed' ? 'bg-red-800' : 'bg-red-500'
-                                }`} title={
-                                  conc === 'green' ? 'No material errors' :
-                                  conc === 'orange' ? 'Errors above CT, within PM' :
-                                  conc === 'failed' ? 'Test failed to run' : 'Errors exceed PM'
-                                } />
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setActiveExecution(isExecutionOpen ? null : testKey); }}
+                                  className={`w-2.5 h-2.5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-offset-1 ${
+                                    conc === 'green' ? 'bg-green-500 hover:ring-green-300' :
+                                    conc === 'orange' ? 'bg-orange-500 hover:ring-orange-300' :
+                                    conc === 'failed' ? 'bg-red-800 hover:ring-red-300' : 'bg-red-500 hover:ring-red-300'
+                                  }`} title={`${
+                                    conc === 'green' ? 'No material errors' :
+                                    conc === 'orange' ? 'Errors above CT, within PM' :
+                                    conc === 'failed' ? 'Test failed to run' : 'Errors exceed PM'
+                                  } — click to ${isExecutionOpen ? 'hide' : 'view'} results`}
+                                />
                               )}
                               {/* Review / RI checkboxes — clickable */}
                               {dbConc && (
@@ -1091,13 +1125,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                             </td>
                           </tr>
                         )}
-                        {/* Results Panel — shown for completed tests with results */}
-                        {isExecutionOpen && conc && conc !== 'pending' && !test.isIngest && test.outputFormat !== 'payroll_workpaper' && (
+                        {/* Results Panel — shown for completed tests with results OR completed executions */}
+                        {isExecutionOpen && hasResults && (
                           <tr>
                             <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-white">
                               <TestResultsPanel
                                 engagementId={engagementId}
-                                executionId={dbConc?.executionId || null}
+                                executionId={effectiveExecId}
                                 testDescription={test.description}
                                 fsLine={activeLevel || activeStatement}
                                 accountCode={row.accountCode}
