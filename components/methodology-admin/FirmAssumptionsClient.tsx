@@ -26,6 +26,8 @@ interface Props {
   initialTechnicalTeam?: { email: string; members: { name: string; email: string; role: string }[] };
   initialRiskClassification?: Record<string, RiskClassification> | null;
   initialFxProvider?: string | null;
+  initialTestCategories?: string[];
+  initialArConfidenceFactor?: number;
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -107,6 +109,8 @@ export function FirmAssumptionsClient({
   initialSpecialistRoles,
   initialRiskClassification,
   initialFxProvider,
+  initialTestCategories,
+  initialArConfidenceFactor,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -123,6 +127,13 @@ export function FirmAssumptionsClient({
   const [confidenceLevel, setConfidenceLevel] = useState(initialConfidenceLevel);
   const [specialistRoles, setSpecialistRoles] = useState<string[]>(
     Array.isArray(initialSpecialistRoles) ? initialSpecialistRoles : ['EQR', 'Valuations', 'Ethics', 'Technical']
+  );
+  const [testCategories, setTestCategories] = useState<string[]>(
+    Array.isArray(initialTestCategories) ? initialTestCategories : ['Significant Risk', 'Area of Focus', 'Other', 'Analytical Review', 'Mandatory']
+  );
+  const [newCategory, setNewCategory] = useState('');
+  const [arConfidenceFactor, setArConfidenceFactor] = useState<number>(
+    initialArConfidenceFactor ?? 1.0
   );
   const [riskClassification, setRiskClassification] = useState<Record<string, RiskClassification>>(() => {
     const init = initialRiskClassification;
@@ -191,6 +202,8 @@ export function FirmAssumptionsClient({
               fxProvider: { provider: fxProvider },
               assertions,
               specialistRoles: { roles: specialistRoles },
+              testCategories: { categories: testCategories },
+              arConfidenceFactor: { confidenceFactor: arConfidenceFactor },
             },
           }),
         }),
@@ -547,6 +560,103 @@ export function FirmAssumptionsClient({
               >
                 <Plus className="h-3.5 w-3.5" /> Add
               </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Test Categories */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('testCategories')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Audit Test Categories</h2>
+          {expandedSections.testCategories ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.testCategories && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">Define test categories used in the Test Bank. Each test is assigned one category which drives risk-based test selection in the Audit Plan.</p>
+            <div className="space-y-2 mb-3">
+              {testCategories.map((cat, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    cat === 'Significant Risk' ? 'bg-red-500' :
+                    cat === 'Area of Focus' ? 'bg-orange-500' :
+                    cat === 'Analytical Review' ? 'bg-green-500' :
+                    cat === 'Mandatory' ? 'bg-blue-500' : 'bg-slate-400'
+                  }`} />
+                  <span className="text-sm text-slate-700 flex-1">{cat}</span>
+                  <button
+                    onClick={() => { setTestCategories(prev => prev.filter((_, i) => i !== idx)); setSaved(false); }}
+                    className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              {testCategories.length === 0 && (
+                <p className="text-sm text-slate-400 italic">No test categories defined.</p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newCategory}
+                onChange={e => setNewCategory(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newCategory.trim()) {
+                    setTestCategories(prev => [...prev, newCategory.trim()]);
+                    setNewCategory('');
+                    setSaved(false);
+                  }
+                }}
+                placeholder="Add category (e.g. Special Purpose)"
+                className="flex-1 max-w-xs px-3 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <button
+                onClick={() => {
+                  if (newCategory.trim()) {
+                    setTestCategories(prev => [...prev, newCategory.trim()]);
+                    setNewCategory('');
+                    setSaved(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* AR Confidence Factor */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('arConfidence')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">AR Confidence Factor</h2>
+          {expandedSections.arConfidence ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.arConfidence && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">
+              The confidence factor is multiplied by tolerance materiality to set the threshold for analytical review procedures.
+              A higher value requires smaller differences to pass. Default is 1.0.
+            </p>
+            <div className="flex items-center space-x-4">
+              <label className="text-sm font-medium text-slate-700">Confidence Factor</label>
+              <input
+                type="number"
+                min={0.1}
+                max={5}
+                step={0.1}
+                value={arConfidenceFactor}
+                onChange={(e) => { setArConfidenceFactor(Number(e.target.value)); setSaved(false); }}
+                className="w-24 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
           </div>
         )}

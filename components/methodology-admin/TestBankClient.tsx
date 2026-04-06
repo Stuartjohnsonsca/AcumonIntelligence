@@ -25,6 +25,7 @@ interface MethodologyTestItem {
   assertions: string[] | null;
   framework: string;
   significantRisk: boolean;
+  category: string;
   outputFormat: string | null;
   isIngest: boolean;
   flow: any | null;
@@ -54,7 +55,7 @@ interface AllocationItem {
   fsLineId: string;
   industryId: string;
   sortOrder: number;
-  test: { id: string; name: string; testTypeCode: string; assertions: string[] | null; framework: string; significantRisk: boolean };
+  test: { id: string; name: string; testTypeCode: string; assertions: string[] | null; framework: string; significantRisk: boolean; category?: string };
   fsLine: { id: string; name: string };
   industry: { id: string; name: string };
 }
@@ -106,7 +107,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   // Test Bank tab state
   const [editingTest, setEditingTest] = useState<MethodologyTestItem | null>(null);
   const [testModalOpen, setTestModalOpen] = useState(false);
-  const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false, outputFormat: 'three_section_no_sampling', isIngest: false });
+  const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false, category: 'Other', outputFormat: 'three_section_no_sampling', isIngest: false });
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -192,7 +193,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           const filtered = prev.filter(a => !(a.fsLineId === allocPickerFsLineId && a.industryId === allocPickerIndustryId));
           return [...filtered, ...newAllocs.map((a: any) => ({
             ...a,
-            test: a.test || { id: a.testId, name: '', testTypeCode: '', framework: '', significantRisk: false },
+            test: a.test || { id: a.testId, name: '', testTypeCode: '', framework: '', significantRisk: false, category: 'Other' },
             fsLine: a.fsLine || { id: allocPickerFsLineId, name: '' },
             industry: { id: allocPickerIndustryId, name: industries.find(i => i.id === allocPickerIndustryId)?.name || '' },
           }))];
@@ -204,7 +205,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   // ── Test Bank CRUD ──
   function openNewTestModal() {
     setEditingTest(null);
-    setTestForm({ name: '', description: '', testTypeCode: '', assertions: [], framework: '', significantRisk: false });
+    setTestForm({ name: '', description: '', testTypeCode: '', assertions: [], framework: '', significantRisk: false, category: 'Other', outputFormat: 'three_section_no_sampling', isIngest: false });
     setTestModalOpen(true);
   }
 
@@ -217,6 +218,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
       assertions: (test.assertions as string[]) || [],
       framework: test.framework === 'ALL' ? '' : test.framework,
       significantRisk: test.significantRisk,
+      category: test.category || (test.significantRisk ? 'Significant Risk' : 'Other'),
       outputFormat: test.outputFormat || 'three_section_no_sampling',
       isIngest: test.isIngest || false,
     });
@@ -229,13 +231,13 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
       if (editingTest) {
         const res = await fetch('/api/methodology-admin/tests', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: editingTest.id, name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.significantRisk, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest }),
+          body: JSON.stringify({ id: editingTest.id, name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.category === 'Significant Risk', category: testForm.category, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest }),
         });
         if (res.ok) { const { test } = await res.json(); setTests(prev => prev.map(t => t.id === test.id ? test : t)); }
       } else {
         const res = await fetch('/api/methodology-admin/tests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.significantRisk, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest }),
+          body: JSON.stringify({ name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.category === 'Significant Risk', category: testForm.category, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest }),
         });
         if (res.ok) { const { test } = await res.json(); setTests(prev => [...prev, test]); }
       }
@@ -281,7 +283,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   function downloadTestBank() {
     const rows = tests.map(t => {
       const tt = testTypes.find(ty => ty.code === t.testTypeCode);
-      return { 'Name': t.name, 'Description': t.description || '', 'Action Type': tt?.name || t.testTypeCode, 'Assertions': ((t.assertions as string[]) || []).join('; '), 'Framework': t.framework || 'All', 'Significant Risk': t.significantRisk ? 'Yes' : 'No', 'Has Flow': t.flow?.nodes?.length > 0 ? 'Yes' : 'No' };
+      return { 'Name': t.name, 'Description': t.description || '', 'Action Type': tt?.name || t.testTypeCode, 'Assertions': ((t.assertions as string[]) || []).join('; '), 'Framework': t.framework || 'All', 'Category': t.category || 'Other', 'Has Flow': t.flow?.nodes?.length > 0 ? 'Yes' : 'No' };
     });
     if (rows.length === 0) return;
     const headers = Object.keys(rows[0]).join(',');
@@ -508,7 +510,12 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                       <td className="px-3 py-2">{((test.assertions as string[]) || []).map((a, ai) => <span key={ai} className="text-[10px] px-1 py-0.5 bg-purple-100 text-purple-700 rounded mr-0.5">{assertionShortLabel(a)}</span>)}</td>
                       <td className="px-3 py-2 text-[10px] text-slate-500">{test.framework || 'All'}</td>
                       <td className="px-3 py-2 text-center"><button onClick={() => { setFlowTestId(test.id); setFlowEditorOpen(true); }} className={`p-0.5 rounded hover:bg-blue-50 ${hasFlow ? 'text-green-600' : 'text-slate-300'}`}><GitBranch className="h-3.5 w-3.5" /></button></td>
-                      <td className="px-3 py-2 text-center">{test.significantRisk && <span className="inline-block w-3 h-3 rounded-full bg-red-500" />}</td>
+                      <td className="px-3 py-2 text-center"><span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                        test.category === 'Significant Risk' ? 'bg-red-100 text-red-700' :
+                        test.category === 'Area of Focus' ? 'bg-orange-100 text-orange-700' :
+                        test.category === 'Analytical Review' ? 'bg-green-100 text-green-700' :
+                        test.category === 'Mandatory' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
+                      }`}>{test.category || 'Other'}</span></td>
                       <td className="px-3 py-2 text-right"><div className="flex items-center gap-0.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => handleDuplicateTest(test)} className="p-1 hover:bg-blue-100 rounded" title="Duplicate"><Copy className="h-3 w-3 text-blue-500" /></button><button onClick={() => openEditTestModal(test)} className="p-1 hover:bg-slate-200 rounded" title="Edit"><Pencil className="h-3 w-3 text-slate-500" /></button><button onClick={() => handleDeleteTest(test.id)} className="p-1 hover:bg-red-100 rounded" title="Delete"><Trash2 className="h-3 w-3 text-red-500" /></button></div></td>
                     </tr>
                   );
@@ -612,7 +619,16 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
               </div>
               <div><label className="text-xs font-medium text-slate-600 block mb-1">Assertions</label><div className="flex flex-wrap gap-1">{ASSERTION_TYPES.map(a => { const c = testForm.assertions.includes(a); return (<label key={a} className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border cursor-pointer transition-colors ${c ? 'bg-purple-100 border-purple-300 text-purple-700' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}><input type="checkbox" checked={c} className="hidden" onChange={e => setTestForm(prev => ({ ...prev, assertions: e.target.checked ? [...prev.assertions, a] : prev.assertions.filter(x => x !== a) }))} />{a.length > 15 ? a.split(' ').map(w => w[0]).join('') : a}</label>); })}</div></div>
               <div className="flex items-center gap-6 flex-wrap">
-                <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={testForm.significantRisk} onChange={e => setTestForm(prev => ({ ...prev, significantRisk: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-red-500" /><span className="text-sm text-slate-700">Significant Risk</span></label>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium text-slate-700">Category</label>
+                  <select value={testForm.category} onChange={e => setTestForm(prev => ({ ...prev, category: e.target.value, significantRisk: e.target.value === 'Significant Risk' }))} className="px-2 py-1 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400">
+                    <option value="Other">Other</option>
+                    <option value="Significant Risk">Significant Risk</option>
+                    <option value="Area of Focus">Area of Focus</option>
+                    <option value="Analytical Review">Analytical Review</option>
+                    <option value="Mandatory">Mandatory</option>
+                  </select>
+                </div>
                 <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={testForm.isIngest} onChange={e => setTestForm(prev => ({ ...prev, isIngest: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-slate-500" /><span className="text-sm text-slate-700">Ingest / Prerequisite</span></label>
               </div>
               <div><label className="text-xs font-medium text-slate-600 block mb-1">Output Format</label><select value={testForm.outputFormat} onChange={e => setTestForm(prev => ({ ...prev, outputFormat: e.target.value }))} className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"><option value="three_section_sampling">3-Section with Sampling</option><option value="three_section_no_sampling">3-Section without Sampling</option><option value="document_summary">Document Summary</option><option value="spreadsheet">Spreadsheet</option></select></div>
@@ -696,7 +712,12 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                         {test.description && <div className="text-[10px] text-slate-400 mt-0.5 line-clamp-2" title={test.description}>{test.description}</div>}
                       </div>
                       {tt && <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full flex-shrink-0 ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.name}</span>}
-                      {test.significantRisk && <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0" />}
+                      {test.category && test.category !== 'Other' && <span className={`text-[7px] px-1 py-0 rounded font-medium ${
+                        test.category === 'Significant Risk' ? 'bg-red-100 text-red-600' :
+                        test.category === 'Area of Focus' ? 'bg-orange-100 text-orange-600' :
+                        test.category === 'Analytical Review' ? 'bg-green-100 text-green-600' :
+                        test.category === 'Mandatory' ? 'bg-blue-100 text-blue-600' : ''
+                      }`}>{test.category}</span>}
                     </div>
                   );
                 })}

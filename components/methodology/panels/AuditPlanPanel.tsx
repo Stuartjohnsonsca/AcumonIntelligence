@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, useMemo, Fragment } from 'react';
-import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch } from 'lucide-react';
+import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch, Calculator } from 'lucide-react';
 import { TestExecutionPanel } from './TestExecutionPanel';
 import { TestResultsPanel } from './TestResultsPanel';
 import { ExecutionFlowViewer } from './ExecutionFlowViewer';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
+import { AnalyticalReviewPanel } from './AnalyticalReviewPanel';
 import { assertionShortLabel } from '@/types/methodology';
 
 interface TBRow {
@@ -509,13 +510,14 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
 
-      // Risk-based filtering (only when riskClassification is set):
-      // - null: no RMM data — show all tests (no filtering)
-      // - AR: skip all substantive tests (AR tests only — TBD)
-      // - Area of Focus: full tests but NOT significant-risk-only tests
-      // - Significant Risk: all tests including significant-risk-only tests
-      if (riskClassification === 'AR') continue;
-      if (riskClassification === 'Area of Focus' && test.significantRisk) continue;
+      // Risk-based filtering using test.category (or legacy significantRisk):
+      // - null: no RMM data — show all tests
+      // - AR: only Analytical Review + Mandatory tests
+      // - Area of Focus: all except Significant Risk category tests
+      // - Significant Risk: all tests
+      const testCategory = (test as any).category || (test.significantRisk ? 'Significant Risk' : 'Other');
+      if (riskClassification === 'AR' && testCategory !== 'Analytical Review' && testCategory !== 'Mandatory') continue;
+      if (riskClassification === 'Area of Focus' && testCategory === 'Significant Risk') continue;
 
       const tt = testTypes.find(t => t.code === test.testTypeCode);
       const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
@@ -664,7 +666,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   async function loadAuditLog() {
     setAuditLogLoading(true);
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/test-execution`);
+      // Filter by active FS level sub-tab when set
+      const params = new URLSearchParams();
+      if (activeLevel) params.set('fsLine', activeLevel);
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const res = await fetch(`/api/engagements/${engagementId}/test-execution${qs}`);
       if (res.ok) {
         const data = await res.json();
         setAuditLog(data.executions || []);
@@ -1095,6 +1101,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       </Fragment>
                       );
                     })}
+                    {/* Analytical Review Panel — for AR-classified rows */}
+                    {isExp && isAR && (
+                      <tr>
+                        <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-green-50/30">
+                          <AnalyticalReviewPanel
+                            engagementId={engagementId}
+                            fsLine={effectiveFsLevel || activeLevel || activeStatement}
+                            accountCodes={[row.accountCode]}
+                          />
+                        </td>
+                      </tr>
+                    )}
                   </Fragment>
                 );
               })}

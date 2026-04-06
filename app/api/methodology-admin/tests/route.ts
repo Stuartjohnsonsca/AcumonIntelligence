@@ -30,8 +30,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { name, description, testTypeCode, assertions, framework, significantRisk, outputFormat, isIngest, flow } = await req.json();
+  const { name, description, testTypeCode, assertions, framework, significantRisk, category, outputFormat, isIngest, flow } = await req.json();
   if (!name?.trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+
+  // Resolve category: prefer explicit category, fall back to significantRisk boolean for backward compat
+  const resolvedCategory = category || (significantRisk ? 'Significant Risk' : 'Other');
 
   const test = await prisma.methodologyTest.create({
     data: {
@@ -41,7 +44,8 @@ export async function POST(req: NextRequest) {
       testTypeCode: testTypeCode || '',
       assertions: assertions || [],
       framework: framework || 'ALL',
-      significantRisk: significantRisk || false,
+      significantRisk: resolvedCategory === 'Significant Risk', // Keep in sync for backward compat
+      category: resolvedCategory,
       outputFormat: outputFormat || null,
       isIngest: isIngest || false,
       flow: flow || null,
@@ -68,6 +72,10 @@ export async function PATCH(req: NextRequest) {
   if (updates.assertions !== undefined) data.assertions = updates.assertions;
   if (updates.framework !== undefined) data.framework = updates.framework;
   if (updates.significantRisk !== undefined) data.significantRisk = updates.significantRisk;
+  if (updates.category !== undefined) {
+    data.category = updates.category;
+    data.significantRisk = updates.category === 'Significant Risk'; // Keep in sync
+  }
   if (updates.outputFormat !== undefined) data.outputFormat = updates.outputFormat || null;
   if (updates.isIngest !== undefined) data.isIngest = updates.isIngest;
   if (updates.flow !== undefined) data.flow = updates.flow;

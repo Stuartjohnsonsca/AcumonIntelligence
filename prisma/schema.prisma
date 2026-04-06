@@ -1662,6 +1662,7 @@ model AuditEngagement {
   testConclusions      AuditTestConclusion[]
   errorScheduleItems   AuditErrorSchedule[]
   auditPoints          AuditPoint[]
+  analyticalReviews    AuditAnalyticalReview[]
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -2044,7 +2045,8 @@ model MethodologyTest {
   testTypeCode    String   @map("test_type_code")
   assertions      Json?    // ["Completeness", "Existence", ...]
   framework       String   @default("ALL")
-  significantRisk Boolean  @default(false) @map("significant_risk")
+  significantRisk Boolean  @default(false) @map("significant_risk") // DEPRECATED — use category instead
+  category        String   @default("Other") @map("category") // Significant Risk | Area of Focus | Other | Analytical Review | Mandatory
   outputFormat    String?  @map("output_format") // three_section_sampling | three_section_no_sampling | document_summary | spreadsheet
   isIngest        Boolean  @default(false) @map("is_ingest") // Data collection/prep, not an auditable test
   flow            Json?    // { nodes, edges }
@@ -2450,6 +2452,68 @@ model AuditTestConclusion {
   @@index([engagementId])
   @@index([engagementId, fsLine])
   @@map("audit_test_conclusions")
+}
+
+model AuditAnalyticalReview {
+  id                   String    @id @default(uuid())
+  engagementId         String    @map("engagement_id")
+  fsLine               String    @map("fs_line")
+  accountCode          String    @map("account_code")
+  description          String?
+
+  // TB amounts
+  recordedAmount       Float     @default(0) @map("recorded_amount")
+  priorYearAmount      Float     @default(0) @map("prior_year_amount")
+
+  // Formula selectors (what each variable represents)
+  formulaX             String?   @map("formula_x")  // PY value(s) | Sales | CoS | Non-Financial Data | 0 | Opening Balance | 12 | Units Sold
+  formulaA             String?   @map("formula_a")
+  formulaB             String?   @map("formula_b")
+  formulaZ             String?   @map("formula_z")  // Change in Sales | Change in CoS | GPM% | Inflation | GDP | FX USD | FX Euro | Interest rate | User Entered
+
+  // Resolved numeric values
+  xValue               Float?    @map("x_value")
+  aValue               Float?    @map("a_value")
+  bValue               Float?    @map("b_value")
+  zValue               Float?    @map("z_value")
+
+  // User-entered explanations (for Non-Financial Data / User Entered selectors)
+  xExplanation         String?   @map("x_explanation") @db.Text
+  zExplanation         String?   @map("z_explanation") @db.Text
+
+  // Calculated results
+  expectedAmount       Float?    @map("expected_amount")    // X + (A + B) / 2 * Z
+  difference           Float?                               // Recorded - Expected
+  toleranceMateriality Float?    @map("tolerance_materiality") // (Recorded / FS Note rollup) × PM
+  threshold            Float?                               // Confidence Factor × Tolerance Materiality
+  withinThreshold      Boolean   @default(true) @map("within_threshold")
+
+  // Auditor assessment
+  justification        String?   @db.Text
+  differenceAssessment String?   @map("difference_assessment") // Isolated and justifiable | Isolated not explainable | Systemic and justifiable | Systemic and not justifiable
+
+  // RMM reconsideration
+  rmmErrors            String    @default("No") @map("rmm_errors")
+  rmmBias              String    @default("No") @map("rmm_bias")
+  rmmControlFailures   String    @default("No") @map("rmm_control_failures")
+  rmmFraudRisks        String    @default("No") @map("rmm_fraud_risks")
+
+  // Sign-offs
+  signOffs             Json?     @map("sign_offs") // { preparer: {...}, reviewer: {...}, ri: {...} }
+  status               String    @default("pending") // pending | calculated | reviewed | signed_off
+
+  // Merge support
+  mergedWithCode       String?   @map("merged_with_code") // Account code this is merged into
+
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  engagement           AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@unique([engagementId, accountCode])
+  @@index([engagementId])
+  @@index([engagementId, fsLine])
+  @@map("audit_analytical_reviews")
 }
 
 model AuditErrorSchedule {
