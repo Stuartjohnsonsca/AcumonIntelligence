@@ -382,6 +382,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                         {step.output?.transactionCount > 0 && !step.output?.dataTable && <span className="text-[8px] px-1 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">{step.output.transactionCount} txns</span>}
                         {/* Evidence info */}
                         {step.output?.uploadCount > 0 && <span className="text-[8px] px-1 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">{step.output.uploadCount} files</span>}
+                        {step.output?.source && <span className={`text-[8px] px-1 py-0.5 rounded-full font-medium ${step.output.fallbackUsed ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>{step.output.source}{step.output.fallbackUsed ? ' (fallback)' : ''}</span>}
                         {step.output?.evidenceFound === false && <span className="text-[8px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">No evidence</span>}
                         {step.status === 'paused' && <span className="text-[8px] px-1 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Paused{pauseReason ? `: ${pauseReason}` : ''}</span>}
                         {step.errorMessage && <span className="text-[8px] text-red-500 break-words max-w-[250px]">{step.errorMessage}</span>}
@@ -389,17 +390,51 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                         {hasOutput && <span className="text-[8px] text-slate-300">{isExpanded ? '▼' : '▶'}</span>}
                       </div>
                       {isExpanded && hasOutput && (
-                        <div className="px-4 py-2 bg-slate-50 border-t border-slate-100">
-                          <div className="text-[9px] font-mono text-slate-600 whitespace-pre-wrap max-h-[200px] overflow-auto bg-white rounded border border-slate-200 p-2">
-                            {(() => {
-                              const display = { ...step.output };
-                              // Truncate raw AI text for readability
-                              if (display.raw && typeof display.raw === 'string' && display.raw.length > 500) {
-                                display.raw = display.raw.slice(0, 500) + '... [truncated]';
-                              }
-                              return JSON.stringify(display, null, 2);
-                            })()}
-                          </div>
+                        <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 space-y-2">
+                          {/* Summary — human-readable explanation */}
+                          {step.output.summary && (
+                            <div className="text-xs text-slate-700 bg-blue-50 rounded border border-blue-100 px-3 py-2">
+                              {step.output.summary}
+                            </div>
+                          )}
+                          {/* Decision log — step-by-step audit trail */}
+                          {step.output.decisionLog && Array.isArray(step.output.decisionLog) && (
+                            <div className="space-y-1">
+                              {step.output.decisionLog.map((entry: any, di: number) => (
+                                <div key={di} className="flex gap-2 text-[10px]">
+                                  <span className="text-slate-400 shrink-0 w-4 text-right">{di + 1}.</span>
+                                  <span className="text-slate-500 shrink-0 font-medium">{entry.step}:</span>
+                                  <span className="text-slate-700">{entry.result}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {/* Source info */}
+                          {step.output.source && (
+                            <div className="flex gap-3 text-[10px]">
+                              <span className="text-slate-400">Source:</span>
+                              <span className="text-slate-700 font-medium">{step.output.source}{step.output.orgName ? ` (${step.output.orgName})` : ''}</span>
+                              {step.output.fallbackUsed && <span className="text-[8px] px-1 py-0 bg-amber-100 text-amber-700 rounded">Fallback</span>}
+                            </div>
+                          )}
+                          {step.output.dateRange && (
+                            <div className="flex gap-3 text-[10px]">
+                              <span className="text-slate-400">Date range:</span>
+                              <span className="text-slate-700">{step.output.dateRange.from} to {step.output.dateRange.to}</span>
+                            </div>
+                          )}
+                          {/* Raw JSON fallback — only for outputs without summary */}
+                          {!step.output.summary && !step.output.decisionLog && (
+                            <div className="text-[9px] font-mono text-slate-600 whitespace-pre-wrap max-h-[200px] overflow-auto bg-white rounded border border-slate-200 p-2">
+                              {(() => {
+                                const display = { ...step.output };
+                                if (display.raw && typeof display.raw === 'string' && display.raw.length > 500) display.raw = display.raw.slice(0, 500) + '... [truncated]';
+                                if (display.dataTable) display.dataTable = `[${display.dataTable.length} rows]`;
+                                if (display.populationData) display.populationData = `[${display.populationData.length} rows]`;
+                                return JSON.stringify(display, null, 2);
+                              })()}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

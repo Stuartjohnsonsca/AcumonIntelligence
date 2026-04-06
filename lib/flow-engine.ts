@@ -1062,11 +1062,12 @@ async function handleAccountingExtract(
     if (fallbackToBankData) {
       // No accounting connection — try to use previously extracted bank statement data
       let bankData: any[] = [];
+      let bankSource = '';
       for (const [, nodeOut] of Object.entries(ctx.nodes)) {
         const out = nodeOut as any;
         if (!out) continue;
-        if (out.dataTable?.length > 0 && bankData.length === 0) bankData = out.dataTable;
-        if (out.populationData?.length > 0 && bankData.length === 0) bankData = out.populationData;
+        if (out.dataTable?.length > 0 && bankData.length === 0) { bankData = out.dataTable; bankSource = 'Previous flow step'; }
+        if (out.populationData?.length > 0 && bankData.length === 0) { bankData = out.populationData; bankSource = 'Previous flow step'; }
       }
       // Also check for stored bank data via require_prior_evidence
       if (bankData.length === 0) {
@@ -1082,7 +1083,7 @@ async function handleAccountingExtract(
           if (bankDocs[0]?.storagePath) {
             const { downloadBlob } = await import('@/lib/azure-blob');
             const buffer = await downloadBlob(bankDocs[0].storagePath, 'upload-inbox');
-            try { bankData = JSON.parse(buffer.toString('utf-8')); } catch {}
+            try { bankData = JSON.parse(buffer.toString('utf-8')); bankSource = `Stored bank data (${bankDocs[0].documentName || bankDocs[0].id})`; } catch {}
           }
         } catch {}
       }
@@ -1090,7 +1091,15 @@ async function handleAccountingExtract(
         return {
           action: 'continue',
           nextNodeId: getNextNodeId(flow, node.id),
-          output: { populationData: bankData, dataTable: bankData, rowCount: bankData.length, source: 'bank_statements', fallbackUsed: true },
+          output: {
+            populationData: bankData, dataTable: bankData, rowCount: bankData.length,
+            source: 'bank_statements', fallbackUsed: true,
+            decisionLog: [
+              { step: 'Check accounting connection', result: 'No accounting system connected for this client' },
+              { step: 'Fallback to bank statement data', result: `Found ${bankData.length} transactions from: ${bankSource}` },
+            ],
+            summary: `No accounting system connected. Used bank statement data (${bankData.length} transactions) from: ${bankSource}.`,
+          },
         };
       }
       return { action: 'error', errorMessage: 'No accounting system connected and no bank statement data available. Connect Xero via the Opening tab, or extract bank statements first.' };
@@ -1174,6 +1183,7 @@ async function handleAccountingExtract(
     const duration = Date.now() - startTime;
     console.log(`[flow-engine] accounting_extract: ${connection.system} returned ${populationData.length} rows in ${duration}ms`);
 
+    const dateDesc = cutoffMode ? `Cut-off window: ${dateFrom} to ${dateTo}` : `Full period: ${dateFrom} to ${dateTo}`;
     return {
       action: 'continue',
       nextNodeId: getNextNodeId(flow, node.id),
@@ -1187,6 +1197,12 @@ async function handleAccountingExtract(
         dateRange: { from: dateFrom, to: dateTo },
         duration,
         ...(cutoffMode && { cutoffMode: true, periodEnd: engagement.period?.endDate?.toISOString().split('T')[0] }),
+        decisionLog: [
+          { step: 'Check accounting connection', result: `Connected to ${connection.system} (${connection.orgName || 'N/A'})` },
+          { step: 'Determine date range', result: dateDesc },
+          { step: 'Extract transactions', result: `Retrieved ${populationData.length} transactions for account codes: ${accountCodes.join(', ') || 'all'} in ${duration}ms` },
+        ],
+        summary: `Extracted ${populationData.length} transactions from ${connection.system} (${connection.orgName || ''}). ${dateDesc}. Account codes: ${accountCodes.join(', ') || 'all'}.`,
       },
     };
   } catch (err: any) {
