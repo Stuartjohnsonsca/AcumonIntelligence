@@ -858,11 +858,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
 
       {/* Integrated TB rows with expandable tests */}
-      <div className="bg-white rounded border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded border border-slate-200 overflow-hidden overflow-x-auto max-w-full">
         {filteredRows.length === 0 ? (
           <div className="p-3 text-center text-[10px] text-slate-400">No items for this selection.</div>
         ) : (
-          <table className="w-full text-[10px]" style={{ tableLayout: 'auto' }}>
+          <table className="w-full text-[10px]" style={{ tableLayout: 'fixed' }}>
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="w-5"></th>
@@ -1010,10 +1010,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                             <input type="checkbox" checked={isApplicable} onChange={() => toggleTestApplicable(testKey)}
                               className="w-2.5 h-2.5 rounded border-slate-300 cursor-pointer" title={isApplicable ? 'Applicable — click to exclude' : 'Not applicable — click to include'} />
                           </td>
-                          <td colSpan={isThreeLevel ? 8 : 7} className="py-0.5 pl-5">
-                            <div className="flex items-center gap-1.5 flex-wrap">
+                          <td colSpan={isThreeLevel ? 8 : 7} className="py-0.5 pl-5 pr-2">
+                            <div className="flex items-center gap-1.5">
                               <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
-                              <span className={`text-[9px] flex-1 ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}>{test.description}</span>
+                              <span className={`text-[9px] min-w-0 truncate ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`} style={{maxWidth: '60%'}}>{test.description}</span>
                               {isApplicable && (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); setActiveExecution(isExecutionOpen ? null : testKey); }}
