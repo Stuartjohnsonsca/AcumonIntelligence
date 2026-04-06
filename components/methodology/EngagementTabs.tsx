@@ -95,16 +95,34 @@ const TAB_TO_SCHEDULE: Record<string, string> = {
 type TabKey = typeof TABS[number]['key'];
 
 // Error boundary to catch tab-level crashes without taking down the whole page
-class TabErrorBoundary extends Component<{ tabName: string; children: ReactNode }, { error: Error | null }> {
-  state = { error: null as Error | null };
-  static getDerivedStateFromError(error: Error) { return { error }; }
+// Automatically reports caught errors to /api/error-report for centralised logging
+class TabErrorBoundary extends Component<{ tabName: string; engagementId?: string; children: ReactNode }, { error: Error | null; reported: boolean }> {
+  state = { error: null as Error | null, reported: false };
+  static getDerivedStateFromError(error: Error) { return { error, reported: false }; }
+  componentDidCatch(error: Error) {
+    if (!this.state.reported) {
+      this.setState({ reported: true });
+      fetch('/api/error-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `${this.props.tabName}: ${error.message}`,
+          stack: error.stack,
+          route: typeof window !== 'undefined' ? window.location.pathname : undefined,
+          engagementId: this.props.engagementId,
+          context: { tabName: this.props.tabName },
+        }),
+      }).catch(() => {}); // Fire and forget
+    }
+  }
   render() {
     if (this.state.error) {
       return (
         <div className="p-6 text-center">
           <div className="text-red-500 font-semibold mb-2">Error loading {this.props.tabName}</div>
           <pre className="text-xs text-red-400 bg-red-50 rounded p-3 max-h-[200px] overflow-auto text-left whitespace-pre-wrap">{this.state.error.message}{'\n'}{this.state.error.stack?.split('\n').slice(0, 5).join('\n')}</pre>
-          <button onClick={() => this.setState({ error: null })} className="mt-3 text-xs text-blue-600 hover:text-blue-800 underline">Try Again</button>
+          <button onClick={() => this.setState({ error: null, reported: false })} className="mt-3 text-xs text-blue-600 hover:text-blue-800 underline">Try Again</button>
+          <div className="mt-1 text-[10px] text-slate-400">This error has been logged for investigation.</div>
         </div>
       );
     }
@@ -382,7 +400,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           </div>
           {/* Main area: Audit Plan */}
           <div className="flex-1 min-w-0 p-4 overflow-auto">
-            <TabErrorBoundary tabName="Audit Plan">
+            <TabErrorBoundary tabName="Audit Plan" engagementId={engagement.id}>
               <AuditPlanPanel engagementId={engagement.id} clientId={engagement.clientId} periodId={engagement.periodId} onClose={() => setShowAuditPlan(false)} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />
             </TabErrorBoundary>
           </div>
@@ -429,10 +447,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               teamMembers={teamMembers}
               headerActions={undefined}
             >
-              <TabErrorBoundary tabName={signOffTitle}>{renderTabContent()}</TabErrorBoundary>
+              <TabErrorBoundary tabName={signOffTitle} engagementId={engagement.id}>{renderTabContent()}</TabErrorBoundary>
             </SignOffHeader>
           ) : (
-            <TabErrorBoundary tabName={activeTab}>{renderTabContent()}</TabErrorBoundary>
+            <TabErrorBoundary tabName={activeTab} engagementId={engagement.id}>{renderTabContent()}</TabErrorBoundary>
           )}
 
           {/* Start Audit button — only shown on Opening tab when engagement is pre_start */}

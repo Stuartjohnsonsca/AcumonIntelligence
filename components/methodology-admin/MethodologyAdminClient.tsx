@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle } from 'lucide-react';
 
 const tiles = [
   {
@@ -43,6 +43,14 @@ const tiles = [
     icon: Users,
     color: 'bg-rose-50 border-rose-200 hover:bg-rose-100',
     iconColor: 'text-rose-600',
+  },
+  {
+    title: 'Error Log',
+    description: 'Centralised error tracking across all engagements — diagnose and resolve issues',
+    href: '/methodology-admin/error-log',
+    icon: AlertTriangle,
+    color: 'bg-red-50 border-red-200 hover:bg-red-100',
+    iconColor: 'text-red-600',
   },
   {
     title: 'Template Documents',

@@ -29,6 +29,10 @@ export async function logActivity(params: {
 
 export async function logError(params: {
   userId?: string;
+  firmId?: string;
+  engagementId?: string;
+  clientId?: string;
+  periodEnd?: string;
   route?: string;
   tool?: string;
   message: string;
@@ -42,7 +46,15 @@ export async function logError(params: {
   try {
     await prisma.errorLog.create({
       data: {
-        ...params,
+        userId: params.userId,
+        firmId: params.firmId,
+        engagementId: params.engagementId,
+        clientId: params.clientId,
+        periodEnd: params.periodEnd,
+        route: params.route,
+        tool: params.tool,
+        message: params.message,
+        stack: params.stack,
         context: params.context ? JSON.stringify(params.context) : null,
         severity: params.severity || 'error',
       },

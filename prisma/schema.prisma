@@ -671,18 +671,27 @@ model ActivityLog {
 }
 
 model ErrorLog {
-  id        String   @id @default(uuid())
-  userId    String?  @map("user_id")
-  route     String?  // e.g. '/api/doc-summary/analyse'
-  tool      String?  // e.g. 'doc-summary', 'data-extraction'
-  message   String
-  stack     String?
-  context   String?  // JSON string with request context
-  severity  String   @default("error") // 'error', 'warning', 'critical'
-  resolved  Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
+  id            String   @id @default(uuid())
+  userId        String?  @map("user_id")
+  firmId        String?  @map("firm_id")
+  engagementId  String?  @map("engagement_id")
+  clientId      String?  @map("client_id")
+  periodEnd     String?  @map("period_end")    // e.g. "2025-03-31"
+  route         String?  // e.g. '/api/doc-summary/analyse'
+  tool          String?  // e.g. 'doc-summary', 'data-extraction'
+  message       String
+  stack         String?
+  context       String?  // JSON string with request context
+  severity      String   @default("error") // 'error', 'warning', 'critical'
+  resolved      Boolean  @default(false)
+  resolvedAt    DateTime? @map("resolved_at")
+  resolvedById  String?  @map("resolved_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   @@index([userId])
+  @@index([firmId])
+  @@index([engagementId])
+  @@index([clientId])
   @@index([route])
   @@index([severity])
   @@index([createdAt])

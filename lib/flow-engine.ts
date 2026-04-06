@@ -588,6 +588,7 @@ async function handleBankStatementExtract(
             console.log(`[flow-engine] Azure DI: ${result.transactions.length} txns from ${u.fileName}`);
           } catch (err) {
             console.error(`[flow-engine] Azure DI failed for ${u.fileName}:`, (err as Error).message);
+            import('@/lib/logger').then(l => l.logError({ engagementId, route: 'flow-engine/bankExtract', tool: 'azure-di', message: `Azure DI extraction failed: ${u.fileName}: ${(err as Error).message}`, stack: (err as Error).stack, context: { executionId, fileName: u.fileName }, severity: 'error' })).catch(() => {});
             statements.push({ fileName: u.fileName, error: (err as Error).message, transactionCount: 0 });
           }
 
@@ -1302,6 +1303,8 @@ async function handleFetchEvidenceOrPortal(
         }
       } catch (err) {
         console.error(`[flow-engine] Xero evidence retrieval FAILED for ref=${reference} invoiceID=${invoiceID}: ${(err as Error).message}\n${(err as Error).stack?.split('\n').slice(0, 3).join('\n')}`);
+        const { logError: le } = await import('@/lib/logger');
+        le({ engagementId, route: 'flow-engine/fetchEvidence', tool: 'xero', message: `Xero evidence fetch failed: ref=${reference} id=${invoiceID}: ${(err as Error).message}`, stack: (err as Error).stack?.split('\n').slice(0, 5).join('\n'), context: { executionId, reference, invoiceID, contact: loopItem.contact }, severity: 'error' }).catch(() => {});
         // Fall through to portal request
       }
     }
@@ -1926,7 +1929,10 @@ async function handleAnalyseCutOff(
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
       output: { result, summary, cutOffDate: periodEnd, transactionsBefore: beforePE.length, transactionsAfter: afterPE.length, flaggedItems: flagged, dataTable: bankData, populationData: bankData, totalInWindow: cutOffTxns.length },
     };
-  } catch (err: any) { return { action: 'error', errorMessage: `Cut-off analysis failed: ${err.message}` }; }
+  } catch (err: any) {
+    import('@/lib/logger').then(l => l.logError({ engagementId, route: 'flow-engine/analyseCutOff', tool: 'test-execution', message: `Cut-off analysis failed: ${err.message}`, stack: err.stack, context: { executionId }, severity: 'error' })).catch(() => {});
+    return { action: 'error', errorMessage: `Cut-off analysis failed: ${err.message}` };
+  }
 }
 
 // ─── Programmatic Large & Unusual Transaction Analysis ───
@@ -1979,7 +1985,10 @@ async function handleAnalyseLargeUnusual(
         decisionLog: result.decisionLog,
       },
     };
-  } catch (err: any) { return { action: 'error', errorMessage: 'Large & unusual analysis failed: ' + (err.message || String(err)) }; }
+  } catch (err: any) {
+    import('@/lib/logger').then(l => l.logError({ engagementId, route: 'flow-engine/analyseLargeUnusual', tool: 'test-execution', message: `Large & unusual analysis failed: ${err.message}`, stack: err.stack, context: { executionId }, severity: 'error' })).catch(() => {});
+    return { action: 'error', errorMessage: 'Large & unusual analysis failed: ' + (err.message || String(err)) };
+  }
 }
 /* Old scoring code removed — now in lib/large-unusual-scorer.ts */
 
@@ -2933,6 +2942,18 @@ export async function processNextNode(executionId: string): Promise<void> {
       }
     } catch (err: any) {
       result = { action: 'error', errorMessage: err.message || 'Node execution failed' };
+      // Log to persistent error log
+      const { logError } = await import('@/lib/logger');
+      logError({
+        engagementId: execution.engagementId,
+        firmId: execution.firmId,
+        route: 'flow-engine/executeFlow',
+        tool: 'test-execution',
+        message: `Node ${currentNode.type}/${currentNode.data?.label || currentNode.id} failed: ${err.message}`,
+        stack: err.stack?.split('\n').slice(0, 5).join('\n'),
+        context: { executionId, nodeId: currentNode.id, nodeType: currentNode.type, testDescription: execution.testDescription, fsLine: execution.fsLine },
+        severity: 'error',
+      }).catch(() => {});
     }
 
     // Update node run (if created)
