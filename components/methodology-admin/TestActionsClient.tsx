@@ -233,20 +233,62 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
                     </div>
                   )}
 
-                  {/* Steps (for multi-step actions like Large & Unusual) */}
-                  {execDef.steps && (
+                  {/* Actual Test Flow Steps (from the test definition) */}
+                  {details?.flowSteps?.length > 0 && (
                     <div>
-                      <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">Steps</div>
+                      <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">
+                        Test Flow: {details.testName || 'N/A'}
+                      </div>
+                      {details.testDescription && <p className="text-[10px] text-slate-500 mb-2">{details.testDescription}</p>}
                       <div className="space-y-1.5">
-                        {execDef.steps.map((step: any, si: number) => (
-                          <div key={si} className="flex gap-2 bg-white rounded border border-indigo-100 px-3 py-2">
-                            <span className="text-[10px] font-bold text-indigo-500 shrink-0 mt-0.5">{step.step || si + 1}.</span>
-                            <div className="flex-1">
-                              <div className="text-xs font-medium text-slate-700">{step.label}</div>
-                              <div className="text-[10px] text-slate-500 mt-0.5">{step.description}</div>
-                              {step.inputType && <span className="text-[8px] px-1 py-0 bg-purple-100 text-purple-600 rounded mt-1 inline-block">{step.inputType}</span>}
-                              {step.type && <span className="text-[8px] px-1 py-0 bg-amber-100 text-amber-600 rounded mt-1 ml-1 inline-block">{step.type}: {step.waitFor}</span>}
+                        {details.flowSteps.map((step: any, si: number) => (
+                          <div key={si} className="bg-white rounded border border-indigo-100 px-3 py-2 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-indigo-500 shrink-0">{si + 1}.</span>
+                              <span className="text-xs font-medium text-slate-700">{step.label}</span>
+                              {step.type === 'wait' && <span className="text-[8px] px-1 py-0 bg-orange-100 text-orange-600 rounded">Pauses — waits for: {step.waitFor}</span>}
+                              {step.type === 'forEach' && <span className="text-[8px] px-1 py-0 bg-blue-100 text-blue-600 rounded">Loop over: {step.collection}</span>}
+                              {step.inputType && <span className="text-[8px] px-1 py-0 bg-purple-100 text-purple-600 rounded">{step.inputType}</span>}
+                              {step.assignee && <span className="text-[8px] px-1 py-0 bg-slate-100 text-slate-600 rounded">{step.assignee}</span>}
                             </div>
+                            {/* What this step does */}
+                            <div className="text-[10px] text-slate-500 pl-5">
+                              {step.inputType === 'accounting_extract_or_bank' && '→ Tries to extract transactions from connected accounting system (Xero). If no connection, falls back to previously extracted bank statement data.'}
+                              {step.inputType === 'accounting_extract' && '→ Extracts transactions from the connected accounting system (Xero) for the audit period.'}
+                              {step.inputType === 'accounting_extract_cutoff' && '→ Extracts transactions from Xero for the 4-week cut-off window (±14 days from period end).'}
+                              {step.inputType === 'analyse_large_unusual' && '→ Programmatic analysis: flags items above PM, round numbers, weekend transactions, related party keywords, reversals, foreign transfers, and 11 more categories. Full dataset shown with flags highlighted.'}
+                              {step.inputType === 'analyse_cut_off' && '→ Filters transactions in the cut-off window, flags items above CT, determines if recorded in correct period.'}
+                              {step.inputType === 'compare_bank_to_tb' && '→ Extracts closing balances from bank data, compares to TB figures, calculates differences.'}
+                              {step.inputType === 'fetch_evidence_or_portal' && '→ Tries to retrieve invoice from Xero by reference number. If not found or not connected, creates a portal request asking the client to upload evidence.'}
+                              {step.inputType === 'require_prior_evidence' && '→ Checks if required evidence (e.g. bank data) has already been extracted and stored.'}
+                              {step.waitFor === 'sampling' && '→ Shows the full population to the auditor. Auditor reviews flagged items and selects which to investigate. This is judgemental selection, not statistical sampling.'}
+                            </div>
+                            {/* Portal template details */}
+                            {step.portalTemplate && (
+                              <div className="pl-5 mt-1 border-l-2 border-indigo-200">
+                                <div className="text-[9px] text-indigo-500 font-medium">Portal message to client:</div>
+                                <div className="text-[9px] text-slate-600 mt-0.5">
+                                  <span className="text-slate-400">Subject:</span> {step.portalTemplate.subject}
+                                </div>
+                                <pre className="text-[9px] text-slate-500 whitespace-pre-wrap mt-0.5">{step.portalTemplate.message}</pre>
+                              </div>
+                            )}
+                            {/* AI instruction */}
+                            {step.systemInstruction && (
+                              <div className="pl-5 mt-1 border-l-2 border-purple-200">
+                                <div className="text-[9px] text-purple-500 font-medium">AI instruction:</div>
+                                <p className="text-[9px] text-slate-500 mt-0.5">{step.systemInstruction}</p>
+                              </div>
+                            )}
+                            {/* Evidence types */}
+                            {step.evidenceTypes && (
+                              <div className="pl-5 flex gap-1 mt-1">
+                                <span className="text-[8px] text-slate-400">Accepts:</span>
+                                {step.evidenceTypes.map((et: string, ei: number) => (
+                                  <span key={ei} className="text-[8px] px-1 py-0 bg-green-50 border border-green-200 rounded text-green-700">{et}</span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

@@ -22,7 +22,32 @@ export default async function TestActionsPage() {
       where: { firmId: session.user.firmId, code: { in: ['fetch_evidence_accounting', 'large_unusual_items'] } },
     });
     for (const tt of systemTestTypes) {
-      systemActionDetails[tt.code] = { name: tt.name, code: tt.code, actionType: tt.actionType, executionDef: tt.executionDef };
+      // Also find the test that uses this type code and get its flow
+      const test = await prisma.methodologyTest.findFirst({
+        where: { firmId: session.user.firmId, testTypeCode: tt.code },
+        select: { name: true, flow: true, description: true },
+      });
+      const flow = test?.flow as any;
+      const flowSteps = flow?.nodes
+        ?.filter((n: any) => n.type !== 'start' && n.type !== 'end')
+        ?.map((n: any) => ({
+          label: n.data?.label || n.type,
+          type: n.type,
+          inputType: n.data?.inputType || null,
+          assignee: n.data?.assignee || null,
+          waitFor: n.data?.waitFor || null,
+          collection: n.data?.collection || null,
+          portalTemplate: n.data?.executionDef?.portalFallbackTemplate || n.data?.executionDef?.requestTemplate || null,
+          evidenceTypes: n.data?.executionDef?.evidenceTypes || null,
+          systemInstruction: n.data?.executionDef?.systemInstruction || null,
+        })) || [];
+
+      systemActionDetails[tt.code] = {
+        name: tt.name, code: tt.code, actionType: tt.actionType,
+        executionDef: tt.executionDef,
+        testName: test?.name, testDescription: test?.description,
+        flowSteps,
+      };
     }
   } catch {}
 
