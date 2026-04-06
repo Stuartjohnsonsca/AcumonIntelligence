@@ -100,60 +100,61 @@ export interface VerificationCheck {
   priority: number;      // Lower = higher priority (shown first)
 }
 
-export const VERIFICATION_CHECKS: Record<string, VerificationCheck[]> = {
-  'Completeness': [
-    { key: 'population_coverage', label: 'Population Coverage', shortLabel: 'Pop', description: 'Verify all items in the population have supporting evidence and none are missing', priority: 1 },
-    { key: 'amount', label: 'Amount Match', shortLabel: 'Amt', description: 'Verify the amount on the evidence agrees to the ledger amount', priority: 2 },
-  ],
-  'Occurrence & Accuracy': [
-    { key: 'amount', label: 'Amount Match', shortLabel: 'Amt', description: 'Verify the amount on the evidence exactly matches the recorded transaction amount', priority: 1 },
-    { key: 'existence_check', label: 'Transaction Occurred', shortLabel: 'Occ', description: 'Verify the transaction actually occurred — evidence of goods/services delivered', priority: 2 },
-  ],
-  'Cut Off': [
-    { key: 'date', label: 'Date Match', shortLabel: 'Date', description: 'Verify the document date matches the recorded transaction date', priority: 1 },
-    { key: 'period', label: 'Period Check', shortLabel: 'Period', description: 'Verify the transaction falls within the correct accounting period (before/after period end)', priority: 1 },
-  ],
-  'Classification': [
-    { key: 'account_classification', label: 'Account Classification', shortLabel: 'Class', description: 'Verify the transaction is recorded in the correct account and classification', priority: 1 },
-  ],
-  'Presentation': [
-    { key: 'disclosure', label: 'Disclosure', shortLabel: 'Disc', description: 'Verify the transaction is properly presented and disclosed in the financial statements', priority: 1 },
-  ],
-  'Existence': [
-    { key: 'existence_check', label: 'Exists', shortLabel: 'Exists', description: 'Verify the asset, liability or transaction exists — physical evidence or third-party confirmation', priority: 1 },
-    { key: 'amount', label: 'Amount Match', shortLabel: 'Amt', description: 'Verify the recorded amount agrees to supporting evidence', priority: 2 },
-  ],
-  'Valuation': [
-    { key: 'amount', label: 'Amount Match', shortLabel: 'Amt', description: 'Verify the valuation amount is correctly calculated and supported', priority: 1 },
-    { key: 'calculation', label: 'Calculation Check', shortLabel: 'Calc', description: 'Verify mathematical accuracy of the valuation calculation', priority: 2 },
-  ],
-  'Rights & Obligations': [
-    { key: 'entity_match', label: 'Entity Match', shortLabel: 'Entity', description: 'Verify the entity named on the evidence is the audit client (rights holder or obligor)', priority: 1 },
-    { key: 'ownership', label: 'Ownership', shortLabel: 'Own', description: 'Verify the client has legal ownership or obligation for the recorded item', priority: 2 },
-  ],
-};
+// Standard 4 verification columns — always shown regardless of assertions
+export const STANDARD_VERIFICATION_COLUMNS: VerificationCheck[] = [
+  {
+    key: 'match',
+    label: 'Match',
+    shortLabel: 'Match',
+    description: 'Does the evidence match the item? Checks amount agreement, description consistency, and whether the account code is appropriate for this type of transaction.',
+    priority: 1,
+  },
+  {
+    key: 'period',
+    label: 'Period',
+    shortLabel: 'Period',
+    description: 'Does the item indicate any risk to the correct allocation period? Checks whether the transaction date and evidence date fall within the correct accounting period.',
+    priority: 2,
+  },
+  {
+    key: 'disclosure',
+    label: 'Disclosure',
+    shortLabel: 'Disclosure',
+    description: 'Does the evidence indicate any specific additional financial statement disclosure requirement? E.g. related party, contingent liability, subsequent event.',
+    priority: 3,
+  },
+  {
+    key: 'audit',
+    label: 'Audit',
+    shortLabel: 'Audit',
+    description: 'Does the evidence indicate that the item falls outside of normal audit procedures and needs a special check? E.g. unusual terms, complex arrangements, fraud indicators.',
+    priority: 4,
+  },
+];
 
-// The consistency check always applies regardless of assertions
-export const CONSISTENCY_CHECK: VerificationCheck = {
-  key: 'consistency', label: 'Consistency', shortLabel: 'Consist',
-  description: 'Verify the description on the evidence is not inconsistent with the account code description',
-  priority: 99,
-};
+// Legacy mapping — still used by getVerificationChecks for backward compatibility
+export const VERIFICATION_CHECKS: Record<string, VerificationCheck[]> = {};
+
+export const CONSISTENCY_CHECK: VerificationCheck = STANDARD_VERIFICATION_COLUMNS[0];
 
 /**
  * Get ordered verification checks for a set of assertions.
  * Deduplicates by key, orders by priority, always includes consistency.
  */
-export function getVerificationChecks(assertions: string[]): VerificationCheck[] {
+export function getVerificationChecks(_assertions: string[]): VerificationCheck[] {
+  // Always return the standard 4 columns — Match, Period, Disclosure, Audit
+  return [...STANDARD_VERIFICATION_COLUMNS];
+}
+
+// Legacy function kept for reference — no longer used
+function _legacyGetVerificationChecks(assertions: string[]): VerificationCheck[] {
   const checkMap = new Map<string, VerificationCheck>();
 
-  // Normalise assertions and collect checks
   for (const rawAssertion of assertions) {
     const normalised = Object.entries(ASSERTION_SHORT_LABELS).find(([, short]) =>
       short === assertionShortLabel(rawAssertion)
     )?.[0] || rawAssertion;
 
-    // Find in VERIFICATION_CHECKS using exact or partial match
     const checks = VERIFICATION_CHECKS[normalised] ||
       Object.entries(VERIFICATION_CHECKS).find(([key]) =>
         key.toLowerCase().includes(normalised.toLowerCase()) ||

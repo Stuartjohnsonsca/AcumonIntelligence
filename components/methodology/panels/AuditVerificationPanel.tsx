@@ -57,6 +57,52 @@ function fmt(n: number | null | undefined): string {
   return n < 0 ? `(${f})` : f;
 }
 
+/**
+ * VerificationCircle — the core interaction element for each check column.
+ *
+ * States:
+ * - hollow green circle: AI assessed as agreeing (not yet confirmed by user)
+ * - hollow red circle: AI assessed as not agreeing
+ * - solid green circle: user confirmed agreement (name + timestamp)
+ * - solid red circle: user confirmed disagreement (name + timestamp)
+ * - grey circle: AI could not assess (insufficient evidence)
+ *
+ * Clicks:
+ * - 1st click on hollow: makes solid (confirms AI assessment, records name+timestamp)
+ * - 2nd click on solid: switches colour (green→red or red→green, updates name+timestamp)
+ */
+function VerificationCircle({ aiStatus, userStatus, userName, timestamp, onClick }: {
+  aiStatus: 'pass' | 'fail' | 'pending'; // AI's assessment
+  userStatus?: 'pass' | 'fail' | null; // User's override (null = not confirmed)
+  userName?: string;
+  timestamp?: string;
+  onClick?: () => void;
+}) {
+  const isConfirmed = userStatus != null;
+  const effectiveStatus = userStatus ?? aiStatus;
+  const isGreen = effectiveStatus === 'pass';
+  const isRed = effectiveStatus === 'fail';
+  const isPending = aiStatus === 'pending' && !isConfirmed;
+
+  const dateStr = timestamp ? new Date(timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) + ' ' + new Date(timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
+  const title = isPending ? 'Not assessed — insufficient evidence'
+    : isConfirmed ? `${isGreen ? 'Agrees' : 'Does not agree'} — confirmed by ${userName} on ${dateStr}`
+    : `AI assessment: ${isGreen ? 'Agrees' : 'Does not agree'} — click to confirm`;
+
+  return (
+    <button
+      onClick={onClick}
+      className="w-4 h-4 rounded-full border-2 transition-all cursor-pointer hover:scale-110"
+      style={{
+        borderColor: isPending ? '#cbd5e1' : isGreen ? '#22c55e' : '#ef4444',
+        backgroundColor: isPending ? 'transparent' : isConfirmed ? (isGreen ? '#22c55e' : '#ef4444') : 'transparent',
+      }}
+      title={title}
+    />
+  );
+}
+
+// Legacy check icon for backward compat
 function CheckIcon({ status }: { status: string }) {
   if (status === 'pass') return <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />;
   if (status === 'fail') return <XCircle className="h-3.5 w-3.5 text-red-500" />;
@@ -181,13 +227,14 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
               <th className="px-2 py-1 text-left border-r border-slate-200 cursor-help" title="Supplier or counterparty name from the evidence document">Seller</th>
               <th className="px-2 py-1 text-right border-r border-slate-200 w-20 cursor-help" title="Gross amount per the evidence document — compared against the sample amount">Gross</th>
               <th className="px-2 py-1 text-center border-r-2 border-green-200 w-14 cursor-help" title="Evidence status: obtained from Xero, uploaded by client, requested via portal, or pending">Status</th>
-              {/* Amber — dynamic verification checks from assertions */}
+              {/* Amber — standard 4 verification columns */}
               {verificationColumns.map((col, ci) => (
-                <th key={col.key} className={`px-2 py-1 text-center cursor-help ${ci < verificationColumns.length - 1 ? 'border-r border-slate-200' : ''} w-12`} title={col.description}>
+                <th key={col.key} className={`px-2 py-1 text-center cursor-help ${ci < verificationColumns.length - 1 ? 'border-r border-slate-200' : ''} w-14`} title={col.description}>
                   {col.shortLabel}
                 </th>
               ))}
               <th className="px-2 py-1 text-center w-14 cursor-help" title="Overall verification result: Pass if all checks satisfied, Fail if any material discrepancy found">Result</th>
+              <th className="px-2 py-1 text-center w-16 cursor-help" title="Actions: tick (no action needed), send to RI Matters, or send to Review Point">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -226,15 +273,37 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
                       }`}>{doc.status}</span>
                     ) : <span className="text-[8px] text-slate-300">—</span>}
                   </td>
-                  {/* Amber: Dynamic verification checks from assertions */}
+                  {/* Amber: 4 standard verification columns with circle interaction */}
                   {verificationColumns.map(col => {
                     const checkResult = (check as any)?.[col.key] || 'pending';
-                    return <td key={col.key} className="px-2 py-1.5 text-center border-r border-slate-100"><CheckIcon status={checkResult} /></td>;
+                    return (
+                      <td key={col.key} className="px-2 py-1.5 text-center border-r border-slate-100">
+                        <VerificationCircle
+                          aiStatus={checkResult}
+                          userStatus={null}
+                          onClick={() => {/* TODO: implement user click state management */}}
+                        />
+                      </td>
+                    );
                   })}
-                  <td className="px-2 py-1.5 text-center">
+                  <td className="px-2 py-1.5 text-center border-r border-slate-100">
                     {check?.overallResult === 'pass' && <span className="text-[8px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">PASS</span>}
                     {check?.overallResult === 'fail' && <span className="text-[8px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">FAIL</span>}
                     {(!check || check.overallResult === 'pending') && <span className="text-[8px] text-slate-300">—</span>}
+                  </td>
+                  {/* Action buttons */}
+                  <td className="px-1 py-1.5 text-center">
+                    <div className="flex items-center gap-0.5 justify-center">
+                      <button className="p-0.5 rounded hover:bg-green-50" title="No action needed">
+                        <CheckCircle2 className="h-3 w-3 text-green-400 hover:text-green-600" />
+                      </button>
+                      <button className="p-0.5 rounded hover:bg-red-50" title="Send to RI Matters">
+                        <span className="text-[7px] font-bold text-red-400 hover:text-red-600">RI</span>
+                      </button>
+                      <button className="p-0.5 rounded hover:bg-amber-50" title="Send to Review Point">
+                        <span className="text-[7px] font-bold text-amber-400 hover:text-amber-600">RP</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
