@@ -155,13 +155,39 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
       }));
     }
 
-    // Extract evidence from fetch_evidence steps (forEach body results)
+    // Extract evidence from forEach loop results AND individual fetch steps
+    const newEvidence: typeof evidence = [];
+
+    // 1. Check forEach loop completion results (accumulated per iteration)
+    const loopDoneStep = flowSteps.find(s => s.output?.loopCompleted && s.output?.results?.length > 0);
+    if (loopDoneStep?.output?.results) {
+      for (let ri = 0; ri < loopDoneStep.output.results.length; ri++) {
+        const r = loopDoneStep.output.results[ri];
+        if (!r) continue;
+        const inv = r.invoice;
+        const itemRef = r.reference || (sampleItems[ri]?.id) || String(ri + 1);
+        newEvidence.push({
+          itemId: itemRef,
+          docRef: inv?.InvoiceNumber || inv?.Reference || r.reference || r.documentName || '',
+          fileName: r.fileName || r.documentName || inv?.InvoiceNumber || '',
+          date: inv?.Date || inv?.DueDate || '',
+          seller: inv?.Contact?.Name || '',
+          net: Number(inv?.SubTotal || 0),
+          tax: Number(inv?.TotalTax || 0),
+          gross: Number(inv?.Total || 0),
+          status: r.found ? 'uploaded' as const : r.portalRequestCreated ? 'pending' as const : 'missing' as const,
+        });
+      }
+    }
+
+    // 2. Also check individual fetch steps (for single-iteration or current iteration)
     const evidenceSteps = flowSteps.filter(s => s.output?.evidenceSource || s.output?.invoice);
-    if (evidenceSteps.length > 0) {
-      const newEvidence = evidenceSteps.map((step, i) => {
+    if (newEvidence.length === 0 && evidenceSteps.length > 0) {
+      for (let si = 0; si < evidenceSteps.length; si++) {
+        const step = evidenceSteps[si];
         const inv = step.output?.invoice;
-        return {
-          itemId: step.output?.reference || String(i + 1),
+        newEvidence.push({
+          itemId: step.output?.reference || String(si + 1),
           docRef: inv?.InvoiceNumber || inv?.Reference || step.output?.reference || '',
           fileName: step.output?.fileName || inv?.InvoiceNumber || '',
           date: inv?.Date || inv?.DueDate || '',
@@ -170,8 +196,11 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           tax: Number(inv?.TotalTax || 0),
           gross: Number(inv?.Total || 0),
           status: step.output?.found ? 'uploaded' as const : 'pending' as const,
-        };
-      });
+        });
+      }
+    }
+
+    if (newEvidence.length > 0) {
       setEvidence(newEvidence);
     }
   }, [flowSteps, samplingCompleted, samplingResults]);
