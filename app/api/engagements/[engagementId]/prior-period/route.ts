@@ -123,7 +123,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         const prompts: Record<string, string> = {
           pp_letter_of_comment: `You are reviewing a prior period Letter of Comment (Management Letter). List each key point as a separate numbered item. For each point include: the finding/recommendation, management's response if any, and current status. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Aim for 5-10 points covering control deficiencies, recommendations, and outstanding items.`,
           pp_letter_of_representation: `You are reviewing a prior period Letter of Representation. List each key representation as a separate numbered item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover representations about: fraud awareness, going concern, related party transactions, completeness of information, compliance with laws, subsequent events. Aim for 6-10 points.`,
-          pp_financial_statements: `You are reviewing the prior period Financial Statements, focusing on the Audit Opinion. List each key finding as a separate item. Output as a JSON array of objects with fields: "point" (string), "detail" (string). Cover: opinion type (unqualified/qualified/adverse/disclaimer), emphasis of matter paragraphs, key audit matters, going concern assessment, material uncertainties. Aim for 4-8 points.`,
+          pp_financial_statements: `You are reviewing the prior period Financial Statements. Extract key information and present as a JSON array of objects with fields: "point" (string), "detail" (string). You MUST include these items in order:
+1. "Revenue" — the total revenue/turnover figure from the P&L
+2. "Total Assets" — the total assets figure from the Balance Sheet
+3. "Net Assets / Equity" — the net assets or shareholders equity figure
+4. "Staff Numbers" — average number of employees if disclosed
+5. "Industry / Principal Activity" — the nature of the business as described in the directors report or notes
+6. "Audit Opinion" — whether the prior audit opinion was unqualified, qualified, adverse, or disclaimer. If qualified, state the reason and which paragraphs were affected
+7. "Going Concern" — whether any going concern emphasis of matter or material uncertainty was reported
+8. "Key Audit Matters" — any KAMs highlighted in the audit report
+9. "Emphasis of Matter" — any other emphasis of matter paragraphs
+10. "Material Uncertainty" — any material uncertainties disclosed
+Extract actual monetary figures where available (e.g. "Revenue: £2,345,678"). If a figure is not found in the document, state "Not disclosed" in the detail.`,
         };
 
         await updateProgress({ phase: 'reading', message: 'Reading document...' });

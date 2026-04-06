@@ -231,7 +231,15 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                   {isLinked ? '✓' : '?'}
                 </span>
                 <div>
-                  <p className="text-sm font-medium text-slate-800">{doc.label}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-slate-800">{doc.label}</p>
+                    {summaries[doc.key] && (
+                      <span className="text-[8px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded-full font-medium">AI Reviewed</span>
+                    )}
+                    {docPoints.length > 0 && (
+                      <span className="text-[8px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded-full font-medium">{docPoints.length} point{docPoints.length !== 1 ? 's' : ''}</span>
+                    )}
+                  </div>
                   {isLinked && doc.documentName && <p className="text-[10px] text-slate-500">Linked: {doc.documentName}</p>}
                 </div>
               </div>
@@ -296,7 +304,8 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                 {/* Or select from existing */}
                 {(() => {
                   // Filter: show docs tagged for this section, or untagged docs not linked elsewhere
-                  const linkedDocIds = new Set(Object.values(data).filter(v => typeof v === 'string' && v.startsWith('doc:')).map(v => (v as string).replace('doc:', '')));
+                  const allLinks = docStatus.filter(d => d.documentId).map(d => d.documentId!);
+                  const linkedDocIds = new Set(allLinks);
                   const sectionDocs = repoDocs.filter(rd => {
                     const tags = rd.mappedItems as string[] | null;
                     if (tags && tags.includes(doc.key)) return true; // Tagged for this section
@@ -319,22 +328,33 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
               </div>
             )}
 
-            {/* AI Summary text box */}
+            {/* AI Summary — structured display */}
             {isExpanded && summaries[doc.key] && (
               <div className="border-t border-slate-200 px-4 py-3 bg-purple-50/30">
-                <div className="text-[10px] font-bold text-purple-600 uppercase mb-1">AI Summary</div>
-                <div className="text-xs text-slate-700 whitespace-pre-wrap bg-white rounded border border-purple-200 px-3 py-2 max-h-[150px] overflow-y-auto">
-                  {(() => {
-                    // Try to format as readable summary
-                    try {
-                      const parsed = JSON.parse(summaries[doc.key]);
-                      if (Array.isArray(parsed)) {
-                        return parsed.map((p: any, i: number) => `${i + 1}. ${p.point}: ${p.detail}`).join('\n\n');
-                      }
-                    } catch {}
-                    return summaries[doc.key];
-                  })()}
-                </div>
+                <div className="text-[10px] font-bold text-purple-600 uppercase mb-2">AI Summary</div>
+                {(() => {
+                  try {
+                    const parsed = JSON.parse(summaries[doc.key]);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                      return (
+                        <div className="space-y-2">
+                          {parsed.map((p: any, i: number) => (
+                            <div key={i} className="bg-white rounded border border-purple-100 px-3 py-2">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[9px] bg-purple-100 text-purple-700 rounded-full w-4 h-4 flex items-center justify-center shrink-0 mt-0.5 font-bold">{i + 1}</span>
+                                <div className="flex-1">
+                                  <p className="text-xs font-semibold text-slate-800">{p.point}</p>
+                                  <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">{p.detail}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+                  } catch {}
+                  return <div className="text-xs text-slate-700 whitespace-pre-wrap bg-white rounded border border-purple-200 px-3 py-2">{summaries[doc.key]}</div>;
+                })()}
               </div>
             )}
 
