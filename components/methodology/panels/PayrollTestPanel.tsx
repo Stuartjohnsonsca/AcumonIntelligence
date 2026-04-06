@@ -15,7 +15,7 @@ interface Props {
   onClose?: () => void;
 }
 
-type PayrollTab = 'lead' | 'payroll_recon' | 'hmrc_recon' | 'pensions_recon' | 'joiners_leavers';
+type PayrollTab = 'lead' | 'payroll_recon' | 'hmrc_recon' | 'pensions_recon' | 'joiners_leavers' | 'holiday_pay';
 
 const TABS: { key: PayrollTab; label: string; icon: any }[] = [
   { key: 'lead', label: 'Payroll Lead', icon: FileText },
@@ -23,6 +23,7 @@ const TABS: { key: PayrollTab; label: string; icon: any }[] = [
   { key: 'hmrc_recon', label: 'HMRC Recon', icon: Building2 },
   { key: 'pensions_recon', label: 'Pensions Recon', icon: Building2 },
   { key: 'joiners_leavers', label: 'Joiners & Leavers', icon: Users },
+  { key: 'holiday_pay', label: 'Holiday Pay', icon: Calculator },
 ];
 
 function fmt(v: number): string {
@@ -153,6 +154,13 @@ export function PayrollTestPanel({ engagementId, fsLine, onClose }: Props) {
             materiality={materiality}
             onChangeJoiners={(v: any) => autoSave('joiners', v)}
             onChangeLeavers={(v: any) => autoSave('leavers', v)}
+          />
+        )}
+        {activeTab === 'holiday_pay' && (
+          <HolidayPayTab
+            data={testData?.holidayPay}
+            materiality={materiality}
+            onChange={(v: any) => autoSave('holidayPay', v)}
           />
         )}
       </div>
@@ -762,6 +770,150 @@ function JoinersLeaversTab({ joiners, leavers, materiality, onChangeJoiners, onC
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Holiday Pay Tab ───
+
+function HolidayPayTab({ data, materiality, onChange }: { data: any; materiality: any; onChange: (v: any) => void }) {
+  const hp = data || { employees: [], policy: '', entitlement: 0, accrualMethod: '', accrualAmount: 0, liabilityAmount: 0, notes: '' };
+
+  function update(field: string, value: any) {
+    onChange({ ...hp, [field]: value });
+  }
+
+  function addEmployee() {
+    update('employees', [...(hp.employees || []), { name: '', entitlement: 0, taken: 0, remaining: 0, dailyRate: 0, accrual: 0, notes: '' }]);
+  }
+
+  function updateEmployee(idx: number, field: string, value: any) {
+    const updated = [...(hp.employees || [])];
+    updated[idx] = { ...updated[idx], [field]: value };
+    // Auto-calc remaining and accrual
+    if (['entitlement', 'taken'].includes(field)) {
+      updated[idx].remaining = (updated[idx].entitlement || 0) - (updated[idx].taken || 0);
+    }
+    if (['remaining', 'dailyRate'].includes(field) || ['entitlement', 'taken'].includes(field)) {
+      const remaining = (updated[idx].entitlement || 0) - (updated[idx].taken || 0);
+      updated[idx].remaining = remaining;
+      updated[idx].accrual = remaining * (updated[idx].dailyRate || 0);
+    }
+    onChange({ ...hp, employees: updated });
+  }
+
+  const totalAccrual = (hp.employees || []).reduce((s: number, e: any) => s + (e.accrual || 0), 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Policy & entitlement */}
+      <div className="border rounded-lg p-3 space-y-2">
+        <div className="text-[10px] font-bold text-slate-600 uppercase">Holiday Pay Policy</div>
+        <div className="grid grid-cols-3 gap-3 text-xs">
+          <div>
+            <label className="text-[10px] text-slate-500 block mb-0.5">Holiday Policy</label>
+            <select value={hp.policy || ''} onChange={e => update('policy', e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-300">
+              <option value="">Select...</option>
+              <option value="statutory">Statutory (28 days inc. bank holidays)</option>
+              <option value="enhanced">Enhanced (above statutory)</option>
+              <option value="unlimited">Unlimited</option>
+              <option value="accrual">Accrual basis</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-500 block mb-0.5">Standard Entitlement (days)</label>
+            <input type="number" value={hp.entitlement || ''} onChange={e => update('entitlement', parseFloat(e.target.value) || 0)}
+              className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-blue-300" />
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-500 block mb-0.5">Accrual Method</label>
+            <select value={hp.accrualMethod || ''} onChange={e => update('accrualMethod', e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-300">
+              <option value="">Select...</option>
+              <option value="daily_rate">Daily rate x days remaining</option>
+              <option value="proportion">Proportion of annual salary</option>
+              <option value="actual">Actual cost basis</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Employee holiday schedule */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] font-bold text-slate-600 uppercase">Employee Holiday Schedule (Sample)</div>
+          <button onClick={addEmployee} className="px-2 py-1 text-[9px] bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Employee</button>
+        </div>
+
+        {(hp.employees || []).length > 0 && (
+          <div className="border rounded overflow-auto">
+            <table className="text-[9px] border-collapse w-full">
+              <thead>
+                <tr className="bg-slate-100 border-b">
+                  <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Name</th>
+                  <th className="px-1.5 py-1 text-right font-semibold text-slate-600">Entitlement</th>
+                  <th className="px-1.5 py-1 text-right font-semibold text-slate-600">Taken</th>
+                  <th className="px-1.5 py-1 text-right font-semibold text-slate-600">Remaining</th>
+                  <th className="px-1.5 py-1 text-right font-semibold text-slate-600">Daily Rate</th>
+                  <th className="px-1.5 py-1 text-right font-semibold text-slate-600">Accrual</th>
+                  <th className="px-1.5 py-1 text-left font-semibold text-slate-600">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(hp.employees || []).map((emp: any, i: number) => (
+                  <tr key={i} className="border-b border-slate-50">
+                    <td className="px-0.5 py-0"><input value={emp.name || ''} onChange={e => updateEmployee(i, 'name', e.target.value)} className="w-full px-1 py-0.5 text-[9px] border-0 bg-transparent focus:bg-blue-50 focus:outline-none" /></td>
+                    <td className="px-0.5 py-0"><input type="number" value={emp.entitlement ?? ''} onChange={e => updateEmployee(i, 'entitlement', parseFloat(e.target.value) || 0)} className="w-full text-right px-1 py-0.5 text-[9px] border-0 bg-transparent focus:bg-blue-50 focus:outline-none font-mono" /></td>
+                    <td className="px-0.5 py-0"><input type="number" value={emp.taken ?? ''} onChange={e => updateEmployee(i, 'taken', parseFloat(e.target.value) || 0)} className="w-full text-right px-1 py-0.5 text-[9px] border-0 bg-transparent focus:bg-blue-50 focus:outline-none font-mono" /></td>
+                    <td className="px-0.5 py-0"><span className="block text-right px-1 py-0.5 font-mono text-slate-600">{emp.remaining || 0}</span></td>
+                    <td className="px-0.5 py-0"><input type="number" value={emp.dailyRate ?? ''} onChange={e => updateEmployee(i, 'dailyRate', parseFloat(e.target.value) || 0)} className="w-full text-right px-1 py-0.5 text-[9px] border-0 bg-transparent focus:bg-blue-50 focus:outline-none font-mono" /></td>
+                    <td className="px-0.5 py-0"><span className={`block text-right px-1 py-0.5 font-mono font-medium ${emp.accrual > 0 ? 'text-amber-600' : 'text-green-600'}`}>{fmt(emp.accrual || 0)}</span></td>
+                    <td className="px-0.5 py-0"><input value={emp.notes || ''} onChange={e => updateEmployee(i, 'notes', e.target.value)} className="w-full px-1 py-0.5 text-[9px] border-0 bg-transparent focus:bg-blue-50 focus:outline-none" /></td>
+                  </tr>
+                ))}
+                <tr className="bg-slate-100 font-bold">
+                  <td colSpan={5} className="px-1.5 py-1 text-right text-slate-700">Total Holiday Pay Accrual:</td>
+                  <td className="px-1.5 py-1 text-right font-mono text-amber-700">{fmt(totalAccrual)}</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Year-end liability comparison */}
+      <div className="border rounded-lg p-3 space-y-2">
+        <div className="text-[10px] font-bold text-slate-600 uppercase">Year-End Liability</div>
+        <div className="grid grid-cols-3 gap-3 text-xs">
+          <div>
+            <label className="text-[10px] text-slate-500 block mb-0.5">Accrual per calculation</label>
+            <div className="border border-slate-200 rounded px-2 py-1.5 text-xs font-mono bg-slate-50">{fmt(totalAccrual)}</div>
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-500 block mb-0.5">Accrual per TB / management</label>
+            <input type="number" value={hp.liabilityAmount ?? ''} onChange={e => update('liabilityAmount', parseFloat(e.target.value) || 0)}
+              className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-blue-300" />
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-500 block mb-0.5">Difference</label>
+            <div className={`border rounded px-2 py-1.5 text-xs font-mono font-medium ${
+              Math.abs(totalAccrual - (hp.liabilityAmount || 0)) > materiality.ct ? 'border-red-300 bg-red-50 text-red-700' : 'border-green-300 bg-green-50 text-green-700'
+            }`}>
+              {fmt(totalAccrual - (hp.liabilityAmount || 0))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Notes */}
+      <div>
+        <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Notes</label>
+        <textarea value={hp.notes || ''} onChange={e => update('notes', e.target.value)}
+          placeholder="Overall assessment of holiday pay calculation and accrual..."
+          className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs min-h-[60px] focus:outline-none focus:border-blue-300" />
       </div>
     </div>
   );

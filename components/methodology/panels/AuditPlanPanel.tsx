@@ -481,7 +481,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
   // Find tests for a row — uses TBCYvPY fsLevel/fsNote mapping to look up allocated tests.
   // The TB row's fsLevel is the key — set via AI Classification or manually in TBCYvPY.
-  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string, riskClassification?: string | null): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any; isIngest?: boolean; outputFormat?: string }[] {
+  function getTestsForRow(fsLevel: string | null, fsNote: string | null, desc: string, assertions: string[] | null, statement?: string, riskClassification?: string | null): { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any; isIngest?: boolean; outputFormat?: string | null }[] {
     // Build list of FS Line names to search — canonical mapped name + raw + fsNote
     const names = new Set<string>();
     if (fsLevel) {
@@ -522,7 +522,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       }
     }
 
-    const result: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any }[] = [];
+    const result: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any; isIngest?: boolean; outputFormat?: string | null }[] = [];
 
     for (const test of matchedTestsMap.values()) {
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
@@ -550,7 +550,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         flow: test.flow,
         executionDef: tt?.executionDef,
         isIngest: (test as any).isIngest || false,
-        outputFormat: (test as any).outputFormat || null,
+        outputFormat: (test as any).outputFormat || undefined,
       });
     }
     return result;
@@ -912,7 +912,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       : rmmMatch.overallRisk === 'Medium' ? 'Area of Focus' : 'AR'
                     ))
                   : null; // null = no RMM data, don't filter by risk
-                const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement, rowClassification);
+                const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement || undefined, rowClassification);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rowClassification === 'Significant Risk';
