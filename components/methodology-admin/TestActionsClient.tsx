@@ -58,6 +58,8 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
   }
 
   function removeAction(id: string) {
+    const action = actions.find(a => a.id === id);
+    if ((action as any)?.isSystem) return; // Cannot remove system actions
     setActions(actions.filter(a => a.id !== id));
     setSaved(false);
   }
