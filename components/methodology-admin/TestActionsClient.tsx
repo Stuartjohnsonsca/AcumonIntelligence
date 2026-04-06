@@ -10,6 +10,7 @@ interface TestAction {
   description: string;
   actionType: 'client' | 'ai' | 'human' | 'review';
   isReusable: boolean;
+  isSystem?: boolean; // System-generated actions cannot be edited or deleted
 }
 
 interface Props {
@@ -119,18 +120,25 @@ export function TestActionsClient({ initialActions }: Props) {
       </div>
 
       <div className="space-y-2">
-        {actions.map((action, i) => (
-          <div key={action.id} className={`border rounded-lg p-3 ${editingId === action.id ? 'border-blue-300 bg-blue-50/20' : 'border-slate-200'}`}>
+        {actions.map((action, i) => {
+          const isSystem = !!(action as any).isSystem;
+          return (
+          <div key={action.id} className={`border rounded-lg p-3 ${isSystem ? 'border-indigo-200 bg-indigo-50/20' : editingId === action.id ? 'border-blue-300 bg-blue-50/20' : 'border-slate-200'}`}>
             <div className="flex items-start gap-2">
               {/* Reorder */}
               <div className="flex flex-col gap-0.5 mt-1">
-                <button onClick={() => moveAction(action.id, -1)} disabled={i === 0} className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-20">
-                  <ChevronUp className="h-3 w-3 text-slate-500" />
-                </button>
-                <GripVertical className="h-3 w-3 text-slate-300" />
-                <button onClick={() => moveAction(action.id, 1)} disabled={i === actions.length - 1} className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-20">
-                  <ChevronDown className="h-3 w-3 text-slate-500" />
-                </button>
+                {!isSystem && (
+                  <>
+                    <button onClick={() => moveAction(action.id, -1)} disabled={i === 0} className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-20">
+                      <ChevronUp className="h-3 w-3 text-slate-500" />
+                    </button>
+                    <GripVertical className="h-3 w-3 text-slate-300" />
+                    <button onClick={() => moveAction(action.id, 1)} disabled={i === actions.length - 1} className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-20">
+                      <ChevronDown className="h-3 w-3 text-slate-500" />
+                    </button>
+                  </>
+                )}
+                {isSystem && <div className="w-3" />}
               </div>
 
               {/* Order number */}
@@ -139,44 +147,64 @@ export function TestActionsClient({ initialActions }: Props) {
               {/* Content */}
               <div className="flex-1 space-y-1.5">
                 <div className="flex items-center gap-2">
+                  {isSystem ? (
+                    <div className="flex-1 flex items-center gap-2">
+                      <span className="text-sm font-medium text-slate-800">{action.name}</span>
+                      <span className="text-[8px] px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded-full font-medium">System</span>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={action.name}
+                      onChange={e => updateAction(action.id, 'name', e.target.value)}
+                      onFocus={() => setEditingId(action.id)}
+                      onBlur={() => setEditingId(null)}
+                      placeholder="Action name (e.g. Select Sample)"
+                      className="flex-1 text-sm font-medium border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                  )}
+                  {isSystem ? (
+                    <span className={`text-xs border rounded px-2 py-1 font-medium ${getColor(action.actionType)}`}>
+                      {ACTION_TYPES.find(t => t.value === action.actionType)?.label || action.actionType}
+                    </span>
+                  ) : (
+                    <select
+                      value={action.actionType}
+                      onChange={e => updateAction(action.id, 'actionType', e.target.value)}
+                      className={`text-xs border rounded px-2 py-1 font-medium ${getColor(action.actionType)}`}
+                    >
+                      {ACTION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  )}
+                </div>
+                {isSystem ? (
+                  <p className="text-xs text-slate-500 px-0.5">{action.description}</p>
+                ) : (
                   <input
                     type="text"
-                    value={action.name}
-                    onChange={e => updateAction(action.id, 'name', e.target.value)}
-                    onFocus={() => setEditingId(action.id)}
-                    onBlur={() => setEditingId(null)}
-                    placeholder="Action name (e.g. Select Sample)"
-                    className="flex-1 text-sm font-medium border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    value={action.description}
+                    onChange={e => updateAction(action.id, 'description', e.target.value)}
+                    placeholder="Description of what this action involves..."
+                    className="w-full text-xs border rounded px-2 py-1 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-400"
                   />
-                  <select
-                    value={action.actionType}
-                    onChange={e => updateAction(action.id, 'actionType', e.target.value)}
-                    className={`text-xs border rounded px-2 py-1 font-medium ${getColor(action.actionType)}`}
-                  >
-                    {ACTION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
-                </div>
-                <input
-                  type="text"
-                  value={action.description}
-                  onChange={e => updateAction(action.id, 'description', e.target.value)}
-                  placeholder="Description of what this action involves..."
-                  className="w-full text-xs border rounded px-2 py-1 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
+                )}
               </div>
 
-              {/* Actions */}
-              <div className="flex items-center gap-0.5 mt-1">
-                <button onClick={() => duplicateAction(action.id)} title="Duplicate" className="p-1 hover:bg-slate-100 rounded">
-                  <Copy className="h-3 w-3 text-slate-400" />
-                </button>
-                <button onClick={() => removeAction(action.id)} title="Remove" className="p-1 hover:bg-red-50 rounded">
-                  <Trash2 className="h-3 w-3 text-red-400" />
-                </button>
-              </div>
+              {/* Actions — hidden for system actions */}
+              {!isSystem && (
+                <div className="flex items-center gap-0.5 mt-1">
+                  <button onClick={() => duplicateAction(action.id)} title="Duplicate" className="p-1 hover:bg-slate-100 rounded">
+                    <Copy className="h-3 w-3 text-slate-400" />
+                  </button>
+                  <button onClick={() => removeAction(action.id)} title="Remove" className="p-1 hover:bg-red-50 rounded">
+                    <Trash2 className="h-3 w-3 text-red-400" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {actions.length === 0 && (
