@@ -471,9 +471,12 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     flowSteps.find(s => s.output?.selectedIndices?.length > 0)?.output?.selectedIndices || []
                   );
                   if (population.length === 0) return null;
-                  // Show all meaningful columns — exclude internal/metadata fields
-                  const SKIP_COLS = new Set(['sourceFile', 'tbAccountCode', 'functionalCurrency', 'page', 'fxRate']);
-                  const cols = Object.keys(population[0]).filter(k => !k.startsWith('_') && !SKIP_COLS.has(k));
+                  // Show all meaningful columns — exclude internal/metadata fields but keep _score
+                  const SKIP_COLS = new Set(['sourceFile', 'tbAccountCode', 'functionalCurrency', 'page', 'fxRate', '_index', '_flagged', '_belowThreshold', '_error', '_reasons']);
+                  const dataCols = Object.keys(population[0]).filter(k => !SKIP_COLS.has(k) && k !== '_score');
+                  const hasScores = population[0]?.hasOwnProperty('_score');
+                  // Put Score first if it exists, then data columns
+                  const cols = hasScores ? ['_score', ...dataCols] : dataCols;
                   const flaggedCount = population.filter((r: any) => r._flagged).length;
                   const hasFlagAnnotations = flaggedCount > 0;
                   return (
@@ -493,8 +496,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                             <tr className="bg-slate-100 border-b">
                               <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">#</th>
                               {(selectedIdx.size > 0 || hasFlagAnnotations) && <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">{hasFlagAnnotations ? '!' : 'Sel'}</th>}
-                              {cols.map(c => <th key={c} className="px-1.5 py-1 text-left font-semibold text-slate-600 whitespace-nowrap">{c}</th>)}
-                              {hasFlagAnnotations && <th className="px-1.5 py-1 text-left font-semibold text-red-600 whitespace-nowrap">Flags</th>}
+                              {cols.map(c => <th key={c} className={`px-1.5 py-1 text-left font-semibold whitespace-nowrap ${c === '_score' ? 'text-orange-700 bg-orange-50' : 'text-slate-600'}`}>{c === '_score' ? 'Score' : c}</th>)}
                             </tr>
                           </thead>
                           <tbody>
@@ -516,16 +518,10 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                                     </td>
                                   )}
                                   {cols.map(c => (
-                                    <td key={c} className="px-1.5 py-0.5 text-slate-600 whitespace-nowrap max-w-[200px] truncate" title={String(row[c] ?? '')}>
+                                    <td key={c} className={`px-1.5 py-0.5 whitespace-nowrap max-w-[200px] truncate ${c === '_score' ? 'font-bold text-center' : 'text-slate-600'} ${c === '_score' && isFlagged ? 'text-orange-700 bg-orange-50' : c === '_score' ? 'text-slate-400' : ''}`} title={c === '_score' && Array.isArray(row._reasons) ? row._reasons.join(', ') : String(row[c] ?? '')}>
                                       {typeof row[c] === 'number' ? row[c].toLocaleString('en-GB', { maximumFractionDigits: 2 }) : String(row[c] ?? '')}
                                     </td>
                                   ))}
-                                  {hasFlagAnnotations && (
-                                    <td className="px-1.5 py-0.5 text-[8px] max-w-[200px] truncate" title={row._flags || ''}>
-                                      {row._flags && <span className="px-1 py-0 rounded bg-orange-100 text-orange-700">{row._flags}</span>}
-                                      {row._score > 0 && <span className="text-[7px] text-slate-400 ml-1">({row._score}pts)</span>}
-                                    </td>
-                                  )}
                                 </tr>
                               );
                             })}
