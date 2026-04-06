@@ -117,7 +117,14 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
     // Don't skip if already populated — re-populate when flow steps change (e.g. evidence arrives)
     // if (sampleItems.length > 0) return;
 
-    // Find population data and selected indices from any step
+    // FIRST: check if actual sampleItems were passed (from review_flagged or similar)
+    // These are the real items the user selected — no index mapping needed
+    let actualSampleItems: any[] = [];
+    for (const step of flowSteps) {
+      if (step.output?.sampleItems?.length > 0) actualSampleItems = step.output.sampleItems;
+    }
+
+    // Find population data and selected indices from any step (fallback)
     let populationData: any[] = [];
     let selectedIndices: number[] = [];
 
@@ -133,11 +140,14 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
       selectedIndices = samplingResults.selectedIndices;
     }
 
-    if (populationData.length > 0 && (selectedIndices.length > 0 || samplingCompleted)) {
-      const items = selectedIndices.length > 0
+    // Use actual sampleItems if available, otherwise fall back to index mapping
+    const items = actualSampleItems.length > 0
+      ? actualSampleItems
+      : (selectedIndices.length > 0 && populationData.length > 0)
         ? selectedIndices.map(idx => populationData[idx]).filter(Boolean)
-        : populationData;
+        : (populationData.length > 0 && samplingCompleted) ? populationData : [];
 
+    if (items.length > 0) {
       setSampleItems(items.map((item: any, i: number) => {
         // Resolve amount: try amount/total first, then debit/credit for bank statements
         const amount = Number(item.amount || item.Amount || item.total || item.Total || item.lineAmount || item.LineAmount || 0)
