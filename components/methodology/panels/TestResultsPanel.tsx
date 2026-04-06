@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle2, XCircle, Clock, FileText, ChevronDown, ChevronUp, AlertTriangle, AlertOctagon, Download, Upload } from 'lucide-react';
+import { BankCheckResultPanel } from './BankCheckResultPanel';
 
 /**
  * TestResultsPanel — displays test results in the selected output format.
@@ -235,7 +236,19 @@ export function TestResultsPanel({
         </button>
         {sectionsOpen.results && (
           <div className="px-4 pb-4">
-            {outputFormat === 'document_summary' && effectiveOutput && (
+            {/* Bank Check to TB — detected by comparisons field in output */}
+            {effectiveOutput?.comparisons && effectiveOutput?.bankAccountCount != null && (
+              <BankCheckResultPanel
+                comparisons={effectiveOutput.comparisons}
+                bankMetadata={effectiveOutput.bankMetadata}
+                documentRefs={effectiveOutput.documentRefs}
+                summary={effectiveOutput.summary}
+                result={effectiveOutput.result}
+                clearlyTrivial={effectiveOutput.clearlyTrivialThreshold}
+                engagementId={engagementId}
+              />
+            )}
+            {outputFormat === 'document_summary' && effectiveOutput && !effectiveOutput.comparisons && (
               <DocumentSummaryOutput data={effectiveOutput} />
             )}
             {outputFormat === 'spreadsheet' && (
@@ -247,7 +260,7 @@ export function TestResultsPanel({
                 savedData={conclusionData?.followUpData?.spreadsheetData}
               />
             )}
-            {(outputFormat === 'three_section_sampling' || outputFormat === 'three_section_no_sampling' || !outputFormat) && effectiveOutput && (
+            {(outputFormat === 'three_section_sampling' || outputFormat === 'three_section_no_sampling' || !outputFormat) && effectiveOutput && !effectiveOutput.comparisons && (
               <ThreeSectionOutput data={effectiveOutput} />
             )}
             {!effectiveOutput && (

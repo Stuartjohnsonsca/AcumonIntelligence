@@ -148,25 +148,24 @@ function parseAzureDIResult(result: any, fileName: string): BankStatementResult 
     }
   }
 
-  // Post-process: if dates are empty, try to extract from description or row text
+  // Post-process: if dates are empty, try to extract from description text
+  // Each transaction must have its own date — no carrying forward between transactions
   const emptyDateCount = transactions.filter(t => !t.date).length;
-  if (emptyDateCount > 0 && emptyDateCount === transactions.length) {
-    console.log(`[AzureDI] All ${transactions.length} transactions have empty dates — attempting date inference`);
-    let lastDate = '';
+  if (emptyDateCount > 0) {
+    console.log(`[AzureDI] ${emptyDateCount}/${transactions.length} transactions have empty dates — attempting extraction from description`);
     for (const txn of transactions) {
-      // Try extracting a date pattern from the description
+      if (txn.date) continue; // Already has a date
+      // Try extracting a date pattern from the description text
       const descDateMatch = txn.description?.match(/(\d{1,2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*(\d{2,4})/i)
         || txn.description?.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
       if (descDateMatch) {
         txn.date = parseDate(descDateMatch[0]);
-        lastDate = txn.date;
-      } else if (lastDate) {
-        // Carry forward the last known date (many bank statements only show date on first txn of the day)
-        txn.date = lastDate;
       }
+      // Do NOT carry forward dates — each transaction must have its own date from the source document
     }
     const fixedCount = transactions.filter(t => t.date).length;
-    console.log(`[AzureDI] Date inference: fixed ${fixedCount}/${transactions.length} dates`);
+    const stillEmpty = transactions.filter(t => !t.date).length;
+    console.log(`[AzureDI] Date extraction: ${fixedCount} with dates, ${stillEmpty} still missing`);
   }
 
   // If no table extraction worked, fall back to line-by-line text parsing

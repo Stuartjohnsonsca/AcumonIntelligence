@@ -1291,7 +1291,40 @@ async function handleCompareBankToTB(
       }
     }
 
-    // 5. Determine overall result
+    // 5. Collect bank metadata from statement data in previous nodes
+    const bankMeta: any[] = [];
+    for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+      const out = nodeOut as any;
+      if (!out?.statements) continue;
+      for (const stmt of out.statements) {
+        if (stmt.bankName || stmt.accountNumber) {
+          bankMeta.push({
+            bankName: stmt.bankName || '',
+            sortCode: stmt.sortCode || '',
+            accountNumber: stmt.accountNumber || '',
+            accountHolder: stmt.accountHolder || '',
+            statementDate: stmt.statementDate || '',
+            fileName: stmt.fileName || '',
+            closingBalance: stmt.closingBalance,
+            openingBalance: stmt.openingBalance,
+            currency: stmt.currency || 'GBP',
+          });
+        }
+      }
+    }
+
+    // 6. Build document references for preview links
+    const documentRefs: any[] = [];
+    for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+      const out = nodeOut as any;
+      if (out?.documents?.length > 0) {
+        for (const doc of out.documents) {
+          documentRefs.push({ id: doc.id, name: doc.documentName || doc.fileName, storagePath: doc.storagePath });
+        }
+      }
+    }
+
+    // 7. Determine overall result
     const overallResult = differenceCount > 0 ? 'fail' : 'pass';
     const summary = `Compared ${bankData.length} bank transactions across ${accountBalances.size} account(s) to ${tbAccounts.length} TB account(s). ${matchCount} matched, ${differenceCount} with material differences. Total absolute difference: £${totalDifference.toFixed(2)}.`;
 
@@ -1301,8 +1334,13 @@ async function handleCompareBankToTB(
       output: {
         result: overallResult,
         summary,
+        // Simple 3-figure comparison table
         comparisons: results,
         dataTable: results,
+        // Bank metadata
+        bankMetadata: bankMeta,
+        documentRefs,
+        // Counts
         bankAccountCount: accountBalances.size,
         tbAccountCount: tbAccounts.length,
         totalTransactions: bankData.length,
