@@ -631,7 +631,20 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 </div>
                 <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={testForm.isIngest} onChange={e => setTestForm(prev => ({ ...prev, isIngest: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-slate-500" /><span className="text-sm text-slate-700">Ingest / Prerequisite</span></label>
               </div>
-              <div><label className="text-xs font-medium text-slate-600 block mb-1">Output Format</label><select value={testForm.outputFormat} onChange={e => setTestForm(prev => ({ ...prev, outputFormat: e.target.value }))} className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white"><option value="three_section_sampling">3-Section with Sampling</option><option value="three_section_no_sampling">3-Section without Sampling</option><option value="document_summary">Document Summary</option><option value="spreadsheet">Spreadsheet</option></select></div>
+              <div><label className="text-xs font-medium text-slate-600 block mb-1">Results Display</label><select value={testForm.outputFormat} onChange={e => setTestForm(prev => ({ ...prev, outputFormat: e.target.value }))} className="w-full border border-slate-300 rounded-md px-2 py-2 text-sm bg-white">
+                <optgroup label="Standard Displays">
+                  <option value="three_section_sampling">Sample & Verify (3-pane with sampling)</option>
+                  <option value="three_section_no_sampling">Data Table (3-pane without sampling)</option>
+                  <option value="document_summary">Document Summary (Key Terms + Findings)</option>
+                  <option value="spreadsheet">Spreadsheet (editable grid)</option>
+                </optgroup>
+                <optgroup label="Specialist Displays">
+                  <option value="bank_check_tb">Bank to TB Comparison (3-figure)</option>
+                  <option value="ranked_flagged">Ranked Flagged Items (scored & highlighted)</option>
+                  <option value="payroll_workpaper">Payroll Workpaper (6-tab)</option>
+                  <option value="reconciliation_grid">Reconciliation Grid (12-month)</option>
+                </optgroup>
+              </select></div>
             </div>
             <div className="flex items-center justify-end gap-2 mt-6">
               <Button onClick={() => setTestModalOpen(false)} size="sm" variant="outline">Cancel</Button>
