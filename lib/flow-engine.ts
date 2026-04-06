@@ -1608,121 +1608,146 @@ async function handleAnalyseLargeUnusual(
   flow: FlowData, node: FlowNode, ctx: ExecutionContext, executionId: string, engagementId: string,
 ): Promise<NodeResult> {
   try {
-    let fullPopulation: any[] = [];
-    let selectedIndices: number[] = [];
+    // 1. Get all transaction data
+    let allTxns: any[] = [];
     for (const [, nodeOut] of Object.entries(ctx.nodes)) {
       const out = nodeOut as any;
       if (!out) continue;
-      if (out.dataTable?.length > 0 && fullPopulation.length === 0) fullPopulation = out.dataTable;
-      if (out.populationData?.length > 0 && fullPopulation.length === 0) fullPopulation = out.populationData;
-      if (out.selectedIndices?.length > 0 && selectedIndices.length === 0) selectedIndices = out.selectedIndices;
+      if (out.dataTable?.length > 0 && allTxns.length === 0) allTxns = out.dataTable;
+      if (out.populationData?.length > 0 && allTxns.length === 0) allTxns = out.populationData;
     }
-    if (fullPopulation.length === 0) return { action: 'error', errorMessage: 'No transaction data found.' };
-
-    const bankData = selectedIndices.length > 0
-      ? selectedIndices.map(i => fullPopulation[i]).filter(Boolean)
-      : fullPopulation;
+    if (allTxns.length === 0) return { action: 'error', errorMessage: 'No transaction data found.' };
 
     const pm = (ctx.engagement as any)?.performanceMateriality || 0;
     const ct = (ctx.engagement as any)?.clearlyTrivial || 0;
 
-    // Unusual description keywords — broader patterns
-    const UNUSUAL_PATTERNS: { pattern: RegExp; category: string }[] = [
-      { pattern: /director|shareholder|owner/i, category: 'Related party — director/shareholder' },
-      { pattern: /loan|advance|lend/i, category: 'Loan/advance' },
-      { pattern: /intercompany|group|subsidiary|parent/i, category: 'Intercompany/group' },
-      { pattern: /related party/i, category: 'Related party' },
-      { pattern: /refund|reversal|correction|adjust/i, category: 'Reversal/correction' },
-      { pattern: /dividend|distribution/i, category: 'Distribution' },
-      { pattern: /settlement|legal|solicitor|court/i, category: 'Legal/settlement' },
-      { pattern: /penalty|fine|hmrc|tax/i, category: 'Tax/penalty' },
-      { pattern: /cash|atm|withdraw/i, category: 'Cash withdrawal' },
-      { pattern: /foreign|fx|transfer overseas|swift/i, category: 'Foreign/FX transfer' },
-      { pattern: /consultancy|management fee|advisory/i, category: 'Consultancy/management fee' },
-      { pattern: /donation|charity|gift/i, category: 'Donation/gift' },
-      { pattern: /insurance|claim/i, category: 'Insurance/claim' },
-      { pattern: /property|rent deposit|lease premium/i, category: 'Property/deposit' },
+    // 2. Compute statistics for relative scoring
+    const amounts = allTxns.map(t => Math.max(Math.abs(Number(t.debit || t.debitFC || t.amount || 0)), Math.abs(Number(t.credit || t.creditFC || 0)))).filter(a => a > 0);
+    const totalValue = amounts.reduce((s, a) => s + a, 0);
+    const meanAmt = amounts.length > 0 ? totalValue / amounts.length : 0;
+    const stdDev = amounts.length > 0 ? Math.sqrt(amounts.reduce((s, a) => s + (a - meanAmt) ** 2, 0) / amounts.length) : 0;
+
+    // Build a frequency map of descriptions to detect one-off vs recurring
+    const descFreq = new Map<string, number>();
+    for (const t of allTxns) {
+      const key = (t.description || '').toLowerCase().trim().slice(0, 50);
+      descFreq.set(key, (descFreq.get(key) || 0) + 1);
+    }
+    const maxFreq = Math.max(...Array.from(descFreq.values()), 1);
+
+    // Unusual nature patterns
+    const UNUSUAL_PATTERNS: { pattern: RegExp; category: string; weight: number }[] = [
+      { pattern: /director|shareholder|owner/i, category: 'Related party — director/shareholder', weight: 30 },
+      { pattern: /loan|advance|lend/i, category: 'Loan/advance', weight: 25 },
+      { pattern: /intercompany|group|subsidiary|parent/i, category: 'Intercompany/group', weight: 25 },
+      { pattern: /related party/i, category: 'Related party', weight: 30 },
+      { pattern: /refund|reversal|correction|adjust/i, category: 'Reversal/correction', weight: 15 },
+      { pattern: /dividend|distribution/i, category: 'Distribution', weight: 20 },
+      { pattern: /settlement|legal|solicitor|court/i, category: 'Legal/settlement', weight: 25 },
+      { pattern: /penalty|fine|hmrc|tax/i, category: 'Tax/penalty', weight: 15 },
+      { pattern: /cash|atm|withdraw/i, category: 'Cash withdrawal', weight: 20 },
+      { pattern: /foreign|fx|transfer overseas|swift/i, category: 'Foreign/FX transfer', weight: 15 },
+      { pattern: /consultancy|management fee|advisory/i, category: 'Consultancy/management fee', weight: 15 },
+      { pattern: /donation|charity|gift/i, category: 'Donation/gift', weight: 20 },
+      { pattern: /insurance|claim/i, category: 'Insurance/claim', weight: 10 },
+      { pattern: /property|rent deposit|lease premium/i, category: 'Property/deposit', weight: 15 },
     ];
 
-    const flagged: any[] = [];
+    // UK bank holidays (approximate — covers common ones)
+    const BANK_HOLIDAYS_2024 = ['2024-01-01','2024-03-29','2024-04-01','2024-05-06','2024-05-27','2024-08-26','2024-12-25','2024-12-26'];
+    const BANK_HOLIDAYS_2025 = ['2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26','2025-08-25','2025-12-25','2025-12-26'];
+    const bankHolidays = new Set([...BANK_HOLIDAYS_2024, ...BANK_HOLIDAYS_2025]);
 
-    for (const txn of bankData) {
-      const debit = Math.abs(Number(txn.debit || txn.debitFC || 0));
+    // 3. Score EVERY transaction
+    const scored = allTxns.map((txn: any, idx: number) => {
+      const debit = Math.abs(Number(txn.debit || txn.debitFC || txn.amount || 0));
       const credit = Math.abs(Number(txn.credit || txn.creditFC || 0));
       const amt = Math.max(debit, credit);
-      if (amt <= 0) continue;
-
-      const flags: string[] = [];
       const desc = (txn.description || '').toLowerCase();
+      const descKey = desc.trim().slice(0, 50);
 
-      // Size-based flags
-      if (amt > pm && pm > 0) flags.push('Above Performance Materiality');
-      else if (amt > ct && ct > 0) flags.push('Above Clearly Trivial');
+      let score = 0;
+      const reasons: string[] = [];
+
+      // Size scoring — how large relative to the population
+      if (amt > 0 && stdDev > 0) {
+        const zScore = (amt - meanAmt) / stdDev;
+        if (zScore > 3) { score += 40; reasons.push(`Extreme outlier (${zScore.toFixed(1)}σ)`); }
+        else if (zScore > 2) { score += 25; reasons.push(`Statistical outlier (${zScore.toFixed(1)}σ)`); }
+        else if (zScore > 1) { score += 10; reasons.push(`Above average (${zScore.toFixed(1)}σ)`); }
+      }
+      if (amt > pm && pm > 0) { score += 20; reasons.push('Above Performance Materiality'); }
+      else if (amt > ct && ct > 0) { score += 5; reasons.push('Above Clearly Trivial'); }
 
       // Round number
-      if (amt >= 1000 && amt % 1000 === 0) flags.push('Round number');
+      if (amt >= 1000 && amt % 1000 === 0) { score += 10; reasons.push('Round number (£' + amt.toLocaleString() + ')'); }
+      if (amt >= 100 && amt % 100 === 0 && amt % 1000 !== 0) { score += 5; reasons.push('Round hundreds'); }
 
-      // Weekend
+      // Timing — weekend, bank holiday, outside normal hours
       const d = txn.date ? new Date(txn.date) : null;
-      if (d && !isNaN(d.getTime()) && (d.getDay() === 0 || d.getDay() === 6)) flags.push('Weekend transaction');
-
-      // Nature-based flags
-      for (const { pattern, category } of UNUSUAL_PATTERNS) {
-        if (pattern.test(txn.description || '')) { flags.push(category); break; }
+      if (d && !isNaN(d.getTime())) {
+        if (d.getDay() === 0 || d.getDay() === 6) { score += 15; reasons.push('Weekend transaction'); }
+        const dateStr = d.toISOString().split('T')[0];
+        if (bankHolidays.has(dateStr)) { score += 20; reasons.push('Bank holiday transaction'); }
       }
 
-      // Include ALL transactions above CT with full detail, plus any with unusual flags
-      if (flags.length > 0 || amt > ct) {
-        flagged.push({
-          // Full transaction detail — auditor needs to see everything
-          date: txn.date || '',
-          description: txn.description || '',
-          reference: txn.reference || '',
-          debit: debit || null,
-          credit: credit || null,
-          balance: Number(txn.balance || txn.balanceFC || 0) || null,
-          accountNumber: txn.accountNumber || '',
-          sourceFile: txn.sourceFile || '',
-          // Analysis
-          amount: amt,
-          flags: flags.join('; ') || 'Above threshold',
-          riskLevel: amt > pm ? 'high' : flags.some(f => f.includes('Related') || f.includes('director') || f.includes('Legal')) ? 'high' : 'medium',
-          // Auditor assessment (to be filled in by user)
-          auditorAssessment: '',
-          satisfactory: null,
-        });
+      // Description / nature patterns
+      for (const { pattern, category, weight } of UNUSUAL_PATTERNS) {
+        if (pattern.test(txn.description || '')) { score += weight; reasons.push(category); }
       }
-    }
 
-    flagged.sort((a, b) => b.amount - a.amount);
-    const highRisk = flagged.filter(f => f.riskLevel === 'high').length;
-    const mediumRisk = flagged.filter(f => f.riskLevel === 'medium').length;
-    const result = highRisk > 0 ? 'fail' : 'pass';
-    const totalValue = flagged.reduce((s: number, f: any) => s + f.amount, 0);
-    const samplingNote = selectedIndices.length > 0 ? ` (sampled ${bankData.length} from population of ${fullPopulation.length})` : ` (full population of ${bankData.length})`;
-    const summary = `Analysed ${bankData.length} transactions${samplingNote}. ${flagged.length} items flagged: ${highRisk} high risk, ${mediumRisk} medium risk. Total value: £${totalValue.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}.`;
+      // Rarity — one-off transactions score higher than recurring
+      const freq = descFreq.get(descKey) || 1;
+      if (freq === 1) { score += 10; reasons.push('One-off transaction (unique description)'); }
+      else if (freq <= 3) { score += 5; reasons.push(`Infrequent (${freq} occurrences)`); }
 
-    // Annotate each transaction in the full population with flag info
-    // so the UI can highlight flagged rows inline
-    const annotatedPopulation = bankData.map((txn: any) => {
-      const matchedFlag = flagged.find((f: any) => f.description === txn.description && f.date === txn.date && f.amount === (Math.max(Math.abs(Number(txn.debit || txn.debitFC || 0)), Math.abs(Number(txn.credit || txn.creditFC || 0)))));
-      if (matchedFlag) {
-        return { ...txn, _flagged: true, _flags: matchedFlag.flags, _riskLevel: matchedFlag.riskLevel };
+      // Negative/credit entries in a normally debit account (or vice versa)
+      // Detect by checking if this transaction is opposite to the majority
+      if (amt > ct) {
+        const isDebit = debit > credit;
+        const majorityDebit = amounts.length > 0 && allTxns.filter(t => Math.abs(Number(t.debit || t.debitFC || 0)) > Math.abs(Number(t.credit || t.creditFC || 0))).length > allTxns.length / 2;
+        if (isDebit !== majorityDebit) { score += 10; reasons.push('Contra entry (opposite to majority flow)'); }
       }
-      return txn;
+
+      return {
+        _index: idx,
+        _score: score,
+        _reasons: reasons,
+        _riskLevel: score >= 40 ? 'high' : score >= 15 ? 'medium' : 'low',
+        _flagged: score >= 15, // Only flag items with meaningful unusualness
+        ...txn,
+      };
     });
+
+    // 4. Sort by score (highest first) — this IS the output, ranked by unusualness
+    scored.sort((a: any, b: any) => b._score - a._score);
+
+    const flaggedItems = scored.filter((t: any) => t._flagged);
+    const highRisk = flaggedItems.filter((t: any) => t._riskLevel === 'high').length;
+    const mediumRisk = flaggedItems.filter((t: any) => t._riskLevel === 'medium').length;
+    const flaggedValue = flaggedItems.reduce((s: number, t: any) => s + Math.max(Math.abs(Number(t.debit || t.debitFC || t.amount || 0)), Math.abs(Number(t.credit || t.creditFC || 0))), 0);
+
+    const result = highRisk > 0 ? 'fail' : 'pass';
+    const summary = `Scored and ranked ${allTxns.length} transactions. ${flaggedItems.length} flagged as large or unusual (${highRisk} high risk, ${mediumRisk} medium). Mean transaction: £${meanAmt.toFixed(2)}, Std Dev: £${stdDev.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}. Flagged value: £${flaggedValue.toFixed(2)}.`;
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
       output: {
         result, summary,
-        flaggedItems: flagged,
-        dataTable: annotatedPopulation, // Full dataset with _flagged annotations
-        populationData: annotatedPopulation,
-        totalFlagged: flagged.length, highRisk, mediumRisk,
-        totalValueFlagged: totalValue,
-        populationSize: bankData.length,
-        populationTotal: bankData.reduce((s: number, t: any) => s + Math.max(Math.abs(Number(t.debit || t.debitFC || 0)), Math.abs(Number(t.credit || t.creditFC || 0))), 0),
+        // Full population ranked by unusualness score — flagged items at top
+        dataTable: scored,
+        populationData: scored,
+        flaggedItems,
+        totalFlagged: flaggedItems.length, highRisk, mediumRisk,
+        totalValueFlagged: flaggedValue,
+        populationSize: allTxns.length,
+        populationTotal: totalValue,
+        statistics: { mean: meanAmt, stdDev, transactionCount: allTxns.length },
+        decisionLog: [
+          { step: 'Statistical analysis', result: `Population: ${allTxns.length} transactions, mean £${meanAmt.toFixed(2)}, std dev £${stdDev.toFixed(2)}` },
+          { step: 'Scoring criteria', result: 'Size (z-score vs population), timing (weekends, bank holidays), description patterns (14 categories), transaction rarity, contra entries' },
+          { step: 'Results', result: `${flaggedItems.length} items scored ≥15 points: ${highRisk} high risk (≥40), ${mediumRisk} medium risk (15-39). Ranked by composite score.` },
+        ],
       },
     };
   } catch (err: any) { return { action: 'error', errorMessage: `Large & unusual analysis failed: ${err.message}` }; }
