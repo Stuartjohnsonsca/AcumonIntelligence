@@ -437,10 +437,17 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   // Show all meaningful columns — exclude internal/metadata fields
                   const SKIP_COLS = new Set(['sourceFile', 'tbAccountCode', 'functionalCurrency', 'page', 'fxRate']);
                   const cols = Object.keys(population[0]).filter(k => !k.startsWith('_') && !SKIP_COLS.has(k));
+                  const flaggedCount = population.filter((r: any) => r._flagged).length;
+                  const hasFlagAnnotations = flaggedCount > 0;
                   return (
                     <div className="border rounded-lg overflow-hidden">
                       <div className="px-3 py-2 bg-slate-50 border-b flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-slate-600 uppercase">Full Extracted Data ({population.length} records{selectedIdx.size > 0 ? ` — ${selectedIdx.size} sampled` : ''})</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-slate-600 uppercase">Full Extracted Data ({population.length} records{selectedIdx.size > 0 ? ` — ${selectedIdx.size} selected` : ''})</span>
+                          {hasFlagAnnotations && (
+                            <span className="text-[9px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full font-medium">{flaggedCount} flagged</span>
+                          )}
+                        </div>
                         <span className="text-[9px] text-slate-400">Source: {popStep?.label || 'Flow step'} | {cols.length} columns</span>
                       </div>
                       <div className="max-h-[500px] overflow-auto">
@@ -448,24 +455,40 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                           <thead className="sticky top-0 z-10">
                             <tr className="bg-slate-100 border-b">
                               <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">#</th>
-                              {selectedIdx.size > 0 && <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">Sel</th>}
+                              {(selectedIdx.size > 0 || hasFlagAnnotations) && <th className="px-1 py-1 text-center w-6 font-semibold text-slate-500">{hasFlagAnnotations ? '!' : 'Sel'}</th>}
                               {cols.map(c => <th key={c} className="px-1.5 py-1 text-left font-semibold text-slate-600 whitespace-nowrap">{c}</th>)}
+                              {hasFlagAnnotations && <th className="px-1.5 py-1 text-left font-semibold text-red-600 whitespace-nowrap">Flags</th>}
                             </tr>
                           </thead>
                           <tbody>
                             {population.map((row: any, i: number) => {
                               const isSampled = selectedIdx.has(i);
+                              const isFlagged = !!row._flagged;
+                              const riskLevel = row._riskLevel || '';
                               return (
-                                <tr key={i} className={`border-b border-slate-50 ${isSampled ? 'bg-green-50 font-medium' : 'hover:bg-slate-50/50'}`}>
+                                <tr key={i} className={`border-b border-slate-50 ${
+                                  isFlagged && riskLevel === 'high' ? 'bg-red-50' :
+                                  isFlagged ? 'bg-amber-50/50' :
+                                  isSampled ? 'bg-green-50 font-medium' : 'hover:bg-slate-50/50'
+                                }`}>
                                   <td className="px-1 py-0.5 text-center text-slate-400">{i + 1}</td>
-                                  {selectedIdx.size > 0 && (
-                                    <td className="px-1 py-0.5 text-center">{isSampled ? <span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> : ''}</td>
+                                  {(selectedIdx.size > 0 || hasFlagAnnotations) && (
+                                    <td className="px-1 py-0.5 text-center">
+                                      {isFlagged && riskLevel === 'high' && <span className="w-2 h-2 rounded-full bg-red-500 inline-block" title="High risk" />}
+                                      {isFlagged && riskLevel !== 'high' && <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" title="Flagged" />}
+                                      {!isFlagged && isSampled && <span className="w-2 h-2 rounded-full bg-green-500 inline-block" title="Selected" />}
+                                    </td>
                                   )}
                                   {cols.map(c => (
                                     <td key={c} className="px-1.5 py-0.5 text-slate-600 whitespace-nowrap max-w-[200px] truncate" title={String(row[c] ?? '')}>
                                       {typeof row[c] === 'number' ? row[c].toLocaleString('en-GB', { maximumFractionDigits: 2 }) : String(row[c] ?? '')}
                                     </td>
                                   ))}
+                                  {hasFlagAnnotations && (
+                                    <td className="px-1.5 py-0.5 text-[8px] max-w-[200px] truncate" title={row._flags || ''}>
+                                      {row._flags && <span className={`px-1 py-0 rounded ${riskLevel === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{row._flags}</span>}
+                                    </td>
+                                  )}
                                 </tr>
                               );
                             })}

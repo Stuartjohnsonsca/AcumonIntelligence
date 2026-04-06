@@ -937,6 +937,7 @@ async function handleAccountingExtract(
   executionId: string,
   engagementId: string,
   cutoffMode: boolean = false,
+  fallbackToBankData: boolean = false,
 ): Promise<NodeResult> {
   const startTime = Date.now();
 
@@ -957,6 +958,42 @@ async function handleAccountingExtract(
     where: { clientId: engagement.clientId },
   });
   if (!connection) {
+    if (fallbackToBankData) {
+      // No accounting connection — try to use previously extracted bank statement data
+      let bankData: any[] = [];
+      for (const [, nodeOut] of Object.entries(ctx.nodes)) {
+        const out = nodeOut as any;
+        if (!out) continue;
+        if (out.dataTable?.length > 0 && bankData.length === 0) bankData = out.dataTable;
+        if (out.populationData?.length > 0 && bankData.length === 0) bankData = out.populationData;
+      }
+      // Also check for stored bank data via require_prior_evidence
+      if (bankData.length === 0) {
+        try {
+          const docs = await prisma.auditDocument.findMany({
+            where: { engagementId },
+            orderBy: { createdAt: 'desc' },
+          });
+          const bankDocs = docs.filter(d => {
+            const items = d.mappedItems as any;
+            return Array.isArray(items) ? items.includes('bank_data') : false;
+          }).slice(0, 1);
+          if (bankDocs[0]?.storagePath) {
+            const { downloadBlob } = await import('@/lib/azure-blob');
+            const buffer = await downloadBlob(bankDocs[0].storagePath, 'upload-inbox');
+            try { bankData = JSON.parse(buffer.toString('utf-8')); } catch {}
+          }
+        } catch {}
+      }
+      if (bankData.length > 0) {
+        return {
+          action: 'continue',
+          nextNodeId: getNextNodeId(flow, node.id),
+          output: { populationData: bankData, dataTable: bankData, rowCount: bankData.length, source: 'bank_statements', fallbackUsed: true },
+        };
+      }
+      return { action: 'error', errorMessage: 'No accounting system connected and no bank statement data available. Connect Xero via the Opening tab, or extract bank statements first.' };
+    }
     return { action: 'error', errorMessage: 'No accounting system connected for this client. Connect via the Opening tab → Connection section.' };
   }
 
@@ -1548,14 +1585,23 @@ async function handleAnalyseLargeUnusual(
     const samplingNote = selectedIndices.length > 0 ? ` (sampled ${bankData.length} from population of ${fullPopulation.length})` : ` (full population of ${bankData.length})`;
     const summary = `Analysed ${bankData.length} transactions${samplingNote}. ${flagged.length} items flagged: ${highRisk} high risk, ${mediumRisk} medium risk. Total value: £${totalValue.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}.`;
 
+    // Annotate each transaction in the full population with flag info
+    // so the UI can highlight flagged rows inline
+    const annotatedPopulation = bankData.map((txn: any) => {
+      const matchedFlag = flagged.find((f: any) => f.description === txn.description && f.date === txn.date && f.amount === (Math.max(Math.abs(Number(txn.debit || txn.debitFC || 0)), Math.abs(Number(txn.credit || txn.creditFC || 0)))));
+      if (matchedFlag) {
+        return { ...txn, _flagged: true, _flags: matchedFlag.flags, _riskLevel: matchedFlag.riskLevel };
+      }
+      return txn;
+    });
+
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
       output: {
         result, summary,
         flaggedItems: flagged,
-        dataTable: bankData, // Full dataset — not just flagged items
-        populationData: bankData,
-        flaggedIndices: flagged.map((f: any) => bankData.findIndex((t: any) => t.description === f.description && t.date === f.date && Math.max(Math.abs(Number(t.debit || t.debitFC || 0)), Math.abs(Number(t.credit || t.creditFC || 0))) === f.amount)),
+        dataTable: annotatedPopulation, // Full dataset with _flagged annotations
+        populationData: annotatedPopulation,
         totalFlagged: flagged.length, highRisk, mediumRisk,
         totalValueFlagged: totalValue,
         populationSize: bankData.length,
@@ -2462,8 +2508,8 @@ export async function processNextNode(executionId: string): Promise<void> {
             result = await handleProcessBankData(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'store_extracted_bank_data') {
             result = await handleStoreExtractedData(flow, currentNode, ctx, executionId, execution.engagementId);
-          } else if (currentNode.data?.inputType === 'accounting_extract' || currentNode.data?.inputType === 'accounting_extract_cutoff') {
-            result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId, currentNode.data?.inputType === 'accounting_extract_cutoff');
+          } else if (currentNode.data?.inputType === 'accounting_extract' || currentNode.data?.inputType === 'accounting_extract_cutoff' || currentNode.data?.inputType === 'accounting_extract_or_bank') {
+            result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId, currentNode.data?.inputType === 'accounting_extract_cutoff', currentNode.data?.inputType === 'accounting_extract_or_bank');
           } else if (currentNode.data?.inputType === 'compare_bank_to_tb') {
             result = await handleCompareBankToTB(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'analyse_cut_off') {
