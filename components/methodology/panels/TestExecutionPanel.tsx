@@ -91,13 +91,14 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
 
   // Paused step detection
   const pausedStep = flowSteps.find(s => s.status === 'paused');
-  const isSamplingPause = pausedStep?.output?.triggerType === 'sampling' || pausedStep?.label?.toLowerCase().includes('sampl');
+  const isReviewFlaggedPause = pausedStep?.output?.triggerType === 'review_flagged';
+  const isSamplingPause = !isReviewFlaggedPause && (pausedStep?.output?.triggerType === 'sampling' || pausedStep?.label?.toLowerCase().includes('sampl'));
   const isPortalPause = !!pausedStep?.output?.portalRequestId;
   const pauseItemId = pausedStep?.output?.outstandingItemId || pausedStep?.output?.portalRequestId;
 
   // Auto-collapse progress when sampling/portal is active
   useEffect(() => {
-    if (isSamplingPause || isPortalPause) {
+    if (isSamplingPause || isPortalPause || isReviewFlaggedPause) {
       setProgressOpen(false);
       setSamplingOpen(true);
     }
@@ -449,7 +450,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             <button onClick={() => setSamplingOpen(!samplingOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
               <div className="flex items-center gap-2">
                 {samplingOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
-                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Data & Sampling</span>
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">{isReviewFlaggedPause ? 'Review Flagged Items' : 'Data & Sampling'}</span>
+                {isReviewFlaggedPause && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">Review Required — Select items to investigate</span>}
                 {isSamplingPause && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-700 font-medium">Action Required</span>}
               </div>
               {(() => {
@@ -550,8 +552,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </div>
                 )}
 
-                {/* Sampling calculator — shown when population data exists (any test with data can sample) */}
-                {(isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0 || s.output?.triggerType === 'sampling')) && (
+                {/* Sampling calculator — shown when population data exists, but NOT for review_flagged tests */}
+                {!isReviewFlaggedPause && (isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0 || s.output?.triggerType === 'sampling')) && (
                   <div className="border border-teal-200 rounded-lg overflow-hidden">
                     <button
                       onClick={() => setSamplingCalcOpen(!samplingCalcOpen)}
@@ -610,6 +612,28 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     </div>
                   ));
                 })()}
+
+                {/* Review flagged pause — auditor reviews ranked results and confirms */}
+                {isReviewFlaggedPause && (
+                  <div className="border border-orange-200 rounded-lg p-3 bg-orange-50/30 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-orange-600" />
+                      <span className="text-sm font-medium text-orange-700">Review the flagged items above</span>
+                    </div>
+                    <p className="text-xs text-slate-600">
+                      The population is ranked by unusualness score. Orange rows are above the threshold and need your review.
+                      Select the items you want to investigate (they will be sent for evidence gathering), then click continue.
+                    </p>
+                    <button
+                      onClick={() => handleSamplingDone()}
+                      disabled={completing}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50"
+                    >
+                      {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                      Confirm Review & Continue
+                    </button>
+                  </div>
+                )}
 
                 {/* Portal pause */}
                 {isPortalPause && (

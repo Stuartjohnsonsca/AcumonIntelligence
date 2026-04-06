@@ -140,8 +140,8 @@ export function FirmAssumptionsClient({
   const [luPatterns, setLuPatterns] = useState<{ pattern: string; category: string; weight: number }[]>(
     initialLargeUnusualScoring?.descriptionPatterns || []
   );
-  const [luThresholds, setLuThresholds] = useState<{ highRisk: number; mediumRisk: number }>(
-    initialLargeUnusualScoring?.thresholds || { highRisk: 40, mediumRisk: 15 }
+  const [luThresholds, setLuThresholds] = useState<{ highRisk: number; mediumRisk: number; financialPctPM: number }>(
+    { ...{ highRisk: 40, mediumRisk: 15, financialPctPM: 5 }, ...(initialLargeUnusualScoring?.thresholds || {}) }
   );
   const [newLuPattern, setNewLuPattern] = useState('');
   const [newLuCategory, setNewLuCategory] = useState('');
@@ -690,17 +690,28 @@ export function FirmAssumptionsClient({
               The weight determines how much it contributes to the composite unusualness score. Items above the threshold are highlighted for auditor review.
             </p>
 
-            {/* Threshold */}
-            <div className="max-w-sm">
-              <label className="text-xs font-medium text-slate-700 block mb-1">Flagging Threshold (score)</label>
-              <input type="number" min={1} max={200} value={luThresholds.mediumRisk}
-                onChange={e => { setLuThresholds(prev => ({ ...prev, mediumRisk: parseInt(e.target.value) || 15 })); setSaved(false); }}
-                className="w-full border rounded px-3 py-2 text-sm" />
-              <span className="text-[10px] text-slate-400 block mt-1">
-                Items scoring at or above this appear <span className="text-orange-600 font-medium">orange</span> for auditor review.
-                Below this = white (not flagged). The auditor marks items as red (investigate) or excludes to white.
-                No red from the system — only the auditor decides.
-              </span>
+            {/* Thresholds */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Scoring Threshold</label>
+                <input type="number" min={1} max={200} value={luThresholds.mediumRisk}
+                  onChange={e => { setLuThresholds(prev => ({ ...prev, mediumRisk: parseInt(e.target.value) || 15 })); setSaved(false); }}
+                  className="w-full border rounded px-3 py-2 text-sm" />
+                <span className="text-[10px] text-slate-400 block mt-1">
+                  Items scoring at or above this appear <span className="text-orange-600 font-medium">orange</span> for review.
+                  Below = white. Auditor decides red (investigate) or exclude to white.
+                </span>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Financial Threshold (% of PM)</label>
+                <input type="number" min={0} max={100} step={1} value={luThresholds.financialPctPM}
+                  onChange={e => { setLuThresholds(prev => ({ ...prev, financialPctPM: parseFloat(e.target.value) || 5 })); setSaved(false); }}
+                  className="w-full border rounded px-3 py-2 text-sm" />
+                <span className="text-[10px] text-slate-400 block mt-1">
+                  Transactions below this % of Performance Materiality are filtered out before scoring.
+                  E.g. 5% of £100,000 PM = items below £5,000 excluded from the orange/white/red population.
+                </span>
+              </div>
             </div>
 
             {/* Pattern list */}

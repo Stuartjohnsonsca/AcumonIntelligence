@@ -1628,7 +1628,11 @@ async function handleAnalyseLargeUnusual(
     }) : null;
     const scoringRules = (scoringTable?.data || {}) as any;
 
-    // 2. Compute statistics for relative scoring
+    // 2. Apply financial threshold — filter out items below % of PM
+    const financialPctPM = thresholds.financialPctPM ?? 5;
+    const financialThreshold = pm > 0 ? pm * (financialPctPM / 100) : 0;
+
+    // 2b. Compute statistics for relative scoring
     const amounts = allTxns.map(t => Math.max(Math.abs(Number(t.debit || t.debitFC || t.amount || 0)), Math.abs(Number(t.credit || t.creditFC || 0)))).filter(a => a > 0);
     const totalValue = amounts.reduce((s, a) => s + a, 0);
     const meanAmt = amounts.length > 0 ? totalValue / amounts.length : 0;
@@ -1683,6 +1687,11 @@ async function handleAnalyseLargeUnusual(
 
       let score = 0;
       const reasons: string[] = [];
+
+      // Financial threshold — items below this are too small to consider
+      if (financialThreshold > 0 && amt < financialThreshold) {
+        return { _index: idx, _score: 0, _reasons: [], _flagged: false, _belowThreshold: true, ...txn };
+      }
 
       // Size scoring — how large relative to the population
       if (amt > 0 && stdDev > 0) {
@@ -1739,8 +1748,9 @@ async function handleAnalyseLargeUnusual(
     const flaggedValue = flaggedItems.reduce((s: number, t: any) => s + Math.max(Math.abs(Number(t.debit || t.debitFC || t.amount || 0)), Math.abs(Number(t.credit || t.creditFC || 0))), 0);
 
     // No pass/fail from the system — the auditor decides. System just flags for review.
+    const belowThresholdCount = scored.filter((t: any) => t._belowThreshold).length;
     const result = flaggedItems.length > 0 ? 'review_required' : 'pass';
-    const summary = `Scored and ranked ${allTxns.length} transactions. ${flaggedItems.length} flagged for review (score ≥ ${thresholds.mediumRisk}). Mean: £${meanAmt.toFixed(2)}, Std Dev: £${stdDev.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}. Flagged value: £${flaggedValue.toFixed(2)}.`;
+    const summary = `Scored and ranked ${allTxns.length} transactions. ${belowThresholdCount > 0 ? `${belowThresholdCount} below financial threshold (£${financialThreshold.toFixed(0)} = ${financialPctPM}% of PM) filtered out. ` : ''}${flaggedItems.length} flagged for review (score ≥ ${thresholds.mediumRisk}). Mean: £${meanAmt.toFixed(2)}, Std Dev: £${stdDev.toFixed(2)}. PM: £${pm.toFixed(2)}, CT: £${ct.toFixed(2)}.`;
 
     return {
       action: 'continue', nextNodeId: getNextNodeId(flow, node.id),
@@ -1757,9 +1767,10 @@ async function handleAnalyseLargeUnusual(
         threshold: thresholds.mediumRisk,
         statistics: { mean: meanAmt, stdDev, transactionCount: allTxns.length },
         decisionLog: [
+          { step: 'Financial threshold', result: financialThreshold > 0 ? `£${financialThreshold.toFixed(0)} (${financialPctPM}% of PM £${pm.toFixed(0)}). ${belowThresholdCount} items below this filtered out.` : 'No financial threshold applied.' },
           { step: 'Statistical analysis', result: `Population: ${allTxns.length} transactions, mean £${meanAmt.toFixed(2)}, std dev £${stdDev.toFixed(2)}` },
           { step: 'Scoring criteria', result: `Size (z-score), timing (weekends, bank holidays), ${UNUSUAL_PATTERNS.length} description patterns, rarity, contra entries` },
-          { step: 'Threshold', result: `Items scoring ≥ ${thresholds.mediumRisk} shown as orange for review. Auditor marks red (investigate) or excludes to white.` },
+          { step: 'Scoring threshold', result: `Items scoring ≥ ${thresholds.mediumRisk} shown as orange for review. Auditor marks red (investigate) or excludes to white.` },
           { step: 'Results', result: `${flaggedItems.length} items above threshold, ranked by composite score.` },
         ],
       },
@@ -2232,6 +2243,31 @@ async function handleWait(
       action: 'pause',
       pauseReason: 'sampling',
       output: { waitingFor: 'sampling', triggerType: 'sampling', populationCount: popCount },
+    };
+  }
+
+  // Review flagged items — auditor sees ranked results, selects items to investigate
+  if (waitFor === 'review_flagged') {
+    // Check if auditor has confirmed their selections (resumed with selectedIndices)
+    if (prevOutput?.samplingDone || prevOutput?.selectedIndices?.length > 0) {
+      return {
+        action: 'continue',
+        nextNodeId: getNextNodeId(flow, node.id),
+        output: { waitingFor: 'review_flagged', satisfied: true, triggerType: 'review_flagged', selectedIndices: prevOutput.selectedIndices, ...prevOutput },
+      };
+    }
+    // Pause and show the ranked flagged results for auditor review
+    let flaggedCount = 0;
+    let totalCount = 0;
+    for (const [, nOut] of Object.entries(ctx.nodes)) {
+      const o = nOut as any;
+      if (o?.totalFlagged) flaggedCount = o.totalFlagged;
+      if (o?.populationSize) totalCount = o.populationSize;
+    }
+    return {
+      action: 'pause',
+      pauseReason: 'review_flagged',
+      output: { waitingFor: 'review_flagged', triggerType: 'review_flagged', flaggedCount, totalCount },
     };
   }
 
