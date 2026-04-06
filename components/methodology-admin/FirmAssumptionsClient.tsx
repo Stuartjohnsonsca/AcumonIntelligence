@@ -28,6 +28,7 @@ interface Props {
   initialFxProvider?: string | null;
   initialTestCategories?: string[];
   initialArConfidenceFactor?: number;
+  initialLargeUnusualScoring?: any;
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -111,6 +112,7 @@ export function FirmAssumptionsClient({
   initialFxProvider,
   initialTestCategories,
   initialArConfidenceFactor,
+  initialLargeUnusualScoring,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -135,6 +137,15 @@ export function FirmAssumptionsClient({
   const [arConfidenceFactor, setArConfidenceFactor] = useState<number>(
     initialArConfidenceFactor ?? 1.0
   );
+  const [luPatterns, setLuPatterns] = useState<{ pattern: string; category: string; weight: number }[]>(
+    initialLargeUnusualScoring?.descriptionPatterns || []
+  );
+  const [luThresholds, setLuThresholds] = useState<{ highRisk: number; mediumRisk: number }>(
+    initialLargeUnusualScoring?.thresholds || { highRisk: 40, mediumRisk: 15 }
+  );
+  const [newLuPattern, setNewLuPattern] = useState('');
+  const [newLuCategory, setNewLuCategory] = useState('');
+  const [newLuWeight, setNewLuWeight] = useState(15);
   const [riskClassification, setRiskClassification] = useState<Record<string, RiskClassification>>(() => {
     const init = initialRiskClassification;
     return (init && typeof init === 'object') ? init : {
@@ -204,6 +215,7 @@ export function FirmAssumptionsClient({
               specialistRoles: { roles: specialistRoles },
               testCategories: { categories: testCategories },
               arConfidenceFactor: { confidenceFactor: arConfidenceFactor },
+              large_unusual_scoring: { descriptionPatterns: luPatterns, thresholds: luThresholds, sizeScoring: initialLargeUnusualScoring?.sizeScoring, timingScoring: initialLargeUnusualScoring?.timingScoring, otherScoring: initialLargeUnusualScoring?.otherScoring },
             },
           }),
         }),
@@ -657,6 +669,109 @@ export function FirmAssumptionsClient({
                 onChange={(e) => { setArConfidenceFactor(Number(e.target.value)); setSaved(false); }}
                 className="w-24 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Large & Unusual Scoring Rules */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('largeUnusual')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Large & Unusual Transaction Scoring</h2>
+          {expandedSections.largeUnusual ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.largeUnusual && (
+          <div className="p-4 space-y-4">
+            <p className="text-sm text-slate-500">
+              Configure the description patterns used to flag unusual transactions. Each pattern is matched against transaction descriptions.
+              The weight determines how much it contributes to the composite unusualness score. Items above the threshold are highlighted for auditor review.
+            </p>
+
+            {/* Thresholds */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">High Risk Threshold (score)</label>
+                <input type="number" min={1} max={200} value={luThresholds.highRisk}
+                  onChange={e => { setLuThresholds(prev => ({ ...prev, highRisk: parseInt(e.target.value) || 40 })); setSaved(false); }}
+                  className="w-full border rounded px-3 py-2 text-sm" />
+                <span className="text-[10px] text-slate-400">Items scoring at or above this are red (high risk)</span>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700 block mb-1">Medium Risk Threshold (score)</label>
+                <input type="number" min={1} max={200} value={luThresholds.mediumRisk}
+                  onChange={e => { setLuThresholds(prev => ({ ...prev, mediumRisk: parseInt(e.target.value) || 15 })); setSaved(false); }}
+                  className="w-full border rounded px-3 py-2 text-sm" />
+                <span className="text-[10px] text-slate-400">Items scoring at or above this are amber (flagged). Below is white (not flagged).</span>
+              </div>
+            </div>
+
+            {/* Pattern list */}
+            <div>
+              <label className="text-xs font-bold text-slate-700 block mb-2">Description Patterns ({luPatterns.length})</label>
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 border-b">
+                      <th className="px-2 py-1.5 text-left font-semibold text-slate-600">Keywords (regex)</th>
+                      <th className="px-2 py-1.5 text-left font-semibold text-slate-600">Category</th>
+                      <th className="px-2 py-1.5 text-right font-semibold text-slate-600 w-20">Weight</th>
+                      <th className="px-2 py-1.5 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {luPatterns.map((p, i) => (
+                      <tr key={i} className="border-b border-slate-50">
+                        <td className="px-2 py-1">
+                          <input value={p.pattern} onChange={e => { const u = [...luPatterns]; u[i] = { ...u[i], pattern: e.target.value }; setLuPatterns(u); setSaved(false); }}
+                            className="w-full border border-slate-200 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-300" />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input value={p.category} onChange={e => { const u = [...luPatterns]; u[i] = { ...u[i], category: e.target.value }; setLuPatterns(u); setSaved(false); }}
+                            className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-300" />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input type="number" min={1} max={100} value={p.weight} onChange={e => { const u = [...luPatterns]; u[i] = { ...u[i], weight: parseInt(e.target.value) || 10 }; setLuPatterns(u); setSaved(false); }}
+                            className="w-full border border-slate-200 rounded px-2 py-1 text-xs text-right font-mono focus:outline-none focus:border-blue-300" />
+                        </td>
+                        <td className="px-1 py-1 text-center">
+                          <button onClick={() => { setLuPatterns(prev => prev.filter((_, idx) => idx !== i)); setSaved(false); }}
+                            className="p-0.5 text-slate-400 hover:text-red-500"><X className="h-3 w-3" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Add new pattern */}
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <label className="text-[10px] text-slate-500 block mb-0.5">Keywords (e.g. bonus|incentive)</label>
+                <input value={newLuPattern} onChange={e => setNewLuPattern(e.target.value)}
+                  placeholder="regex pattern" className="w-full border rounded px-2 py-1.5 text-xs font-mono" />
+              </div>
+              <div className="flex-1">
+                <label className="text-[10px] text-slate-500 block mb-0.5">Category name</label>
+                <input value={newLuCategory} onChange={e => setNewLuCategory(e.target.value)}
+                  placeholder="e.g. Bonus/incentive" className="w-full border rounded px-2 py-1.5 text-xs" />
+              </div>
+              <div className="w-20">
+                <label className="text-[10px] text-slate-500 block mb-0.5">Weight</label>
+                <input type="number" min={1} max={100} value={newLuWeight} onChange={e => setNewLuWeight(parseInt(e.target.value) || 15)}
+                  className="w-full border rounded px-2 py-1.5 text-xs text-right font-mono" />
+              </div>
+              <button onClick={() => {
+                if (newLuPattern.trim() && newLuCategory.trim()) {
+                  setLuPatterns(prev => [...prev, { pattern: newLuPattern.trim(), category: newLuCategory.trim(), weight: newLuWeight }]);
+                  setNewLuPattern(''); setNewLuCategory(''); setNewLuWeight(15); setSaved(false);
+                }
+              }} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
+                <Plus className="h-3 w-3 inline mr-0.5" /> Add
+              </button>
             </div>
           </div>
         )}

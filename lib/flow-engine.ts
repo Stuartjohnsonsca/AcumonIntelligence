@@ -1621,6 +1621,13 @@ async function handleAnalyseLargeUnusual(
     const pm = (ctx.engagement as any)?.performanceMateriality || 0;
     const ct = (ctx.engagement as any)?.clearlyTrivial || 0;
 
+    // Load firm's configurable scoring rules (Methodology Admin can add/remove/adjust)
+    const engagement = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
+    const scoringTable = engagement ? await prisma.methodologyRiskTable.findUnique({
+      where: { firmId_tableType: { firmId: engagement.firmId, tableType: 'large_unusual_scoring' } },
+    }) : null;
+    const scoringRules = (scoringTable?.data || {}) as any;
+
     // 2. Compute statistics for relative scoring
     const amounts = allTxns.map(t => Math.max(Math.abs(Number(t.debit || t.debitFC || t.amount || 0)), Math.abs(Number(t.credit || t.creditFC || 0)))).filter(a => a > 0);
     const totalValue = amounts.reduce((s, a) => s + a, 0);
@@ -1633,27 +1640,35 @@ async function handleAnalyseLargeUnusual(
       const key = (t.description || '').toLowerCase().trim().slice(0, 50);
       descFreq.set(key, (descFreq.get(key) || 0) + 1);
     }
-    const maxFreq = Math.max(...Array.from(descFreq.values()), 1);
 
-    // Unusual nature patterns
-    const UNUSUAL_PATTERNS: { pattern: RegExp; category: string; weight: number }[] = [
-      { pattern: /director|shareholder|owner/i, category: 'Related party — director/shareholder', weight: 30 },
-      { pattern: /loan|advance|lend/i, category: 'Loan/advance', weight: 25 },
-      { pattern: /intercompany|group|subsidiary|parent/i, category: 'Intercompany/group', weight: 25 },
-      { pattern: /related party/i, category: 'Related party', weight: 30 },
-      { pattern: /refund|reversal|correction|adjust/i, category: 'Reversal/correction', weight: 15 },
-      { pattern: /dividend|distribution/i, category: 'Distribution', weight: 20 },
-      { pattern: /settlement|legal|solicitor|court/i, category: 'Legal/settlement', weight: 25 },
-      { pattern: /penalty|fine|hmrc|tax/i, category: 'Tax/penalty', weight: 15 },
-      { pattern: /cash|atm|withdraw/i, category: 'Cash withdrawal', weight: 20 },
-      { pattern: /foreign|fx|transfer overseas|swift/i, category: 'Foreign/FX transfer', weight: 15 },
-      { pattern: /consultancy|management fee|advisory/i, category: 'Consultancy/management fee', weight: 15 },
-      { pattern: /donation|charity|gift/i, category: 'Donation/gift', weight: 20 },
-      { pattern: /insurance|claim/i, category: 'Insurance/claim', weight: 10 },
-      { pattern: /property|rent deposit|lease premium/i, category: 'Property/deposit', weight: 15 },
-    ];
+    // Unusual nature patterns — from firm config or defaults
+    const configuredPatterns = scoringRules.descriptionPatterns || [];
+    const UNUSUAL_PATTERNS: { pattern: RegExp; category: string; weight: number }[] = configuredPatterns.length > 0
+      ? configuredPatterns.map((p: any) => ({ pattern: new RegExp(p.pattern, 'i'), category: p.category, weight: p.weight }))
+      : [
+          { pattern: /director|shareholder|owner/i, category: 'Related party — director/shareholder', weight: 30 },
+          { pattern: /loan|advance|lend/i, category: 'Loan/advance', weight: 25 },
+          { pattern: /intercompany|group|subsidiary|parent/i, category: 'Intercompany/group', weight: 25 },
+          { pattern: /related party/i, category: 'Related party', weight: 30 },
+          { pattern: /refund|reversal|correction|adjust/i, category: 'Reversal/correction', weight: 15 },
+          { pattern: /dividend|distribution/i, category: 'Distribution', weight: 20 },
+          { pattern: /settlement|legal|solicitor|court/i, category: 'Legal/settlement', weight: 25 },
+          { pattern: /penalty|fine|hmrc|tax/i, category: 'Tax/penalty', weight: 15 },
+          { pattern: /cash|atm|withdraw/i, category: 'Cash withdrawal', weight: 20 },
+          { pattern: /foreign|fx|transfer overseas|swift/i, category: 'Foreign/FX transfer', weight: 15 },
+          { pattern: /consultancy|management fee|advisory/i, category: 'Consultancy/management fee', weight: 15 },
+          { pattern: /donation|charity|gift/i, category: 'Donation/gift', weight: 20 },
+          { pattern: /insurance|claim/i, category: 'Insurance/claim', weight: 10 },
+          { pattern: /property|rent deposit|lease premium/i, category: 'Property/deposit', weight: 15 },
+        ];
 
-    // UK bank holidays (approximate — covers common ones)
+    // Scoring weights from config
+    const sizeW = scoringRules.sizeScoring || { extreme3Sigma: 40, outlier2Sigma: 25, aboveAvg1Sigma: 10, abovePM: 20, aboveCT: 5 };
+    const timingW = scoringRules.timingScoring || { weekend: 15, bankHoliday: 20 };
+    const otherW = scoringRules.otherScoring || { roundThousands: 10, roundHundreds: 5, oneOff: 10, infrequent: 5, contraEntry: 10 };
+    const thresholds = scoringRules.thresholds || { highRisk: 40, mediumRisk: 15 };
+
+    // UK bank holidays
     const BANK_HOLIDAYS_2024 = ['2024-01-01','2024-03-29','2024-04-01','2024-05-06','2024-05-27','2024-08-26','2024-12-25','2024-12-26'];
     const BANK_HOLIDAYS_2025 = ['2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26','2025-08-25','2025-12-25','2025-12-26'];
     const bankHolidays = new Set([...BANK_HOLIDAYS_2024, ...BANK_HOLIDAYS_2025]);
@@ -1672,23 +1687,23 @@ async function handleAnalyseLargeUnusual(
       // Size scoring — how large relative to the population
       if (amt > 0 && stdDev > 0) {
         const zScore = (amt - meanAmt) / stdDev;
-        if (zScore > 3) { score += 40; reasons.push(`Extreme outlier (${zScore.toFixed(1)}σ)`); }
-        else if (zScore > 2) { score += 25; reasons.push(`Statistical outlier (${zScore.toFixed(1)}σ)`); }
-        else if (zScore > 1) { score += 10; reasons.push(`Above average (${zScore.toFixed(1)}σ)`); }
+        if (zScore > 3) { score += sizeW.extreme3Sigma; reasons.push(`Extreme outlier (${zScore.toFixed(1)}σ)`); }
+        else if (zScore > 2) { score += sizeW.outlier2Sigma; reasons.push(`Statistical outlier (${zScore.toFixed(1)}σ)`); }
+        else if (zScore > 1) { score += sizeW.aboveAvg1Sigma; reasons.push(`Above average (${zScore.toFixed(1)}σ)`); }
       }
-      if (amt > pm && pm > 0) { score += 20; reasons.push('Above Performance Materiality'); }
-      else if (amt > ct && ct > 0) { score += 5; reasons.push('Above Clearly Trivial'); }
+      if (amt > pm && pm > 0) { score += sizeW.abovePM; reasons.push('Above Performance Materiality'); }
+      else if (amt > ct && ct > 0) { score += sizeW.aboveCT; reasons.push('Above Clearly Trivial'); }
 
       // Round number
-      if (amt >= 1000 && amt % 1000 === 0) { score += 10; reasons.push('Round number (£' + amt.toLocaleString() + ')'); }
-      if (amt >= 100 && amt % 100 === 0 && amt % 1000 !== 0) { score += 5; reasons.push('Round hundreds'); }
+      if (amt >= 1000 && amt % 1000 === 0) { score += otherW.roundThousands; reasons.push('Round number (£' + amt.toLocaleString() + ')'); }
+      if (amt >= 100 && amt % 100 === 0 && amt % 1000 !== 0) { score += otherW.roundHundreds; reasons.push('Round hundreds'); }
 
-      // Timing — weekend, bank holiday, outside normal hours
+      // Timing — weekend, bank holiday
       const d = txn.date ? new Date(txn.date) : null;
       if (d && !isNaN(d.getTime())) {
-        if (d.getDay() === 0 || d.getDay() === 6) { score += 15; reasons.push('Weekend transaction'); }
+        if (d.getDay() === 0 || d.getDay() === 6) { score += timingW.weekend; reasons.push('Weekend transaction'); }
         const dateStr = d.toISOString().split('T')[0];
-        if (bankHolidays.has(dateStr)) { score += 20; reasons.push('Bank holiday transaction'); }
+        if (bankHolidays.has(dateStr)) { score += timingW.bankHoliday; reasons.push('Bank holiday transaction'); }
       }
 
       // Description / nature patterns
@@ -1698,23 +1713,22 @@ async function handleAnalyseLargeUnusual(
 
       // Rarity — one-off transactions score higher than recurring
       const freq = descFreq.get(descKey) || 1;
-      if (freq === 1) { score += 10; reasons.push('One-off transaction (unique description)'); }
-      else if (freq <= 3) { score += 5; reasons.push(`Infrequent (${freq} occurrences)`); }
+      if (freq === 1) { score += otherW.oneOff; reasons.push('One-off transaction (unique description)'); }
+      else if (freq <= 3) { score += otherW.infrequent; reasons.push(`Infrequent (${freq} occurrences)`); }
 
-      // Negative/credit entries in a normally debit account (or vice versa)
-      // Detect by checking if this transaction is opposite to the majority
+      // Contra entries — opposite to the majority flow
       if (amt > ct) {
         const isDebit = debit > credit;
         const majorityDebit = amounts.length > 0 && allTxns.filter(t => Math.abs(Number(t.debit || t.debitFC || 0)) > Math.abs(Number(t.credit || t.creditFC || 0))).length > allTxns.length / 2;
-        if (isDebit !== majorityDebit) { score += 10; reasons.push('Contra entry (opposite to majority flow)'); }
+        if (isDebit !== majorityDebit) { score += otherW.contraEntry; reasons.push('Contra entry (opposite to majority flow)'); }
       }
 
       return {
         _index: idx,
         _score: score,
         _reasons: reasons,
-        _riskLevel: score >= 40 ? 'high' : score >= 15 ? 'medium' : 'low',
-        _flagged: score >= 15, // Only flag items with meaningful unusualness
+        _riskLevel: score >= thresholds.highRisk ? 'high' : score >= thresholds.mediumRisk ? 'medium' : 'low',
+        _flagged: score >= thresholds.mediumRisk,
         ...txn,
       };
     });
