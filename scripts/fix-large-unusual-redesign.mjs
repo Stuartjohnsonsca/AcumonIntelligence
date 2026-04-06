@@ -48,17 +48,16 @@ const FLOW = {
       },
     },
     {
-      id: 'n_portal', type: 'action', position: { x: 520, y: 510 },
+      id: 'n_fetch_evidence', type: 'action', position: { x: 520, y: 510 },
       data: {
-        label: 'Request Supporting Evidence',
-        assignee: 'client',
-        inputType: 'portal_request',
+        label: 'Fetch Evidence (Xero or Portal)',
+        assignee: 'ai',
+        inputType: 'fetch_evidence_or_portal',
         executionDef: {
-          requestTemplate: {
-            subject: 'Large/Unusual Item — Evidence Required: {{loop.currentItem.reference}}',
-            message: 'We have identified the following transaction as requiring further investigation:\n\nDate: {{loop.currentItem.date}}\nDescription: {{loop.currentItem.description}}\nAmount: £{{loop.currentItem.amount}}\nReference: {{loop.currentItem.reference}}\n\nPlease provide the supporting documentation (invoice, contract, board minute, or other evidence explaining the nature and business purpose of this transaction).',
+          portalFallbackTemplate: {
+            subject: 'Large/Unusual Item — Evidence Required: {{reference}}',
+            message: 'We have identified the following transaction as requiring further investigation:\n\nDate: {{date}}\nDescription: {{description}}\nAmount: £{{amount}}\nReference: {{reference}}\n\nPlease provide the supporting documentation (invoice, contract, board minute, or other evidence explaining the nature and business purpose of this transaction).',
           },
-          expectedResponse: 'file_upload',
           evidenceTypes: ['invoice', 'contract', 'board_minute', 'correspondence', 'other'],
         },
       },
@@ -83,7 +82,7 @@ const FLOW = {
     { id: 'e2', source: 'n_extract', target: 'n_flag' },
     { id: 'e3', source: 'n_flag', target: 'n_review' },
     { id: 'e4', source: 'n_review', target: 'n_evidence_loop' },
-    { id: 'e5', source: 'n_evidence_loop', target: 'n_portal', sourceHandle: 'body' },
+    { id: 'e5', source: 'n_evidence_loop', target: 'n_fetch_evidence', sourceHandle: 'body' },
     { id: 'e6', source: 'n_evidence_loop', target: 'n_verify', sourceHandle: 'done' },
     { id: 'e7', source: 'n_verify', target: 'n_end' },
   ],

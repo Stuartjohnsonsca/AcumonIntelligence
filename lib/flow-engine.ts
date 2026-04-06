@@ -930,6 +930,107 @@ async function handleStoreExtractedData(
 
 // ─── Accounting System Extractor ───
 // Calls the connected accounting system API directly (no AI)
+// ─── Fetch Evidence: Xero first, Portal fallback ───
+
+async function handleFetchEvidenceOrPortal(
+  flow: FlowData,
+  node: FlowNode,
+  ctx: ExecutionContext,
+  executionId: string,
+  engagementId: string,
+): Promise<NodeResult> {
+  // Get the current loop item (reference, amount, etc.)
+  const loopItem = ctx.loop?.currentItem || {};
+  const reference = loopItem.reference || loopItem.invoiceNumber || loopItem.ref || '';
+  const description = loopItem.description || '';
+
+  // Try to fetch from accounting system first
+  const engagement = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { clientId: true },
+  });
+
+  if (engagement) {
+    const connection = await prisma.accountingConnection.findFirst({
+      where: { clientId: engagement.clientId },
+    });
+
+    if (connection && new Date() <= connection.expiresAt && connection.system.toLowerCase() === 'xero' && reference) {
+      try {
+        // Try to get the invoice from Xero by reference/invoice number
+        const { getInvoiceByNumber } = await import('./xero');
+        const invoice = await getInvoiceByNumber(engagement.clientId, reference);
+        if (invoice) {
+          return {
+            action: 'continue',
+            nextNodeId: getNextNodeId(flow, node.id),
+            output: {
+              evidenceSource: 'accounting_system',
+              system: connection.system,
+              found: true,
+              invoice,
+              reference,
+              fileName: `${reference}_xero.json`,
+            },
+          };
+        }
+      } catch (err) {
+        console.log(`[flow-engine] Xero invoice lookup failed for ${reference}: ${(err as Error).message}`);
+        // Fall through to portal request
+      }
+    }
+  }
+
+  // Fallback: create portal request
+  const portalTemplate = node.data?.executionDef?.portalFallbackTemplate || {
+    subject: `Evidence Required: ${reference || description}`,
+    message: `Please provide the supporting document for: ${description} (${reference})`,
+  };
+
+  // Resolve template placeholders
+  const subject = (portalTemplate.subject || '')
+    .replace(/\{\{reference\}\}/g, reference)
+    .replace(/\{\{description\}\}/g, description)
+    .replace(/\{\{amount\}\}/g, String(loopItem.amount || ''))
+    .replace(/\{\{date\}\}/g, loopItem.date || '');
+  const message = (portalTemplate.message || '')
+    .replace(/\{\{reference\}\}/g, reference)
+    .replace(/\{\{description\}\}/g, description)
+    .replace(/\{\{amount\}\}/g, String(loopItem.amount || ''))
+    .replace(/\{\{date\}\}/g, loopItem.date || '');
+
+  try {
+    const item = await prisma.outstandingItem.create({
+      data: {
+        engagementId,
+        executionId,
+        nodeId: node.id,
+        type: 'portal_request',
+        title: subject,
+        description: message,
+        source: 'flow',
+        status: 'awaiting_client',
+        flowNodeType: 'action',
+      },
+    });
+
+    return {
+      action: 'pause',
+      pauseReason: 'portal_response',
+      pauseRefId: item.id,
+      output: {
+        evidenceSource: 'portal_request',
+        found: false,
+        portalRequestCreated: true,
+        outstandingItemId: item.id,
+        reference,
+      },
+    };
+  } catch (err) {
+    return { action: 'error', errorMessage: `Failed to create evidence request: ${(err as Error).message}` };
+  }
+}
+
 async function handleAccountingExtract(
   flow: FlowData,
   node: FlowNode,
@@ -2508,6 +2609,8 @@ export async function processNextNode(executionId: string): Promise<void> {
             result = await handleProcessBankData(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'store_extracted_bank_data') {
             result = await handleStoreExtractedData(flow, currentNode, ctx, executionId, execution.engagementId);
+          } else if (currentNode.data?.inputType === 'fetch_evidence_or_portal') {
+            result = await handleFetchEvidenceOrPortal(flow, currentNode, ctx, executionId, execution.engagementId);
           } else if (currentNode.data?.inputType === 'accounting_extract' || currentNode.data?.inputType === 'accounting_extract_cutoff' || currentNode.data?.inputType === 'accounting_extract_or_bank') {
             result = await handleAccountingExtract(flow, currentNode, ctx, executionId, execution.engagementId, currentNode.data?.inputType === 'accounting_extract_cutoff', currentNode.data?.inputType === 'accounting_extract_or_bank');
           } else if (currentNode.data?.inputType === 'compare_bank_to_tb') {

@@ -479,6 +479,33 @@ export async function getTransactions(
   );
 }
 
+/**
+ * Look up a single invoice by invoice number or reference.
+ * Returns the invoice data if found, null otherwise.
+ */
+export async function getInvoiceByNumber(clientId: string, invoiceNumber: string): Promise<XeroTransaction | null> {
+  const { accessToken, tenantId } = await getValidAccessToken(clientId);
+  // Try by InvoiceNumber first
+  const whereClause = `InvoiceNumber=="${invoiceNumber}"`;
+  const res = await fetch(`${XERO_API_BASE}/Invoices?where=${encodeURIComponent(whereClause)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, 'Xero-Tenant-Id': tenantId, Accept: 'application/json' },
+  });
+  if (res.ok) {
+    const data = await res.json();
+    if (data.Invoices?.length > 0) return data.Invoices[0];
+  }
+  // Try by Reference
+  const whereRef = `Reference=="${invoiceNumber}"`;
+  const resRef = await fetch(`${XERO_API_BASE}/Invoices?where=${encodeURIComponent(whereRef)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, 'Xero-Tenant-Id': tenantId, Accept: 'application/json' },
+  });
+  if (resRef.ok) {
+    const dataRef = await resRef.json();
+    if (dataRef.Invoices?.length > 0) return dataRef.Invoices[0];
+  }
+  return null;
+}
+
 export async function revokeConnection(accessToken: string, tenantId: string): Promise<void> {
   try {
     const res = await fetch(`${XERO_CONNECTIONS_URL}/${tenantId}`, {
