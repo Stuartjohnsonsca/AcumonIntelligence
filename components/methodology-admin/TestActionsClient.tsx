@@ -125,9 +125,31 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
         </div>
       </div>
 
+      {/* System Test Actions */}
+      {actions.some(a => (a as any).isSystem) && (
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-lg font-bold text-indigo-900">System Test Actions</h2>
+            <span className="text-[9px] px-2 py-0.5 bg-indigo-100 text-indigo-600 rounded-full font-medium">Built-in</span>
+          </div>
+          <p className="text-xs text-slate-500 mb-3">These actions are embedded in the system and cannot be modified. Click "View Details" to see how each one works.</p>
+          <div className="space-y-2">
+            {actions.filter(a => (a as any).isSystem).map((action, i) => {
+              const isSystem = true;
+              return <SystemActionCard key={action.id} action={action} index={i} expandedSystemId={expandedSystemId} setExpandedSystemId={setExpandedSystemId} systemActionDetails={systemActionDetails} getColor={getColor} />;
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* User Test Actions */}
+      <div className="mb-3">
+        <h2 className="text-lg font-bold text-slate-900">User Test Actions</h2>
+        <p className="text-xs text-slate-500 mt-1">Custom actions you can edit, reorder, and assign to tests.</p>
+      </div>
       <div className="space-y-2">
-        {actions.map((action, i) => {
-          const isSystem = !!(action as any).isSystem;
+        {actions.filter(a => !(a as any).isSystem).map((action, i) => {
+          const isSystem = false;
           return (
           <div key={action.id} className={`border rounded-lg p-3 ${isSystem ? 'border-indigo-200 bg-indigo-50/20' : editingId === action.id ? 'border-blue-300 bg-blue-50/20' : 'border-slate-200'}`}>
             <div className="flex items-start gap-2">
@@ -359,10 +381,137 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
         })}
       </div>
 
-      {actions.length === 0 && (
+      {actions.filter(a => !(a as any).isSystem).length === 0 && (
         <div className="text-center py-12 border rounded-lg">
-          <p className="text-sm text-slate-400">No test actions defined yet.</p>
+          <p className="text-sm text-slate-400">No user test actions defined yet.</p>
           <button onClick={addAction} className="mt-2 text-xs text-blue-600 hover:text-blue-800">+ Add your first action</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── System Action Card (read-only with expandable details) ───
+
+function SystemActionCard({ action, index, expandedSystemId, setExpandedSystemId, systemActionDetails, getColor }: {
+  action: any; index: number; expandedSystemId: string | null; setExpandedSystemId: (id: string | null) => void;
+  systemActionDetails: Record<string, any>; getColor: (t: string) => string;
+}) {
+  const ACTION_TYPES_MAP: Record<string, string> = { client: 'Client Action', human: 'Human Action', ai: 'AI Action', review: 'Review/Conclude' };
+  const codeMap: Record<string, string> = { sys_fetch_evidence: 'fetch_evidence_accounting', sys_large_unusual: 'large_unusual_items' };
+  const details = systemActionDetails[codeMap[action.id] || ''];
+  const execDef = details?.executionDef || {};
+  const isExpanded = expandedSystemId === action.id;
+
+  return (
+    <div className="border border-indigo-200 rounded-lg bg-indigo-50/20 overflow-hidden">
+      <div className="px-4 py-3">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs font-bold text-slate-400">{index + 1}.</span>
+          <span className="text-sm font-semibold text-slate-800">{action.name}</span>
+          <span className="text-[8px] px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded-full font-medium">System</span>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getColor(action.actionType)}`}>
+            {ACTION_TYPES_MAP[action.actionType] || action.actionType}
+          </span>
+        </div>
+        <p className="text-xs text-slate-500">{action.description}</p>
+        <button onClick={() => setExpandedSystemId(isExpanded ? null : action.id)}
+          className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium mt-2">
+          {isExpanded ? '▼ Hide Details' : '▶ View Details'}
+        </button>
+      </div>
+
+      {isExpanded && (
+        <div className="border-t border-indigo-200 px-4 py-3 space-y-3 bg-white/50">
+          {/* How it works */}
+          {execDef.description && (
+            <div>
+              <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">How It Works</div>
+              <p className="text-xs text-slate-600 bg-white rounded border border-indigo-100 px-3 py-2">{execDef.description}</p>
+            </div>
+          )}
+
+          {/* Actual flow steps from the test */}
+          {details?.flowSteps?.length > 0 && (
+            <div>
+              <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">
+                Test Flow: {details.testName || 'N/A'}
+              </div>
+              {details.testDescription && <p className="text-[10px] text-slate-500 mb-2">{details.testDescription}</p>}
+              <div className="space-y-1.5">
+                {details.flowSteps.map((step: any, si: number) => (
+                  <div key={si} className="bg-white rounded border border-indigo-100 px-3 py-2 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-indigo-500 shrink-0">{si + 1}.</span>
+                      <span className="text-xs font-medium text-slate-700">{step.label}</span>
+                      {step.type === 'wait' && <span className="text-[8px] px-1 py-0 bg-orange-100 text-orange-600 rounded">Pauses — waits for: {step.waitFor}</span>}
+                      {step.type === 'forEach' && <span className="text-[8px] px-1 py-0 bg-blue-100 text-blue-600 rounded">Loop over: {step.collection}</span>}
+                      {step.inputType && <span className="text-[8px] px-1 py-0 bg-purple-100 text-purple-600 rounded">{step.inputType}</span>}
+                      {step.assignee && <span className="text-[8px] px-1 py-0 bg-slate-100 text-slate-600 rounded">{step.assignee}</span>}
+                    </div>
+                    <div className="text-[10px] text-slate-500 pl-5">
+                      {step.inputType === 'accounting_extract_or_bank' && '→ Tries to extract transactions from connected accounting system (Xero). If no connection, falls back to previously extracted bank statement data.'}
+                      {step.inputType === 'accounting_extract' && '→ Extracts transactions from the connected accounting system (Xero) for the audit period.'}
+                      {step.inputType === 'accounting_extract_cutoff' && '→ Extracts transactions from Xero for the 4-week cut-off window (±14 days from period end).'}
+                      {step.inputType === 'analyse_large_unusual' && '→ Programmatic analysis: flags items above PM, round numbers, weekend transactions, related party keywords, reversals, foreign transfers, and 11 more categories. Full dataset shown with flags highlighted.'}
+                      {step.inputType === 'fetch_evidence_or_portal' && '→ Tries to retrieve invoice from Xero by reference number. If not found or not connected, creates a portal request asking the client to upload evidence.'}
+                      {step.inputType === 'require_prior_evidence' && '→ Checks if required evidence (e.g. bank data) has already been extracted and stored.'}
+                      {step.waitFor === 'sampling' && '→ Shows the full population to the auditor. Auditor reviews flagged items and selects which to investigate. This is judgemental selection, not statistical sampling.'}
+                      {!step.inputType && !step.waitFor && step.assignee === 'ai' && '→ AI reviews the evidence and assesses each item.'}
+                    </div>
+                    {step.portalTemplate && (
+                      <div className="pl-5 mt-1 border-l-2 border-indigo-200">
+                        <div className="text-[9px] text-indigo-500 font-medium">Portal message to client:</div>
+                        <div className="text-[9px] text-slate-600 mt-0.5"><span className="text-slate-400">Subject:</span> {step.portalTemplate.subject}</div>
+                        <pre className="text-[9px] text-slate-500 whitespace-pre-wrap mt-0.5">{step.portalTemplate.message}</pre>
+                      </div>
+                    )}
+                    {step.systemInstruction && (
+                      <div className="pl-5 mt-1 border-l-2 border-purple-200">
+                        <div className="text-[9px] text-purple-500 font-medium">AI instruction:</div>
+                        <p className="text-[9px] text-slate-500 mt-0.5">{step.systemInstruction}</p>
+                      </div>
+                    )}
+                    {step.evidenceTypes && (
+                      <div className="pl-5 flex gap-1 mt-1">
+                        <span className="text-[8px] text-slate-400">Accepts:</span>
+                        {step.evidenceTypes.map((et: string, ei: number) => (
+                          <span key={ei} className="text-[8px] px-1 py-0 bg-green-50 border border-green-200 rounded text-green-700">{et}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Flag categories */}
+          {execDef.flagCategories && (
+            <div>
+              <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">Anomaly Detection Categories ({execDef.flagCategories.length})</div>
+              <div className="flex flex-wrap gap-1">
+                {execDef.flagCategories.map((cat: string, ci: number) => (
+                  <span key={ci} className="text-[9px] px-1.5 py-0.5 bg-white border border-slate-200 rounded text-slate-600">{cat}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Inputs */}
+          {execDef.inputs && (
+            <div>
+              <div className="text-[9px] font-bold text-indigo-600 uppercase mb-1">Inputs</div>
+              <div className="grid grid-cols-2 gap-1">
+                {execDef.inputs.map((inp: any, ii: number) => (
+                  <div key={ii} className="text-[10px] bg-white rounded border border-slate-200 px-2 py-1">
+                    <span className="font-medium text-slate-700">{inp.label || inp.key}</span>
+                    {inp.source && <span className="text-slate-400 ml-1">({inp.source})</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
