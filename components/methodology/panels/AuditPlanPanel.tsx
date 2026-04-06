@@ -526,6 +526,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     const result: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any; isIngest?: boolean; outputFormat?: string | null }[] = [];
 
     for (const test of matchedTestsMap.values()) {
+      if (!test || !test.name) continue; // Skip tests without names
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
 
@@ -541,7 +542,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       const tt = testTypes.find(t => t.code === test.testTypeCode);
       const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
       result.push({
-        description: test.name,
+        description: test.name || `Test ${test.id?.slice(0, 8) || 'unknown'}`,
         testTypeCode: test.testTypeCode,
         assertions: (test.assertions as string[]) || [],
         assertion: ((test.assertions as string[]) || [])[0] || '',
@@ -879,6 +880,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             </thead>
             <tbody>
               {filteredRows.filter(Boolean).map(row => {
+                try {
                 if (!row) return null;
                 // Match RMM to this TB row.
                 // RMM lineItem is the account description (e.g. "Barclays Current Account").
@@ -1164,6 +1166,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                     )}
                   </Fragment>
                 );
+                } catch (renderErr) {
+                  console.error('[AuditPlanPanel] Row render error:', renderErr, 'row:', row?.accountCode, row?.description);
+                  return <tr key={row?.accountCode || 'err'}><td colSpan={8} className="px-2 py-1 text-red-500 text-xs">Error rendering row: {(renderErr as Error).message}</td></tr>;
+                }
               })}
             </tbody>
           </table>
