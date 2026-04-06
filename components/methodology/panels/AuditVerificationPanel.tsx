@@ -229,25 +229,30 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
       if (assessment[checkKey] && assessment[checkKey] !== 'pending') return assessment[checkKey];
     }
 
+    // Try matching by itemId if sampleIndex didn't find it
+    var evDocFallback = evDoc || evidenceDocs.find(d => {
+      const si = sampleItems[itemIndex];
+      return si && (d.itemId === si.id || d.itemId === si.reference || d.docRef === si.reference);
+    }) || evidenceDocs[itemIndex]; // Last resort: match by position
+
     // If server assessment is pending but we have evidence, compute client-side
-    if (!evDoc || evDoc.status === 'pending' || evDoc.status === 'missing') return 'pending';
+    if (!evDocFallback || evDocFallback.status === 'pending' || evDocFallback.status === 'missing') return 'pending';
     const sampleItem = sampleItems[itemIndex];
     if (!sampleItem) return 'pending';
 
     if (checkKey === 'match') {
-      // Compare amount + contact
-      const amtDiff = Math.abs((evDoc.gross || 0) - (sampleItem.gross || 0));
+      const amtDiff = Math.abs((evDocFallback.gross || 0) - (sampleItem.gross || 0));
       const amtMatches = amtDiff < 0.01 || ((sampleItem.gross || 0) > 0 && amtDiff / (sampleItem.gross || 1) < 0.01);
-      const contactMatches = !sampleItem.customer || !evDoc.seller ||
-        sampleItem.customer.toLowerCase().includes(evDoc.seller.toLowerCase()) ||
-        evDoc.seller.toLowerCase().includes(sampleItem.customer.toLowerCase());
+      const contactMatches = !sampleItem.customer || !evDocFallback.seller ||
+        sampleItem.customer.toLowerCase().includes(evDocFallback.seller.toLowerCase()) ||
+        evDocFallback.seller.toLowerCase().includes(sampleItem.customer.toLowerCase());
       return (amtMatches && contactMatches) ? 'pass' : 'fail';
     }
 
     if (checkKey === 'period') {
-      if (!evDoc.date || evDoc.date === '—') return 'pending';
+      if (!evDocFallback.date || evDocFallback.date === '—') return 'pending';
       // Check if description suggests costs that span multiple periods (prepayments/accruals risk)
-      const desc = ((evDoc as any).description || '' + ' ' + (sampleItem.description || '')).toLowerCase();
+      const desc = ((evDocFallback as any).description || '' + ' ' + (sampleItem.description || '')).toLowerCase();
       const multiPeriodKeywords = [
         'insurance', 'annual', 'yearly', 'per annum', 'p.a.',
         'rent', 'lease', 'quarterly', 'in advance', 'prepaid',
@@ -274,10 +279,10 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
 
     if (checkKey === 'audit') {
       // Flag if amounts don't match or contact doesn't match
-      const amtDiff = Math.abs((evDoc.gross || 0) - (sampleItem.gross || 0));
+      const amtDiff = Math.abs((evDocFallback.gross || 0) - (sampleItem.gross || 0));
       const amtMatches = amtDiff < 0.01 || ((sampleItem.gross || 0) > 0 && amtDiff / (sampleItem.gross || 1) < 0.01);
-      if (!amtMatches) return 'fail'; // Needs investigation
-      const text = ((evDoc as any).description || '').toLowerCase();
+      if (!amtMatches) return 'fail';
+      const text = ((evDocFallback as any).description || '').toLowerCase();
       if (text.includes('credit note') || text.includes('reversal') || text.includes('voided') || text.includes('cash')) {
         return 'fail';
       }
