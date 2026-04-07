@@ -2059,7 +2059,7 @@ model MethodologyTest {
   assertions      Json?    // ["Completeness", "Existence", ...]
   framework       String   @default("ALL")
   significantRisk Boolean  @default(false) @map("significant_risk") // DEPRECATED — use category instead
-  category        String   @default("Other") @map("category") // Significant Risk | Area of Focus | Other | Analytical Review | Mandatory
+  category        String   @default("Normal") @map("category") // Significant Risk | Area of Focus | Normal | Analytical Review | Mandatory
   outputFormat    String?  @map("output_format") // three_section_sampling | three_section_no_sampling | document_summary | spreadsheet
   isIngest        Boolean  @default(false) @map("is_ingest") // Data collection/prep, not an auditable test
   flow            Json?    // { nodes, edges }

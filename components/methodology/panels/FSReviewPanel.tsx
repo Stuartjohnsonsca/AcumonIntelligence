@@ -141,19 +141,40 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     return stmtMap;
   }, [tbRows]);
 
-  // Lookup by fsLineId (exact) with fallback to lowercase fsLine name
+  // Fuzzy match for pre-fsLineId data: "Cash at Bank" ↔ "Cash and Cash Equivalents"
+  const allConcKeys = useMemo(() => Array.from(concsByFsLineId.keys()), [concsByFsLineId]);
+  function fuzzy(a: string, b: string): boolean {
+    if (a === b) return true;
+    if (a.includes(b) || b.includes(a)) return true;
+    const stop = new Set(['and','at','the','of','in','&','due','within','one','year','after','other','trade']);
+    const wa = new Set(a.split(/[\s\-\/]+/).filter(w => w.length > 1 && !stop.has(w)));
+    const wb = new Set(b.split(/[\s\-\/]+/).filter(w => w.length > 1 && !stop.has(w)));
+    if (wa.size === 0 || wb.size === 0) return false;
+    let n = 0; for (const w of wa) if (wb.has(w)) n++;
+    return n > 0 && n >= Math.min(wa.size, wb.size) * 0.5;
+  }
+
   function getConcs(fsLineId: string | null, name: string): Conc[] {
-    if (fsLineId) {
-      const byId = concsByFsLineId.get(fsLineId);
-      if (byId && byId.length > 0) return byId;
+    // 1. Exact by fsLineId
+    if (fsLineId) { const r = concsByFsLineId.get(fsLineId); if (r?.length) return r; }
+    // 2. Exact by lowercase name
+    const byName = concsByFsLineId.get(name.toLowerCase());
+    if (byName?.length) return byName;
+    // 3. Fuzzy match (for pre-fsLineId data where names differ)
+    const lc = name.toLowerCase();
+    for (const key of allConcKeys) {
+      if (fuzzy(lc, key)) { const r = concsByFsLineId.get(key); if (r?.length) return r; }
     }
-    // Fallback: match by lowercase name (for pre-fsLineId data)
-    return concsByFsLineId.get(name.toLowerCase()) || [];
+    return [];
   }
 
   function getErrs(fsLineId: string | null, name: string) {
     if (fsLineId) { const r = errsByFsLineId.get(fsLineId); if (r) return r; }
-    return errsByFsLineId.get(name.toLowerCase()) || { adj: 0, unadj: 0 };
+    const byName = errsByFsLineId.get(name.toLowerCase());
+    if (byName) return byName;
+    const lc = name.toLowerCase();
+    for (const [key, val] of errsByFsLineId) { if (fuzzy(lc, key)) return val; }
+    return { adj: 0, unadj: 0 };
   }
 
   function getAccConcs(code: string): Conc[] { return concsByAccount.get(code.toLowerCase()) || []; }
@@ -246,6 +267,21 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
 
                           {isLevelOpen && (
                             <div className="border-t">
+                              {/* FS Level test summary — shows all tests for this level */}
+                              {lConcs.length > 0 && (
+                                <div className="px-3 py-1.5 bg-blue-50/30 border-b space-y-0.5">
+                                  <div className="text-[8px] font-semibold text-blue-600 uppercase">Tests for {level} ({lConcs.length})</div>
+                                  {lConcs.map(c => (
+                                    <div key={c.id} className="flex items-center gap-2 text-[10px]">
+                                      <Dot c={c.conclusion} />
+                                      <span className="text-slate-700 flex-1 truncate">{c.testDescription}</span>
+                                      {c.totalErrors > 0 && <span className="text-red-600 font-mono text-[9px]">£{f(c.extrapolatedError)}</span>}
+                                      {c.reviewedByName ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded">{c.reviewedByName}</span> : <span className="text-[8px] text-slate-300">No rev</span>}
+                                      {c.riSignedByName ? <span className="text-[8px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">RI: {c.riSignedByName}</span> : <span className="text-[8px] text-slate-300">No RI</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                               {/* FS Note sub-cards (if any) */}
                               {sortedNotes.length > 0 && (
                                 <div className="px-2 py-1.5 space-y-1">

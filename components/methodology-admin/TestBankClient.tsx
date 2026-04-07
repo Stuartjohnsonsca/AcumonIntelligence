@@ -107,7 +107,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   // Test Bank tab state
   const [editingTest, setEditingTest] = useState<MethodologyTestItem | null>(null);
   const [testModalOpen, setTestModalOpen] = useState(false);
-  const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false, category: 'Other', outputFormat: 'three_section_no_sampling', isIngest: false });
+  const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false, category: 'Normal', outputFormat: 'three_section_no_sampling', isIngest: false });
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -193,7 +193,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           const filtered = prev.filter(a => !(a.fsLineId === allocPickerFsLineId && a.industryId === allocPickerIndustryId));
           return [...filtered, ...newAllocs.map((a: any) => ({
             ...a,
-            test: a.test || { id: a.testId, name: '', testTypeCode: '', framework: '', significantRisk: false, category: 'Other' },
+            test: a.test || { id: a.testId, name: '', testTypeCode: '', framework: '', significantRisk: false, category: 'Normal' },
             fsLine: a.fsLine || { id: allocPickerFsLineId, name: '' },
             industry: { id: allocPickerIndustryId, name: industries.find(i => i.id === allocPickerIndustryId)?.name || '' },
           }))];
@@ -205,7 +205,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   // ── Test Bank CRUD ──
   function openNewTestModal() {
     setEditingTest(null);
-    setTestForm({ name: '', description: '', testTypeCode: '', assertions: [], framework: '', significantRisk: false, category: 'Other', outputFormat: 'three_section_no_sampling', isIngest: false });
+    setTestForm({ name: '', description: '', testTypeCode: '', assertions: [], framework: '', significantRisk: false, category: 'Normal', outputFormat: 'three_section_no_sampling', isIngest: false });
     setTestModalOpen(true);
   }
 
@@ -622,7 +622,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 <div className="flex items-center gap-2">
                   <label className="text-sm font-medium text-slate-700">Category</label>
                   <select value={testForm.category} onChange={e => setTestForm(prev => ({ ...prev, category: e.target.value, significantRisk: e.target.value === 'Significant Risk' }))} className="px-2 py-1 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    <option value="Other">Other</option>
+                    <option value="Normal">Normal</option>
                     <option value="Significant Risk">Significant Risk</option>
                     <option value="Area of Focus">Area of Focus</option>
                     <option value="Analytical Review">Analytical Review</option>

@@ -131,7 +131,7 @@ export function FirmAssumptionsClient({
     Array.isArray(initialSpecialistRoles) ? initialSpecialistRoles : ['EQR', 'Valuations', 'Ethics', 'Technical']
   );
   const [testCategories, setTestCategories] = useState<string[]>(
-    Array.isArray(initialTestCategories) ? initialTestCategories : ['Significant Risk', 'Area of Focus', 'Other', 'Analytical Review', 'Mandatory']
+    Array.isArray(initialTestCategories) ? initialTestCategories : ['Significant Risk', 'Area of Focus', 'Normal', 'Analytical Review', 'Mandatory']
   );
   const [newCategory, setNewCategory] = useState('');
   const [arConfidenceFactor, setArConfidenceFactor] = useState<number>(

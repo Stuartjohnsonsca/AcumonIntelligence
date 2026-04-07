@@ -549,7 +549,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       // - AR: only Analytical Review + Mandatory tests
       // - Area of Focus: all except Significant Risk category tests
       // - Significant Risk: all tests
-      const testCategory = (test as any).category || (test.significantRisk ? 'Significant Risk' : 'Other');
+      const testCategory = (test as any).category || (test.significantRisk ? 'Significant Risk' : 'Normal');
       if (riskClassification === 'AR' && testCategory !== 'Analytical Review' && testCategory !== 'Mandatory') continue;
       if (riskClassification === 'Area of Focus' && testCategory === 'Significant Risk') continue;
 
