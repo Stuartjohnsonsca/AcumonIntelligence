@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2, CheckCircle2, Clock, Eye } from 'lucide-react';
+import { Loader2, CheckCircle2, Clock, Eye, Users, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface ChatMessage {
   from: 'firm' | 'client';
@@ -22,6 +22,13 @@ interface PortalRequest {
   respondedByName?: string;
   respondedAt?: string;
   chatHistory?: ChatMessage[];
+}
+
+interface ClientContact {
+  id?: string;
+  name: string;
+  email: string;
+  role?: string;
 }
 
 interface Props {
@@ -45,6 +52,10 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
   const [loading, setLoading] = useState(true);
   const [activeView, setActiveView] = useState<'outstanding' | 'responded'>('outstanding');
   const [viewMode, setViewMode] = useState<Record<string, 'batched' | 'separated'>>({});
+  const [contacts, setContacts] = useState<ClientContact[]>([]);
+  const [showContacts, setShowContacts] = useState(false);
+  const [newContact, setNewContact] = useState({ name: '', email: '', role: '' });
+  const [savingContact, setSavingContact] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -56,13 +67,15 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
         const clientId = engData.engagement?.clientId;
         if (!clientId) return;
 
-        const [outRes, respRes] = await Promise.all([
+        const [outRes, respRes, contactsRes] = await Promise.all([
           fetch(`/api/portal/requests?clientId=${clientId}&status=outstanding&engagementId=${engagementId}`),
           fetch(`/api/portal/requests?clientId=${clientId}&status=responded&engagementId=${engagementId}`),
+          fetch(`/api/engagements/${engagementId}/contacts`),
         ]);
 
         if (outRes.ok) setOutstanding((await outRes.json()).requests || []);
         if (respRes.ok) setResponded((await respRes.json()).requests || []);
+        if (contactsRes.ok) setContacts((await contactsRes.json()).contacts || []);
       } catch {}
       setLoading(false);
     }
@@ -71,16 +84,74 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
 
   if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading Client Portal view...</div>;
 
+  async function addContact() {
+    if (!newContact.name || !newContact.email) return;
+    setSavingContact(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/contacts`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newContact),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setContacts(prev => [...prev, data.contact || newContact]);
+        setNewContact({ name: '', email: '', role: '' });
+      }
+    } catch {} finally { setSavingContact(false); }
+  }
+
+  async function removeContact(id: string) {
+    try {
+      await fetch(`/api/engagements/${engagementId}/contacts/${id}`, { method: 'DELETE' });
+      setContacts(prev => prev.filter(c => c.id !== id));
+    } catch {}
+  }
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold text-slate-800">Client Portal View</h2>
-          <p className="text-xs text-slate-400">What {clientName} sees in their portal for this period</p>
+          <h2 className="text-base font-semibold text-slate-800">Client Portal</h2>
+          <p className="text-xs text-slate-400">Manage client contacts and view portal messages for {clientName}</p>
         </div>
-        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-[10px] font-medium">
-          <Eye className="h-3 w-3" /> READ ONLY
-        </span>
+      </div>
+
+      {/* Client Contacts Management */}
+      <div className="border rounded-lg overflow-hidden">
+        <button onClick={() => setShowContacts(!showContacts)} className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+          <div className="flex items-center gap-2">
+            {showContacts ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
+            <Users className="h-3.5 w-3.5 text-slate-500" />
+            <span className="text-xs font-semibold text-slate-700">Client Contacts</span>
+            <span className="text-[9px] text-slate-400">({contacts.length})</span>
+          </div>
+        </button>
+        {showContacts && (
+          <div className="p-3 space-y-2">
+            {contacts.map(c => (
+              <div key={c.id || c.email} className="flex items-center gap-2 text-xs">
+                <span className="font-medium text-slate-700 w-32 truncate">{c.name}</span>
+                <span className="text-slate-500 flex-1 truncate">{c.email}</span>
+                <span className="text-[9px] text-slate-400 w-20">{c.role || 'Contact'}</span>
+                {c.id && <button onClick={() => removeContact(c.id!)} className="text-red-400 hover:text-red-600"><Trash2 className="h-3 w-3" /></button>}
+              </div>
+            ))}
+            <div className="flex items-center gap-1 pt-1 border-t">
+              <input type="text" value={newContact.name} onChange={e => setNewContact(prev => ({ ...prev, name: e.target.value }))} className="flex-1 border rounded px-2 py-1 text-xs" placeholder="Name" />
+              <input type="email" value={newContact.email} onChange={e => setNewContact(prev => ({ ...prev, email: e.target.value }))} className="flex-1 border rounded px-2 py-1 text-xs" placeholder="Email" />
+              <select value={newContact.role} onChange={e => setNewContact(prev => ({ ...prev, role: e.target.value }))} className="border rounded px-2 py-1 text-xs w-24">
+                <option value="">Role</option>
+                <option value="Director">Director</option>
+                <option value="Finance">Finance</option>
+                <option value="Admin">Admin</option>
+                <option value="Other">Other</option>
+              </select>
+              <button onClick={addContact} disabled={savingContact || !newContact.name || !newContact.email} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-600 text-white rounded text-xs disabled:opacity-50 hover:bg-blue-700">
+                <Plus className="h-3 w-3" /> Add
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Simulated portal */}
