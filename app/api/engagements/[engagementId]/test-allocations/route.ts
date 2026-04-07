@@ -92,5 +92,11 @@ export async function GET(
     }),
   ]);
 
+  // One-time migration: rename "Other" → "Normal" category (runs once, idempotent)
+  prisma.methodologyTest.updateMany({
+    where: { firmId: engagement.firmId, category: 'Other' },
+    data: { category: 'Normal' },
+  }).catch(() => {});
+
   return NextResponse.json({ allocations, fsLines, tests: allTests, industryId: effectiveIndustryId });
 }
