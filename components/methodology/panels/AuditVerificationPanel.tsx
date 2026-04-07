@@ -17,15 +17,20 @@ interface SampleRow {
 
 interface EvidenceDoc {
   sampleIndex: number;
+  itemId?: string;
   fileName: string;
   docRef: string;
   date: string;
   seller: string;
+  description?: string;
   net: number;
   tax: number;
   gross: number;
-  status: 'matched' | 'partial' | 'missing' | 'pending';
+  status: 'matched' | 'partial' | 'missing' | 'pending' | string;
   previewUrl?: string;
+  storagePath?: string;
+  documentId?: string;
+  matchAssessment?: { match: string; period: string; disclosure: string; audit: string; notes?: string };
 }
 
 interface VerificationCheck {
@@ -66,6 +71,58 @@ interface Props {
   onRowClick?: (index: number) => void;
 }
 
+// Render JSON invoice data as a formatted card (when Xero stored JSON, not PDF)
+function JsonInvoicePreview({ url }: { url: string }) {
+  const [data, setData] = useState<any>(null);
+  useEffect(() => {
+    fetch(url).then(r => r.json()).then(setData).catch(() => {});
+  }, [url]);
+  if (!data) return <div className="p-3 flex items-center justify-center min-h-[120px]"><Loader2 className="h-5 w-5 animate-spin text-slate-300" /></div>;
+  return <InvoiceCardFromData data={data} />;
+}
+
+function InvoiceCardFromData({ data }: { data: any }) {
+  const lines = data.LineItems || [];
+  const parseDate = (d: string) => {
+    if (!d) return '';
+    if (d.includes('/Date(')) { const ms = parseInt(d.replace(/\/Date\((\d+)[+-]\d+\)\//, '$1')); return !isNaN(ms) ? new Date(ms).toLocaleDateString('en-GB') : d; }
+    return d;
+  };
+  return (
+    <div className="p-3 space-y-2 text-xs max-h-[250px] overflow-auto">
+      <div className="flex justify-between items-start">
+        <div><div className="font-bold text-slate-800">{data.Contact?.Name || 'Unknown'}</div><div className="text-slate-400">{data.InvoiceNumber || data.Reference || ''}</div></div>
+        <div className="text-right"><div className="font-bold text-lg text-slate-800">{data.CurrencyCode || ''} {Number(data.Total || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div><div className="text-slate-400">{parseDate(data.Date || '')}</div></div>
+      </div>
+      {data.Status && <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${data.Status === 'PAID' ? 'bg-green-100 text-green-700' : data.Status === 'AUTHORISED' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>{data.Status}</span>}
+      {lines.length > 0 && (
+        <table className="w-full text-[10px] border-collapse mt-1">
+          <thead><tr className="border-b"><th className="text-left py-0.5 text-slate-500">Description</th><th className="text-right py-0.5 text-slate-500">Qty</th><th className="text-right py-0.5 text-slate-500">Price</th><th className="text-right py-0.5 text-slate-500">Amount</th></tr></thead>
+          <tbody>{lines.map((li: any, i: number) => (
+            <tr key={i} className="border-b border-slate-50"><td className="py-0.5 text-slate-700 max-w-[200px] truncate">{li.Description || ''}</td><td className="py-0.5 text-right text-slate-500">{li.Quantity || ''}</td><td className="py-0.5 text-right text-slate-500">{li.UnitAmount != null ? Number(li.UnitAmount).toFixed(2) : ''}</td><td className="py-0.5 text-right font-medium">{Number(li.LineAmount || 0).toFixed(2)}</td></tr>
+          ))}</tbody>
+        </table>
+      )}
+      <div className="flex justify-between text-[10px] pt-1 border-t"><span className="text-slate-400">Sub: {Number(data.SubTotal || 0).toFixed(2)}</span><span className="text-slate-400">Tax: {Number(data.TotalTax || 0).toFixed(2)}</span><span className="font-bold">Total: {Number(data.Total || 0).toFixed(2)}</span></div>
+    </div>
+  );
+}
+
+// Inline invoice card when we have doc metadata but no storagePath/previewUrl
+function InlineInvoiceCard({ doc }: { doc: EvidenceDoc }) {
+  return (
+    <div className="p-3 space-y-1 min-h-[120px]">
+      <div className="flex justify-between items-start">
+        <div><div className="text-xs font-bold text-slate-700">{doc.seller || 'Unknown'}</div><div className="text-[10px] text-slate-400">{doc.docRef || doc.fileName}</div></div>
+        <div className="text-right"><div className="text-sm font-bold text-slate-800">{fmt(doc.gross)}</div><div className="text-[10px] text-slate-400">{doc.date || ''}</div></div>
+      </div>
+      {doc.description && <div className="text-[10px] text-slate-500 truncate">{doc.description}</div>}
+      <div className="flex gap-3 text-[10px] text-slate-400"><span>Net: {fmt(doc.net)}</span><span>Tax: {fmt(doc.tax)}</span></div>
+      <div className={`text-[9px] px-1.5 py-0.5 rounded font-medium inline-block ${doc.status === 'matched' ? 'bg-green-100 text-green-700' : doc.status === 'partial' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>{doc.status}</div>
+    </div>
+  );
+}
+
 function fmt(n: number | null | undefined): string {
   if (n == null || isNaN(n)) return '—';
   const abs = Math.abs(n);
@@ -75,6 +132,15 @@ function fmt(n: number | null | undefined): string {
 
 export function AuditVerificationPanel({ engagementId, executionId, fsLine, assertions, sampleItems, evidenceDocs, verificationResults, onRowClick }: Props) {
   const verificationColumns = useMemo(() => getVerificationChecks(assertions || []), [assertions]);
+
+  // Robust evidence doc finder — tries sampleIndex, itemId, docRef, then position
+  function findEvDoc(itemIndex: number): EvidenceDoc | null {
+    const si = sampleItems[itemIndex];
+    return evidenceDocs.find(d => d.sampleIndex === itemIndex)
+      || (si ? evidenceDocs.find(d => d.itemId && (d.itemId === (si as any).id || d.itemId === si.reference || d.docRef === si.reference)) : null)
+      || evidenceDocs[itemIndex]
+      || null;
+  }
   const [currentItemIndex, setCurrentItemIndex] = useState(0);
   const [previewDoc, setPreviewDoc] = useState<EvidenceDoc | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
@@ -86,6 +152,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
   const [rowStates, setRowStates] = useState<Record<number, RowState>>({});
   const [actionModalRow, setActionModalRow] = useState<{ index: number; type: 'ri_matter' | 'review_point' } | null>(null);
   const [actionComment, setActionComment] = useState('');
+  const [popoutPreview, setPopoutPreview] = useState(false);
 
   // Auto-create extraction session
   useEffect(() => {
@@ -222,13 +289,11 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
     if (check && (check as any)[checkKey] && (check as any)[checkKey] !== 'pending') {
       return (check as any)[checkKey];
     }
-    // Then check matchAssessment from evidence docs — try multiple matching strategies
-    const evDoc = evidenceDocs.find(d => d.sampleIndex === itemIndex)
-      || evidenceDocs.find(d => { const si = sampleItems[itemIndex]; return si && ((d as any).itemId === (si as any).id || (d as any).itemId === si.reference); })
-      || evidenceDocs[itemIndex]; // Last resort: match by position
-    if (evDoc && (evDoc as any).matchAssessment) {
-      const assessment = (evDoc as any).matchAssessment;
-      if (assessment[checkKey] && assessment[checkKey] !== 'pending') return assessment[checkKey];
+    // Then check matchAssessment from evidence docs
+    const evDoc = findEvDoc(itemIndex);
+    if (evDoc?.matchAssessment) {
+      const assessment = evDoc.matchAssessment;
+      if ((assessment as any)[checkKey] && (assessment as any)[checkKey] !== 'pending') return (assessment as any)[checkKey];
     }
 
     // If server assessment is pending but we have evidence, compute client-side
@@ -292,13 +357,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
   }
 
   const item = sampleItems[currentItemIndex];
-  // Find evidence doc — try sampleIndex first, then by position, then by matching fields
-  const rawDoc = item ? (
-    evidenceDocs.find(d => d.sampleIndex === currentItemIndex)
-    || evidenceDocs.find(d => (d as any).itemId && ((d as any).itemId === (item as any).id || (d as any).itemId === item.reference))
-    || evidenceDocs[currentItemIndex] // fallback: match by position
-    || null
-  ) : null;
+  const rawDoc = item ? findEvDoc(currentItemIndex) : null;
   // Ensure preview URL exists — generate from storagePath or documentId if missing
   const doc = rawDoc ? {
     ...rawDoc,
@@ -397,25 +456,30 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
           <div className="border rounded-lg overflow-hidden">
             <div className="bg-slate-600 text-white px-3 py-1.5 text-[10px] font-semibold flex items-center justify-between">
               Document Preview
-              {(doc?.previewUrl || previewDoc?.previewUrl) && (
-                <a href={doc?.previewUrl || previewDoc?.previewUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-slate-300 hover:text-white flex items-center gap-0.5">
-                  <ExternalLink className="h-2.5 w-2.5" /> Open
-                </a>
-              )}
+              <div className="flex items-center gap-2">
+                {(resolvedPreviewUrl || doc?.previewUrl) && (
+                  <a href={resolvedPreviewUrl || doc?.previewUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-slate-300 hover:text-white flex items-center gap-0.5">
+                    <ExternalLink className="h-2.5 w-2.5" /> Open
+                  </a>
+                )}
+                {(resolvedPreviewUrl || doc) && (
+                  <button onClick={() => setPopoutPreview(true)} className="text-[9px] text-slate-300 hover:text-white flex items-center gap-0.5">
+                    <Eye className="h-2.5 w-2.5" /> Pop Out
+                  </button>
+                )}
+              </div>
             </div>
-            {resolvedPreviewUrl ? (
+            {resolvedPreviewUrl && !(doc?.storagePath || doc?.fileName || '').endsWith('.json') ? (
               <iframe src={resolvedPreviewUrl} className="w-full h-[250px] border-0" title="Document Preview" />
+            ) : resolvedPreviewUrl && (doc?.storagePath || doc?.fileName || '').endsWith('.json') ? (
+              <JsonInvoicePreview url={resolvedPreviewUrl} />
             ) : doc?.previewUrl ? (
               <div className="p-3 flex flex-col items-center justify-center text-slate-400 min-h-[120px]">
                 <Loader2 className="h-6 w-6 animate-spin mb-1" />
                 <p className="text-[10px]">Loading preview...</p>
               </div>
             ) : doc ? (
-              <div className="p-3 flex flex-col items-center justify-center text-slate-400 min-h-[120px]">
-                <FileText className="h-8 w-8 mb-1" />
-                <p className="text-[10px] font-medium">{doc.fileName || doc.docRef}</p>
-                <p className="text-[9px] mt-1">No document file stored</p>
-              </div>
+              <InlineInvoiceCard doc={doc} />
             ) : (
               <div className="p-3 flex items-center justify-center text-slate-300 min-h-[120px]">
                 <p className="text-[10px]">No evidence obtained yet</p>
@@ -469,8 +533,8 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
             </div>
             {/* Assessment notes from the system */}
             {(() => {
-              const evDoc = evidenceDocs.find(d => d.sampleIndex === currentItemIndex);
-              const notes = (evDoc as any)?.matchAssessment?.notes;
+              const evDoc = findEvDoc(currentItemIndex);
+              const notes = evDoc?.matchAssessment?.notes;
               if (!notes) return null;
               return (
                 <div className="mt-2 text-[10px] text-slate-600 bg-slate-50 rounded px-3 py-2 border">
@@ -572,6 +636,45 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
                 {actionModalRow.type === 'ri_matter' ? 'Send to RI' : 'Create Review Point'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-out preview window — floating, resizable, moves with item navigation */}
+      {popoutPreview && (
+        <div
+          className="fixed z-50 bg-white border-2 border-slate-300 rounded-lg shadow-2xl overflow-hidden"
+          style={{ top: '10%', right: '2%', width: '45vw', height: '75vh', resize: 'both', minWidth: 400, minHeight: 300 }}
+        >
+          <div
+            className="bg-slate-700 text-white px-3 py-2 text-xs font-semibold flex items-center justify-between cursor-move select-none"
+            onMouseDown={(e) => {
+              const el = (e.target as HTMLElement).closest('.fixed') as HTMLElement;
+              if (!el) return;
+              const startX = e.clientX - el.offsetLeft;
+              const startY = e.clientY - el.offsetTop;
+              const move = (ev: MouseEvent) => { el.style.left = (ev.clientX - startX) + 'px'; el.style.top = (ev.clientY - startY) + 'px'; el.style.right = 'auto'; };
+              const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+              document.addEventListener('mousemove', move);
+              document.addEventListener('mouseup', up);
+            }}
+          >
+            <span>Preview — Item {currentItemIndex + 1}/{sampleItems.length}: {item?.reference || item?.description || ''}</span>
+            <div className="flex items-center gap-2">
+              {resolvedPreviewUrl && <a href={resolvedPreviewUrl} target="_blank" rel="noopener noreferrer" className="text-slate-300 hover:text-white"><ExternalLink className="h-3.5 w-3.5" /></a>}
+              <button onClick={() => setPopoutPreview(false)} className="text-slate-300 hover:text-white"><X className="h-4 w-4" /></button>
+            </div>
+          </div>
+          <div className="h-[calc(100%-36px)] overflow-auto">
+            {resolvedPreviewUrl && !(doc?.storagePath || doc?.fileName || '').endsWith('.json') ? (
+              <iframe src={resolvedPreviewUrl} className="w-full h-full border-0" title="Document Preview" />
+            ) : resolvedPreviewUrl && (doc?.storagePath || doc?.fileName || '').endsWith('.json') ? (
+              <JsonInvoicePreview url={resolvedPreviewUrl} />
+            ) : doc ? (
+              <InlineInvoiceCard doc={doc} />
+            ) : (
+              <div className="p-6 text-center text-slate-400"><FileText className="h-10 w-10 mx-auto mb-2" /><p>No preview available</p></div>
+            )}
           </div>
         </div>
       )}
