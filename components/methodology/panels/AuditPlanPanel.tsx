@@ -553,14 +553,15 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
 
       // Risk-based filtering using test.category:
-      // - Significant Risk: all tests (most coverage)
-      // - Area of Focus: all except Significant Risk category
-      // - Normal: only Normal + Mandatory tests (no Sig Risk or AoF specific)
-      // - AR: only Analytical Review + Mandatory tests (below PM)
+      // - Significant Risk: all tests EXCEPT Analytical Review (substantive focus)
+      // - Area of Focus: all except Significant Risk and Analytical Review
+      // - Normal (>PM, no RMM): only Normal + Mandatory (no AR, no Sig Risk, no AoF)
+      // - AR (≤PM): only Analytical Review + Mandatory
       const testCategory = (test as any).category || (test.significantRisk ? 'Significant Risk' : 'Normal');
       if (riskClassification === 'AR' && testCategory !== 'Analytical Review' && testCategory !== 'Mandatory') continue;
       if (riskClassification === 'Normal' && testCategory !== 'Normal' && testCategory !== 'Mandatory') continue;
-      if (riskClassification === 'Area of Focus' && testCategory === 'Significant Risk') continue;
+      if (riskClassification === 'Area of Focus' && (testCategory === 'Significant Risk' || testCategory === 'Analytical Review')) continue;
+      if (riskClassification === 'Significant Risk' && testCategory === 'Analytical Review') continue;
 
       const tt = testTypes.find(t => t.code === test.testTypeCode);
       const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';
