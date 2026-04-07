@@ -440,17 +440,14 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const dotColor = conclusion === 'green' ? 'bg-green-500' : conclusion === 'orange' ? 'bg-orange-500' : conclusion === 'red' ? 'bg-red-500' : 'bg-slate-300';
 
   return (
-    <div className={riApproved ? 'relative' : ''}>
+    <div>
       {riApproved && (
-        <>
-          <div className="bg-green-50 border border-green-200 rounded-t-lg px-4 py-2 flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
-            <span className="text-xs font-medium text-green-800">Approved by {riApprovedBy}{riApprovedAt ? ` on ${riApprovedAt}` : ''} — Read Only</span>
-          </div>
-          <div className="pointer-events-none opacity-70">
-        </>
+        <div className="bg-green-50 border border-green-200 rounded-t-lg px-4 py-2 flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 text-green-600" />
+          <span className="text-xs font-medium text-green-800">Approved by {riApprovedBy}{riApprovedAt ? ` on ${riApprovedAt}` : ''} — Read Only</span>
+        </div>
       )}
-    <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
+    <div className={`border rounded-lg bg-white overflow-hidden shadow-sm ${riApproved ? 'pointer-events-none opacity-70' : ''}`}>
       {/* ─── HEADER ─── */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b">
         <div className="flex items-center gap-3 min-w-0">
@@ -1237,7 +1234,6 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         </div>
       )}
     </div>
-      {riApproved && <></div></>}
     </div>
   );
 }
