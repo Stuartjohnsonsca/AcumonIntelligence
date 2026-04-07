@@ -255,7 +255,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                                             <div className="flex gap-1"><SignDot count={nSo.rev} total={nSo.total} /><SignDot count={nSo.ri} total={nSo.total} /></div>
                                           </div>
                                         </button>
-                                        {isNoteOpen && <AccountRows rows={noteRows} getAccConcs={getAccConcs} expanded={expanded} toggle={toggle} prefix={`na:${note}`} />}
+                                        {isNoteOpen && <AccountRows rows={noteRows} getAccConcs={getAccConcs} getLineConcs={getConcs} fsLineName={note} expanded={expanded} toggle={toggle} prefix={`na:${note}`} />}
                                       </div>
                                     );
                                   })}
@@ -263,7 +263,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                               )}
 
                               {/* Account rows (when no notes, or as the default view) */}
-                              {sortedNotes.length === 0 && <AccountRows rows={ld.rows} getAccConcs={getAccConcs} expanded={expanded} toggle={toggle} prefix={`la:${level}`} />}
+                              {sortedNotes.length === 0 && <AccountRows rows={ld.rows} getAccConcs={getAccConcs} getLineConcs={getConcs} fsLineName={level} expanded={expanded} toggle={toggle} prefix={`la:${level}`} />}
                             </div>
                           )}
                         </div>
@@ -280,86 +280,116 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
   );
 }
 
-// ─── Account Rows with inline test conclusions ───
-function AccountRows({ rows, getAccConcs, expanded, toggle, prefix }: {
+// ─── Account Rows with FS-level test conclusions + per-account drill-down ───
+function AccountRows({ rows, getAccConcs, getLineConcs, fsLineName, expanded, toggle, prefix }: {
   rows: TBRow[];
   getAccConcs: (code: string) => Conc[];
+  getLineConcs: (name: string) => Conc[];
+  fsLineName: string;
   expanded: Set<string>;
   toggle: (key: string) => void;
   prefix: string;
 }) {
+  // Get ALL conclusions for this FS line (the primary source of test results)
+  const lineConcs = getLineConcs(fsLineName);
+
   return (
-    <table className="w-full text-[10px]">
-      <thead>
-        <tr className="bg-slate-50/50 border-b text-[9px] text-slate-500 uppercase">
-          <th className="w-5"></th>
-          <th className="px-1.5 py-1 text-left w-16">Code</th>
-          <th className="px-1.5 py-1 text-left">Description</th>
-          <th className="px-1.5 py-1 text-right w-16">CY</th>
-          <th className="px-1.5 py-1 text-right w-16">PY</th>
-          <th className="px-1.5 py-1 text-center w-10">Tests</th>
-          <th className="px-1.5 py-1 text-center w-8">Rev</th>
-          <th className="px-1.5 py-1 text-center w-8">RI</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map(r => {
-          const concs = getAccConcs(r.accountCode);
-          const rowKey = `${prefix}:${r.accountCode}`;
-          const isOpen = expanded.has(rowKey);
-          const hasConcs = concs.length > 0;
-          const so = { rev: concs.filter(c => c.reviewedByName).length, ri: concs.filter(c => c.riSignedByName).length, total: concs.length };
-          return (
-            <tr key={r.id} className="border-b border-slate-100/50 group">
-              <td className="py-0.5 text-center">
-                {hasConcs && (
-                  <button onClick={() => toggle(rowKey)} className="text-slate-400 hover:text-slate-600">
-                    {isOpen ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
-                  </button>
-                )}
-              </td>
-              <td className="px-1.5 py-0.5 font-mono text-slate-400">{r.accountCode}</td>
-              <td className="px-1.5 py-0.5 text-slate-700">{r.description}</td>
-              <td className="px-1.5 py-0.5 text-right font-mono">{f(Number(r.currentYear) || 0)}</td>
-              <td className="px-1.5 py-0.5 text-right font-mono text-slate-400">{f(Number(r.priorYear) || 0)}</td>
-              <td className="px-1.5 py-0.5 text-center">
-                {hasConcs && (
-                  <div className="flex items-center justify-center gap-0.5">
-                    {concs.map(c => <Dot key={c.id} c={c.conclusion} />)}
-                  </div>
-                )}
-              </td>
-              <td className="px-1.5 py-0.5 text-center"><SignDot count={so.rev} total={so.total} /></td>
-              <td className="px-1.5 py-0.5 text-center"><SignDot count={so.ri} total={so.total} /></td>
-              {/* Expanded test details row handled via CSS sibling — using a second <tr> */}
-            </tr>
-          );
-        })}
-        {/* Render expanded test details as separate rows after each account */}
-        {rows.map(r => {
-          const concs = getAccConcs(r.accountCode);
-          const rowKey = `${prefix}:${r.accountCode}`;
-          if (!expanded.has(rowKey) || concs.length === 0) return null;
-          return (
-            <tr key={`${r.id}-exp`}>
-              <td colSpan={8} className="px-6 py-1.5 bg-blue-50/30">
-                <div className="space-y-0.5">
-                  {concs.map(c => (
-                    <div key={c.id} className="flex items-center gap-2 text-[10px]">
-                      <Dot c={c.conclusion} />
-                      <span className="text-slate-700 flex-1">{c.testDescription}</span>
-                      {c.totalErrors > 0 && <span className="text-red-600 font-mono text-[9px]">£{f(c.extrapolatedError)}</span>}
-                      {c.reviewedByName && <span className="text-[8px] bg-green-100 text-green-700 px-1 rounded">{c.reviewedByName}</span>}
-                      {c.riSignedByName && <span className="text-[8px] bg-blue-100 text-blue-700 px-1 rounded">RI: {c.riSignedByName}</span>}
+    <div className="border-t">
+      {/* FS Line test conclusions — shown at the top before account rows */}
+      {lineConcs.length > 0 && (
+        <div className="px-3 py-2 bg-blue-50/40 border-b">
+          <div className="text-[8px] font-semibold text-blue-600 uppercase mb-1">Tests for {fsLineName} ({lineConcs.length})</div>
+          <div className="space-y-1">
+            {lineConcs.map(c => (
+              <div key={c.id} className="flex items-center gap-2 text-[10px]">
+                <Dot c={c.conclusion} />
+                <span className="text-slate-700 flex-1">{c.testDescription}</span>
+                {c.totalErrors > 0 && <span className="text-red-600 font-mono text-[9px]">£{f(c.extrapolatedError)} err</span>}
+                {c.reviewedByName && <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded">{c.reviewedByName}</span>}
+                {c.riSignedByName && <span className="text-[8px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">RI: {c.riSignedByName}</span>}
+                {!c.reviewedByName && !c.riSignedByName && c.conclusion && <span className="text-[8px] text-slate-400">Not reviewed</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Account code rows */}
+      <table className="w-full text-[10px]">
+        <thead>
+          <tr className="bg-slate-50/50 border-b text-[9px] text-slate-500 uppercase">
+            <th className="w-5"></th>
+            <th className="px-1.5 py-1 text-left w-16">Code</th>
+            <th className="px-1.5 py-1 text-left">Description</th>
+            <th className="px-1.5 py-1 text-right w-16">CY</th>
+            <th className="px-1.5 py-1 text-right w-16">PY</th>
+            <th className="px-1.5 py-1 text-center w-10">Tests</th>
+            <th className="px-1.5 py-1 text-center w-8">Rev</th>
+            <th className="px-1.5 py-1 text-center w-8">RI</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => {
+            // Conclusions matched to this specific account code
+            const accConcs = getAccConcs(r.accountCode);
+            // Also include FS-line-level conclusions for dot display (tests apply to all accounts in the line)
+            const allConcs = accConcs.length > 0 ? accConcs : lineConcs;
+            const rowKey = `${prefix}:${r.accountCode}`;
+            const isOpen = expanded.has(rowKey);
+            const hasConcs = allConcs.length > 0;
+            const so = { rev: allConcs.filter(c => c.reviewedByName).length, ri: allConcs.filter(c => c.riSignedByName).length, total: allConcs.length };
+            return (
+              <tr key={r.id} className={`border-b border-slate-100/50 ${isOpen ? 'bg-blue-50/20' : 'hover:bg-slate-50/50'}`}>
+                <td className="py-0.5 text-center">
+                  {hasConcs && (
+                    <button onClick={() => toggle(rowKey)} className="text-slate-400 hover:text-slate-600">
+                      {isOpen ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
+                    </button>
+                  )}
+                </td>
+                <td className="px-1.5 py-0.5 font-mono text-slate-400">{r.accountCode}</td>
+                <td className="px-1.5 py-0.5 text-slate-700">{r.description}</td>
+                <td className="px-1.5 py-0.5 text-right font-mono">{f(Number(r.currentYear) || 0)}</td>
+                <td className="px-1.5 py-0.5 text-right font-mono text-slate-400">{f(Number(r.priorYear) || 0)}</td>
+                <td className="px-1.5 py-0.5 text-center">
+                  {hasConcs && (
+                    <div className="flex items-center justify-center gap-0.5">
+                      {allConcs.map(c => <Dot key={c.id} c={c.conclusion} />)}
                     </div>
-                  ))}
-                </div>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                  )}
+                </td>
+                <td className="px-1.5 py-0.5 text-center"><SignDot count={so.rev} total={so.total} /></td>
+                <td className="px-1.5 py-0.5 text-center"><SignDot count={so.ri} total={so.total} /></td>
+              </tr>
+            );
+          })}
+          {/* Expanded test details — rendered as separate rows immediately after account rows */}
+          {rows.map(r => {
+            const accConcs = getAccConcs(r.accountCode);
+            const displayConcs = accConcs.length > 0 ? accConcs : lineConcs;
+            const rowKey = `${prefix}:${r.accountCode}`;
+            if (!expanded.has(rowKey) || displayConcs.length === 0) return null;
+            return (
+              <tr key={`${r.id}-exp`}>
+                <td colSpan={8} className="px-5 py-1.5 bg-blue-50/30 border-b">
+                  <div className="space-y-0.5">
+                    {displayConcs.map(c => (
+                      <div key={c.id} className="flex items-center gap-2 text-[10px]">
+                        <Dot c={c.conclusion} />
+                        <span className="text-slate-700 flex-1">{c.testDescription}</span>
+                        {c.totalErrors > 0 && <span className="text-red-600 font-mono text-[9px]">£{f(c.extrapolatedError)}</span>}
+                        {c.reviewedByName && <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded">{c.reviewedByName}</span>}
+                        {c.riSignedByName && <span className="text-[8px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">RI: {c.riSignedByName}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
