@@ -69,7 +69,11 @@ interface Props {
   evidenceDocs: EvidenceDoc[];
   verificationResults: VerificationCheck[];
   onRowClick?: (index: number) => void;
+  onRowStatesChange?: (states: Record<number, RowState>) => void;
 }
+
+// Export RowState so parent can use it
+export type { RowState };
 
 // Render JSON invoice data as a formatted card (when Xero stored JSON, not PDF)
 function JsonInvoicePreview({ url }: { url: string }) {
@@ -130,7 +134,7 @@ function fmt(n: number | null | undefined): string {
   return n < 0 ? `(${f})` : f;
 }
 
-export function AuditVerificationPanel({ engagementId, executionId, fsLine, assertions, sampleItems, evidenceDocs, verificationResults, onRowClick }: Props) {
+export function AuditVerificationPanel({ engagementId, executionId, fsLine, assertions, sampleItems, evidenceDocs, verificationResults, onRowClick, onRowStatesChange }: Props) {
   const verificationColumns = useMemo(() => getVerificationChecks(assertions || []), [assertions]);
 
   // Robust evidence doc finder — tries sampleIndex, itemId, docRef, then position
@@ -154,6 +158,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
   const [actionComment, setActionComment] = useState('');
   const [popoutPreview, setPopoutPreview] = useState(false);
   const [resolvedPreviewUrl, setResolvedPreviewUrl] = useState<string | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(true);
 
   // Auto-create extraction session
   useEffect(() => {
@@ -177,8 +182,9 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
       }).catch(() => {});
   }, [engagementId, executionId]);
 
-  // Save row states to DB
+  // Save row states to DB and notify parent
   const saveRowStates = useCallback(async (states: Record<number, RowState>) => {
+    onRowStatesChange?.(states);
     if (!engagementId || !executionId) return;
     try {
       await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
@@ -186,7 +192,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
         body: JSON.stringify({ executionId, fsLine, testDescription: '', followUpData: { rowStates: states } }),
       });
     } catch {}
-  }, [engagementId, executionId, fsLine]);
+  }, [engagementId, executionId, fsLine, onRowStatesChange]);
 
   function handleCheckClick(itemIndex: number, checkKey: string) {
     setRowStates(prev => {
@@ -503,6 +509,24 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
                 const aiStatus = getAiCheckStatus(currentItemIndex, col.key);
                 const userConfirm = rowState.checks[col.key];
                 const effectiveStatus = userConfirm?.status ?? (aiStatus !== 'pending' ? aiStatus : null);
+                // Build reason tooltip from matchAssessment
+                const evDocForTip = findEvDoc(currentItemIndex);
+                const assessment = evDocForTip?.matchAssessment;
+                const reasonLines: string[] = [];
+                if (assessment) {
+                  const notes = (assessment.notes || '').split('\n').filter(Boolean);
+                  const keyMap: Record<string, string[]> = {
+                    match: ['AMOUNT', 'CONTACT', 'MATCH'],
+                    period: ['PERIOD'],
+                    disclosure: ['DISCLOSURE'],
+                    audit: ['AUDIT', 'OTHER'],
+                  };
+                  const keys = keyMap[col.key] || [];
+                  for (const line of notes) {
+                    if (keys.some(k => line.toUpperCase().includes(k))) reasonLines.push(line);
+                  }
+                }
+                const failReason = aiStatus === 'fail' && reasonLines.length > 0 ? '\n\nReason: ' + reasonLines.join('; ') : '';
 
                 return (
                   <div key={col.key} className="text-center space-y-1.5">
@@ -516,7 +540,8 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
                       }}
                       title={
                         !userConfirm && aiStatus === 'pending' ? 'Not assessed — click to set'
-                        : !userConfirm ? `AI: ${aiStatus === 'pass' ? 'Agrees' : 'Issue found'} — click to confirm`
+                        : !userConfirm && aiStatus === 'fail' ? `Issue found — click to confirm${failReason}`
+                        : !userConfirm ? `AI: Agrees — click to confirm`
                         : `${userConfirm.status === 'pass' ? 'Agrees' : 'Issue'} — ${userConfirm.userName} ${new Date(userConfirm.timestamp).toLocaleDateString('en-GB')} — click to toggle`
                       }
                     >
@@ -555,58 +580,23 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
         </div>
       )}
 
-      {/* Actions + Sign-off */}
+      {/* Actions — per-item buttons */}
       {item && (
         <div className="border rounded-lg overflow-hidden">
-          <div className="px-3 py-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-slate-600 uppercase">Action:</span>
-              <button onClick={() => handleAction(currentItemIndex, 'none')}
-                className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'none' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-green-50'}`}>
-                <CheckCircle2 className="h-3 w-3" /> No action needed
-              </button>
-              <button onClick={() => handleAction(currentItemIndex, 'ri_matter')}
-                className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'ri_matter' ? 'bg-red-100 text-red-700 border border-red-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-red-50'}`}>
-                <Flag className="h-3 w-3" /> RI Matter
-              </button>
-              <button onClick={() => handleAction(currentItemIndex, 'review_point')}
-                className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'review_point' ? 'bg-amber-100 text-amber-700 border border-amber-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-amber-50'}`}>
-                <Send className="h-3 w-3" /> Review Point
-              </button>
-            </div>
-            {/* Reviewer + RI sign-off */}
-            <div className="flex items-center gap-4">
-              <button onClick={() => {
-                setRowStates(prev => {
-                  const row = prev[currentItemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
-                  const updated = { ...prev, [currentItemIndex]: { ...row, reviewerSignOff: row.reviewerSignOff ? null : { userName: 'Current User', timestamp: new Date().toISOString() } } };
-                  saveRowStates(updated);
-                  return updated;
-                });
-              }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${rowState.reviewerSignOff ? '' : 'hover:opacity-100'}`}
-                title={rowState.reviewerSignOff ? `Reviewed by ${rowState.reviewerSignOff.userName} — click to unsign` : 'Click to sign as Reviewer'}>
-                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${rowState.reviewerSignOff ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
-                  {rowState.reviewerSignOff && <CheckCircle2 className="h-3.5 w-3.5 text-white" />}
-                </div>
-                <span className="text-[8px] font-bold text-slate-600">Reviewer</span>
-                {rowState.reviewerSignOff && <span className="text-[7px] text-green-600">{rowState.reviewerSignOff.userName}</span>}
-              </button>
-              <button onClick={() => {
-                setRowStates(prev => {
-                  const row = prev[currentItemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
-                  const updated = { ...prev, [currentItemIndex]: { ...row, riSignOff: row.riSignOff ? null : { userName: 'Current User', timestamp: new Date().toISOString() } } };
-                  saveRowStates(updated);
-                  return updated;
-                });
-              }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${rowState.riSignOff ? '' : 'hover:opacity-100'}`}
-                title={rowState.riSignOff ? `RI signed by ${rowState.riSignOff.userName} — click to unsign` : 'Click to sign as RI'}>
-                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${rowState.riSignOff ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
-                  {rowState.riSignOff && <CheckCircle2 className="h-3.5 w-3.5 text-white" />}
-                </div>
-                <span className="text-[8px] font-bold text-slate-600">RI</span>
-                {rowState.riSignOff && <span className="text-[7px] text-green-600">{rowState.riSignOff.userName}</span>}
-              </button>
-            </div>
+          <div className="px-3 py-2 flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-600 uppercase">Action:</span>
+            <button onClick={() => handleAction(currentItemIndex, 'none')}
+              className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'none' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-green-50'}`}>
+              <CheckCircle2 className="h-3 w-3" /> No action needed
+            </button>
+            <button onClick={() => handleAction(currentItemIndex, 'ri_matter')}
+              className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'ri_matter' ? 'bg-red-100 text-red-700 border border-red-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-red-50'}`}>
+              <Flag className="h-3 w-3" /> RI Matter
+            </button>
+            <button onClick={() => handleAction(currentItemIndex, 'review_point')}
+              className={`inline-flex items-center gap-1 px-2 py-1 text-[9px] rounded font-medium ${rowState.action === 'review_point' ? 'bg-amber-100 text-amber-700 border border-amber-300' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-amber-50'}`}>
+              <Send className="h-3 w-3" /> Review Point
+            </button>
           </div>
           {rowState.actionComment && (
             <div className="px-3 pb-2 text-[10px] text-slate-600 bg-slate-50 border-t">

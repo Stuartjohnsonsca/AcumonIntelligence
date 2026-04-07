@@ -70,6 +70,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [progressOpen, setProgressOpen] = useState(false);
   const [samplingOpen, setSamplingOpen] = useState(true);
   const [findingsOpen, setFindingsOpen] = useState(false);
+  const [verificationRowStates, setVerificationRowStates] = useState<Record<number, any>>({});
   const [verificationOpen, setVerificationOpen] = useState(true);
 
   // ─── Computed values (MUST be before any useEffect that references them) ───
@@ -989,76 +990,143 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     sellerMatch: r.consistency as any,
                     overallResult: r.overallResult as any,
                   }))}
+                  onRowStatesChange={setVerificationRowStates}
                 />
               </div>
             )}
           </div>
 
-          {/* SECTION 4: Findings & Conclusions (collapsible) — only show when evidence has been obtained */}
+          {/* SECTION 4: Findings & Conclusions */}
           {(() => {
-            // Evidence is obtained if status is anything other than 'pending' or 'missing'
             const evidenceObtained = (e: any) => e.status === 'uploaded' || e.status === 'matched' || e.status === 'partial';
             const hasEvidence = evidence.length > 0 && evidence.some(evidenceObtained);
-            // Also check loop results for evidence (may not be in evidence state yet)
             const loopStep = flowSteps.find(s => s.output?.loopCompleted && s.output?.results?.length > 0);
             const loopEvidenceCount = loopStep?.output?.results?.filter((r: any) => r?.found || r?.evidenceRetrieved)?.length || 0;
             const totalEvidenceCount = Math.max(evidence.filter(evidenceObtained).length, loopEvidenceCount);
             const allEvidenceObtained = sampleItems.length > 0 && totalEvidenceCount >= sampleItems.length;
             const canConclude = allEvidenceObtained || executionStatus === 'completed';
+            // For review_flagged: conclusion requires all items actioned
+            const actionedCount = sampleItems.filter((_, i) => verificationRowStates[i]?.action).length;
+            const allActioned = sampleItems.length > 0 && actionedCount >= sampleItems.length;
+            const globalSignOff = verificationRowStates[-1] || {};
             return (
           <div>
             <button onClick={() => setFindingsOpen(!findingsOpen)} className="w-full flex items-center justify-between px-4 py-2 bg-slate-50/50 hover:bg-slate-100 transition-colors">
               <div className="flex items-center gap-2">
                 {findingsOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
-                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Findings & Conclusions</span>
-                {!hasEvidence && sampleItems.length > 0 && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Awaiting evidence — cannot conclude</span>}
-                {hasEvidence && !allEvidenceObtained && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{totalEvidenceCount}/{sampleItems.length} evidence obtained</span>}
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">{isReviewFlaggedTest ? 'Conclusion Summary' : 'Findings & Conclusions'}</span>
+                {isReviewFlaggedTest && sampleItems.length > 0 && (
+                  <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-medium ${allActioned ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {actionedCount}/{sampleItems.length} actioned
+                  </span>
+                )}
+                {!isReviewFlaggedTest && !hasEvidence && sampleItems.length > 0 && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Awaiting evidence</span>}
+                {!isReviewFlaggedTest && hasEvidence && !allEvidenceObtained && <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{totalEvidenceCount}/{sampleItems.length} evidence</span>}
                 {canConclude && conclusion !== 'pending' && <div className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />}
               </div>
-              {!canConclude && <span className="text-[9px] text-amber-600 font-medium">Evidence required before conclusion</span>}
-              {canConclude && failCount > 0 && <span className="text-[9px] text-red-500 font-medium">{failCount} exception{failCount !== 1 ? 's' : ''}</span>}
+              {/* Reviewer + RI sign-off for review_flagged tests */}
+              {isReviewFlaggedTest && (
+                <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
+                  <button onClick={() => {
+                    setVerificationRowStates(prev => {
+                      const g = prev[-1] || {}; const upd = { ...prev, [-1]: { ...g, reviewerSignOff: g.reviewerSignOff ? null : { userName: 'Current User', timestamp: new Date().toISOString() } } };
+                      return upd;
+                    });
+                  }} className="flex items-center gap-1" title={globalSignOff.reviewerSignOff ? `Reviewed by ${globalSignOff.reviewerSignOff.userName}` : 'Click to sign as Reviewer'}>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${globalSignOff.reviewerSignOff ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
+                      {globalSignOff.reviewerSignOff && <CheckCircle2 className="h-3 w-3 text-white" />}
+                    </div>
+                    <span className="text-[8px] font-bold text-slate-500">Reviewer</span>
+                  </button>
+                  <button onClick={() => {
+                    setVerificationRowStates(prev => {
+                      const g = prev[-1] || {}; const upd = { ...prev, [-1]: { ...g, riSignOff: g.riSignOff ? null : { userName: 'Current User', timestamp: new Date().toISOString() } } };
+                      return upd;
+                    });
+                  }} className="flex items-center gap-1" title={globalSignOff.riSignOff ? `RI signed by ${globalSignOff.riSignOff.userName}` : 'Click to sign as RI'}>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${globalSignOff.riSignOff ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
+                      {globalSignOff.riSignOff && <CheckCircle2 className="h-3 w-3 text-white" />}
+                    </div>
+                    <span className="text-[8px] font-bold text-slate-500">RI</span>
+                  </button>
+                </div>
+              )}
             </button>
-            {findingsOpen && !canConclude && (
+
+            {/* Review Flagged summary table */}
+            {findingsOpen && isReviewFlaggedTest && sampleItems.length > 0 && (
+              <div className="overflow-auto">
+                <table className="w-full text-[10px] border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100 border-b">
+                      <th className="px-2 py-1.5 text-left font-semibold text-slate-600 w-8">#</th>
+                      <th className="px-2 py-1.5 text-left font-semibold text-slate-600">Item</th>
+                      <th className="px-2 py-1.5 text-right font-semibold text-slate-600 w-20">Amount</th>
+                      <th className="px-2 py-1.5 text-center font-semibold w-20 cursor-help" title="No issues found — item verified successfully"><span className="inline-flex items-center gap-0.5 text-green-600"><CheckCircle2 className="h-3 w-3" /> No Action</span></th>
+                      <th className="px-2 py-1.5 text-center font-semibold w-20 cursor-help" title="Significant issue requiring Responsible Individual review and decision"><span className="inline-flex items-center gap-0.5 text-red-600"><AlertTriangle className="h-3 w-3" /> RI Matter</span></th>
+                      <th className="px-2 py-1.5 text-center font-semibold w-20 cursor-help" title="Issue requiring follow-up — creates a review point for the engagement manager"><span className="inline-flex items-center gap-0.5 text-amber-600"><Clock className="h-3 w-3" /> Review Pt</span></th>
+                      <th className="px-2 py-1.5 text-left font-semibold text-slate-600">Comment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sampleItems.map((si, i) => {
+                      const rs = verificationRowStates[i] || {};
+                      return (
+                        <tr key={i} className={`border-b border-slate-50 ${!rs.action ? 'bg-amber-50/30' : ''}`}>
+                          <td className="px-2 py-1 text-slate-400">{i + 1}</td>
+                          <td className="px-2 py-1 text-slate-700 truncate max-w-[200px]">{si.ref || si.description || `Item ${i + 1}`}</td>
+                          <td className="px-2 py-1 text-right font-mono text-slate-700">£{fmt(si.amount)}</td>
+                          {(['none', 'ri_matter', 'review_point'] as const).map(action => (
+                            <td key={action} className="px-2 py-1 text-center">
+                              <button onClick={() => {
+                                setVerificationRowStates(prev => {
+                                  const row = prev[i] || {};
+                                  return { ...prev, [i]: { ...row, action } };
+                                });
+                              }} className={`w-5 h-5 rounded-full border-2 mx-auto flex items-center justify-center transition-colors ${
+                                rs.action === action
+                                  ? action === 'none' ? 'bg-green-500 border-green-500' : action === 'ri_matter' ? 'bg-red-500 border-red-500' : 'bg-amber-500 border-amber-500'
+                                  : 'border-slate-300 hover:border-slate-400'
+                              }`}>
+                                {rs.action === action && <CheckCircle2 className="h-3 w-3 text-white" />}
+                              </button>
+                            </td>
+                          ))}
+                          <td className="px-2 py-1">
+                            <input type="text" value={rs.actionComment || ''} onChange={e => {
+                              const val = e.target.value;
+                              setVerificationRowStates(prev => ({ ...prev, [i]: { ...prev[i], actionComment: val } }));
+                            }} placeholder="Comment..." className="w-full text-[10px] border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-400" />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {!allActioned && <div className="px-3 py-2 bg-amber-50 text-[10px] text-amber-700 font-medium">All items must be actioned to conclude this test</div>}
+              </div>
+            )}
+
+            {/* Standard findings for non-review_flagged tests */}
+            {findingsOpen && !isReviewFlaggedTest && !canConclude && (
               <div className="p-4">
                 <div className="text-center py-6 text-slate-400">
                   <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-amber-400" />
                   <p className="text-sm font-medium text-amber-700">Cannot conclude — evidence not yet obtained for all items</p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {totalEvidenceCount} of {sampleItems.length} items have evidence.
-                    Obtain evidence for all selected items before recording findings.
-                  </p>
+                  <p className="text-xs text-slate-500 mt-1">{totalEvidenceCount} of {sampleItems.length} items have evidence.</p>
                 </div>
               </div>
             )}
-            {findingsOpen && canConclude && (
+            {findingsOpen && !isReviewFlaggedTest && canConclude && (
               <div className="p-4 space-y-3">
                 {/* Summary KPIs */}
                 <div className="grid grid-cols-6 gap-3 text-center">
-                  <div className="bg-slate-50 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400 uppercase">Population</div>
-                    <div className="text-sm font-bold text-slate-800">£{fmt(sampleValueTotal)}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400 uppercase">Sample</div>
-                    <div className="text-sm font-bold text-slate-800">{sampleTotal}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400 uppercase">Errors</div>
-                    <div className={`text-sm font-bold ${failCount > 0 ? 'text-red-600' : 'text-green-600'}`}>£{fmt(errorAmountTotal)}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400 uppercase">Error %</div>
-                    <div className={`text-sm font-bold ${errorPct > 0 ? 'text-red-600' : 'text-green-600'}`}>{errorPct.toFixed(1)}%</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400 uppercase">Extrapolated</div>
-                    <div className={`text-sm font-bold ${extrapolatedError > clearlyTrivial ? 'text-red-600' : 'text-slate-800'}`}>£{fmt(extrapolatedError)}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400 uppercase">CT / PM</div>
-                    <div className="text-[10px] font-mono text-slate-600">£{fmt(clearlyTrivial)}</div>
-                    <div className="text-[10px] font-mono text-slate-600">£{fmt(tolerableMisstatement)}</div>
-                  </div>
+                  <div className="bg-slate-50 rounded-lg p-2"><div className="text-[9px] text-slate-400 uppercase">Population</div><div className="text-sm font-bold text-slate-800">£{fmt(sampleValueTotal)}</div></div>
+                  <div className="bg-slate-50 rounded-lg p-2"><div className="text-[9px] text-slate-400 uppercase">Sample</div><div className="text-sm font-bold text-slate-800">{sampleTotal}</div></div>
+                  <div className="bg-slate-50 rounded-lg p-2"><div className="text-[9px] text-slate-400 uppercase">Errors</div><div className={`text-sm font-bold ${failCount > 0 ? 'text-red-600' : 'text-green-600'}`}>£{fmt(errorAmountTotal)}</div></div>
+                  <div className="bg-slate-50 rounded-lg p-2"><div className="text-[9px] text-slate-400 uppercase">Error %</div><div className={`text-sm font-bold ${errorPct > 0 ? 'text-red-600' : 'text-green-600'}`}>{errorPct.toFixed(1)}%</div></div>
+                  <div className="bg-slate-50 rounded-lg p-2"><div className="text-[9px] text-slate-400 uppercase">Extrapolated</div><div className={`text-sm font-bold ${extrapolatedError > clearlyTrivial ? 'text-red-600' : 'text-slate-800'}`}>£{fmt(extrapolatedError)}</div></div>
+                  <div className="bg-slate-50 rounded-lg p-2"><div className="text-[9px] text-slate-400 uppercase">CT / PM</div><div className="text-[10px] font-mono text-slate-600">£{fmt(clearlyTrivial)}</div><div className="text-[10px] font-mono text-slate-600">£{fmt(tolerableMisstatement)}</div></div>
                 </div>
 
                 {/* Error Investigation & Conclusion */}
