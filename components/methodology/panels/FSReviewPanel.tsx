@@ -83,7 +83,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     })();
   }, [engagementId]);
 
-  // Pre-compute lookup maps for O(1) access
+  // Pre-compute lookup maps
   const concsByLine = useMemo(() => {
     const m = new Map<string, Conc[]>();
     for (const c of conclusions) {
@@ -105,6 +105,9 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     }
     return m;
   }, [conclusions]);
+
+  // All unique fsLine values from conclusions (for fuzzy matching)
+  const allConcFsLines = useMemo(() => Array.from(concsByLine.keys()), [concsByLine]);
 
   const errsByLine = useMemo(() => {
     const m = new Map<string, { adj: number; unadj: number }>();
@@ -137,8 +140,45 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     return stmtMap;
   }, [tbRows]);
 
-  function getConcs(name: string): Conc[] { return concsByLine.get(name.toLowerCase()) || []; }
-  function getErrs(name: string) { return errsByLine.get(name.toLowerCase()) || { adj: 0, unadj: 0 }; }
+  // Fuzzy match: "Cash at Bank" matches "Cash and Cash Equivalents", "Debtors" matches "Trade and Other Receivables"
+  function fuzzyMatch(a: string, b: string): boolean {
+    if (a === b) return true;
+    if (a.includes(b) || b.includes(a)) return true;
+    // Keyword overlap: strip common words and check if significant words match
+    const stop = new Set(['and','at','the','of','in','&','due','within','one','year','after','other','trade']);
+    const wordsA = new Set(a.split(/[\s\-\/]+/).filter(w => w.length > 1 && !stop.has(w)));
+    const wordsB = new Set(b.split(/[\s\-\/]+/).filter(w => w.length > 1 && !stop.has(w)));
+    if (wordsA.size === 0 || wordsB.size === 0) return false;
+    let overlap = 0;
+    for (const w of wordsA) if (wordsB.has(w)) overlap++;
+    return overlap > 0 && overlap >= Math.min(wordsA.size, wordsB.size) * 0.5;
+  }
+
+  function getConcs(name: string): Conc[] {
+    const lc = name.toLowerCase();
+    // Exact match first
+    const exact = concsByLine.get(lc);
+    if (exact && exact.length > 0) return exact;
+    // Fuzzy match against all conclusion fsLine values
+    for (const key of allConcFsLines) {
+      if (fuzzyMatch(lc, key)) {
+        const found = concsByLine.get(key);
+        if (found && found.length > 0) return found;
+      }
+    }
+    return [];
+  }
+
+  function getErrs(name: string) {
+    const lc = name.toLowerCase();
+    const exact = errsByLine.get(lc);
+    if (exact) return exact;
+    for (const [key, val] of errsByLine) {
+      if (fuzzyMatch(lc, key)) return val;
+    }
+    return { adj: 0, unadj: 0 };
+  }
+
   function getAccConcs(code: string): Conc[] { return concsByAccount.get(code.toLowerCase()) || []; }
 
   function signCounts(concs: Conc[]) {
