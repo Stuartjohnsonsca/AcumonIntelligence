@@ -166,10 +166,19 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
             ) : responded.map(item => {
               const { question, source } = cleanQuestion(item.question);
               const chatMsgs = (item.chatHistory || []).filter(m => m.name !== 'System');
+              const isSeparated = viewMode[item.id] === 'separated';
               return (
                 <div key={item.id} className="bg-white rounded-lg border border-slate-200 p-3">
-                  <p className="text-xs text-slate-800 font-medium">{question}</p>
-                  {source && <span className="text-[8px] px-1 py-0.5 bg-slate-100 text-slate-400 rounded mt-0.5 inline-block">{source}</span>}
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs text-slate-800 font-medium">{question}</p>
+                      {source && <span className="text-[8px] px-1 py-0.5 bg-slate-100 text-slate-400 rounded mt-0.5 inline-block">{source}</span>}
+                    </div>
+                    <div className="flex bg-slate-100 rounded p-0.5 flex-shrink-0">
+                      <button onClick={() => setViewMode(prev => ({ ...prev, [item.id]: 'batched' }))} className={`px-2 py-0.5 text-[9px] font-medium rounded ${(viewMode[item.id] || 'batched') === 'batched' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>Batched</button>
+                      <button onClick={() => setViewMode(prev => ({ ...prev, [item.id]: 'separated' }))} className={`px-2 py-0.5 text-[9px] font-medium rounded ${isSeparated ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>Separated</button>
+                    </div>
+                  </div>
                   {chatMsgs.length > 0 && (
                     <div className="mt-1.5 space-y-1 pl-2 border-l-2 border-slate-200">
                       {chatMsgs.map((msg, mi) => (

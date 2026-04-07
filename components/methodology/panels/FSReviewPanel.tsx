@@ -190,7 +190,10 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-700">Financial Statement Review</h3>
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-bold text-slate-700">Financial Statement Review</h3>
+          <span className="text-[9px] text-slate-400">{conclusions.length} conclusions · {errors.length} errors · {tbRows.length} TB rows</span>
+        </div>
         <div className="flex bg-slate-100 rounded p-0.5 text-[10px]">
           <button onClick={() => setViewMode('statement')} className={`px-3 py-1 font-medium rounded ${viewMode === 'statement' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>Statement</button>
           <button onClick={() => setViewMode('tb')} className={`px-3 py-1 font-medium rounded ${viewMode === 'tb' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>TB Format</button>

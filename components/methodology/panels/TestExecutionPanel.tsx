@@ -1127,6 +1127,35 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </tbody>
                 </table>
                 {!allActioned && <div className="px-3 py-2 bg-amber-50 text-[10px] text-amber-700 font-medium">All items must be actioned to conclude this test</div>}
+                {allActioned && (
+                  <div className="px-3 py-2 bg-green-50 border-t flex items-center justify-between">
+                    <span className="text-[10px] text-green-700 font-medium">All items actioned — ready to conclude</span>
+                    <button
+                      onClick={async () => {
+                        // Determine conclusion: if any RI Matter → orange, if any Review Point → orange, else green
+                        const hasRI = sampleItems.some((_, i) => verificationRowStates[i]?.action === 'ri_matter');
+                        const hasRP = sampleItems.some((_, i) => verificationRowStates[i]?.action === 'review_point');
+                        const color = hasRI ? 'orange' : hasRP ? 'orange' : 'green';
+                        try {
+                          await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              executionId, fsLine, fsLineId, testDescription,
+                              conclusion: color, status: 'concluded',
+                              totalErrors: 0, extrapolatedError: 0,
+                              populationSize: populationSize, sampleSize: sampleTotal,
+                              followUpData: { rowStates: verificationRowStates },
+                            }),
+                          });
+                          onConclusionChange?.(color);
+                        } catch {}
+                      }}
+                      className="text-[10px] px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 font-medium"
+                    >
+                      Save Conclusion
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
