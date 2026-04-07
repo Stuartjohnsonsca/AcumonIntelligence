@@ -311,6 +311,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [activeExecution, setActiveExecution] = useState<string | null>(null);
   const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'>>({});
   const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
+  const [performanceMateriality, setPerformanceMateriality] = useState(0);
   const [dbConclusions, setDbConclusions] = useState<any[]>([]);
   const [dbExecutions, setDbExecutions] = useState<any[]>([]);
   const [errorFooterOpen, setErrorFooterOpen] = useState(true);
@@ -374,7 +375,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes, rcRes, execRes] = await Promise.all([
+        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes, rcRes, execRes, matRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}/test-allocations`),
@@ -383,6 +384,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           fetch(`/api/engagements/${engagementId}/test-conclusions`),
           fetch('/api/methodology-admin/risk-tables?tableType=riskClassification'),
           fetch(`/api/engagements/${engagementId}/test-execution`),
+          fetch(`/api/engagements/${engagementId}/materiality`),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
@@ -455,6 +457,12 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         if (rcRes.ok) {
           const rcData = await rcRes.json();
           if (rcData.table?.data) setRiskClassificationTable(rcData.table.data);
+        }
+        // Load performance materiality
+        if (matRes.ok) {
+          const matData = await matRes.json();
+          const pm = matData.materiality?.performanceMateriality || matData.performanceMateriality || 0;
+          setPerformanceMateriality(Number(pm) || 0);
         }
       } catch (err) { console.error('Failed to load:', err); }
       setLoading(false);
@@ -544,13 +552,14 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
 
-      // Risk-based filtering using test.category (or legacy significantRisk):
-      // - null: no RMM data — show all tests
-      // - AR: only Analytical Review + Mandatory tests
-      // - Area of Focus: all except Significant Risk category tests
-      // - Significant Risk: all tests
+      // Risk-based filtering using test.category:
+      // - Significant Risk: all tests (most coverage)
+      // - Area of Focus: all except Significant Risk category
+      // - Normal: only Normal + Mandatory tests (no Sig Risk or AoF specific)
+      // - AR: only Analytical Review + Mandatory tests (below PM)
       const testCategory = (test as any).category || (test.significantRisk ? 'Significant Risk' : 'Normal');
       if (riskClassification === 'AR' && testCategory !== 'Analytical Review' && testCategory !== 'Mandatory') continue;
+      if (riskClassification === 'Normal' && testCategory !== 'Normal' && testCategory !== 'Mandatory') continue;
       if (riskClassification === 'Area of Focus' && testCategory === 'Significant Risk') continue;
 
       const tt = testTypes.find(t => t.code === test.testTypeCode);
@@ -878,18 +887,37 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         {filteredRows.length === 0 ? (
           <div className="p-3 text-center text-[10px] text-slate-400">No items for this selection.</div>
         ) : (
-          <table className="w-full text-[10px]" style={{ tableLayout: 'fixed' }}>
+          <table className="w-full text-[10px]">
+            <colgroup>
+              <col style={{width: '20px'}} />
+              <col style={{width: '16px'}} />
+              <col style={{width: '60px'}} />
+              <col />
+              {isThreeLevel && <col style={{width: '80px'}} />}
+              <col style={{width: '55px'}} />
+              <col style={{width: '55px'}} />
+              <col style={{width: '55px'}} />
+              <col style={{width: '55px'}} />
+              <col style={{width: '70px'}} />
+              <col style={{width: '50px'}} />
+            </colgroup>
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="w-5"></th>
-                <th className="w-4"></th>
-                <th className="pl-1 pr-0.5 py-0.5 text-left font-semibold text-slate-600">Code</th>
-                <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">Description</th>
-                {isThreeLevel && <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">FS Note</th>}
-                <th className="px-0.5 py-0.5 text-right font-semibold text-slate-600 whitespace-nowrap" colSpan={2}>{fmtDate(periodEndDate) || 'CY'}</th>
-                <th className="px-0.5 py-0.5 text-right font-semibold text-slate-600 whitespace-nowrap" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
-                <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">Assertions</th>
-                <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">Risk</th>
+                <th className="w-5" rowSpan={2}></th>
+                <th className="w-4" rowSpan={2}></th>
+                <th className="pl-1 pr-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Code</th>
+                <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Description</th>
+                {isThreeLevel && <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>FS Note</th>}
+                <th className="px-0.5 py-0 text-center font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{fmtDate(periodEndDate) || 'CY'}</th>
+                <th className="px-0.5 py-0 text-center font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
+                <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Assertions</th>
+                <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Risk</th>
+              </tr>
+              <tr>
+                <th className="px-0.5 py-0 text-right text-[8px] text-slate-400 font-medium">Dr</th>
+                <th className="px-0.5 py-0 text-right text-[8px] text-slate-400 font-medium">Cr</th>
+                <th className="px-0.5 py-0 text-right text-[8px] text-slate-400 font-medium">Dr</th>
+                <th className="px-0.5 py-0 text-right text-[8px] text-slate-400 font-medium">Cr</th>
               </tr>
             </thead>
             <tbody>
@@ -923,13 +951,21 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 const effectiveStatement = activeStatement || rmmMatch?.fsStatement;
 
                 // Determine risk classification from admin table.
-                // If no RMM match found, show tests without risk filtering (null = show all).
-                const rowClassification = rmmMatch?.overallRisk
-                  ? (riskClassificationTable?.[rmmMatch.overallRisk] || (
-                      rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High' ? 'Significant Risk'
-                      : rmmMatch.overallRisk === 'Medium' ? 'Area of Focus' : 'AR'
-                    ))
-                  : null; // null = no RMM data, don't filter by risk
+                // If Significant Risk or Area of Focus → pick up relevant tests for that classification
+                // If no RMM flag but value > PM → show Normal category tests
+                // If below PM → no substantive tests needed (just AR/Mandatory)
+                const rowValue = Math.abs(Number(row.currentYear) || 0);
+                let rowClassification: string | null = null;
+                if (rmmMatch?.overallRisk) {
+                  rowClassification = riskClassificationTable?.[rmmMatch.overallRisk] || (
+                    rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High' ? 'Significant Risk'
+                    : rmmMatch.overallRisk === 'Medium' ? 'Area of Focus' : 'AR'
+                  );
+                } else if (performanceMateriality > 0 && rowValue > performanceMateriality) {
+                  rowClassification = 'Normal'; // Above PM, no RMM flag → Normal tests
+                } else {
+                  rowClassification = 'AR'; // Below PM → only AR/Mandatory
+                }
                 const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement || undefined, rowClassification);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
