@@ -5,6 +5,7 @@ import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, Ch
 import { AuditTestSummaryPanel } from './AuditTestSummaryPanel';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
 import { FSReviewPanel } from './FSReviewPanel';
+import { AdjustedTBPanel } from './AdjustedTBPanel';
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout, CompletionTemplateData } from '@/types/methodology';
 
 interface Props {
@@ -23,6 +24,7 @@ const COMPLETION_TABS = [
   { key: 'test-summary', label: 'Test Summary Results', icon: BarChart3, templateType: null },
   { key: 'overall-review', label: 'Overall Review of FS', icon: Eye, templateType: 'overall_review_fs_questions' },
   { key: 'fs-review', label: 'FS Review', icon: FileText, templateType: null },
+  { key: 'adj-tb', label: 'Adj TB', icon: FileText, templateType: null },
   { key: 'error-schedule', label: 'Error Schedule', icon: AlertTriangle, templateType: null },
 ] as const;
 
@@ -55,6 +57,7 @@ export function CompletionPanel({ engagementId, clientId, userRole, userId, user
         {activeTab === 'test-summary' && <AuditTestSummaryPanel engagementId={engagementId} userRole={userRole} userId={userId} />}
         {activeTab === 'error-schedule' && <ErrorSchedulePanel engagementId={engagementId} />}
         {activeTab === 'fs-review' && <FSReviewPanel engagementId={engagementId} />}
+        {activeTab === 'adj-tb' && <AdjustedTBPanel engagementId={engagementId} />}
         {['summary-memo', 'update-procedures', 'completion-checklist', 'overall-review'].includes(activeTab) && (
           <StructuredScheduleTab
             engagementId={engagementId}
