@@ -703,6 +703,30 @@ export async function downloadAttachment(
   return { buffer: Buffer.from(arrayBuffer), mimeType };
 }
 
+/**
+ * Download an invoice as a PDF directly from Xero (not an attachment — the invoice itself).
+ * Works for any invoice, even those without uploaded attachments.
+ */
+export async function downloadInvoicePdf(
+  clientId: string,
+  invoiceId: string,
+): Promise<Buffer | null> {
+  try {
+    const { accessToken, tenantId } = await getValidAccessToken(clientId);
+    const url = `${XERO_API_BASE}/Invoices/${invoiceId}`;
+    const res = await xeroFetchWithRetry(url, {
+      Authorization: `Bearer ${accessToken}`,
+      'Xero-Tenant-Id': tenantId,
+      Accept: 'application/pdf',
+    });
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch {
+    return null;
+  }
+}
+
 // Track remaining API calls from Xero headers
 let xeroMinLimitRemaining = 60;
 

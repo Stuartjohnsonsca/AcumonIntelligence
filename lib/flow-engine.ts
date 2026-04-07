@@ -1149,31 +1149,48 @@ async function handleFetchEvidenceOrPortal(
           const invoiceJson = JSON.stringify(invoice, null, 2);
           const docName = reference + ' — ' + (invoice.Contact?.Name || 'Unknown') + ' (Xero)';
 
-          // Try to download the PDF attachment from Xero
+          // Try to download the original document from Xero (3 strategies)
           let storagePath = '';
-          let mimeType = 'application/json';
+          let mimeType = 'application/pdf';
           try {
+            // Strategy 1: Download PDF attachment (user-uploaded documents on the invoice)
             const attachments = await getAttachmentsList(engagement.clientId, 'Invoices', invoice.InvoiceID);
             if (attachments && attachments.length > 0) {
               const att = attachments[0];
               const { uploadToInbox } = await import('@/lib/azure-blob');
-              const pdfBuffer = await downloadAttachment(engagement.clientId, 'Invoices', invoice.InvoiceID, att.FileName);
-              if (pdfBuffer) {
+              const attResult = await downloadAttachment(engagement.clientId, 'Invoices', invoice.InvoiceID, att.FileName);
+              if (attResult && attResult.buffer) {
                 storagePath = 'documents/' + engagement.clientId + '/' + engagementId + '/' + Date.now() + '_' + att.FileName;
-                await uploadToInbox(storagePath, pdfBuffer, att.MimeType || 'application/pdf');
-                mimeType = att.MimeType || 'application/pdf';
+                await uploadToInbox(storagePath, attResult.buffer, attResult.mimeType || att.MimeType || 'application/pdf');
+                mimeType = attResult.mimeType || att.MimeType || 'application/pdf';
+                console.log('[flow-engine] Downloaded attachment: ' + att.FileName);
+              }
+            }
+
+            // Strategy 2: Download the invoice itself as PDF from Xero
+            if (!storagePath) {
+              const { downloadInvoicePdf } = await import('./xero');
+              const pdfBuf = await downloadInvoicePdf(engagement.clientId, invoice.InvoiceID);
+              if (pdfBuf && pdfBuf.length > 100) { // Sanity check — valid PDFs are > 100 bytes
+                const { uploadToInbox } = await import('@/lib/azure-blob');
+                storagePath = 'documents/' + engagement.clientId + '/' + engagementId + '/' + Date.now() + '_' + (reference || invoice.InvoiceID) + '.pdf';
+                await uploadToInbox(storagePath, pdfBuf, 'application/pdf');
+                mimeType = 'application/pdf';
+                console.log('[flow-engine] Downloaded invoice PDF for ' + reference);
               }
             }
           } catch (attErr) {
-            console.log('[flow-engine] No PDF attachment for ' + reference + ': ' + (attErr as Error).message);
+            console.log('[flow-engine] Document download failed for ' + reference + ': ' + (attErr as Error).message);
           }
 
-          // If no PDF, store the JSON data
+          // Strategy 3 (last resort): Store the JSON invoice data
           if (!storagePath) {
             try {
               const { uploadToInbox } = await import('@/lib/azure-blob');
               storagePath = 'documents/' + engagement.clientId + '/' + engagementId + '/' + Date.now() + '_' + reference + '.json';
               await uploadToInbox(storagePath, Buffer.from(invoiceJson), 'application/json');
+              mimeType = 'application/json';
+              console.log('[flow-engine] Stored JSON fallback for ' + reference);
             } catch (upErr) {
               console.log('[flow-engine] Failed to store invoice JSON: ' + (upErr as Error).message);
             }
