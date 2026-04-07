@@ -133,11 +133,21 @@ class TabErrorBoundary extends Component<{ tabName: string; engagementId?: strin
 export function EngagementTabs({ engagement, auditType, clientName, periodEndDate, periodStartDate, currentUserId }: Props) {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const initialTab = (searchParams.get('tab') as TabKey) || 'opening';
+
+  // Restore last page for this engagement
+  const storageKey = `lastPage:${engagement.id}`;
+  const urlTab = searchParams.get('tab') as TabKey | null;
+  const savedState = typeof window !== 'undefined' ? (() => { try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch { return {}; } })() : {};
+  const initialTab = urlTab || savedState.tab || 'opening';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [tbShowCategory, setTbShowCategory] = useState(true);
-  const [showAuditPlan, setShowAuditPlan] = useState(false);
-  const [showCompletion, setShowCompletion] = useState(false);
+  const [showAuditPlan, setShowAuditPlan] = useState(!!savedState.auditPlan);
+  const [showCompletion, setShowCompletion] = useState(!!savedState.completion);
+
+  // Persist last page to localStorage
+  useEffect(() => {
+    try { localStorage.setItem(storageKey, JSON.stringify({ tab: activeTab, auditPlan: showAuditPlan, completion: showCompletion })); } catch {}
+  }, [activeTab, showAuditPlan, showCompletion, storageKey]);
   const [planCreated, setPlanCreated] = useState(false);
 
   // Check if plan was previously created
@@ -310,18 +320,20 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               Audit Plan
             </button>
             <button
-              onClick={() => { if (!planCreated) return; setShowCompletion(!showCompletion); if (!showCompletion) setShowAuditPlan(false); }}
-              disabled={!planCreated}
+              onClick={() => {
+                if (!planCreated || showCompletion) return;
+                setShowCompletion(true);
+                setShowAuditPlan(false);
+              }}
+              disabled={!planCreated || showCompletion}
               className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
-                !planCreated
-                  ? 'bg-slate-100 text-slate-300 cursor-default border border-slate-200'
-                  : showCompletion
-                    ? 'bg-green-600 text-white'
-                    : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                !planCreated || showCompletion
+                  ? 'bg-slate-200 text-slate-400 cursor-default'
+                  : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
               }`}
               title={!planCreated ? 'Open Audit Plan first' : ''}
             >
-              {showCompletion ? 'Exit Completion' : 'Completion'}
+              Completion
             </button>
           </>
         )}

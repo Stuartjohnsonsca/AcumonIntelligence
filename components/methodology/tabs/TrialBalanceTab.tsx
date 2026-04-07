@@ -436,7 +436,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     if (isNaN(num)) return '';
     const abs = Math.abs(num);
     const formatted = abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return num < 0 ? `(${formatted})` : formatted;
+    return num < 0 ? `(${formatted}) Cr` : `${formatted} Dr`;
   }
 
   // Parse a number string, treating (1,234.56) as -1234.56

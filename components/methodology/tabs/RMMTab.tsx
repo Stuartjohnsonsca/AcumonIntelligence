@@ -629,7 +629,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         const classification = riskClassificationTable?.[row.overallRisk]
                           || (row.overallRisk === 'High' || row.overallRisk === 'Very High' ? 'Significant Risk'
                             : row.overallRisk === 'Medium' ? 'Area of Focus' : null);
-                        if (classification === 'Significant Risk') return <span className="inline-block w-3 h-3 rounded-full bg-green-500 cursor-help" title="Significant Risk" />;
+                        if (classification === 'Significant Risk') return <span className="inline-block w-3 h-3 rounded-full bg-red-500 cursor-help" title="Significant Risk" />;
                         if (classification === 'Area of Focus') return <span className="inline-block w-3 h-3 rounded-full bg-orange-400 cursor-help" title="Area of Focus" />;
                         return null;
                       })()}

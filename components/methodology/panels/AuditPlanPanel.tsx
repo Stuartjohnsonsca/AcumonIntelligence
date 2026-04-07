@@ -237,14 +237,28 @@ function fmtAmount(v: number | null | undefined): string {
   return `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${n < 0 ? ' Cr' : ' Dr'}`;
 }
 
+// Dr/Cr offset: renders into the correct column. Use DrCell for debit, CrCell for credit.
+function DrCell({ value, className = '' }: { value: number | null | undefined; className?: string }) {
+  if (value == null) return <span></span>;
+  const n = Number(value);
+  if (isNaN(n) || n <= 0) return <span></span>;
+  return <span className={`font-mono text-[10px] ${className}`}>{n.toLocaleString('en-GB', { minimumFractionDigits: 0 })}</span>;
+}
+function CrCell({ value, className = '' }: { value: number | null | undefined; className?: string }) {
+  if (value == null) return <span></span>;
+  const n = Number(value);
+  if (isNaN(n) || n >= 0) return <span></span>;
+  return <span className={`font-mono text-[10px] ${className}`}>({Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 0 })})</span>;
+}
+// Legacy single-column for merged rows etc
 function AmountCell({ value, className = '' }: { value: number | null | undefined; className?: string }) {
   if (value == null) return <span></span>;
   const n = Number(value);
   if (isNaN(n)) return <span></span>;
   const isCr = n < 0;
   return (
-    <span className={`${isCr ? 'pl-3' : ''} ${className}`}>
-      £{Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2 })}{isCr ? ' Cr' : ' Dr'}
+    <span className={`font-mono text-[10px] ${isCr ? '' : ''} ${className}`}>
+      {isCr ? `(${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 0 })})` : n.toLocaleString('en-GB', { minimumFractionDigits: 0 })}
     </span>
   );
 }
@@ -872,8 +886,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 <th className="pl-1 pr-0.5 py-0.5 text-left font-semibold text-slate-600">Code</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">Description</th>
                 {isThreeLevel && <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">FS Note</th>}
-                <th className="px-0.5 py-0.5 text-right font-semibold text-slate-600 whitespace-nowrap">{fmtDate(periodEndDate) || 'CY'}</th>
-                <th className="px-0.5 py-0.5 text-right font-semibold text-slate-600 whitespace-nowrap">{dayBefore(periodStartDate) || 'PY'}</th>
+                <th className="px-0.5 py-0.5 text-right font-semibold text-slate-600 whitespace-nowrap" colSpan={2}>{fmtDate(periodEndDate) || 'CY'}</th>
+                <th className="px-0.5 py-0.5 text-right font-semibold text-slate-600 whitespace-nowrap" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">Assertions</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600">Risk</th>
               </tr>
@@ -962,8 +976,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       <td className="pl-1 pr-0.5 py-px font-mono text-slate-500">{displayCode}</td>
                       <td className="px-0.5 py-px text-slate-700">{row.description}</td>
                       {isThreeLevel && <td className="px-0.5 py-px text-slate-400">{row.fsNoteLevel || ''}</td>}
-                      <td className="px-0.5 py-px text-right whitespace-nowrap"><AmountCell value={row.currentYear} /></td>
-                      <td className="px-0.5 py-px text-right whitespace-nowrap"><AmountCell value={row.priorYear} className="text-slate-500" /></td>
+                      <td className="px-0.5 py-px text-right whitespace-nowrap"><DrCell value={row.currentYear} /></td>
+                      <td className="px-0.5 py-px text-right whitespace-nowrap"><CrCell value={row.currentYear} /></td>
+                      <td className="px-0.5 py-px text-right whitespace-nowrap"><DrCell value={row.priorYear} className="text-slate-500" /></td>
+                      <td className="px-0.5 py-px text-right whitespace-nowrap"><CrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px">
                         {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
                           <div className="flex flex-wrap gap-px">
@@ -1100,7 +1116,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Execution Panel — opens below the test row */}
                         {isExecutionOpen && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-slate-50/50">
+                            <td colSpan={isThreeLevel ? 11 : 10} className="p-2 bg-slate-50/50">
                               <TestExecutionPanel
                                 testId={testKey}
                                 testDescription={test.description}
@@ -1124,7 +1140,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Payroll Workpaper — for payroll_workpaper output format */}
                         {isExecutionOpen && test.outputFormat === 'payroll_workpaper' && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-white">
+                            <td colSpan={isThreeLevel ? 11 : 10} className="p-2 bg-white">
                               <PayrollTestPanel
                                 engagementId={engagementId}
                                 fsLine={activeLevel || activeStatement}
@@ -1135,7 +1151,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Results Panel — shown for completed tests with results (not for ranked_flagged which shows in execution panel) */}
                         {isExecutionOpen && hasResults && test.outputFormat !== 'ranked_flagged' && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-white">
+                            <td colSpan={isThreeLevel ? 11 : 10} className="p-2 bg-white">
                               <TestResultsPanel
                                 engagementId={engagementId}
                                 executionId={effectiveExecId}
@@ -1157,7 +1173,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                     {/* Analytical Review Panel — for AR-classified rows */}
                     {isExp && isAR && (
                       <tr>
-                        <td colSpan={isThreeLevel ? 9 : 8} className="p-2 bg-green-50/30">
+                        <td colSpan={isThreeLevel ? 11 : 10} className="p-2 bg-green-50/30">
                           <AnalyticalReviewPanel
                             engagementId={engagementId}
                             fsLine={effectiveFsLevel || activeLevel || activeStatement}

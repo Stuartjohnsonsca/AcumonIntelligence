@@ -72,6 +72,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
 
   // Row selection for Large & Unusual review (click = select this + above, ctrl+click = deselect)
   const [investigateRows, setInvestigateRows] = useState<Set<number>>(new Set());
+  const [selectionJustification, setSelectionJustification] = useState('');
 
   // Section collapse state
   const [progressOpen, setProgressOpen] = useState(false);
@@ -823,14 +824,22 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                       The population is ranked by unusualness score. Orange rows are above the threshold and need your review.
                       Select the items you want to investigate (they will be sent for evidence gathering), then click continue.
                     </p>
+                    {/* Selection justification — auditor explains why these items were chosen (and others excluded) */}
+                    <div>
+                      <label className="text-[10px] font-semibold text-slate-600 uppercase block mb-1">Selection Justification</label>
+                      <textarea
+                        value={selectionJustification}
+                        onChange={e => setSelectionJustification(e.target.value)}
+                        placeholder="Justify your selection — explain why these items were chosen for investigation and why excluded items were deemed acceptable..."
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs min-h-[80px] focus:outline-none focus:border-blue-400 resize-y"
+                      />
+                    </div>
                     <button
                       onClick={() => {
-                        // Get the actual items from the scored population (not just indices)
                         const popStepsForIdx = flowSteps.filter(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0);
                         const popData = popStepsForIdx[popStepsForIdx.length - 1]?.output?.populationData || popStepsForIdx[popStepsForIdx.length - 1]?.output?.dataTable || [];
                         const selectedItems = Array.from(investigateRows).map(displayIdx => popData[displayIdx]).filter(Boolean);
-                        // Pass both indices and actual items so the forEach can use either
-                        handleSamplingDone({ runId: '', selectedIndices: Array.from(investigateRows), sampleSize: selectedItems.length, coverage: 0, sampleItems: selectedItems } as any);
+                        handleSamplingDone({ runId: '', selectedIndices: Array.from(investigateRows), sampleSize: selectedItems.length, coverage: 0, sampleItems: selectedItems, selectionJustification } as any);
                       }}
                       disabled={completing || investigateRows.size === 0}
                       className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
