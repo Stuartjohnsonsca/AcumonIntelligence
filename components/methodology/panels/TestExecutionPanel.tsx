@@ -19,6 +19,7 @@ interface Props {
   tbRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote: string | null };
   sessionId?: string; flowData?: any; executionDef?: any;
   assertions?: string[];  // Test assertions — drives verification columns
+  conclusionRecord?: any; // Full AuditTestConclusion — used to check RI approval
   onClose: () => void;
   onConclusionChange?: (conclusion: 'green' | 'orange' | 'red' | 'pending') => void;
 }
@@ -36,7 +37,12 @@ function ResultIcon({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, clientId, periodId, tbRow, flowData, executionDef, assertions, onClose, onConclusionChange }: Props) {
+export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, clientId, periodId, tbRow, flowData, executionDef, assertions, conclusionRecord, onClose, onConclusionChange }: Props) {
+  // RI Approved = Read-Only
+  const riApproved = !!conclusionRecord?.riSignedByName;
+  const riApprovedBy = conclusionRecord?.riSignedByName;
+  const riApprovedAt = conclusionRecord?.riSignedAt ? new Date(conclusionRecord.riSignedAt).toLocaleDateString('en-GB') : '';
+
   // Data state
   const [sampleItems, setSampleItems] = useState<SampleItem[]>([]);
   const [evidence, setEvidence] = useState<ClientEvidence[]>([]);
@@ -434,6 +440,16 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const dotColor = conclusion === 'green' ? 'bg-green-500' : conclusion === 'orange' ? 'bg-orange-500' : conclusion === 'red' ? 'bg-red-500' : 'bg-slate-300';
 
   return (
+    <div className={riApproved ? 'relative' : ''}>
+      {riApproved && (
+        <>
+          <div className="bg-green-50 border border-green-200 rounded-t-lg px-4 py-2 flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <span className="text-xs font-medium text-green-800">Approved by {riApprovedBy}{riApprovedAt ? ` on ${riApprovedAt}` : ''} — Read Only</span>
+          </div>
+          <div className="pointer-events-none opacity-70">
+        </>
+      )}
     <div className="border rounded-lg bg-white overflow-hidden shadow-sm">
       {/* ─── HEADER ─── */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b">
@@ -1220,6 +1236,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           })()}
         </div>
       )}
+    </div>
+      {riApproved && <></div></>}
     </div>
   );
 }

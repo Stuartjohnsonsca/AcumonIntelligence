@@ -1113,6 +1113,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 flowData={(test as any).flow || null}
                                 executionDef={(test as any).executionDef || null}
                                 assertions={(test as any).assertions || []}
+                                conclusionRecord={dbConc || null}
                                 onClose={() => setActiveExecution(null)}
                                 onConclusionChange={(c) => setTestConclusions(prev => ({ ...prev, [testKey]: c }))}
                               />

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
 import { AuditTestSummaryPanel } from './AuditTestSummaryPanel';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
+import { FSReviewPanel } from './FSReviewPanel';
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout, CompletionTemplateData } from '@/types/methodology';
 
 interface Props {
@@ -53,7 +54,7 @@ export function CompletionPanel({ engagementId, clientId, userRole, userId, user
       <div className="flex-1 overflow-auto p-4">
         {activeTab === 'test-summary' && <AuditTestSummaryPanel engagementId={engagementId} userRole={userRole} userId={userId} />}
         {activeTab === 'error-schedule' && <ErrorSchedulePanel engagementId={engagementId} />}
-        {activeTab === 'fs-review' && <FinancialStatementReview engagementId={engagementId} />}
+        {activeTab === 'fs-review' && <FSReviewPanel engagementId={engagementId} />}
         {['summary-memo', 'update-procedures', 'completion-checklist', 'overall-review'].includes(activeTab) && (
           <StructuredScheduleTab
             engagementId={engagementId}
