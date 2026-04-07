@@ -153,6 +153,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
   const [actionModalRow, setActionModalRow] = useState<{ index: number; type: 'ri_matter' | 'review_point' } | null>(null);
   const [actionComment, setActionComment] = useState('');
   const [popoutPreview, setPopoutPreview] = useState(false);
+  const [resolvedPreviewUrl, setResolvedPreviewUrl] = useState<string | null>(null);
 
   // Auto-create extraction session
   useEffect(() => {
@@ -372,16 +373,19 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
   ) : null;
   const rowState = rowStates[currentItemIndex] || { checks: {}, action: null, actionComment: '', reviewerSignOff: null, riSignOff: null };
 
-  // Resolve SAS URL for preview iframe (redirects don't work in iframes)
-  const [resolvedPreviewUrl, setResolvedPreviewUrl] = useState<string | null>(null);
+  // Resolve SAS URL for preview iframe — re-fetch on every item change
+  const previewUrlForEffect = doc?.previewUrl || null;
   useEffect(() => {
     setResolvedPreviewUrl(null);
-    if (!doc?.previewUrl) return;
-    const jsonUrl = doc.previewUrl + (doc.previewUrl.includes('?') ? '&' : '?') + 'json=1';
-    fetch(jsonUrl).then(r => r.ok ? r.json() : null).then(data => {
+    if (!previewUrlForEffect) return;
+    const jsonUrl = previewUrlForEffect + (previewUrlForEffect.includes('?') ? '&' : '?') + 'json=1';
+    fetch(jsonUrl).then(r => {
+      if (!r.ok) { console.error('[preview] SAS fetch failed:', r.status); return null; }
+      return r.json();
+    }).then(data => {
       if (data?.url) setResolvedPreviewUrl(data.url);
-    }).catch(() => {});
-  }, [doc?.previewUrl]);
+    }).catch(err => console.error('[preview] SAS fetch error:', err));
+  }, [previewUrlForEffect, currentItemIndex]);
 
   if (sampleItems.length === 0) {
     return <div className="p-8 text-center text-sm text-slate-400">No sample items to verify</div>;
