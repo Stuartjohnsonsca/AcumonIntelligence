@@ -37,9 +37,9 @@ function f(n: number): string {
 }
 
 // ─── Types ───
-interface TBRow { id: string; accountCode: string; description: string; fsStatement: string | null; fsLevel: string | null; fsNoteLevel: string | null; currentYear: number | null; priorYear: number | null; }
-interface Conc { id: string; fsLine: string; testDescription: string; conclusion: string | null; totalErrors: number; extrapolatedError: number; reviewedByName: string | null; riSignedByName: string | null; accountCode: string | null; }
-interface Err { id: string; fsLine: string; errorAmount: number; errorType: string; }
+interface TBRow { id: string; accountCode: string; description: string; fsStatement: string | null; fsLevel: string | null; fsLineId: string | null; fsNoteLevel: string | null; currentYear: number | null; priorYear: number | null; }
+interface Conc { id: string; fsLine: string; fsLineId: string | null; testDescription: string; conclusion: string | null; totalErrors: number; extrapolatedError: number; reviewedByName: string | null; riSignedByName: string | null; accountCode: string | null; }
+interface Err { id: string; fsLine: string; fsLineId: string | null; errorAmount: number; errorType: string; }
 
 function Dot({ c }: { c: string | null }) {
   const col = c === 'green' ? 'bg-green-500' : c === 'orange' ? 'bg-orange-500' : c === 'red' ? 'bg-red-500' : 'bg-slate-300';
@@ -83,11 +83,12 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     })();
   }, [engagementId]);
 
-  // Pre-compute lookup maps
-  const concsByLine = useMemo(() => {
+  // Pre-compute lookup maps keyed by fsLineId (canonical, exact)
+  const concsByFsLineId = useMemo(() => {
     const m = new Map<string, Conc[]>();
     for (const c of conclusions) {
-      const k = (c.fsLine || '').toLowerCase();
+      // Primary: use fsLineId if available
+      const k = c.fsLineId || (c.fsLine || '').toLowerCase();
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(c);
     }
@@ -106,13 +107,10 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     return m;
   }, [conclusions]);
 
-  // All unique fsLine values from conclusions (for fuzzy matching)
-  const allConcFsLines = useMemo(() => Array.from(concsByLine.keys()), [concsByLine]);
-
-  const errsByLine = useMemo(() => {
+  const errsByFsLineId = useMemo(() => {
     const m = new Map<string, { adj: number; unadj: number }>();
     for (const e of errors) {
-      const k = (e.fsLine || '').toLowerCase();
+      const k = e.fsLineId || (e.fsLine || '').toLowerCase();
       const cur = m.get(k) || { adj: 0, unadj: 0 };
       if (e.errorType === 'factual') cur.adj += e.errorAmount; else cur.unadj += e.errorAmount;
       m.set(k, cur);
@@ -120,18 +118,21 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     return m;
   }, [errors]);
 
-  // Hierarchy
+  // Hierarchy — track fsLineId per level group
+  type LevelData = { notes: Map<string, TBRow[]>; rows: TBRow[]; fsLineId: string | null };
   const hierarchy = useMemo(() => {
-    const stmtMap = new Map<string, Map<string, { notes: Map<string, TBRow[]>; rows: TBRow[] }>>();
+    const stmtMap = new Map<string, Map<string, LevelData>>();
     for (const s of STATEMENT_ORDER) stmtMap.set(s, new Map());
     for (const row of tbRows) {
       const stmt = row.fsStatement || 'Unclassified';
       if (!stmtMap.has(stmt)) stmtMap.set(stmt, new Map());
       const levels = stmtMap.get(stmt)!;
       const level = row.fsLevel || 'Other';
-      if (!levels.has(level)) levels.set(level, { notes: new Map(), rows: [] });
+      if (!levels.has(level)) levels.set(level, { notes: new Map(), rows: [], fsLineId: null });
       const ld = levels.get(level)!;
       ld.rows.push(row);
+      // Use the first row's fsLineId as the canonical ID for this level
+      if (!ld.fsLineId && row.fsLineId) ld.fsLineId = row.fsLineId;
       if (row.fsNoteLevel) {
         if (!ld.notes.has(row.fsNoteLevel)) ld.notes.set(row.fsNoteLevel, []);
         ld.notes.get(row.fsNoteLevel)!.push(row);
@@ -140,43 +141,19 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     return stmtMap;
   }, [tbRows]);
 
-  // Fuzzy match: "Cash at Bank" matches "Cash and Cash Equivalents", "Debtors" matches "Trade and Other Receivables"
-  function fuzzyMatch(a: string, b: string): boolean {
-    if (a === b) return true;
-    if (a.includes(b) || b.includes(a)) return true;
-    // Keyword overlap: strip common words and check if significant words match
-    const stop = new Set(['and','at','the','of','in','&','due','within','one','year','after','other','trade']);
-    const wordsA = new Set(a.split(/[\s\-\/]+/).filter(w => w.length > 1 && !stop.has(w)));
-    const wordsB = new Set(b.split(/[\s\-\/]+/).filter(w => w.length > 1 && !stop.has(w)));
-    if (wordsA.size === 0 || wordsB.size === 0) return false;
-    let overlap = 0;
-    for (const w of wordsA) if (wordsB.has(w)) overlap++;
-    return overlap > 0 && overlap >= Math.min(wordsA.size, wordsB.size) * 0.5;
+  // Lookup by fsLineId (exact) with fallback to lowercase fsLine name
+  function getConcs(fsLineId: string | null, name: string): Conc[] {
+    if (fsLineId) {
+      const byId = concsByFsLineId.get(fsLineId);
+      if (byId && byId.length > 0) return byId;
+    }
+    // Fallback: match by lowercase name (for pre-fsLineId data)
+    return concsByFsLineId.get(name.toLowerCase()) || [];
   }
 
-  function getConcs(name: string): Conc[] {
-    const lc = name.toLowerCase();
-    // Exact match first
-    const exact = concsByLine.get(lc);
-    if (exact && exact.length > 0) return exact;
-    // Fuzzy match against all conclusion fsLine values
-    for (const key of allConcFsLines) {
-      if (fuzzyMatch(lc, key)) {
-        const found = concsByLine.get(key);
-        if (found && found.length > 0) return found;
-      }
-    }
-    return [];
-  }
-
-  function getErrs(name: string) {
-    const lc = name.toLowerCase();
-    const exact = errsByLine.get(lc);
-    if (exact) return exact;
-    for (const [key, val] of errsByLine) {
-      if (fuzzyMatch(lc, key)) return val;
-    }
-    return { adj: 0, unadj: 0 };
+  function getErrs(fsLineId: string | null, name: string) {
+    if (fsLineId) { const r = errsByFsLineId.get(fsLineId); if (r) return r; }
+    return errsByFsLineId.get(name.toLowerCase()) || { adj: 0, unadj: 0 };
   }
 
   function getAccConcs(code: string): Conc[] { return concsByAccount.get(code.toLowerCase()) || []; }
@@ -211,9 +188,9 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
             const allRows = Array.from(levels.values()).flatMap(l => l.rows);
             const cy = allRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
             const py = allRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
-            const allConcs = Array.from(levels.keys()).flatMap(l => getConcs(l));
+            const allConcs = Array.from(levels.entries()).flatMap(([l, ld]) => getConcs(ld.fsLineId, l));
             const so = signCounts(allConcs);
-            const allErrs = Array.from(levels.keys()).reduce((a, l) => { const e = getErrs(l); return { adj: a.adj + e.adj, unadj: a.unadj + e.unadj }; }, { adj: 0, unadj: 0 });
+            const allErrs = Array.from(levels.entries()).reduce((a, [l, ld]) => { const e = getErrs(ld.fsLineId, l); return { adj: a.adj + e.adj, unadj: a.unadj + e.unadj }; }, { adj: 0, unadj: 0 });
             const sortedLevels = Array.from(levels.entries()).sort((a, b) => getPos(framework, stmt, a[0]) - getPos(framework, stmt, b[0]));
 
             return (
@@ -243,9 +220,9 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                       const lCY = ld.rows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
                       const lPY = ld.rows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
                       const lV = lCY - lPY;
-                      const lConcs = getConcs(level);
+                      const lConcs = getConcs(ld.fsLineId, level);
                       const lSo = signCounts(lConcs);
-                      const lErr = getErrs(level);
+                      const lErr = getErrs(ld.fsLineId, level);
                       const sortedNotes = Array.from(ld.notes.entries()).sort((a, b) => getPos(framework, stmt, a[0]) - getPos(framework, stmt, b[0]));
 
                       return (
@@ -277,9 +254,11 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                                     const isNoteOpen = expanded.has(noteKey);
                                     const nCY = noteRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
                                     const nPY = noteRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
-                                    const nConcs = getConcs(note);
+                                    // Notes: try to find an fsLineId from the note rows, fallback to parent level
+                                    const noteFsLineId = noteRows.find(r => r.fsLineId)?.fsLineId || ld.fsLineId;
+                                    const nConcs = getConcs(noteFsLineId, note);
                                     const nSo = signCounts(nConcs);
-                                    const nErr = getErrs(note);
+                                    const nErr = getErrs(noteFsLineId, note);
                                     return (
                                       <div key={note} className="bg-slate-50 rounded border border-slate-100 overflow-hidden">
                                         <button onClick={() => toggle(noteKey)} className="w-full flex items-center justify-between px-2.5 py-1 hover:bg-slate-100 transition-colors">
@@ -295,7 +274,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                                             <div className="flex gap-1"><SignDot count={nSo.rev} total={nSo.total} /><SignDot count={nSo.ri} total={nSo.total} /></div>
                                           </div>
                                         </button>
-                                        {isNoteOpen && <AccountRows rows={noteRows} getAccConcs={getAccConcs} getLineConcs={getConcs} fsLineName={note} expanded={expanded} toggle={toggle} prefix={`na:${note}`} />}
+                                        {isNoteOpen && <AccountRows rows={noteRows} getAccConcs={getAccConcs} lineConcs={nConcs} fsLineName={note} expanded={expanded} toggle={toggle} prefix={`na:${note}`} />}
                                       </div>
                                     );
                                   })}
@@ -303,7 +282,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                               )}
 
                               {/* Account rows (when no notes, or as the default view) */}
-                              {sortedNotes.length === 0 && <AccountRows rows={ld.rows} getAccConcs={getAccConcs} getLineConcs={getConcs} fsLineName={level} expanded={expanded} toggle={toggle} prefix={`la:${level}`} />}
+                              {sortedNotes.length === 0 && <AccountRows rows={ld.rows} getAccConcs={getAccConcs} lineConcs={lConcs} fsLineName={level} expanded={expanded} toggle={toggle} prefix={`la:${level}`} />}
                             </div>
                           )}
                         </div>
@@ -321,16 +300,15 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
 }
 
 // ─── Account Rows: each row shows conclusion/Rev/RI, click expands to show individual tests ───
-function AccountRows({ rows, getAccConcs, getLineConcs, fsLineName, expanded, toggle, prefix }: {
+function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggle, prefix }: {
   rows: TBRow[];
   getAccConcs: (code: string) => Conc[];
-  getLineConcs: (name: string) => Conc[];
+  lineConcs: Conc[];
   fsLineName: string;
   expanded: Set<string>;
   toggle: (key: string) => void;
   prefix: string;
 }) {
-  const lineConcs = getLineConcs(fsLineName);
 
   // For each account row, get its applicable conclusions (account-specific first, then FS-line level)
   function getRowConcs(accountCode: string): Conc[] {

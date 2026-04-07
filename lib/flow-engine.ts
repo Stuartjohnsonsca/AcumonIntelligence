@@ -2704,6 +2704,7 @@ export async function startExecution(
   userId: string,
   tbRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote?: string | null },
   initialNodeData?: Record<string, any>,
+  fsLineId?: string,
 ): Promise<string> {
   const eng = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
   if (!eng) throw new Error('Engagement not found');
@@ -2725,6 +2726,7 @@ export async function startExecution(
       engagementId,
       firmId: eng.firmId,
       fsLine,
+      fsLineId: fsLineId || null,
       testDescription,
       testTypeCode,
       flowSnapshot: flowData as any,

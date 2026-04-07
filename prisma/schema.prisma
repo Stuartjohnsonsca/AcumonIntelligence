@@ -1946,6 +1946,7 @@ model AuditTBRow {
   priorYear      Float?  @map("prior_year")
   fsNoteLevel    String? @map("fs_note_level")
   fsLevel        String? @map("fs_level")
+  fsLineId       String? @map("fs_line_id")    // Canonical FK to MethodologyFsLine
   fsStatement    String? @map("fs_statement")
   groupName      String? @map("group_name") // Only display for GROUP audit type
   aiConfidence   Int?    @map("ai_confidence") // 0-100 confidence of AI classification
@@ -1953,8 +1954,10 @@ model AuditTBRow {
   sortOrder      Int     @default(0) @map("sort_order")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  canonicalFsLine MethodologyFsLine? @relation(fields: [fsLineId], references: [id], onDelete: SetNull)
 
   @@index([engagementId])
+  @@index([fsLineId])
   @@map("audit_tb_rows")
 }
 
@@ -2106,6 +2109,7 @@ model MethodologyFsLine {
   children         MethodologyFsLine[] @relation("FsLineHierarchy")
   industryMappings MethodologyFsLineIndustry[]
   testAllocations  MethodologyTestAllocation[]
+  tbRows           AuditTBRow[]
 
   @@unique([firmId, name])
   @@index([firmId])
@@ -2336,6 +2340,7 @@ model TestExecution {
   engagementId    String    @map("engagement_id")
   firmId          String    @map("firm_id")
   fsLine          String    @map("fs_line")
+  fsLineId        String?   @map("fs_line_id")             // Canonical FK to MethodologyFsLine
   testDescription String    @map("test_description")
   testTypeCode    String?   @map("test_type_code")
   flowSnapshot    Json      @map("flow_snapshot")          // Frozen FlowData at execution start
@@ -2423,6 +2428,7 @@ model AuditTestConclusion {
   engagementId           String    @map("engagement_id")
   executionId            String?   @map("execution_id")
   fsLine                 String    @map("fs_line")
+  fsLineId               String?   @map("fs_line_id")           // Canonical FK to MethodologyFsLine
   testDescription        String    @map("test_description")
   accountCode            String?   @map("account_code")
 

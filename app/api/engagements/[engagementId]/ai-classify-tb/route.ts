@@ -13,6 +13,44 @@ const CATEGORY_TO_STATEMENT: Record<string, string> = {
 };
 
 const apiKey = process.env.TOGETHER_API_KEY || process.env.TOGETHER_DOC_SUMMARY_KEY || '';
+
+/**
+ * Resolve a fuzzy fsLevel/fsNoteLevel string to a canonical MethodologyFsLine ID.
+ * This is the ONE place fuzzy matching happens — at classification time, not render time.
+ */
+function resolveFsLineId(
+  fsLines: { id: string; name: string; lineType: string; fsCategory: string }[],
+  fsLevel?: string | null,
+  fsNoteLevel?: string | null,
+): string | null {
+  if (!fsLevel && !fsNoteLevel) return null;
+
+  const stop = new Set(['and', 'at', 'the', 'of', 'in', '&', 'due', 'within', 'one', 'year', 'after', 'other']);
+  function words(s: string) { return new Set(s.toLowerCase().split(/[\s\-\/]+/).filter(w => w.length > 1 && !stop.has(w))); }
+  function overlap(a: Set<string>, b: Set<string>) { let n = 0; for (const w of a) if (b.has(w)) n++; return a.size === 0 ? 0 : n / Math.max(a.size, b.size); }
+
+  function findBest(name: string): string | null {
+    const lc = name.toLowerCase().trim();
+    // 1. Exact match
+    const exact = fsLines.find(fl => fl.name.toLowerCase().trim() === lc);
+    if (exact) return exact.id;
+    // 2. Contains match
+    const contains = fsLines.find(fl => { const fn = fl.name.toLowerCase(); return fn.includes(lc) || lc.includes(fn); });
+    if (contains) return contains.id;
+    // 3. Keyword overlap (50% threshold)
+    const nameWords = words(name);
+    let bestId: string | null = null, bestScore = 0;
+    for (const fl of fsLines) {
+      const score = overlap(nameWords, words(fl.name));
+      if (score > bestScore) { bestScore = score; bestId = fl.id; }
+    }
+    if (bestScore >= 0.5 && bestId) return bestId;
+    return null;
+  }
+
+  // Try fsLevel first (the primary FS Line), then fsNoteLevel
+  return findBest(fsLevel || '') || findBest(fsNoteLevel || '');
+}
 const client = new OpenAI({
   apiKey,
   baseURL: 'https://api.together.xyz/v1',
@@ -196,17 +234,20 @@ No other text.`;
 
           const classifications = JSON.parse(jsonStr);
 
-          // Save each classification directly to DB
+          // Save each classification directly to DB — resolve fsLineId from canonical FS Lines
           for (const c of classifications) {
             const sourceRow = batch.find((r: any) => r.index === c.index);
             if (!sourceRow) continue;
             const dbRow = tbRowsDb.find(r => r.accountCode === sourceRow.accountCode);
             if (dbRow && (c.fsNoteLevel || c.fsLevel || c.fsStatement)) {
+              // Resolve fsLineId: match AI's fuzzy fsLevel to canonical MethodologyFsLine
+              const resolvedFsLineId = resolveFsLineId(fsLines, c.fsLevel, c.fsNoteLevel);
               await prisma.auditTBRow.update({
                 where: { id: dbRow.id },
                 data: {
                   fsNoteLevel: c.fsNoteLevel || undefined,
                   fsLevel: c.fsLevel || undefined,
+                  fsLineId: resolvedFsLineId || undefined,
                   fsStatement: c.fsStatement || undefined,
                   aiConfidence: c.confidence ?? null,
                 },
@@ -238,9 +279,23 @@ No other text.`;
         }
       }
 
+      // Backfill: resolve fsLineId for any rows that have fsLevel but no fsLineId (covers existing data)
+      let backfilled = 0;
+      const unresolved = await prisma.auditTBRow.findMany({
+        where: { engagementId, fsLevel: { not: null }, fsLineId: null },
+        select: { id: true, fsLevel: true, fsNoteLevel: true },
+      });
+      for (const row of unresolved) {
+        const resolved = resolveFsLineId(fsLines, row.fsLevel, row.fsNoteLevel);
+        if (resolved) {
+          await prisma.auditTBRow.update({ where: { id: row.id }, data: { fsLineId: resolved } });
+          backfilled++;
+        }
+      }
+
       await prisma.backgroundTask.update({
         where: { id: task.id },
-        data: { status: 'completed', result: { classified: totalClassified, total: rows.length } as any },
+        data: { status: 'completed', result: { classified: totalClassified, total: rows.length, backfilled } as any },
       });
     } catch (err: any) {
       console.error('[AI Classify] Background task failed:', err);

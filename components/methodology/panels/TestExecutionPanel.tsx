@@ -15,6 +15,7 @@ interface VerificationResult { itemId: string; amountMatch: string; dateMatch: s
 interface FlowStep { id: string; label: string; status: string; output?: any; errorMessage?: string; duration?: number; }
 interface Props {
   testId: string; testDescription: string; testType: string; engagementId: string; fsLine: string;
+  fsLineId?: string | null;
   clientId?: string; periodId?: string;
   tbRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote: string | null };
   sessionId?: string; flowData?: any; executionDef?: any;
@@ -37,7 +38,7 @@ function ResultIcon({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, clientId, periodId, tbRow, flowData, executionDef, assertions, conclusionRecord, onClose, onConclusionChange }: Props) {
+export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, fsLineId, clientId, periodId, tbRow, flowData, executionDef, assertions, conclusionRecord, onClose, onConclusionChange }: Props) {
   // RI Approved = Read-Only
   const riApproved = !!conclusionRecord?.riSignedByName;
   const riApprovedBy = conclusionRecord?.riSignedByName;
@@ -332,7 +333,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
     try {
       const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fsLine, testDescription, testTypeCode: testType, flowData, tbRow }),
+        body: JSON.stringify({ fsLine, fsLineId, testDescription, testTypeCode: testType, flowData, tbRow }),
       });
       if (res.ok) {
         const data = await res.json();

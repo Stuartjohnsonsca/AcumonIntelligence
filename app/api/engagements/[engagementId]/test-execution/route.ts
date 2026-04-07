@@ -11,7 +11,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
 
-  const { fsLine, testDescription, testTypeCode, flowData, tbRow, additionalItems } = await req.json();
+  const { fsLine, fsLineId, testDescription, testTypeCode, flowData, tbRow, additionalItems } = await req.json();
 
   if (!fsLine || !testDescription) {
     return NextResponse.json({ error: 'fsLine and testDescription are required' }, { status: 400 });
@@ -45,6 +45,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
         session.user.id,
         tbRow,
         { sampleItems: additionalItems, selectedIndices: additionalItems.map((_: any, i: number) => i), samplingDone: true },
+        fsLineId || undefined,
       );
 
       return NextResponse.json({ executionId, status: 'running' });
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     }
 
     // Start execution in background so response returns immediately
-    const executionId = await startExecution(engagementId, fsLine, testDescription, testTypeCode || null, flow, session.user.id, tbRow);
+    const executionId = await startExecution(engagementId, fsLine, testDescription, testTypeCode || null, flow, session.user.id, tbRow, undefined, fsLineId || undefined);
 
     // Continue processing in background (after response sent)
     after(async () => {

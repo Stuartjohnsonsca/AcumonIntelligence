@@ -54,12 +54,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     return NextResponse.json({ conclusion });
   }
 
-  // Create new
+  // Create new — resolve fsLineId from execution if not provided
+  let fsLineId = body.fsLineId || null;
+  if (!fsLineId && body.executionId) {
+    const exec = await prisma.testExecution.findUnique({ where: { id: body.executionId }, select: { fsLineId: true } });
+    fsLineId = exec?.fsLineId || null;
+  }
+
   const conclusion = await prisma.auditTestConclusion.create({
     data: {
       engagementId,
       executionId: body.executionId || null,
       fsLine: body.fsLine,
+      fsLineId,
       testDescription: body.testDescription,
       accountCode: body.accountCode || null,
       conclusion: body.conclusion || null,

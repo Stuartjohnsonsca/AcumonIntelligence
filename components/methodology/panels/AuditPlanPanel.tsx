@@ -1109,6 +1109,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 clientId={clientId}
                                 periodId={periodId}
                                 fsLine={activeLevel || activeStatement}
+                                fsLineId={(row as any).fsLineId || null}
                                 tbRow={{ accountCode: row.accountCode, description: row.description, currentYear: row.currentYear, priorYear: row.priorYear, fsNote: row.fsNoteLevel }}
                                 flowData={(test as any).flow || null}
                                 executionDef={(test as any).executionDef || null}
