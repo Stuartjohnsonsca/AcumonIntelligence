@@ -1009,11 +1009,22 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 } else {
                   rowClassification = null; // PM not set → show all
                 }
-                // Merge assertions from ALL matching RMM entries (different risks may have different assertions)
-                const mergedAssertions = rmmMatches.length > 0
-                  ? Array.from(new Set(rmmMatches.flatMap(r => r.assertions || [])))
-                  : null;
-                const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, mergedAssertions, effectiveStatement || undefined, rowClassification);
+                // Each RMM risk drives its own tests with its own assertions + classification
+                // Call getTestsForRow once per RMM match, then deduplicate by test description
+                let tests: ReturnType<typeof getTestsForRow>;
+                if (rmmMatches.length > 0) {
+                  const seen = new Set<string>();
+                  tests = [];
+                  for (const rm of rmmMatches) {
+                    const rmClass = classifyRisk(rm.overallRisk);
+                    const rmTests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rm.assertions || null, effectiveStatement || undefined, rmClass);
+                    for (const t of rmTests) {
+                      if (!seen.has(t.description)) { seen.add(t.description); tests.push(t); }
+                    }
+                  }
+                } else {
+                  tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, null, effectiveStatement || undefined, rowClassification);
+                }
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rowClassification === 'Significant Risk';
@@ -1064,9 +1075,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       <td className="px-0.5 py-px text-right whitespace-nowrap"><DrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px text-right whitespace-nowrap"><CrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px">
-                        {mergedAssertions && mergedAssertions.length > 0 ? (
+                        {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
                           <div className="flex flex-wrap gap-px">
-                            {mergedAssertions.map(a => (
+                            {rmmMatch.assertions.map(a => (
                               <span key={a} className="text-[7px] px-0.5 py-0 bg-blue-100 text-blue-600 rounded">{assertionShortLabel(a)}</span>
                             ))}
                           </div>
