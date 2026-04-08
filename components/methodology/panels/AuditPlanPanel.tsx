@@ -968,61 +968,52 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 const canonRowLevel = (canonicalLevel(row) || '').toLowerCase().trim();
                 const activeLevelLower = (activeLevel || '').toLowerCase().trim();
 
-                const rmmMatch = rmmItems.find(r => {
+                // Find ALL matching RMM entries for this row (multiple risks can map to same account)
+                const rmmMatches = rmmItems.filter(r => {
                   const li = r.lineItem.toLowerCase().trim();
-                  // Direct match: RMM lineItem is the account description or code
                   if (li === rowDesc || li === rowCode) return true;
-                  // FS level match: RMM lineItem matches the FS level
                   if (li === rowFsLevel || li === canonRowLevel || li === activeLevelLower) return true;
-                  // RMM has its own fsLevel set
                   const rfl = (r.fsLevel || '').toLowerCase().trim();
                   if (rfl && (rfl === rowFsLevel || rfl === canonRowLevel || rfl === activeLevelLower)) return true;
                   return false;
                 });
+                // Pick the highest-risk RMM match: Sig Risk > Area of Focus > Normal > AR
+                const RISK_PRIORITY: Record<string, number> = { 'Very High': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
+                const rmmMatch = rmmMatches.length > 0
+                  ? rmmMatches.reduce((best, r) => (RISK_PRIORITY[r.overallRisk || ''] ?? 99) < (RISK_PRIORITY[best.overallRisk || ''] ?? 99) ? r : best)
+                  : null;
 
-                // The active tab level is the primary FS level for test matching
                 const effectiveFsLevel = activeLevel || rmmMatch?.fsLevel || row.fsLevel;
                 const effectiveFsNote = activeNote || rmmMatch?.fsNote || row.fsNoteLevel;
                 const effectiveStatement = activeStatement || rmmMatch?.fsStatement;
 
-                // Determine risk classification.
-                // 1. Check row-level RMM match first
-                // 2. If no row match, check if the FS Level tab has an RMM entry (inherit from level)
-                // 3. If no RMM at all but value > PM → Normal tests
-                // 4. Below PM → AR/Mandatory only
+                // Classify based on highest RMM risk found
                 const rowValue = Math.abs(Number(row.currentYear) || 0);
 
-                // Also try to find an RMM match at the FS Level (not just individual account)
-                const levelRmmMatch = !rmmMatch ? rmmItems.find(r => {
-                  const li = r.lineItem.toLowerCase().trim();
-                  return li === activeLevelLower || li === rowFsLevel || li === canonRowLevel;
-                }) : null;
-                const effectiveRmm = rmmMatch || levelRmmMatch;
+                function classifyRisk(overallRisk: string | undefined): string {
+                  if (!overallRisk) return 'Normal';
+                  const mapped = riskClassificationTable?.[overallRisk];
+                  if (mapped) return mapped;
+                  if (overallRisk === 'High' || overallRisk === 'Very High') return 'Significant Risk';
+                  if (overallRisk === 'Medium') return 'Area of Focus';
+                  return 'Normal'; // Low or unknown
+                }
 
                 let rowClassification: string | null = null;
-                if (effectiveRmm?.overallRisk) {
-                  const mapped = riskClassificationTable?.[effectiveRmm.overallRisk];
-                  if (mapped) {
-                    rowClassification = mapped;
-                  } else if (effectiveRmm.overallRisk === 'High' || effectiveRmm.overallRisk === 'Very High') {
-                    rowClassification = 'Significant Risk';
-                  } else if (effectiveRmm.overallRisk === 'Medium') {
-                    rowClassification = 'Area of Focus';
-                  } else if (effectiveRmm.overallRisk === 'Low') {
-                    // Low risk WITH RMM entry → Normal tests (not AR)
-                    rowClassification = 'Normal';
-                  } else {
-                    rowClassification = 'Normal';
-                  }
+                if (rmmMatch) {
+                  rowClassification = classifyRisk(rmmMatch.overallRisk);
                 } else if (performanceMateriality > 0 && rowValue > performanceMateriality) {
                   rowClassification = 'Normal';
                 } else if (performanceMateriality > 0) {
                   rowClassification = 'AR';
                 } else {
-                  // PM not set yet — show all tests (backwards compatible)
-                  rowClassification = null;
+                  rowClassification = null; // PM not set → show all
                 }
-                const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement || undefined, rowClassification);
+                // Merge assertions from ALL matching RMM entries (different risks may have different assertions)
+                const mergedAssertions = rmmMatches.length > 0
+                  ? Array.from(new Set(rmmMatches.flatMap(r => r.assertions || [])))
+                  : null;
+                const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, mergedAssertions, effectiveStatement || undefined, rowClassification);
                 const rowKey = row.id || row.accountCode;
                 const isExp = expandedRmm.has(rowKey);
                 const isSig = rowClassification === 'Significant Risk';
@@ -1073,9 +1064,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       <td className="px-0.5 py-px text-right whitespace-nowrap"><DrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px text-right whitespace-nowrap"><CrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px">
-                        {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
+                        {mergedAssertions && mergedAssertions.length > 0 ? (
                           <div className="flex flex-wrap gap-px">
-                            {rmmMatch.assertions.map(a => (
+                            {mergedAssertions.map(a => (
                               <span key={a} className="text-[7px] px-0.5 py-0 bg-blue-100 text-blue-600 rounded">{assertionShortLabel(a)}</span>
                             ))}
                           </div>
