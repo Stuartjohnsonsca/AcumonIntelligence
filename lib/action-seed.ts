@@ -49,25 +49,35 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   {
     code: 'extract_bank_statements',
     name: 'Extract Bank Statements',
-    description: 'Extract transaction data from PDF/image bank statements using OCR. Processes FX conversion, period trimming, and stores extracted data.',
+    description: 'Extract transaction data from PDF/image bank statements using OCR. Auto-detects and separates by bank account. Processes FX conversion, period trimming, and stores extracted data per account.',
     category: 'evidence',
     handlerName: 'extractBankStatements',
     icon: 'Landmark',
     color: '#3b82f6',
     isSystem: true,
     inputSchema: [
-      { code: 'source_files', label: 'Bank Statement Files', type: 'file', required: true, source: 'auto', autoMapFrom: '$prev.documents', group: 'Input', description: 'PDF or image files of bank statements.' },
+      { code: 'source_files', label: 'Bank Statement Files', type: 'file', required: true, source: 'auto', autoMapFrom: '$prev.documents', group: 'Input', description: 'PDF or image files of bank statements. Can be mixed accounts — the action auto-detects and separates by bank account.' },
       { code: 'currency', label: 'Currency', type: 'select', required: false, source: 'user', group: 'Processing', defaultValue: 'GBP', options: [
         { value: 'GBP', label: 'GBP' }, { value: 'USD', label: 'USD' }, { value: 'EUR', label: 'EUR' },
       ]},
+      { code: 'separate_by_account', label: 'Separate by Account', type: 'select', required: false, source: 'user', group: 'Processing', defaultValue: 'auto', description: 'How to handle multiple bank accounts in the source files.', options: [
+        { value: 'auto', label: 'Auto-detect from statements' },
+        { value: 'per_file', label: 'Each file is a separate account' },
+        { value: 'combined', label: 'Treat all as one account' },
+      ]},
       { code: 'period_start', label: 'Period Start', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodStart', group: 'Processing' },
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Processing' },
-      { code: 'evidence_tag', label: 'Evidence Tag', type: 'text', required: false, source: 'auto', autoMapFrom: '$ctx.test.fsLine', group: 'Storage', description: 'Auto-generated filing reference from the FS Line. Used to organise evidence in the document library.' },
+      { code: 'evidence_tag_level', label: 'Evidence Tag Level', type: 'select', required: false, source: 'user', group: 'Storage', defaultValue: 'account', description: 'How to tag evidence in the document library.', options: [
+        { value: 'account', label: 'Per TB Account (e.g. bank_1000, bank_1010)' },
+        { value: 'fs_line', label: 'Per FS Line (e.g. Cash at Bank)' },
+      ]},
     ],
     outputSchema: [
-      { code: 'data_table', label: 'Extracted Transactions', type: 'data_table', description: 'All transactions extracted from the statements.' },
+      { code: 'data_table', label: 'Extracted Transactions', type: 'data_table', description: 'All transactions extracted, with bank account column for filtering.' },
+      { code: 'data_by_account', label: 'Transactions by Account', type: 'json', description: 'Transactions grouped by detected bank account.' },
       { code: 'transaction_count', label: 'Transaction Count', type: 'number' },
-      { code: 'statements', label: 'Statement Summaries', type: 'json' },
+      { code: 'account_count', label: 'Number of Accounts Detected', type: 'number' },
+      { code: 'statements', label: 'Statement Summaries', type: 'json', description: 'Per-account statement summaries with opening/closing balances.' },
     ],
   },
 
