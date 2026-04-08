@@ -172,29 +172,17 @@ function WalkthroughProcess({ engagementId, processKey, processLabel }: { engage
   async function requestFromClient() {
     setRequesting(true);
     try {
-      // Get clientId
-      const engRes = await fetch(`/api/engagements/${engagementId}`);
-      const engData = await engRes.json();
-      const clientId = engData.engagement?.clientId;
-      if (!clientId) return;
-
-      // Create portal request
-      const res = await fetch(`/api/engagements/${engagementId}/outstanding`, {
+      const res = await fetch(`/api/engagements/${engagementId}/walkthrough-request`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'portal_request',
+          section: 'walkthroughs',
           title: `${processLabel} — Documentation Request`,
-          description: `Please provide documentation for your ${processLabel.toLowerCase()}. This can be:\n• Process maps or flowcharts\n• Procedure manuals\n• A written description of the process from start to finish\n\nPlease upload files or type your description below.`,
-          assignedTo: null,
-          priority: 'normal',
-          portalSection: 'walkthroughs',
-          portalQuestion: `[Walkthrough: ${processLabel}] Please provide your ${processLabel.toLowerCase()} documentation — process maps, procedure manuals, or a written description.`,
-          clientId,
+          question: `[Walkthrough: ${processLabel}] Please provide your ${processLabel.toLowerCase()} documentation. This can be:\n• Process maps or flowcharts\n• Procedure manuals\n• A written description of the process from start to finish\n\nPlease upload files or type your description below.`,
         }),
       });
       if (res.ok) {
         const data = await res.json();
-        await saveStatus({ stage: 'requested', portalRequestId: data.item?.id || data.id });
+        await saveStatus({ stage: 'requested', portalRequestId: data.id });
       }
     } catch {} finally { setRequesting(false); }
   }
@@ -217,27 +205,18 @@ function WalkthroughProcess({ engagementId, processKey, processLabel }: { engage
   // Send flowchart for client verification
   async function sendForVerification() {
     try {
-      const engRes = await fetch(`/api/engagements/${engagementId}`);
-      const engData = await engRes.json();
-      const clientId = engData.engagement?.clientId;
-      if (!clientId) return;
-
       const flowSummary = (status.flowchart || []).map((s, i) => `${i + 1}. [${s.type}] ${s.label}`).join('\n');
 
-      const res = await fetch(`/api/engagements/${engagementId}/outstanding`, {
+      const res = await fetch(`/api/engagements/${engagementId}/walkthrough-request`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'portal_request',
-          title: `${processLabel} — Verify Flowchart`,
-          description: `Please review the ${processLabel.toLowerCase()} flowchart below and confirm it accurately represents your process.\n\nIf incorrect, please describe what needs changing or upload a corrected version.\n\n${flowSummary}`,
-          portalSection: 'walkthroughs',
-          portalQuestion: `[Walkthrough Verification: ${processLabel}] Please verify this process flowchart is accurate. Reply Yes to confirm, or describe corrections / upload a corrected file.`,
-          clientId,
+          section: 'walkthroughs',
+          question: `[Walkthrough Verification: ${processLabel}] Please verify this process flowchart is accurate. Reply Yes to confirm, or describe corrections / upload a corrected file.\n\n${flowSummary}`,
         }),
       });
       if (res.ok) {
         const data = await res.json();
-        await saveStatus({ stage: 'sent_for_verification', verificationRequestId: data.item?.id || data.id });
+        await saveStatus({ stage: 'sent_for_verification', verificationRequestId: data.id });
       }
     } catch {}
   }
@@ -245,26 +224,17 @@ function WalkthroughProcess({ engagementId, processKey, processLabel }: { engage
   // Schedule walkthrough
   async function scheduleWalkthrough(method: 'teams' | 'onsite' | 'message') {
     try {
-      const engRes = await fetch(`/api/engagements/${engagementId}`);
-      const engData = await engRes.json();
-      const clientId = engData.engagement?.clientId;
-      if (!clientId) return;
-
       const messages: Record<string, string> = {
         teams: `Please schedule a Microsoft Teams meeting to perform a walkthrough of your ${processLabel.toLowerCase()}. We will need to speak with the person(s) responsible for this process.`,
         onsite: `We would like to arrange an on-site visit to perform a walkthrough of your ${processLabel.toLowerCase()}. Please advise when would be convenient and who should be available.`,
         message: `We will be performing a walkthrough of your ${processLabel.toLowerCase()} via message exchange. We will be asking for specific evidence supporting each step of the process. Please respond to each request below.`,
       };
 
-      await fetch(`/api/engagements/${engagementId}/outstanding`, {
+      await fetch(`/api/engagements/${engagementId}/walkthrough-request`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'portal_request',
-          title: `${processLabel} — ${method === 'teams' ? 'Teams Meeting' : method === 'onsite' ? 'On-Site Visit' : 'Message Exchange'}`,
-          description: messages[method],
-          portalSection: 'walkthroughs',
-          portalQuestion: `[Walkthrough: ${processLabel}] ${messages[method]}`,
-          clientId,
+          section: 'walkthroughs',
+          question: `[Walkthrough: ${processLabel}] ${messages[method]}`,
         }),
       });
 
