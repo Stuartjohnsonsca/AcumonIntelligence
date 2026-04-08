@@ -15,6 +15,7 @@ export interface EngagementData {
   infoRequestType: InfoRequestType;
   hardCloseDate: string | null;
   isGroupAudit: boolean;
+  isNewClient?: boolean | null;
   startedAt: string | null;
   createdAt: string;
   teamMembers: TeamMemberData[];

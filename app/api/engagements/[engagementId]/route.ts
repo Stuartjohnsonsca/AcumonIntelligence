@@ -42,6 +42,21 @@ export async function GET(
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
 
+    // Check if prior engagement exists (for continuance vs new client logic)
+    const url = new URL(req.url);
+    if (url.searchParams.get('checkPriorAuditor') === 'true') {
+      const priorEngagement = await prisma.auditEngagement.findFirst({
+        where: {
+          clientId: engagement.clientId,
+          firmId: engagement.firmId,
+          id: { not: engagement.id },
+          status: { in: ['active', 'review', 'complete', 'archived'] },
+        },
+        select: { id: true },
+      });
+      return NextResponse.json({ engagement, hasPriorEngagement: !!priorEngagement });
+    }
+
     return NextResponse.json({ engagement });
   } catch (err) {
     console.error('Error fetching engagement:', err);

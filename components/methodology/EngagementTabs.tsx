@@ -8,6 +8,8 @@ import { SignOffHeader } from './SignOffHeader';
 import { PermanentFileTab } from './tabs/PermanentFileTab';
 import { EthicsTab } from './tabs/EthicsTab';
 import { ContinuanceTab } from './tabs/ContinuanceTab';
+import { SubsequentEventsTab } from './tabs/SubsequentEventsTab';
+import { NewClientTab } from './tabs/NewClientTab';
 import { MaterialityTab } from './tabs/MaterialityTab';
 import { TrialBalanceTab } from './tabs/TrialBalanceTab';
 import { PARTab } from './tabs/PARTab';
@@ -34,7 +36,7 @@ interface Props {
   currentUserId: string;
 }
 
-const PRE_PLAN_KEYS = new Set(['opening', 'prior-period', 'permanent-file', 'ethics', 'continuance', 'tb', 'materiality', 'par', 'walkthroughs', 'rmm']);
+const PRE_PLAN_KEYS = new Set(['opening', 'prior-period', 'permanent-file', 'ethics', 'continuance', 'new-client', 'tb', 'materiality', 'par', 'walkthroughs', 'rmm']);
 
 const TABS = [
   { key: 'opening', label: 'Opening' },
@@ -42,6 +44,7 @@ const TABS = [
   { key: 'permanent-file', label: 'Permanent' },
   { key: 'ethics', label: 'Ethics' },
   { key: 'continuance', label: 'Continuance' },
+  { key: 'new-client', label: 'New Client Take-On' },
   { key: 'tb', label: 'TBCYvPY' },
   { key: 'materiality', label: 'Materiality' },
   { key: 'par', label: 'PAR' },
@@ -51,6 +54,7 @@ const TABS = [
   { key: 'outstanding', label: 'Outstanding' },
   { key: 'portal', label: 'Portal' },
   { key: 'communication', label: 'Communication' },
+  { key: 'subsequent-events', label: 'Subsequent Events' },
 ] as const;
 
 // Tabs that get sign-off dots — everything except Documents and Portal
@@ -60,6 +64,8 @@ const SIGNOFF_TABS: Record<string, string> = {
   'permanent-file': 'Client Permanent File',
   'ethics': 'Ethics',
   'continuance': 'Continuance',
+  'new-client': 'New Client Take-On',
+  'subsequent-events': 'Subsequent Events',
   'tb': 'Trial Balance CY v PY',
   'materiality': 'Materiality',
   'par': 'Preliminary Analytical Review',
@@ -73,6 +79,8 @@ const TAB_ENDPOINTS: Record<string, string> = {
   'permanent-file': 'permanent-file',
   'ethics': 'ethics',
   'continuance': 'continuance',
+  'new-client': 'new-client-takeon',
+  'subsequent-events': 'subsequent-events',
   'tb': 'trial-balance',
   'materiality': 'materiality',
   'par': 'par',
@@ -86,6 +94,8 @@ const TAB_TO_SCHEDULE: Record<string, string> = {
   'permanent-file': 'permanent_file_questions',
   'ethics': 'ethics_questions',
   'continuance': 'continuance_questions',
+  'new-client': 'new_client_takeon_questions',
+  'subsequent-events': 'subsequent_events_questions',
   'tb': 'trial_balance',
   'materiality': 'materiality_questions',
   'par': 'par',
@@ -178,6 +188,20 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [openPanel, setOpenPanel] = useState<'review_point' | 'representation' | 'management' | 'ri_matter' | null>(null);
 
   const isPreStart = engStatus === 'pre_start';
+  const [isNewClient, setIsNewClient] = useState<boolean | null>(engagement.isNewClient ?? null);
+
+  // Auto-detect new client: check if prior engagement exists for same client
+  useEffect(() => {
+    if (isNewClient !== null) return; // Manual override set, skip auto-detect
+    fetch(`/api/engagements/${engagement.id}?checkPriorAuditor=true`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.hasPriorEngagement !== undefined) {
+          setIsNewClient(!d.hasPriorEngagement);
+        }
+      })
+      .catch(() => {});
+  }, [engagement.id, isNewClient]);
 
   async function handleStartAudit() {
     setStarting(true);
@@ -244,10 +268,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       .catch(() => {}); // Fail silently, show all tabs
   }, [auditType]);
 
-  // Filter tabs based on engagement status and audit type schedule config
+  // Filter tabs based on engagement status, audit type schedule config, and continuance/new-client
   const visibleTabs = TABS.filter(tab => {
     if (tab.key === 'opening') return true; // Opening always visible
     if (isPreStart) return false; // Only show Opening until audit is started
+
+    // Continuance / New Client Take-On: show one or the other
+    if (tab.key === 'continuance' && isNewClient === true) return false;
+    if (tab.key === 'new-client' && isNewClient !== true) return false;
+
     if (!enabledSchedules) return true; // Not loaded yet or no config = show all
     const scheduleKey = TAB_TO_SCHEDULE[tab.key];
     return scheduleKey ? enabledSchedules.has(scheduleKey) : true;
@@ -284,6 +313,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         return <EthicsTab engagementId={engagement.id} />;
       case 'continuance':
         return <ContinuanceTab engagementId={engagement.id} />;
+      case 'new-client':
+        return <NewClientTab engagementId={engagement.id} />;
+      case 'subsequent-events':
+        return <SubsequentEventsTab engagementId={engagement.id} />;
       case 'tb':
         return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} showCategory={tbShowCategory} onShowCategoryChange={setTbShowCategory} periodEndDate={periodEndDate} periodStartDate={periodStartDate} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'materiality':
