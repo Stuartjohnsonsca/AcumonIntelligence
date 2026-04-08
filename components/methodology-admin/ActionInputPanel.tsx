@@ -141,7 +141,16 @@ export function ActionInputPanel({ field, value, onChange, previousOutputs, step
 
       {field.description && <p className="text-[10px] text-slate-400 -mt-0.5">{field.description}</p>}
 
-      {field.type === 'select' && (
+      {/* Auto-mapped fields: show blue pill for ALL field types */}
+      {isAutoMapped && (
+        <div className="flex items-center gap-1.5 px-2 py-1.5 bg-blue-50 border border-blue-100 rounded-md">
+          <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+          <span className="text-[10px] text-blue-600 font-medium">Mapped from: {value}</span>
+        </div>
+      )}
+
+      {/* Non-auto-mapped fields: show normal inputs */}
+      {!isAutoMapped && field.type === 'select' && (
         <select
           value={value || field.defaultValue || ''}
           onChange={e => onChange(field.code, e.target.value)}
@@ -154,7 +163,7 @@ export function ActionInputPanel({ field, value, onChange, previousOutputs, step
         </select>
       )}
 
-      {field.type === 'multiselect' && (
+      {!isAutoMapped && field.type === 'multiselect' && (
         <div className="flex flex-wrap gap-1">
           {(field.options || []).map(opt => {
             const selected = Array.isArray(value) && value.includes(opt.value);
@@ -176,29 +185,29 @@ export function ActionInputPanel({ field, value, onChange, previousOutputs, step
         </div>
       )}
 
-      {field.type === 'textarea' && (
+      {!isAutoMapped && field.type === 'textarea' && (
         <textarea
           ref={textareaRef}
-          value={isAutoMapped ? value : (value || '')}
+          value={value || ''}
           onChange={e => onChange(field.code, e.target.value)}
-          className={`w-full border border-slate-200 rounded-md px-2 py-1.5 text-xs min-h-[60px] focus:outline-none focus:border-blue-300 ${isAutoMapped ? 'bg-blue-50/50 text-blue-600' : ''}`}
+          className="w-full border border-slate-200 rounded-md px-2 py-1.5 text-xs min-h-[60px] focus:outline-none focus:border-blue-300"
           rows={3}
           placeholder={field.description || `Enter ${field.label.toLowerCase()}...`}
         />
       )}
 
-      {field.type === 'text' && (
+      {!isAutoMapped && field.type === 'text' && (
         <input
           ref={inputRef}
           type="text"
-          value={isAutoMapped ? value : (value || '')}
+          value={value || ''}
           onChange={e => onChange(field.code, e.target.value)}
-          className={`w-full border border-slate-200 rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-blue-300 ${isAutoMapped ? 'bg-blue-50/50 text-blue-600' : ''}`}
+          className="w-full border border-slate-200 rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-blue-300"
           placeholder={field.description || `Enter ${field.label.toLowerCase()}...`}
         />
       )}
 
-      {field.type === 'number' && (
+      {!isAutoMapped && field.type === 'number' && (
         <input
           type="number"
           value={value ?? field.defaultValue ?? ''}
@@ -207,7 +216,7 @@ export function ActionInputPanel({ field, value, onChange, previousOutputs, step
         />
       )}
 
-      {field.type === 'boolean' && (
+      {!isAutoMapped && field.type === 'boolean' && (
         <label className="inline-flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -219,24 +228,16 @@ export function ActionInputPanel({ field, value, onChange, previousOutputs, step
         </label>
       )}
 
-      {field.type === 'date' && (
+      {!isAutoMapped && field.type === 'date' && (
         <input
           type="date"
-          value={isAutoMapped ? '' : (value || '')}
+          value={value || ''}
           onChange={e => onChange(field.code, e.target.value)}
-          className={`w-full border border-slate-200 rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-blue-300 ${isAutoMapped ? 'bg-blue-50/50' : ''}`}
-          disabled={isAutoMapped}
+          className="w-full border border-slate-200 rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-blue-300"
         />
       )}
 
-      {(field.type === 'json_table' || field.type === 'file') && isAutoMapped && (
-        <div className="flex items-center gap-1.5 px-2 py-1.5 bg-blue-50 border border-blue-100 rounded-md">
-          <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-          <span className="text-[10px] text-blue-600 font-medium">Mapped from: {value}</span>
-        </div>
-      )}
-
-      {(field.type === 'json_table' || field.type === 'file') && !isAutoMapped && (
+      {!isAutoMapped && (field.type === 'json_table' || field.type === 'file') && (
         <div className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-md">
           <span className="text-[10px] text-slate-400">Will be populated at runtime</span>
         </div>
