@@ -28,9 +28,11 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
         { value: 'payment_voucher', label: 'Payment Voucher' },
         { value: 'other', label: 'Other' },
       ]},
-      { code: 'output_format', label: 'Format of Output', type: 'select', required: false, source: 'user', group: 'Request Details', defaultValue: 'individual', options: [
-        { value: 'individual', label: 'Individual Files' },
+      { code: 'accepted_responses', label: 'Accepted Response Types', type: 'multiselect', required: false, source: 'user', group: 'Request Details', defaultValue: ['single_file', 'multiple_files', 'zip', 'chat'], description: 'What the client can provide. The action auto-detects the format received and handles accordingly (e.g. unzips archives, collects multiple uploads, accepts chat explanations).', options: [
+        { value: 'single_file', label: 'Single File' },
+        { value: 'multiple_files', label: 'Multiple Files' },
         { value: 'zip', label: 'Zip Archive' },
+        { value: 'chat', label: 'Chat Response' },
       ]},
       { code: 'area_of_work', label: 'Area of Work', type: 'text', required: false, source: 'user', group: 'Request Details' },
       { code: 'transactions', label: 'Requested Transactions', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data', description: 'Table with Date, Ref Number, CounterParty, Gross Amount, Net Amount, Account Code columns.' },
