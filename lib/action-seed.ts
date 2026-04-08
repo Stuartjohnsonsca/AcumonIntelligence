@@ -62,7 +62,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       ]},
       { code: 'period_start', label: 'Period Start', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodStart', group: 'Processing' },
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Processing' },
-      { code: 'evidence_tag', label: 'Evidence Tag', type: 'text', required: false, source: 'user', group: 'Storage' },
+      { code: 'evidence_tag', label: 'Evidence Tag', type: 'text', required: false, source: 'auto', autoMapFrom: '$ctx.test.fsLine', group: 'Storage', description: 'Auto-generated filing reference from the FS Line. Used to organise evidence in the document library.' },
     ],
     outputSchema: [
       { code: 'data_table', label: 'Extracted Transactions', type: 'data_table', description: 'All transactions extracted from the statements.' },
