@@ -83,7 +83,7 @@ interface Props {
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 const THREE_LEVEL_STATEMENTS = new Set(['Balance Sheet']);
-const OTHER_TABS = ['Going Concern', 'Management Override', 'Disclosure'] as const;
+const OTHER_TABS = ['Going Concern', 'Management Override', 'Subsequent Events', 'Permanent', 'Disclosure'] as const;
 type OtherTab = typeof OTHER_TABS[number];
 
 // Statutory format order by framework
@@ -929,10 +929,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               <col style={{width: '60px'}} />
               <col />
               {isThreeLevel && <col style={{width: '80px'}} />}
-              <col style={{width: '55px'}} />
-              <col style={{width: '55px'}} />
-              <col style={{width: '55px'}} />
-              <col style={{width: '55px'}} />
+              <col style={{width: '70px'}} />
+              <col style={{width: '70px'}} />
+              <col style={{width: '12px'}} />{/* spacer between CY and PY */}
+              <col style={{width: '70px'}} />
+              <col style={{width: '70px'}} />
               <col style={{width: '70px'}} />
               <col style={{width: '50px'}} />
             </colgroup>
@@ -944,6 +945,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Description</th>
                 {isThreeLevel && <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>FS Note</th>}
                 <th className="px-0.5 py-0 text-center font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{fmtDate(periodEndDate) || 'CY'}</th>
+                <th rowSpan={2}></th>{/* spacer */}
                 <th className="px-0.5 py-0 text-center font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Assertions</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Risk</th>
@@ -1072,6 +1074,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       {isThreeLevel && <td className="px-0.5 py-px text-slate-400">{row.fsNoteLevel || ''}</td>}
                       <td className="px-0.5 py-px text-right whitespace-nowrap"><DrCell value={row.currentYear} /></td>
                       <td className="px-0.5 py-px text-right whitespace-nowrap"><CrCell value={row.currentYear} /></td>
+                      <td></td>{/* spacer */}
                       <td className="px-0.5 py-px text-right whitespace-nowrap"><DrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px text-right whitespace-nowrap"><CrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px">
@@ -1210,7 +1213,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Execution Panel — opens below the test row */}
                         {isExecutionOpen && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 11 : 10} className="p-2 bg-slate-50/50">
+                            <td colSpan={isThreeLevel ? 12 : 11} className="p-2 bg-slate-50/50">
                               <TestExecutionPanel
                                 testId={testKey}
                                 testDescription={test.description}
@@ -1234,7 +1237,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Payroll Workpaper — for payroll_workpaper output format */}
                         {isExecutionOpen && test.outputFormat === 'payroll_workpaper' && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 11 : 10} className="p-2 bg-white">
+                            <td colSpan={isThreeLevel ? 12 : 11} className="p-2 bg-white">
                               <PayrollTestPanel
                                 engagementId={engagementId}
                                 fsLine={activeLevel || activeStatement}
@@ -1245,7 +1248,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Results Panel — shown for completed tests with results (not for ranked_flagged which shows in execution panel) */}
                         {isExecutionOpen && hasResults && test.outputFormat !== 'ranked_flagged' && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 11 : 10} className="p-2 bg-white">
+                            <td colSpan={isThreeLevel ? 12 : 11} className="p-2 bg-white">
                               <TestResultsPanel
                                 engagementId={engagementId}
                                 executionId={effectiveExecId}
@@ -1267,7 +1270,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                     {/* Analytical Review Panel — for AR-classified rows */}
                     {isExp && isAR && (
                       <tr>
-                        <td colSpan={isThreeLevel ? 11 : 10} className="p-2 bg-green-50/30">
+                        <td colSpan={isThreeLevel ? 12 : 11} className="p-2 bg-green-50/30">
                           <AnalyticalReviewPanel
                             engagementId={engagementId}
                             fsLine={effectiveFsLevel || activeLevel || activeStatement}
