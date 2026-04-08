@@ -41,16 +41,57 @@ export function WalkthroughsTab({ engagementId }: Props) {
   const [activeTab, setActiveTab] = useState('sales');
   const [newProcessName, setNewProcessName] = useState('');
   const [showAddProcess, setShowAddProcess] = useState(false);
+  const [allStatuses, setAllStatuses] = useState<Record<string, ProcessStatus>>({});
 
-  // Load custom processes from permanent file
+  // Load custom processes and all statuses from permanent file
   useEffect(() => {
     fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_processes`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (data?.data?.processes?.length > 0) setProcesses(data.data.processes);
-        else if (data?.answers?.processes?.length > 0) setProcesses(data.answers.processes);
+        const procs = data?.data?.processes || data?.answers?.processes;
+        if (procs?.length > 0) setProcesses(procs);
       }).catch(() => {});
   }, [engagementId]);
+
+  // Load all process statuses for overall sign-off calculation
+  useEffect(() => {
+    if (processes.length === 0) return;
+    Promise.all(processes.map(p =>
+      fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_${p.key}_status`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => ({ key: p.key, status: data?.data || data?.answers || {} }))
+        .catch(() => ({ key: p.key, status: {} }))
+    )).then(results => {
+      const map: Record<string, ProcessStatus> = {};
+      for (const r of results) map[r.key] = r.status;
+      setAllStatuses(map);
+    });
+  }, [engagementId, processes]);
+
+  // Callback from child process to update allStatuses
+  function onProcessStatusChange(key: string, newStatus: ProcessStatus) {
+    setAllStatuses(prev => ({ ...prev, [key]: newStatus }));
+  }
+
+  // Overall walkthrough sign-off (tab level) — clicked by Reviewer/RI
+  const [overallSignOffs, setOverallSignOffs] = useState<{ reviewer?: { name: string; at: string }; ri?: { name: string; at: string } }>({});
+
+  useEffect(() => {
+    fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_overall_signoffs`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { const d = data?.data || data?.answers; if (d) setOverallSignOffs(d); })
+      .catch(() => {});
+  }, [engagementId]);
+
+  function toggleOverallSignOff(role: 'reviewer' | 'ri') {
+    const current = overallSignOffs[role];
+    const updated = { ...overallSignOffs, [role]: current ? undefined : { name: 'Current User', at: new Date().toISOString() } };
+    setOverallSignOffs(updated);
+    fetch(`/api/engagements/${engagementId}/permanent-file`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sectionKey: 'walkthrough_overall_signoffs', data: updated }),
+    }).catch(() => {});
+  }
 
   function addProcess() {
     if (!newProcessName.trim()) return;
@@ -86,6 +127,21 @@ export function WalkthroughsTab({ engagementId }: Props) {
           <h2 className="text-base font-semibold text-slate-800">Walkthroughs</h2>
           <p className="text-xs text-slate-400">Document business processes, generate flowcharts, and perform walkthrough testing</p>
         </div>
+        {/* Overall Reviewer/RI dots — clickable sign-off for entire Walkthroughs tab */}
+        <div className="flex items-center gap-3">
+          <button onClick={() => toggleOverallSignOff('reviewer')} className="flex items-center gap-1" title={overallSignOffs.reviewer ? `Reviewed by ${overallSignOffs.reviewer.name} — click to unsign` : 'Click to sign off as Reviewer'}>
+            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${overallSignOffs.reviewer ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
+              {overallSignOffs.reviewer && <CheckCircle2 className="h-3 w-3 text-white" />}
+            </div>
+            <span className="text-[9px] font-bold text-slate-500">Reviewer</span>
+          </button>
+          <button onClick={() => toggleOverallSignOff('ri')} className="flex items-center gap-1" title={overallSignOffs.ri ? `RI signed by ${overallSignOffs.ri.name} — click to unsign` : 'Click to sign off as RI'}>
+            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${overallSignOffs.ri ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
+              {overallSignOffs.ri && <CheckCircle2 className="h-3 w-3 text-white" />}
+            </div>
+            <span className="text-[9px] font-bold text-slate-500">RI</span>
+          </button>
+        </div>
       </div>
 
       {/* Process sub-tabs */}
@@ -120,13 +176,13 @@ export function WalkthroughsTab({ engagementId }: Props) {
       </div>
 
       {/* Active process content */}
-      <WalkthroughProcess engagementId={engagementId} processKey={activeTab} processLabel={processes.find(p => p.key === activeTab)?.label || activeTab} />
+      <WalkthroughProcess engagementId={engagementId} processKey={activeTab} processLabel={processes.find(p => p.key === activeTab)?.label || activeTab} onStatusChange={(s) => onProcessStatusChange(activeTab, s)} />
     </div>
   );
 }
 
 // ─── Single Process Walkthrough ───
-function WalkthroughProcess({ engagementId, processKey, processLabel }: { engagementId: string; processKey: string; processLabel: string }) {
+function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusChange }: { engagementId: string; processKey: string; processLabel: string; onStatusChange?: (s: ProcessStatus) => void }) {
   const [narrative, setNarrative] = useState('');
   const [controls, setControls] = useState<Control[]>([]);
   const [status, setStatus] = useState<ProcessStatus>({ stage: 'draft' });
@@ -162,6 +218,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel }: { engage
   async function saveStatus(newStatus: Partial<ProcessStatus>) {
     const updated = { ...status, ...newStatus };
     setStatus(updated);
+    onStatusChange?.(updated);
     await fetch(`/api/engagements/${engagementId}/permanent-file`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sectionKey: `walkthrough_${processKey}_status`, data: updated }),
