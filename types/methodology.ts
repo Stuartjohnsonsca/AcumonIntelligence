@@ -204,9 +204,9 @@ export const MANDATORY_FS_LINES = [
 // ─── Engagement Types (for URL routing) ─────────────────────────────────────
 
 export const AUDIT_TYPE_ROUTES: Record<string, AuditType> = {
-  'sme-audit': 'SME',
+  'StatAudit': 'SME',
   'pie-audit': 'PIE',
-  'sme-controls-audit': 'SME_CONTROLS',
+  'StatControlsAudit': 'SME_CONTROLS',
   'pie-controls-audit': 'PIE_CONTROLS',
   'group': 'GROUP',
 };

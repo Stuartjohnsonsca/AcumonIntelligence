@@ -199,7 +199,7 @@ export function OutstandingActionsSection() {
                     {expandedAction === action.id && action.type !== 'land_registry_selection' && action.engagementId && (
                       <div className="mt-3 border-t pt-3">
                         <a
-                          href={`/methodology/sme-audit?engagementId=${action.engagementId}`}
+                          href={`/methodology/StatAudit?engagementId=${action.engagementId}`}
                           className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
                         >
                           <ExternalLink className="h-3 w-3" /> Go to Engagement

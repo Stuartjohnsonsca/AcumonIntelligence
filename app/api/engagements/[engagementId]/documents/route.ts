@@ -38,13 +38,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   // Create document request
   if (action === 'request') {
-    const { documentName, requestedFrom, mappedItems } = body;
+    const { documentName, requestedFrom, mappedItems, source, usageLocation, documentType } = body;
     if (!documentName) return NextResponse.json({ error: 'documentName required' }, { status: 400 });
     const doc = await prisma.auditDocument.create({
       data: {
         engagementId, documentName, requestedFrom: requestedFrom || null,
         requestedDate: new Date(), requestedById: session.user.id,
         mappedItems: mappedItems || null,
+        source: source || null,
+        usageLocation: usageLocation || null,
+        documentType: documentType || null,
       },
       include: { requestedBy: { select: { id: true, name: true } }, uploadedBy: { select: { id: true, name: true } } },
     });
@@ -117,6 +120,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const doc = await prisma.auditDocument.update({
       where: { id: documentId },
       data: { visibleToClient: !existing.visibleToClient },
+    });
+    return NextResponse.json({ document: doc });
+  }
+
+  // Update categorisation fields
+  if (action === 'update_categories') {
+    const { documentId, source, usageLocation, documentType } = body;
+    if (!documentId) return NextResponse.json({ error: 'documentId required' }, { status: 400 });
+    const doc = await prisma.auditDocument.update({
+      where: { id: documentId },
+      data: {
+        ...(source !== undefined && { source: source || null }),
+        ...(usageLocation !== undefined && { usageLocation: usageLocation || null }),
+        ...(documentType !== undefined && { documentType: documentType || null }),
+      },
     });
     return NextResponse.json({ document: doc });
   }

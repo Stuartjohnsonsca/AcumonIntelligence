@@ -118,6 +118,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     });
 
     after(async () => {
+      console.log('[AI Review] Background task started:', task.id, docKey);
       const updateProgress = (progress: any) => prisma.backgroundTask.update({ where: { id: task.id }, data: { progress } });
       try {
         const prompts: Record<string, string> = {
@@ -185,7 +186,11 @@ Extract actual monetary figures where available (e.g. "Revenue: £2,345,678"). I
           }),
         });
 
-        if (!aiRes.ok) throw new Error(`AI returned ${aiRes.status}`);
+        if (!aiRes.ok) {
+          const errText = await aiRes.text().catch(() => '');
+          console.error('[AI Review] Together API error:', aiRes.status, errText);
+          throw new Error(`AI returned ${aiRes.status}: ${errText.slice(0, 200)}`);
+        }
         const aiData = await aiRes.json();
         let content = aiData.choices?.[0]?.message?.content?.trim() || '[]';
 
@@ -221,11 +226,11 @@ Extract actual monetary figures where available (e.g. "Revenue: £2,345,678"). I
           data: { status: 'completed', result: { points: pointsWithStatus, docKey } as any },
         });
       } catch (err: any) {
-        console.error('AI review failed:', err);
+        console.error('[AI Review] Failed:', err.message, err.stack?.split('\n').slice(0, 3).join('\n'));
         await prisma.backgroundTask.update({
           where: { id: task.id },
           data: { status: 'error', error: err.message || 'AI review failed' },
-        });
+        }).catch(() => {});
       }
     }); // end after()
 

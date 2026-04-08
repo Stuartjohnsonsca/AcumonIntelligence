@@ -41,7 +41,7 @@ export async function POST(
 
   // Build the materiality screen URL
   const baseUrl = process.env.NEXTAUTH_URL || process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
-  const link = `${baseUrl}/methodology/sme-audit?tab=materiality&engagementId=${engagementId}`;
+  const link = `${baseUrl}/methodology/StatAudit?tab=materiality&engagementId=${engagementId}`;
 
   // Send email via Azure Communication Services (or log if not configured)
   const subject = `Technical Breach: Materiality — ${engagement.client?.clientName || 'Unknown Client'}`;

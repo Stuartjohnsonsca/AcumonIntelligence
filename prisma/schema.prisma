@@ -1930,6 +1930,9 @@ model AuditDocument {
   utilisedByName  String?   @map("utilised_by_name")
   utilisedTab     String?   @map("utilised_tab") // which tab the document is used in
   mappedItems     Json?     @map("mapped_items") // JSON array of item keys this doc maps to
+  source          String?   @map("source")         // e.g. Client, Bank, Solicitor, Third Party, Team
+  usageLocation   String?   @map("usage_location") // which tab/section: Ethics, Materiality, etc.
+  documentType    String?   @map("document_type")  // e.g. Bank Statement, Confirmation, Invoice
   createdAt       DateTime  @default(now()) @map("created_at")
 
   engagement  AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)

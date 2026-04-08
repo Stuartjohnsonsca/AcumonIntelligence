@@ -339,7 +339,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
         {stage === 'draft' && (
           <>
             <button onClick={save} disabled={saving} className="text-[10px] px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-              {saving ? 'Saving...' : 'Save Draft'}
+              {saving ? 'Saving...' : 'Save'}
             </button>
             <button onClick={requestFromClient} disabled={requesting || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 inline-flex items-center gap-1">
               <Send className="h-3 w-3" /> {requesting ? 'Sending...' : 'Request from Client'}

@@ -33,6 +33,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     });
   }
 
+  // If a specific section is requested, return just that section's data
+  const sectionParam = url.searchParams.get('section');
+  if (sectionParam) {
+    const section = sections.find(s => s.sectionKey === sectionParam);
+    return NextResponse.json({ data: section?.data || {} });
+  }
+
   // Merge into single data object keyed by sectionKey (excluding meta keys)
   const data: Record<string, unknown> = {};
   for (const s of sections) {
@@ -50,13 +57,14 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
-  const { data, fieldMeta } = body as { data: Record<string, unknown>; fieldMeta?: Record<string, unknown> };
+  const { data, fieldMeta, sectionKey } = body as { data: Record<string, unknown>; fieldMeta?: Record<string, unknown>; sectionKey?: string };
 
-  // Save form data - flatten all values into a single section for simplicity
+  // Save form data — use explicit sectionKey if provided, otherwise default to 'all'
   if (data && typeof data === 'object') {
+    const key = sectionKey || 'all';
     await prisma.auditPermanentFile.upsert({
-      where: { engagementId_sectionKey: { engagementId, sectionKey: 'all' } },
-      create: { engagementId, sectionKey: 'all', data: data as object },
+      where: { engagementId_sectionKey: { engagementId, sectionKey: key } },
+      create: { engagementId, sectionKey: key, data: data as object },
       update: { data: data as object },
     });
   }

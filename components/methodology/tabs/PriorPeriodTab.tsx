@@ -85,11 +85,17 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'ai_review', docKey, documentName }),
       });
-      if (!res.ok) { setReviewProgress('Failed to start'); setReviewing(null); return; }
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        setReviewProgress(`Failed: ${res.status} ${errBody.slice(0, 100)}`);
+        setTimeout(() => { setReviewing(null); setReviewProgress(null); }, 4000);
+        return;
+      }
       const { taskId } = await res.json();
       if (!taskId) { setReviewing(null); return; }
 
       // Poll for completion
+      let hadError = false;
       for (let i = 0; i < 120; i++) {
         await new Promise(r => setTimeout(r, 2000));
         const pollRes = await fetch(`/api/engagements/${engagementId}/prior-period`, {
@@ -109,12 +115,18 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
           break;
         }
         if (pollData.status === 'error') {
+          hadError = true;
           setReviewProgress(`Error: ${pollData.error}`);
+          setTimeout(() => { setReviewing(null); setReviewProgress(null); }, 5000);
           break;
         }
       }
-    } catch (err) { console.error('AI review failed:', err); }
-    finally { setReviewing(null); setReviewProgress(null); }
+      if (!hadError) { setReviewing(null); setReviewProgress(null); }
+    } catch (err) {
+      console.error('AI review failed:', err);
+      setReviewProgress('Failed — check console');
+      setTimeout(() => { setReviewing(null); setReviewProgress(null); }, 4000);
+    }
   }
 
   async function updatePoints(docKey: string, updatedPoints: ReviewPoint[]) {

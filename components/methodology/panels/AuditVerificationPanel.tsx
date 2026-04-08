@@ -264,7 +264,7 @@ export function AuditVerificationPanel({ engagementId, executionId, fsLine, asse
       const assessmentDesc = assessment?.notes || '';
 
       // Build link back to this test screen
-      const testLink = '/tools/methodology/sme-audit?tab=rmm&exec=' + (executionId || '') + '&item=' + index;
+      const testLink = '/tools/methodology/StatAudit?tab=rmm&exec=' + (executionId || '') + '&item=' + index;
 
       fetch(`/api/engagements/${engagementId}/audit-points`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -132,6 +132,12 @@ class TabErrorBoundary extends Component<{ tabName: string; engagementId?: strin
   }
 }
 
+// Sign-off status for tab-level dots
+interface TabSignOffStatus {
+  reviewer: 'none' | 'signed' | 'stale';
+  partner: 'none' | 'signed' | 'stale';
+}
+
 export function EngagementTabs({ engagement, auditType, clientName, periodEndDate, periodStartDate, currentUserId }: Props) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -145,6 +151,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [tbShowCategory, setTbShowCategory] = useState(true);
   const [showAuditPlan, setShowAuditPlan] = useState(!!savedState.auditPlan);
   const [showCompletion, setShowCompletion] = useState(!!savedState.completion);
+  const [tabSignOffs, setTabSignOffs] = useState<Record<string, TabSignOffStatus>>({});
 
   // Persist last page to localStorage
   useEffect(() => {
@@ -189,6 +196,40 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       setStarting(false);
     }
   }
+
+  // Fetch sign-off status for all tabs to show Reviewer/RI dots
+  const loadTabSignOffs = useCallback(async () => {
+    const statuses: Record<string, TabSignOffStatus> = {};
+    await Promise.all(
+      Object.entries(TAB_ENDPOINTS).map(async ([tabKey, ep]) => {
+        try {
+          const res = await fetch(`/api/engagements/${engagement.id}/${ep}?meta=signoffs`);
+          if (!res.ok) return;
+          const json = await res.json();
+          const so = json.signOffs || {};
+          const meta: Record<string, { lastEditedAt?: string }> = json.fieldMeta || {};
+
+          function isStale(role: 'reviewer' | 'partner'): boolean {
+            const ts = so[role]?.timestamp;
+            if (!ts) return false;
+            const signTime = new Date(ts).getTime();
+            return Object.values(meta).some(m => m.lastEditedAt && new Date(m.lastEditedAt).getTime() > signTime);
+          }
+
+          statuses[tabKey] = {
+            reviewer: so.reviewer?.timestamp ? (isStale('reviewer') ? 'stale' : 'signed') : 'none',
+            partner: so.partner?.timestamp ? (isStale('partner') ? 'stale' : 'signed') : 'none',
+          };
+        } catch { /* ignore */ }
+      })
+    );
+    setTabSignOffs(statuses);
+  }, [engagement.id]);
+
+  useEffect(() => { loadTabSignOffs(); }, [loadTabSignOffs]);
+
+  // Re-fetch tab sign-offs when switching tabs (to pick up changes made inside SignOffHeader)
+  useEffect(() => { loadTabSignOffs(); }, [activeTab, loadTabSignOffs]);
 
   // Fetch audit type → schedule mapping
   useEffect(() => {
@@ -364,13 +405,20 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
             {visibleTabs.map(tab => {
               const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
+              const tso = tabSignOffs[tab.key];
               return (
                 <button
                   key={tab.key}
                   onClick={() => { switchTab(tab.key); setShowCompletion(false); }}
-                  className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors flex items-center gap-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                 >
                   {label}
+                  {tab.key in SIGNOFF_TABS && (
+                    <span className="inline-flex items-center gap-0.5 ml-auto">
+                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.reviewer === 'signed' ? 'bg-green-500' : tso?.reviewer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.partner === 'signed' ? 'bg-green-500' : tso?.partner === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -398,6 +446,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
             {visibleTabs.map(tab => {
               const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
+              const tso = tabSignOffs[tab.key];
               return (
                 <button
                   key={tab.key}
@@ -405,6 +454,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                   className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors flex items-center gap-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
                 >
                   {label}
+                  {tab.key in SIGNOFF_TABS && (
+                    <span className="inline-flex items-center gap-0.5 ml-auto">
+                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.reviewer === 'signed' ? 'bg-green-500' : tso?.reviewer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.partner === 'signed' ? 'bg-green-500' : tso?.partner === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
+                    </span>
+                  )}
                   {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
                     <span className="inline-flex items-center justify-center min-w-[16px] px-1 h-4 rounded-full bg-teal-500 text-white text-[8px] font-bold">{outstandingTeamCount}</span>
                   )}
@@ -430,6 +485,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               {visibleTabs.map(tab => {
                 const isActive = activeTab === tab.key;
                 const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
+                const tso = tabSignOffs[tab.key];
                 return (
                   <button
                     key={tab.key}
@@ -441,6 +497,28 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                     }`}
                   >
                     {label}
+                    {tab.key in SIGNOFF_TABS && (
+                      <span className="inline-flex items-center gap-0.5 ml-0.5">
+                        {/* Reviewer dot */}
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            tso?.reviewer === 'signed' ? 'bg-green-500' :
+                            tso?.reviewer === 'stale' ? 'border border-green-500 bg-transparent' :
+                            'border border-slate-300 bg-transparent'
+                          }`}
+                          title={`Reviewer: ${tso?.reviewer === 'signed' ? 'Complete' : tso?.reviewer === 'stale' ? 'Partial (stale)' : 'Not signed'}`}
+                        />
+                        {/* RI dot */}
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            tso?.partner === 'signed' ? 'bg-green-500' :
+                            tso?.partner === 'stale' ? 'border border-green-500 bg-transparent' :
+                            'border border-slate-300 bg-transparent'
+                          }`}
+                          title={`RI: ${tso?.partner === 'signed' ? 'Complete' : tso?.partner === 'stale' ? 'Partial (stale)' : 'Not signed'}`}
+                        />
+                      </span>
+                    )}
                     {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
                       <span className="inline-flex items-center justify-center min-w-[18px] px-1 h-[18px] rounded-full bg-teal-500 text-white text-[9px] font-bold leading-none">{outstandingTeamCount}</span>
                     )}

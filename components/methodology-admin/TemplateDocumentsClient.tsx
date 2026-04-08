@@ -257,7 +257,7 @@ const SAMPLE_DATA: Record<string, string> = {
   current_user: 'Stuart Thomson',
   portal_link: 'https://app.acumon.co.uk/portal?token=abc123&client=acme&engagement=fy2026',
   custom_link: 'https://example.com/custom-resource',
-  job_section_link: 'https://app.acumon.co.uk/methodology/sme-audit?tab=ethics',
+  job_section_link: 'https://app.acumon.co.uk/methodology/StatAudit?tab=ethics',
 };
 
 // ─── Component ───────────────────────────────────────────────────

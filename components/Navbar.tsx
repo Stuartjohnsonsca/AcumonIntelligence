@@ -102,7 +102,7 @@ export function Navbar() {
               {auditOpen && (
                 <div className="absolute top-full left-0 pt-1 w-64 z-50">
                   <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
-                    <Link href="/tools/methodology/sme-audit" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Statutory Audit</Link>
+                    <Link href="/tools/methodology/StatAudit" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Statutory Audit</Link>
                     <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">Grant Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
                     <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">CASS Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
                     <Link href="/tools/methodology/group" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Group Audit</Link>
@@ -341,7 +341,7 @@ export function Navbar() {
 
           <div>
             <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Audit</p>
-            <Link href="/tools/methodology/sme-audit" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Statutory Audit</Link>
+            <Link href="/tools/methodology/StatAudit" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Statutory Audit</Link>
             <span className="block px-3 py-2 text-sm text-slate-400">Grant Audit <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
             <span className="block px-3 py-2 text-sm text-slate-400">CASS Audit <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
             <Link href="/tools/methodology/group" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Group Audit</Link>
