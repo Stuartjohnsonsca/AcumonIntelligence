@@ -1264,6 +1264,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           </table>
         )}
       </div>
+      )}
 
       {/* ─── ERROR SCHEDULE ─── */}
       {showErrorSchedule && (
