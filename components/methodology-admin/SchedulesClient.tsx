@@ -47,7 +47,14 @@ const APPENDIX_TEMPLATE_TYPES = [
 ];
 
 const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;
-const AUDIT_TYPES = ['ALL', 'SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS'];
+const AUDIT_TYPES = ['ALL', 'SME', 'GRANT', 'CASS', 'GROUP'];
+const AUDIT_TYPE_LABELS: Record<string, string> = {
+  ALL: 'All Types',
+  SME: 'Statutory Audit',
+  GRANT: 'Grant Audit',
+  CASS: 'CASS Audit',
+  GROUP: 'Group Audit',
+};
 
 type ViewMode = 'lists' | 'appendix' | 'triggers';
 
@@ -311,7 +318,7 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
             {AUDIT_TYPES.map(at => (
               <button key={at} onClick={() => setActiveAuditType(at)}
                 className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${activeAuditType === at ? 'bg-slate-700 text-white' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'}`}>
-                {at === 'ALL' ? 'All Types' : at.replace('_', ' ')}
+                {AUDIT_TYPE_LABELS[at] || at}
               </button>
             ))}
           </div>
@@ -358,7 +365,7 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
               activeAuditType === at ? 'bg-slate-700 text-white' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'
             }`}
           >
-            {at === 'ALL' ? 'All Types' : at.replace('_', ' ')}
+            {AUDIT_TYPE_LABELS[at] || at}
           </button>
         ))}
       </div>
