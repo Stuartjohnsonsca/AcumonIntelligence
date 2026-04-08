@@ -3092,3 +3092,258 @@ export async function resumeExecution(executionId: string, externalData?: any): 
   // Continue processing
   await processNextNode(executionId);
 }
+
+// ─── Pipeline Execution Engine ──────────────────────────────────────────────
+// Sits alongside the flow engine. A pipeline is a linear sequence of Actions
+// (TestActionStep records), each backed by an ActionDefinition with a handler.
+
+export async function startPipelineExecution(
+  engagementId: string,
+  fsLine: string,
+  testDescription: string,
+  testId: string,
+  userId: string,
+  tbRow?: { accountCode: string; description: string; currentYear: number | null; priorYear: number | null; fsNote?: string | null },
+  fsLineId?: string,
+): Promise<string> {
+  const eng = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
+  if (!eng) throw new Error('Engagement not found');
+
+  // Load action steps for this test
+  const steps = await prisma.testActionStep.findMany({
+    where: { testId, isActive: true },
+    include: { actionDefinition: true },
+    orderBy: { stepOrder: 'asc' },
+  });
+
+  if (steps.length === 0) throw new Error('No action steps configured for this test pipeline');
+
+  // Build a minimal flow snapshot for compatibility (start → end)
+  const flowSnapshot = {
+    nodes: [
+      { id: 'pipeline_start', type: 'start', position: { x: 0, y: 0 }, data: { label: 'Pipeline Start' } },
+      { id: 'pipeline_end', type: 'end', position: { x: 0, y: 100 }, data: { label: 'Pipeline End' } },
+    ],
+    edges: [{ id: 'e_pipeline', source: 'pipeline_start', target: 'pipeline_end' }],
+  };
+
+  const execution = await prisma.testExecution.create({
+    data: {
+      engagementId,
+      firmId: eng.firmId,
+      fsLine,
+      fsLineId: fsLineId || null,
+      testDescription,
+      testTypeCode: null,
+      flowSnapshot: flowSnapshot as any,
+      status: 'running',
+      executionMode: 'action_pipeline',
+      currentStepIndex: 0,
+      pipelineState: {} as any,
+      context: {} as any,
+      startedById: userId,
+    },
+  });
+
+  await processPipelineStep(execution.id);
+  return execution.id;
+}
+
+export async function processPipelineStep(executionId: string): Promise<void> {
+  const { getActionHandler } = await import('@/lib/action-handlers');
+
+  const execution = await prisma.testExecution.findUnique({ where: { id: executionId } });
+  if (!execution || execution.status !== 'running' || execution.executionMode !== 'action_pipeline') return;
+
+  const currentStepIndex = execution.currentStepIndex ?? 0;
+  const pipelineState = (execution.pipelineState as Record<number, Record<string, any>>) || {};
+
+  // Load all action steps for this test
+  const testExec = await prisma.testExecution.findUnique({
+    where: { id: executionId },
+    select: { testDescription: true, fsLine: true, fsLineId: true, engagementId: true, startedById: true },
+  });
+  if (!testExec) return;
+
+  // Find the test by matching fsLine + testDescription to get the testId
+  const eng = await prisma.auditEngagement.findUnique({
+    where: { id: testExec.engagementId },
+    select: { firmId: true },
+  });
+  if (!eng) return;
+
+  const test = await prisma.methodologyTest.findFirst({
+    where: { firmId: eng.firmId, name: testExec.testDescription, executionMode: 'action_pipeline' },
+  });
+  if (!test) {
+    await prisma.testExecution.update({ where: { id: executionId }, data: { status: 'failed', errorMessage: 'Pipeline test not found' } });
+    return;
+  }
+
+  const steps = await prisma.testActionStep.findMany({
+    where: { testId: test.id, isActive: true },
+    include: { actionDefinition: true },
+    orderBy: { stepOrder: 'asc' },
+  });
+
+  // Check if we've completed all steps
+  if (currentStepIndex >= steps.length) {
+    await prisma.testExecution.update({
+      where: { id: executionId },
+      data: { status: 'completed', completedAt: new Date(), pipelineState: pipelineState as any },
+    });
+    return;
+  }
+
+  const step = steps[currentStepIndex];
+  const actionDef = step.actionDefinition;
+  const handlerName = actionDef.handlerName;
+
+  if (!handlerName) {
+    await prisma.testExecution.update({
+      where: { id: executionId },
+      data: { status: 'failed', errorMessage: `Action "${actionDef.name}" has no handler` },
+    });
+    return;
+  }
+
+  const handler = getActionHandler(handlerName);
+  if (!handler) {
+    await prisma.testExecution.update({
+      where: { id: executionId },
+      data: { status: 'failed', errorMessage: `Handler "${handlerName}" not found` },
+    });
+    return;
+  }
+
+  // Resolve inputs from bindings + pipeline state
+  const { resolveActionInputs } = await import('@/lib/action-registry');
+  const resolvedInputs = resolveActionInputs(
+    actionDef.inputSchema as any[],
+    step.inputBindings as Record<string, any>,
+    pipelineState,
+    currentStepIndex,
+    execution.context as Record<string, any>,
+  );
+
+  // Record node run
+  const nodeRun = await prisma.testExecutionNodeRun.create({
+    data: {
+      executionId,
+      nodeId: `pipeline_step_${currentStepIndex}`,
+      nodeType: 'action',
+      assignee: 'system',
+      label: actionDef.name,
+      status: 'running',
+      input: resolvedInputs as any,
+      actionStepId: step.id,
+    },
+  });
+
+  // Execute handler
+  const startTime = Date.now();
+  const result = await handler({
+    engagementId: testExec.engagementId,
+    executionId,
+    stepIndex: currentStepIndex,
+    actionStepId: step.id,
+    inputs: resolvedInputs,
+    pipelineState,
+    config: {
+      userId: testExec.startedById,
+      firmId: eng.firmId,
+      fsLine: testExec.fsLine,
+      fsLineId: testExec.fsLineId || undefined,
+      testDescription: testExec.testDescription,
+    },
+  });
+
+  const duration = Date.now() - startTime;
+
+  if (result.action === 'continue') {
+    // Store outputs and advance
+    const updatedState = { ...pipelineState, [currentStepIndex]: result.outputs };
+    await prisma.testExecutionNodeRun.update({
+      where: { id: nodeRun.id },
+      data: { status: 'completed', output: result.outputs as any, duration, completedAt: new Date() },
+    });
+    await prisma.testExecution.update({
+      where: { id: executionId },
+      data: {
+        currentStepIndex: currentStepIndex + 1,
+        actionStepId: step.id,
+        pipelineState: updatedState as any,
+      },
+    });
+    // Continue to next step
+    await processPipelineStep(executionId);
+
+  } else if (result.action === 'pause') {
+    const updatedState = { ...pipelineState, [currentStepIndex]: result.outputs };
+    await prisma.testExecutionNodeRun.update({
+      where: { id: nodeRun.id },
+      data: { status: 'paused', output: result.outputs as any, duration },
+    });
+    await prisma.testExecution.update({
+      where: { id: executionId },
+      data: {
+        status: 'paused',
+        actionStepId: step.id,
+        pipelineState: updatedState as any,
+        pauseReason: result.pauseReason || 'action_pause',
+        pauseRefId: result.pauseRefId || null,
+        currentNodeId: `pipeline_step_${currentStepIndex}`,
+      },
+    });
+
+  } else {
+    // Error
+    await prisma.testExecutionNodeRun.update({
+      where: { id: nodeRun.id },
+      data: { status: 'failed', errorMessage: result.errorMessage, duration, completedAt: new Date() },
+    });
+    await prisma.testExecution.update({
+      where: { id: executionId },
+      data: {
+        status: 'failed',
+        errorMessage: result.errorMessage,
+        actionStepId: step.id,
+        pipelineState: { ...pipelineState, [currentStepIndex]: result.outputs } as any,
+      },
+    });
+  }
+}
+
+export async function resumePipelineExecution(executionId: string, externalData?: any): Promise<void> {
+  const execution = await prisma.testExecution.findUnique({ where: { id: executionId } });
+  if (!execution || execution.status !== 'paused' || execution.executionMode !== 'action_pipeline') return;
+
+  const currentStepIndex = execution.currentStepIndex ?? 0;
+  const pipelineState = (execution.pipelineState as Record<number, Record<string, any>>) || {};
+
+  // Merge external data into current step's outputs
+  if (externalData) {
+    const currentOutputs = pipelineState[currentStepIndex] || {};
+    pipelineState[currentStepIndex] = { ...currentOutputs, ...externalData };
+  }
+
+  // Mark paused node run as completed
+  await prisma.testExecutionNodeRun.updateMany({
+    where: { executionId, actionStepId: execution.actionStepId || undefined, status: 'paused' },
+    data: { status: 'completed', completedAt: new Date(), output: pipelineState[currentStepIndex] as any },
+  });
+
+  // Advance to next step
+  await prisma.testExecution.update({
+    where: { id: executionId },
+    data: {
+      status: 'running',
+      currentStepIndex: currentStepIndex + 1,
+      pauseReason: null,
+      pauseRefId: null,
+      pipelineState: pipelineState as any,
+    },
+  });
+
+  await processPipelineStep(executionId);
+}

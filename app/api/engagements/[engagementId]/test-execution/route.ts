@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { startExecution } from '@/lib/flow-engine';
+import { startExecution, startPipelineExecution } from '@/lib/flow-engine';
 
 export const maxDuration = 300; // Allow up to 2 minutes for AI extraction steps
 
@@ -11,13 +11,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
 
-  const { fsLine, fsLineId, testDescription, testTypeCode, flowData, tbRow, additionalItems } = await req.json();
+  const { fsLine, fsLineId, testDescription, testTypeCode, flowData, tbRow, additionalItems, pipelineTestId } = await req.json();
 
   if (!fsLine || !testDescription) {
     return NextResponse.json({ error: 'fsLine and testDescription are required' }, { status: 400 });
   }
 
   try {
+    // Pipeline mode: execute as action pipeline
+    if (pipelineTestId) {
+      const test = await prisma.methodologyTest.findUnique({ where: { id: pipelineTestId } });
+      if (test?.executionMode === 'action_pipeline') {
+        const executionId = await startPipelineExecution(
+          engagementId, fsLine, testDescription, pipelineTestId,
+          session.user.id, tbRow, fsLineId || undefined,
+        );
+        return NextResponse.json({ executionId, status: 'running', mode: 'action_pipeline' });
+      }
+    }
+
     // Additional items mode: skip scoring, go straight to evidence fetch forEach
     if (additionalItems && Array.isArray(additionalItems) && additionalItems.length > 0) {
       const evidenceFetchFlow = {

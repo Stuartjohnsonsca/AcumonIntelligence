@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { resumeExecution, processNextNode } from '@/lib/flow-engine';
+import { resumeExecution, processNextNode, resumePipelineExecution, processPipelineStep } from '@/lib/flow-engine';
 
 export const maxDuration = 300;
 
@@ -82,7 +82,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   switch (action) {
     case 'resume':
       if (execution.status !== 'paused') return NextResponse.json({ error: 'Execution is not paused' }, { status: 400 });
-      await resumeExecution(executionId, responseData);
+      if (execution.executionMode === 'action_pipeline') {
+        await resumePipelineExecution(executionId, responseData);
+      } else {
+        await resumeExecution(executionId, responseData);
+      }
       return NextResponse.json({ status: 'resumed' });
 
     case 'cancel':
@@ -92,13 +96,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     case 'retry':
       if (execution.status !== 'failed') return NextResponse.json({ error: 'Execution is not failed' }, { status: 400 });
       await prisma.testExecution.update({ where: { id: executionId }, data: { status: 'running', errorMessage: null } });
-      await processNextNode(executionId);
+      if (execution.executionMode === 'action_pipeline') {
+        await processPipelineStep(executionId);
+      } else {
+        await processNextNode(executionId);
+      }
       return NextResponse.json({ status: 'retrying' });
 
     case 'continue':
-      // Continue a running execution that hit its time budget (used by auto-continuation polling)
       if (execution.status !== 'running') return NextResponse.json({ error: 'Execution is not running' }, { status: 400 });
-      await processNextNode(executionId);
+      if (execution.executionMode === 'action_pipeline') {
+        await processPipelineStep(executionId);
+      } else {
+        await processNextNode(executionId);
+      }
       return NextResponse.json({ status: 'continuing' });
 
     default:
