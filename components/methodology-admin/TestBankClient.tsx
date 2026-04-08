@@ -2,8 +2,9 @@
 
 import React, { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch, Settings2, Search, Check, Copy } from 'lucide-react';
+import { Plus, X, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch, Settings2, Search, Check, Copy, ListOrdered } from 'lucide-react';
 const TestFlowEditor = lazy(() => import('./TestFlowEditor').then(m => ({ default: m.TestFlowEditor })));
+const ActionPipelineEditor = lazy(() => import('./ActionPipelineEditor').then(m => ({ default: m.ActionPipelineEditor })));
 import { ExecutionDefEditor } from './ExecutionDefEditor';
 import { ASSERTION_TYPES, assertionShortLabel } from '@/types/methodology';
 
@@ -29,6 +30,7 @@ interface MethodologyTestItem {
   outputFormat: string | null;
   isIngest: boolean;
   flow: any | null;
+  executionMode: string;
   sortOrder: number;
   isActive: boolean;
 }
@@ -124,6 +126,10 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   const [flowEditorOpen, setFlowEditorOpen] = useState(false);
   const [flowTestId, setFlowTestId] = useState<string | null>(null);
   const testActionsLib = initialTestActions || [];
+
+  // Pipeline editor state
+  const [pipelineEditorOpen, setPipelineEditorOpen] = useState(false);
+  const [pipelineTestId, setPipelineTestId] = useState<string | null>(null);
 
   // Test Types state
   const [newTestTypeName, setNewTestTypeName] = useState('');
@@ -278,6 +284,20 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
     const res = await fetch('/api/methodology-admin/tests', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: testId, flow }) });
     if (res.ok) { const { test } = await res.json(); setTests(prev => prev.map(t => t.id === test.id ? test : t)); }
     setFlowEditorOpen(false);
+  }
+
+  async function handleSavePipeline(testId: string, steps: { actionDefinitionId: string; stepOrder: number; inputBindings: Record<string, any> }[]) {
+    // Save action steps and set execution mode to action_pipeline
+    const res = await fetch('/api/methodology-admin/tests', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: testId, executionMode: 'action_pipeline', actionSteps: steps }),
+    });
+    if (res.ok) {
+      const { test } = await res.json();
+      setTests(prev => prev.map(t => t.id === test.id ? test : t));
+    }
+    setPipelineEditorOpen(false);
   }
 
   function downloadTestBank() {
@@ -496,6 +516,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-32">Assertions</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-20">Framework</th>
                 <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12">Flow</th>
+                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12">Pipeline</th>
                 <th className="text-center px-3 py-2 text-slate-600 font-semibold w-10">Sig.</th>
                 <th className="w-20 px-3 py-2"></th>
               </tr></thead>
@@ -510,6 +531,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                       <td className="px-3 py-2">{((test.assertions as string[]) || []).map((a, ai) => <span key={ai} className="text-[10px] px-1 py-0.5 bg-purple-100 text-purple-700 rounded mr-0.5">{assertionShortLabel(a)}</span>)}</td>
                       <td className="px-3 py-2 text-[10px] text-slate-500">{test.framework || 'All'}</td>
                       <td className="px-3 py-2 text-center"><button onClick={() => { setFlowTestId(test.id); setFlowEditorOpen(true); }} className={`p-0.5 rounded hover:bg-blue-50 ${hasFlow ? 'text-green-600' : 'text-slate-300'}`}><GitBranch className="h-3.5 w-3.5" /></button></td>
+                      <td className="px-3 py-2 text-center"><button onClick={() => { setPipelineTestId(test.id); setPipelineEditorOpen(true); }} className={`p-0.5 rounded hover:bg-blue-50 ${test.executionMode === 'action_pipeline' ? 'text-blue-600' : 'text-slate-300'}`}><ListOrdered className="h-3.5 w-3.5" /></button></td>
                       <td className="px-3 py-2 text-center"><span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
                         test.category === 'Significant Risk' ? 'bg-red-100 text-red-700' :
                         test.category === 'Area of Focus' ? 'bg-orange-100 text-orange-700' :
@@ -600,6 +622,12 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
         const flowTest = tests.find(t => t.id === flowTestId);
         if (!flowTest) return null;
         return (<Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-white" /></div>}><TestFlowEditor testDescription={flowTest.name} initialFlow={flowTest.flow || null} testActions={testActionsLib} onSave={async (flow) => handleSaveFlow(flowTest.id, flow)} onClose={() => setFlowEditorOpen(false)} /></Suspense>);
+      })()}
+
+      {pipelineEditorOpen && pipelineTestId && (() => {
+        const pipelineTest = tests.find(t => t.id === pipelineTestId);
+        if (!pipelineTest) return null;
+        return (<Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-white" /></div>}><ActionPipelineEditor testId={pipelineTest.id} testDescription={pipelineTest.name} onSave={async (steps) => handleSavePipeline(pipelineTest.id, steps)} onClose={() => setPipelineEditorOpen(false)} /></Suspense>);
       })()}
 
       {/* ─── TEST MODAL (Add/Edit) ─── */}

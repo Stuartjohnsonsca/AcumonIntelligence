@@ -65,6 +65,7 @@ model Firm {
   resourceClientSettings   ResourceClientSetting[]
   resourceOptimizerSettings ResourceOptimizerSettings?
   documentTemplates        DocumentTemplate[]
+  actionDefinitions        ActionDefinition[]
 
   @@map("firms")
 }
@@ -1641,6 +1642,10 @@ model AuditEngagement {
   tbViewMode            String    @default("fs_line") @map("tb_view_mode") // fs_line | tb_account
   tbXeroSummary         Json?     @map("tb_xero_summary") // Raw accounting system TB totals for verification
   planCreated           Boolean   @default(false) @map("plan_created")
+  farEnabled            Boolean   @default(false) @map("far_enabled")
+  farAssetType          String?   @map("far_asset_type")    // "cost" | "valuation"
+  farScope              String?   @map("far_scope")          // "tangible" | "intangible" | "both"
+  farCategories         Json?     @map("far_categories")     // [{ id, name, order }]
   createdById           String    @map("created_by_id")
   startedAt             DateTime? @map("started_at")
   completedAt           DateTime? @map("completed_at")
@@ -1951,6 +1956,7 @@ model AuditTBRow {
   groupName      String? @map("group_name") // Only display for GROUP audit type
   aiConfidence   Int?    @map("ai_confidence") // 0-100 confidence of AI classification
   sourceMetadata Json?   @map("source_metadata") // Additional data from accounting system (e.g. { xeroType, xeroClass })
+  farSchedule    Json?   @map("far_schedule")    // Fixed Asset Register movement data per category
   sortOrder      Int     @default(0) @map("sort_order")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
@@ -2068,8 +2074,11 @@ model MethodologyTest {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
+  executionMode String   @default("flow") @map("execution_mode") // flow | action_pipeline
+
   firm        Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
   allocations MethodologyTestAllocation[]
+  actionSteps TestActionStep[]
 
   @@unique([firmId, name])
   @@index([firmId])
@@ -2356,6 +2365,11 @@ model TestExecution {
   completedAt     DateTime? @map("completed_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
+  executionMode    String   @default("flow") @map("execution_mode")    // flow | action_pipeline
+  currentStepIndex Int?     @map("current_step_index")                // For action_pipeline mode
+  actionStepId     String?  @map("action_step_id")                    // Current TestActionStep being executed
+  pipelineState    Json?    @map("pipeline_state")                    // Accumulated outputs from completed steps
+
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   nodeRuns   TestExecutionNodeRun[]
   outstandingItems OutstandingItem[]
@@ -2381,6 +2395,7 @@ model TestExecutionNodeRun {
   aiTokensUsed  Int?      @map("ai_tokens_used")
   duration      Int?                               // milliseconds
   loopIndex     Int?      @map("loop_index")
+  actionStepId  String?   @map("action_step_id")   // Which pipeline step this node run belongs to
   startedAt     DateTime  @default(now()) @map("started_at")
   completedAt   DateTime? @map("completed_at")
 
@@ -2632,4 +2647,57 @@ model AuditPoint {
   @@index([engagementId, pointType])
   @@index([engagementId, pointType, status])
   @@map("audit_points")
+}
+
+// ─── Action-Based Test Pipeline ─────────────────────────────────────────────
+
+model ActionDefinition {
+  id              String   @id @default(uuid())
+  firmId          String?  @map("firm_id")           // null = system-global action
+  code            String                              // unique slug: "request_documents", "select_sample"
+  name            String                              // Display: "Request Documents from Client"
+  description     String?  @db.Text
+  category        String   @default("general")        // evidence | sampling | analysis | verification | reporting
+  version         Int      @default(1)
+
+  inputSchema     Json     @map("input_schema")       // InputFieldDef[]
+  outputSchema    Json     @map("output_schema")      // OutputFieldDef[]
+
+  handlerName     String?  @map("handler_name")       // For system actions: e.g. "requestDocuments"
+  internalFlow    Json?    @map("internal_flow")      // For custom actions: FlowData { nodes, edges }
+
+  icon            String?                              // lucide icon name
+  color           String?                              // hex color for UI badge
+  isSystem        Boolean  @default(false) @map("is_system")
+  isActive        Boolean  @default(true)  @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  firm            Firm?    @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  testActionSteps TestActionStep[]
+
+  @@unique([firmId, code, version])
+  @@index([firmId])
+  @@index([category])
+  @@map("action_definitions")
+}
+
+model TestActionStep {
+  id                  String   @id @default(uuid())
+  testId              String   @map("test_id")
+  actionDefinitionId  String   @map("action_definition_id")
+  stepOrder           Int      @map("step_order")
+
+  inputBindings       Json     @map("input_bindings")    // { fieldCode: value | "$prev.outputField" | "$step.2.outputField" }
+  configOverrides     Json?    @map("config_overrides")  // Optional overrides
+
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  test                MethodologyTest   @relation(fields: [testId], references: [id], onDelete: Cascade)
+  actionDefinition    ActionDefinition  @relation(fields: [actionDefinitionId], references: [id])
+
+  @@index([testId])
+  @@unique([testId, stepOrder])
+  @@map("test_action_steps")
 }

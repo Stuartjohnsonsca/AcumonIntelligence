@@ -7,7 +7,7 @@ import { useSession, signOut } from 'next-auth/react';
 import { useState, useEffect, useCallback } from 'react';
 import { Menu, X, ChevronDown, LogIn, LogOut, User, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { STATUTORY_AUDIT_PRODUCTS, ASSURANCE_PRODUCTS, FINANCIAL_ACCOUNTS_ITEMS } from '@/lib/products';
+import { ASSURANCE_PRODUCTS, FINANCIAL_ACCOUNTS_ITEMS } from '@/lib/products';
 import { cn } from '@/lib/utils';
 import { BackgroundTaskDots } from '@/components/BackgroundTaskDots';
 
@@ -23,8 +23,6 @@ export function Navbar() {
   const [auditOpen, setAuditOpen] = useState(false);
   const [assuranceOpen, setAssuranceOpen] = useState(false);
   const [financialOpen, setFinancialOpen] = useState(false);
-  const [clientsOpen, setClientsOpen] = useState(false);
-  const [methodologyOpen, setMethodologyOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [toolSessions, setToolSessions] = useState<{toolKey: string; toolLabel: string; clients: {clientId: string; clientName: string; periods: {id: string; periodLabel: string; toolPath: string}[]}[]}[]>([]);
   const [actionCount, setActionCount] = useState(0);
@@ -88,7 +86,7 @@ export function Navbar() {
               About
             </Link>
 
-            {/* Statutory Audit Dropdown */}
+            {/* Audit Dropdown */}
             <div
               className="relative"
               onMouseEnter={() => setAuditOpen(true)}
@@ -98,21 +96,27 @@ export function Navbar() {
                 onClick={() => setAuditOpen(!auditOpen)}
                 className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
               >
-                <span>Statutory Audit</span>
+                <span>Audit</span>
                 <ChevronDown className={cn('h-4 w-4 transition-transform', auditOpen && 'rotate-180')} />
               </button>
               {auditOpen && (
                 <div className="absolute top-full left-0 pt-1 w-64 z-50">
                   <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
-                    {STATUTORY_AUDIT_PRODUCTS.map((product) => (
-                      <button
-                        key={product.urlPrefix}
-                        onClick={() => { setAuditOpen(false); handleProductClick(product.urlPrefix); }}
-                        className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                      >
-                        {product.navLabel}
-                      </button>
-                    ))}
+                    <Link href="/tools/methodology/sme-audit" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Statutory Audit</Link>
+                    <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">Grant Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
+                    <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">CASS Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
+                    <Link href="/tools/methodology/group" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Group Audit</Link>
+                    <div className="border-t border-slate-100 mt-1 pt-1">
+                      <div className="px-4 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Tools</div>
+                      {[
+                        { label: 'Financial Data Extraction', prefix: 'DateExtraction' },
+                        { label: 'Sample Calculator', prefix: 'Sampling' },
+                        { label: 'Document Summary', prefix: 'DocSummary' },
+                        { label: 'Financial Statement Review', prefix: 'FSChecker' },
+                      ].map(item => (
+                        <button key={item.prefix} onClick={() => { setAuditOpen(false); handleProductClick(item.prefix); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">{item.label}</button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -142,7 +146,7 @@ export function Navbar() {
                     </button>
                     <button
                       onClick={() => { setAssuranceOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/risk'); } else { router.push('/tools/risk'); } }}
-                      className="w-full text-left px-4 py-2.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 transition-colors border-b border-slate-100"
+                      className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
                     >
                       Risk
                     </button>
@@ -190,44 +194,23 @@ export function Navbar() {
               )}
             </div>
 
-            {/* Methodology Dropdown */}
-            {isAuthenticated && (
-              <div
-                className="relative"
-                onMouseEnter={() => setMethodologyOpen(true)}
-                onMouseLeave={() => setMethodologyOpen(false)}
-              >
-                <button
-                  onClick={() => setMethodologyOpen(!methodologyOpen)}
-                  className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                >
-                  <span>Methodology</span>
-                  <ChevronDown className={cn('h-4 w-4 transition-transform', methodologyOpen && 'rotate-180')} />
-                </button>
-                {methodologyOpen && (
-                  <div className="absolute top-full left-0 pt-1 w-64 z-50">
-                    <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
-                      {[
-                        { label: 'SME Audit', href: '/tools/methodology/sme-audit' },
-                        { label: 'PIE Audit', href: '/tools/methodology/pie-audit' },
-                        { label: 'SME Controls Based Audit', href: '/tools/methodology/sme-controls-audit' },
-                        { label: 'PIE Controls Based Audit', href: '/tools/methodology/pie-controls-audit' },
-                        { label: 'Group', href: '/tools/methodology/group' },
-                      ].map((item) => (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          onClick={() => setMethodologyOpen(false)}
-                          className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                        >
-                          {item.label}
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            {/* Connections Link */}
+            <Link
+              href="/connections"
+              className="px-4 py-2 text-sm font-medium text-slate-400 rounded-md transition-colors cursor-default"
+              onClick={e => e.preventDefault()}
+            >
+              Connections <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span>
+            </Link>
+
+            {/* Deal Portal Link */}
+            <Link
+              href="/deal-portal"
+              className="px-4 py-2 text-sm font-medium text-slate-400 rounded-md transition-colors cursor-default"
+              onClick={e => e.preventDefault()}
+            >
+              Deal Portal <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span>
+            </Link>
 
             {/* Resources Link */}
             {isAuthenticated && (
@@ -237,50 +220,6 @@ export function Navbar() {
               >
                 Resources
               </Link>
-            )}
-
-            {/* Clients Dropdown */}
-            {isAuthenticated && (
-              <div
-                className="relative"
-                onMouseEnter={() => setClientsOpen(true)}
-                onMouseLeave={() => setClientsOpen(false)}
-              >
-                <button
-                  onClick={() => setClientsOpen(!clientsOpen)}
-                  className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                >
-                  <span>Clients</span>
-                  <ChevronDown className={cn('h-4 w-4 transition-transform', clientsOpen && 'rotate-180')} />
-                </button>
-                {clientsOpen && (
-                  <div className="absolute top-full left-0 pt-1 w-52 z-50">
-                    <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
-                      <Link
-                        href="/clients/add-delete"
-                        onClick={() => setClientsOpen(false)}
-                        className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                      >
-                        Add / Delete
-                      </Link>
-                      <Link
-                        href="/clients/manage"
-                        onClick={() => setClientsOpen(false)}
-                        className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                      >
-                        Manage
-                      </Link>
-                      <Link
-                        href="/clients/new-period"
-                        onClick={() => setClientsOpen(false)}
-                        className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                      >
-                        Create New Period
-                      </Link>
-                    </div>
-                  </div>
-                )}
-              </div>
             )}
 
             {/* Sessions Dropdown */}
@@ -394,23 +333,19 @@ export function Navbar() {
           <Link href="/about" className="block px-3 py-2 text-sm font-medium text-slate-700 hover:bg-blue-50 rounded-md" onClick={() => setMobileOpen(false)}>About</Link>
 
           <div>
-            <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Statutory Audit</p>
-            {STATUTORY_AUDIT_PRODUCTS.map((product) => (
-              <button key={product.urlPrefix} onClick={() => { setMobileOpen(false); handleProductClick(product.urlPrefix); }} className="w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md">
-                {product.navLabel}
-              </button>
-            ))}
-          </div>
-
-          <div>
-            <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Assurance</p>
-            <button onClick={() => { setMobileOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/risk'); } else { router.push('/tools/risk'); } }} className="w-full text-left px-3 py-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 rounded-md">
-              Risk
-            </button>
-            {ASSURANCE_PRODUCTS.map((product) => (
-              <button key={product.urlPrefix} onClick={() => { setMobileOpen(false); handleProductClick(product.urlPrefix); }} className="w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md">
-                {product.navLabel}
-              </button>
+            <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Audit</p>
+            <Link href="/tools/methodology/sme-audit" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Statutory Audit</Link>
+            <span className="block px-3 py-2 text-sm text-slate-400">Grant Audit <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
+            <span className="block px-3 py-2 text-sm text-slate-400">CASS Audit <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
+            <Link href="/tools/methodology/group" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Group Audit</Link>
+            <p className="px-3 py-1 mt-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Tools</p>
+            {[
+              { label: 'Financial Data Extraction', prefix: 'DateExtraction' },
+              { label: 'Sample Calculator', prefix: 'Sampling' },
+              { label: 'Document Summary', prefix: 'DocSummary' },
+              { label: 'Financial Statement Review', prefix: 'FSChecker' },
+            ].map(item => (
+              <button key={item.prefix} onClick={() => { setMobileOpen(false); handleProductClick(item.prefix); }} className="w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md">{item.label}</button>
             ))}
           </div>
 
@@ -423,34 +358,22 @@ export function Navbar() {
             ))}
           </div>
 
-          {isAuthenticated && (
-            <div>
-              <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Methodology</p>
-              {[
-                { label: 'SME Audit', href: '/tools/methodology/sme-audit' },
-                { label: 'PIE Audit', href: '/tools/methodology/pie-audit' },
-                { label: 'SME Controls Based Audit', href: '/tools/methodology/sme-controls-audit' },
-                { label: 'PIE Controls Based Audit', href: '/tools/methodology/pie-controls-audit' },
-                { label: 'Group', href: '/tools/methodology/group' },
-              ].map((item) => (
-                <Link key={item.href} href={item.href} className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>
-                  {item.label}
-                </Link>
-              ))}
-            </div>
-          )}
+          <div>
+            <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Assurance</p>
+            <button onClick={() => { setMobileOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/assurance'); } else { router.push('/tools/assurance'); } }} className="w-full text-left px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 rounded-md">Assurance Hub</button>
+            <button onClick={() => { setMobileOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/risk'); } else { router.push('/tools/risk'); } }} className="w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md">Risk</button>
+            {ASSURANCE_PRODUCTS.map((product) => (
+              <button key={product.urlPrefix} onClick={() => { setMobileOpen(false); handleProductClick(product.urlPrefix); }} className="w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md">
+                {product.navLabel}
+              </button>
+            ))}
+          </div>
+
+          <span className="block px-3 py-2 text-sm text-slate-400">Connections <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
+          <span className="block px-3 py-2 text-sm text-slate-400">Deal Portal <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
 
           {isAuthenticated && (
             <Link href="/tools/resource-planning" className="block px-3 py-2 text-sm font-medium text-slate-700 hover:bg-blue-50 rounded-md" onClick={() => setMobileOpen(false)}>Resources</Link>
-          )}
-
-          {isAuthenticated && (
-            <div>
-              <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Clients</p>
-              <Link href="/clients/add-delete" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Add / Delete</Link>
-              <Link href="/clients/manage" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Manage</Link>
-              <Link href="/clients/new-period" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Create New Period</Link>
-            </div>
           )}
 
           <Link href="/my-account" className="block px-3 py-2 text-sm font-medium text-slate-700 hover:bg-blue-50 rounded-md" onClick={() => setMobileOpen(false)}>My Account</Link>

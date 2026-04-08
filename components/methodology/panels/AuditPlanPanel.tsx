@@ -83,6 +83,8 @@ interface Props {
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 const THREE_LEVEL_STATEMENTS = new Set(['Balance Sheet']);
+const OTHER_TABS = ['Going Concern', 'Management Override', 'Disclosure'] as const;
+type OtherTab = typeof OTHER_TABS[number];
 
 // Statutory format order by framework
 // Each framework may have different terminology and ordering
@@ -305,6 +307,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [activeStatement, setActiveStatement] = useState('');
   const [activeLevel, setActiveLevel] = useState('');
   const [activeNote, setActiveNote] = useState('');
+  const [activeOtherTab, setActiveOtherTab] = useState<OtherTab | ''>('');
   const [framework, setFramework] = useState('');
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
@@ -777,21 +780,52 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         </button>
       </div>
 
-      {/* Level 1: FS Statement tabs */}
+      {/* Level 1: FS Statement tabs + Other */}
       <div className="flex gap-0.5 border-b border-slate-200 overflow-x-auto">
         {statements.map(stmt => (
           <button key={stmt}
-            onClick={() => { setActiveStatement(stmt); setActiveLevel(''); setActiveNote(''); }}
+            onClick={() => { setActiveStatement(stmt); setActiveLevel(''); setActiveNote(''); setActiveOtherTab(''); }}
             className={`px-3 py-1.5 text-[11px] font-medium border-b-2 whitespace-nowrap transition-colors ${
-              activeStatement === stmt ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+              activeStatement === stmt && !activeOtherTab ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'
             }`}>
             {stmt}
           </button>
         ))}
+        <div className="w-px bg-slate-300 mx-1.5 my-1" />
+        <span className="px-1 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide self-center">Other</span>
+        {OTHER_TABS.map(tab => (
+          <button key={tab}
+            onClick={() => { setActiveOtherTab(tab); setActiveStatement(''); setActiveLevel(''); setActiveNote(''); }}
+            className={`px-3 py-1.5 text-[11px] font-medium border-b-2 whitespace-nowrap transition-colors ${
+              activeOtherTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}>
+            {tab}
+          </button>
+        ))}
       </div>
 
+      {/* ─── "Other" tab content ─── */}
+      {activeOtherTab === 'Going Concern' && (
+        <div className="p-6 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Going Concern</div>
+          <p className="text-xs text-slate-400 mt-3">Going Concern assessment workspace — coming soon.</p>
+        </div>
+      )}
+      {activeOtherTab === 'Management Override' && (
+        <div className="p-6 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Management Override</div>
+          <p className="text-xs text-slate-400 mt-3">Journal risk scoring and management override testing — coming soon.</p>
+        </div>
+      )}
+      {activeOtherTab === 'Disclosure' && (
+        <div className="p-6 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Disclosure</div>
+          <p className="text-xs text-slate-400 mt-3">Disclosure checklist and testing workspace — coming soon.</p>
+        </div>
+      )}
+
       {/* Level 2: FS Level sub-tabs */}
-      {levels.length > 0 && (
+      {!activeOtherTab && levels.length > 0 && (
         <div className="flex gap-0.5 bg-slate-100 rounded p-0.5 overflow-x-auto">
           {levels.map(level => (
             <button key={level}
@@ -806,7 +840,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
 
       {/* Level 3: FS Note sub-sub-tabs — only for Balance Sheet */}
-      {isThreeLevel && notes.length > 1 && (
+      {!activeOtherTab && isThreeLevel && notes.length > 1 && (
         <div className="flex gap-0.5 overflow-x-auto">
           <button onClick={() => setActiveNote('')}
             className={`px-2 py-0.5 text-[9px] font-medium rounded border transition-colors ${!activeNote ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-white text-slate-500 border-slate-200'}`}>
@@ -828,7 +862,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
 
       {/* Tab-level error summary bar */}
-      {(() => {
+      {!activeOtherTab && (() => {
         const levelConcs = dbConclusions.filter(c =>
           activeLevel ? c.fsLine === activeLevel : c.fsLine // all for statement
         );
@@ -870,7 +904,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       })()}
 
       {/* Merge toolbar */}
-      {selectedForMerge.size > 0 && (
+      {!activeOtherTab && selectedForMerge.size > 0 && (
         <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded text-xs">
           <span className="text-blue-700 font-medium">{selectedForMerge.size} rows selected</span>
           {selectedForMerge.size >= 2 && (
@@ -884,7 +918,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
 
       {/* Integrated TB rows with expandable tests */}
-      <div className="bg-white rounded border border-slate-200 overflow-hidden overflow-x-auto max-w-full">
+      {!activeOtherTab && (<div className="bg-white rounded border border-slate-200 overflow-hidden overflow-x-auto max-w-full">
         {filteredRows.length === 0 ? (
           <div className="p-3 text-center text-[10px] text-slate-400">No items for this selection.</div>
         ) : (

@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment, lazy, Suspense } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
+
+const FixedAssetRegisterPopup = lazy(() => import('../FixedAssetRegisterPopup').then(m => ({ default: m.FixedAssetRegisterPopup })));
 
 interface Props {
   engagementId: string;
@@ -56,6 +58,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
+  const [farOpen, setFarOpen] = useState(false);
   const [filters, setFilters] = useState<Record<string, Set<string>>>({});
   const [openFilter, setOpenFilter] = useState<string | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
@@ -550,6 +553,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
           <button onClick={addRow} className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
+          <button onClick={() => setFarOpen(true)} className="text-xs px-3 py-1 bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 font-medium">📋 Add FAR</button>
           <button
             onClick={async () => {
               setImporting(true);
@@ -1071,6 +1075,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       <div className="mt-2 text-xs text-slate-400">
         {hasActiveFilters ? `${filteredRows.length} of ${rows.length} rows (filtered)` : `${rows.length} row${rows.length !== 1 ? 's' : ''}`}
       </div>
+
+      {farOpen && (
+        <Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-500" /></div>}>
+          <FixedAssetRegisterPopup engagementId={engagementId} onClose={() => setFarOpen(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }

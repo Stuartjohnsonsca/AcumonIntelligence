@@ -81,11 +81,31 @@ export async function PATCH(req: NextRequest) {
   if (updates.flow !== undefined) data.flow = updates.flow;
   if (updates.sortOrder !== undefined) data.sortOrder = updates.sortOrder;
   if (updates.isActive !== undefined) data.isActive = updates.isActive;
+  if (updates.executionMode !== undefined) data.executionMode = updates.executionMode;
+
+  // Handle action pipeline steps
+  if (updates.actionSteps !== undefined) {
+    // Delete existing steps and recreate
+    await prisma.testActionStep.deleteMany({ where: { testId: id } });
+    if (Array.isArray(updates.actionSteps) && updates.actionSteps.length > 0) {
+      await prisma.testActionStep.createMany({
+        data: updates.actionSteps.map((step: any, i: number) => ({
+          testId: id,
+          actionDefinitionId: step.actionDefinitionId,
+          stepOrder: step.stepOrder ?? i,
+          inputBindings: step.inputBindings || {},
+        })),
+      });
+    }
+  }
 
   const test = await prisma.methodologyTest.update({
     where: { id },
     data,
-    include: { allocations: { include: { fsLine: true, industry: true } } },
+    include: {
+      allocations: { include: { fsLine: true, industry: true } },
+      actionSteps: { include: { actionDefinition: true }, orderBy: { stepOrder: 'asc' } },
+    },
   });
 
   return NextResponse.json({ test });
