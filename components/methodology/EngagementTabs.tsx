@@ -11,6 +11,7 @@ import { ContinuanceTab } from './tabs/ContinuanceTab';
 import { MaterialityTab } from './tabs/MaterialityTab';
 import { TrialBalanceTab } from './tabs/TrialBalanceTab';
 import { PARTab } from './tabs/PARTab';
+import { WalkthroughsTab } from './tabs/WalkthroughsTab';
 import { RMMTab } from './tabs/RMMTab';
 import { DocumentRepositoryTab } from './tabs/DocumentRepositoryTab';
 import { ClientPortalTab } from './tabs/ClientPortalTab';
@@ -33,7 +34,7 @@ interface Props {
   currentUserId: string;
 }
 
-const PRE_PLAN_KEYS = new Set(['opening', 'prior-period', 'permanent-file', 'ethics', 'continuance', 'tb', 'materiality', 'par', 'rmm']);
+const PRE_PLAN_KEYS = new Set(['opening', 'prior-period', 'permanent-file', 'ethics', 'continuance', 'tb', 'materiality', 'par', 'walkthroughs', 'rmm']);
 
 const TABS = [
   { key: 'opening', label: 'Opening' },
@@ -44,6 +45,7 @@ const TABS = [
   { key: 'tb', label: 'TBCYvPY' },
   { key: 'materiality', label: 'Materiality' },
   { key: 'par', label: 'PAR' },
+  { key: 'walkthroughs', label: 'Walkthroughs' },
   { key: 'rmm', label: 'Identifying & Assessing RMM' },
   { key: 'documents', label: 'Documents' },
   { key: 'outstanding', label: 'Outstanding' },
@@ -247,6 +249,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         return <MaterialityTab engagementId={engagement.id} currentUserId={currentUserId} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'par':
         return <PARTab engagementId={engagement.id} userId={currentUserId} userName={teamMembers.find(m => m.userId === currentUserId)?.userName} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
+      case 'walkthroughs':
+        return <WalkthroughsTab engagementId={engagement.id} />;
       case 'rmm':
         return <RMMTab engagementId={engagement.id} auditType={auditType} teamMembers={teamMembers} showCategoryOption={tbShowCategory} />;
       case 'documents':
