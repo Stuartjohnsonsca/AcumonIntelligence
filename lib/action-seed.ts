@@ -49,21 +49,17 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   {
     code: 'extract_bank_statements',
     name: 'Extract Bank Statements',
-    description: 'Extract transaction data from PDF/image bank statements using OCR. Auto-detects and separates by bank account. Processes FX conversion, period trimming, and stores extracted data per account.',
+    description: 'Processes bank statement files through a 7-step pipeline: (1) Confirms statements belong to the client entity, (2) Separates into distinct bank accounts, (3) Orders pages and flags missing pages, (4) Checks closing balance at period end and matches to TB account, (5) Confirms coverage of period start date, (6) Confirms coverage of period end date, (7) Extracts all transactions with header info (bank, account, sort code, statement date) repeated per row. Issues and gaps are flagged for review rather than blocking.',
     category: 'evidence',
     handlerName: 'extractBankStatements',
     icon: 'Landmark',
     color: '#3b82f6',
     isSystem: true,
     inputSchema: [
-      { code: 'source_files', label: 'Bank Statement Files', type: 'file', required: true, source: 'auto', autoMapFrom: '$prev.documents', group: 'Input', description: 'PDF or image files of bank statements. Can be mixed accounts — the action auto-detects and separates by bank account.' },
+      { code: 'source_files', label: 'Bank Statement Files', type: 'file', required: true, source: 'auto', autoMapFrom: '$prev.documents', group: 'Input', description: 'PDF or image files of bank statements. Can be mixed accounts, multiple pages, or zipped — the action sorts everything out.' },
+      { code: 'client_name', label: 'Client Name', type: 'text', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.clientName', group: 'Validation', description: 'Used to confirm bank statements belong to this client.' },
       { code: 'currency', label: 'Currency', type: 'select', required: false, source: 'user', group: 'Processing', defaultValue: 'GBP', options: [
         { value: 'GBP', label: 'GBP' }, { value: 'USD', label: 'USD' }, { value: 'EUR', label: 'EUR' },
-      ]},
-      { code: 'separate_by_account', label: 'Separate by Account', type: 'select', required: false, source: 'user', group: 'Processing', defaultValue: 'auto', description: 'How to handle multiple bank accounts in the source files.', options: [
-        { value: 'auto', label: 'Auto-detect from statements' },
-        { value: 'per_file', label: 'Each file is a separate account' },
-        { value: 'combined', label: 'Treat all as one account' },
       ]},
       { code: 'period_start', label: 'Period Start', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodStart', group: 'Processing' },
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Processing' },
@@ -73,11 +69,14 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       ]},
     ],
     outputSchema: [
-      { code: 'data_table', label: 'Extracted Transactions', type: 'data_table', description: 'All transactions extracted, with bank account column for filtering.' },
+      { code: 'data_table', label: 'Extracted Transactions', type: 'data_table', description: 'All transactions with header info per row: bank name, account number, sort code, statement date, plus transaction date, description, debit, credit, balance.' },
       { code: 'data_by_account', label: 'Transactions by Account', type: 'json', description: 'Transactions grouped by detected bank account.' },
       { code: 'transaction_count', label: 'Transaction Count', type: 'number' },
       { code: 'account_count', label: 'Number of Accounts Detected', type: 'number' },
-      { code: 'statements', label: 'Statement Summaries', type: 'json', description: 'Per-account statement summaries with opening/closing balances.' },
+      { code: 'account_tb_mapping', label: 'Account to TB Mapping', type: 'json', description: 'Each bank account mapped to its TB account based on period-end closing balance.' },
+      { code: 'validation_report', label: 'Validation Report', type: 'json', description: 'Results of all checks: client name match, page ordering, missing pages, period coverage (start/end), balance reconciliation to TB.' },
+      { code: 'issues', label: 'Issues Flagged', type: 'data_table', description: 'List of issues found: wrong client, missing pages, period gaps, balance mismatches. Each with severity and recommendation.' },
+      { code: 'statements', label: 'Statement Summaries', type: 'json', description: 'Per-account summaries: opening balance, closing balance, page count, date range, total debits/credits.' },
     ],
   },
 
