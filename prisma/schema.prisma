@@ -125,6 +125,7 @@ model User {
   auditDocumentsUploaded     AuditDocument[]            @relation("DocumentUploader")
   methodologyConfigsCreated  MethodologyConfig[]
   firmEthicsPartnerOf        Firm[]                     @relation("FirmEthicsPartner")
+  journalRiskRuns            JournalRiskRun[]           @relation("JournalRiskRunBy")
   // Resource planning relations
   resourceStaffSetting       ResourceStaffSetting?
   resourceAllocations        ResourceAllocation[]
@@ -1639,6 +1640,7 @@ model AuditEngagement {
   infoRequestType       String    @default("standard") @map("info_request_type") // preliminary | standard
   hardCloseDate         DateTime? @map("hard_close_date")
   isGroupAudit          Boolean   @default(false) @map("is_group_audit")
+  isNewClient           Boolean?  @map("is_new_client")  // null = auto-detect, true = force new client, false = force continuance
   tbViewMode            String    @default("fs_line") @map("tb_view_mode") // fs_line | tb_account
   tbXeroSummary         Json?     @map("tb_xero_summary") // Raw accounting system TB totals for verification
   planCreated           Boolean   @default(false) @map("plan_created")
@@ -1666,6 +1668,7 @@ model AuditEngagement {
   ethics              AuditEthics?
   continuance         AuditContinuance?
   newClientTakeOn     AuditNewClientTakeOn?
+  subsequentEvents    AuditSubsequentEvents?
   materiality         AuditMateriality?
   parRows             AuditPARRow[]
   rmmRows             AuditRMMRow[]
@@ -1678,6 +1681,7 @@ model AuditEngagement {
   auditPoints          AuditPoint[]
   analyticalReviews    AuditAnalyticalReview[]
   payrollTests         AuditPayrollTest[]
+  journalRiskRuns      JournalRiskRun[]
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -1835,6 +1839,18 @@ model AuditNewClientTakeOn {
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@map("audit_new_client_take_on")
+}
+
+model AuditSubsequentEvents {
+  id           String   @id @default(uuid())
+  engagementId String   @unique @map("engagement_id")
+  data         Json     // Stores subsequent events review form data (ISA 560)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@map("audit_subsequent_events")
 }
 
 model AuditMateriality {
@@ -2703,4 +2719,61 @@ model TestActionStep {
   @@index([testId])
   @@unique([testId, stepOrder])
   @@map("test_action_steps")
+}
+
+// ─── Journal Risk (ISA 240 Management Override) ────────────────────────────
+
+model JournalRiskRun {
+  id                 String   @id @default(uuid())
+  engagementId       String   @map("engagement_id")
+  runId              String   @unique @map("run_id")
+  status             String   @default("completed")        // completed | superseded
+  config             Json                                   // Frozen Config snapshot
+  populationEvidence Json     @map("population_evidence")   // PopulationEvidence
+  selectionSummary   Json     @map("selection_summary")     // { layer1, layer2, layer3, notSelected }
+  riskModelSnapshot  Json     @map("risk_model_snapshot")   // rules, thresholds, weights
+  totalJournals      Int      @map("total_journals")
+  totalSelected      Int      @map("total_selected")
+  runById            String   @map("run_by_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  engagement AuditEngagement  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  runBy      User             @relation("JournalRiskRunBy", fields: [runById], references: [id])
+  entries    JournalRiskEntry[]
+
+  @@index([engagementId])
+  @@map("journal_risk_runs")
+}
+
+model JournalRiskEntry {
+  id               String    @id @default(uuid())
+  runId            String    @map("run_id")
+  journalId        String    @map("journal_id")
+  postedAt         String    @map("posted_at")
+  period           String
+  isManual         Boolean   @map("is_manual")
+  preparedByUserId String    @map("prepared_by_user_id")
+  approvedByUserId String?   @map("approved_by_user_id")
+  amount           Float
+  description      String?   @db.Text
+  debitAccountId   String    @map("debit_account_id")
+  creditAccountId  String    @map("credit_account_id")
+  riskScore        Int       @map("risk_score")
+  riskBand         String    @map("risk_band")              // low | medium | high
+  riskTags         Json      @map("risk_tags")              // string[]
+  drivers          Json                                     // RiskDriver[]
+  selected         Boolean   @default(false)
+  selectionLayer   String    @map("selection_layer")        // layer1_mandatory_high_risk | layer2_targeted_coverage | layer3_unpredictable | not_selected
+  mandatory        Boolean   @default(false)
+  rationale        String?   @db.Text
+  testStatus       String    @default("pending") @map("test_status") // pending | tested | no_exception | exception
+  testNotes        String?   @map("test_notes") @db.Text
+  testedById       String?   @map("tested_by_id")
+  testedAt         DateTime? @map("tested_at")
+
+  run JournalRiskRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([runId, selected])
+  @@map("journal_risk_entries")
 }

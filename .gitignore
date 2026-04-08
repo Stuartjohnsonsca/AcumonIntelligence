@@ -4,6 +4,7 @@ node_modules/
 .next/
 out/
 *.log
+*.tsbuildinfo
 .DS_Store
 check-db.mjs
 debug-xero.mjs

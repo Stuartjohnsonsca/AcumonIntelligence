@@ -9,6 +9,7 @@ import { ErrorSchedulePanel } from './ErrorSchedulePanel';
 import { AnalyticalReviewPanel } from './AnalyticalReviewPanel';
 import { PayrollTestPanel } from './PayrollTestPanel';
 import { assertionShortLabel } from '@/types/methodology';
+import { JournalRiskPanel } from './JournalRiskPanel';
 
 interface TBRow {
   id: string;
@@ -812,10 +813,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         </div>
       )}
       {activeOtherTab === 'Management Override' && (
-        <div className="p-6 text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Management Override</div>
-          <p className="text-xs text-slate-400 mt-3">Journal risk scoring and management override testing — coming soon.</p>
-        </div>
+        <JournalRiskPanel engagementId={engagementId} periodStartDate={periodStartDate} periodEndDate={periodEndDate} />
       )}
       {activeOtherTab === 'Disclosure' && (
         <div className="p-6 text-center">

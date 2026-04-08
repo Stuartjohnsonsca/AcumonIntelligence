@@ -44,6 +44,7 @@ const APPENDIX_TEMPLATE_TYPES = [
   { key: 'update_procedures_questions', label: 'Update Procedures', sectionDefaults: ['Subsequent Events Review', 'Management Representations Update', 'Going Concern Update', 'Post Year-End Trading', 'Legal & Compliance Update', 'Related Parties Update', 'Commitments & Contingencies', 'Final Analytical Review'] },
   { key: 'completion_checklist_questions', label: 'Completion Checklist', sectionDefaults: ['Audit Summary Memo', 'Error Schedule', 'Subsequent Events', 'Going Concern', 'Management Representations', 'Communication with TCWG', 'Related Parties', 'Laws & Regulations', 'Fraud', 'Accounting Estimates', 'Fair Values', 'Opening Balances', 'Comparatives', 'Group Considerations', 'Final Analytical Review', 'Quality Control', 'Documentation', 'Engagement Sign-Off'] },
   { key: 'overall_review_fs_questions', label: 'Overall Review of FS', sectionDefaults: ['Presentation & Disclosure', 'Accounting Policies', 'True & Fair View', 'Consistency', 'Directors Report', 'Strategic Report', 'Notes Completeness', 'Comparative Information', 'Other Information'] },
+  { key: 'subsequent_events_questions', label: 'Subsequent Events', sectionDefaults: ['Subsequent Events Review'] },
 ];
 
 const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;
