@@ -103,7 +103,7 @@ const KNOWN_INPUTS: { group: string; items: { key: string; label: string; bindin
       { key: 'client_name', label: 'Client Name' },
       { key: 'period_start', label: 'Period Start Date' },
       { key: 'period_end', label: 'Period End Date' },
-      { key: 'audit_type', label: 'Audit Type (SME/PIE)' },
+      { key: 'audit_type', label: 'Audit Type (Statutory/PIE)' },
       { key: 'hard_close_date', label: 'Hard Close Date' },
       { key: 'framework', label: 'Accounting Framework (IFRS/FRS102)' },
     ],

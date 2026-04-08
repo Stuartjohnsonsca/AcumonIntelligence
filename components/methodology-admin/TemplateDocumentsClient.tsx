@@ -107,9 +107,9 @@ const DEFAULT_CATEGORIES = [
 
 const AUDIT_TYPES = [
   { value: 'ALL', label: 'All Types' },
-  { value: 'SME', label: 'SME' },
+  { value: 'SME', label: 'Statutory' },
   { value: 'PIE', label: 'PIE' },
-  { value: 'SME_CONTROLS', label: 'SME Controls' },
+  { value: 'SME_CONTROLS', label: 'Statutory Controls' },
   { value: 'PIE_CONTROLS', label: 'PIE Controls' },
 ];
 

@@ -212,9 +212,9 @@ export const AUDIT_TYPE_ROUTES: Record<string, AuditType> = {
 };
 
 export const AUDIT_TYPE_LABELS: Record<AuditType, string> = {
-  SME: 'SME Audit',
+  SME: 'Statutory Audit',
   PIE: 'PIE Audit',
-  SME_CONTROLS: 'SME Controls Based Audit',
+  SME_CONTROLS: 'Statutory Controls Based Audit',
   PIE_CONTROLS: 'PIE Controls Based Audit',
   GROUP: 'Group',
 };

@@ -10,9 +10,9 @@ interface Props {
 }
 
 const AUDIT_TYPES = [
-  { key: 'SME', label: 'SME Audit' },
+  { key: 'SME', label: 'Statutory Audit' },
   { key: 'PIE', label: 'PIE Audit' },
-  { key: 'SME_CONTROLS', label: 'SME Controls Based Audit' },
+  { key: 'SME_CONTROLS', label: 'Statutory Controls Based Audit' },
   { key: 'PIE_CONTROLS', label: 'PIE Controls Based Audit' },
   { key: 'GROUP', label: 'Group' },
 ];

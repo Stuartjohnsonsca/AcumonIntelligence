@@ -61,9 +61,9 @@ export default async function QuestionnaireActionsPage() {
   } catch {}
 
   const auditTypes = [
-    { key: 'SME', label: 'SME' },
+    { key: 'SME', label: 'Statutory' },
     { key: 'PIE', label: 'PIE' },
-    { key: 'SME_CONTROLS', label: 'SME Controls' },
+    { key: 'SME_CONTROLS', label: 'Statutory Controls' },
     { key: 'PIE_CONTROLS', label: 'PIE Controls' },
   ];
 

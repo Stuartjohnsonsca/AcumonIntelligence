@@ -24,7 +24,7 @@ const PLACEHOLDER_GROUPS = [
       { placeholder: '{{engagement.performanceMateriality}}', description: 'Performance materiality' },
       { placeholder: '{{engagement.clearlyTrivial}}', description: 'Clearly trivial threshold' },
       { placeholder: '{{engagement.framework}}', description: 'Accounting framework (IFRS, FRS102, etc.)' },
-      { placeholder: '{{engagement.auditType}}', description: 'Audit type (SME, PIE, etc.)' },
+      { placeholder: '{{engagement.auditType}}', description: 'Audit type (Statutory, PIE, etc.)' },
     ],
   },
   {
