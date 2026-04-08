@@ -10,6 +10,7 @@ import { AnalyticalReviewPanel } from './AnalyticalReviewPanel';
 import { PayrollTestPanel } from './PayrollTestPanel';
 import { assertionShortLabel } from '@/types/methodology';
 import { JournalRiskPanel } from './JournalRiskPanel';
+import { SRMMPanel } from './SRMMPanel';
 
 interface TBRow {
   id: string;
@@ -84,7 +85,7 @@ interface Props {
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 const THREE_LEVEL_STATEMENTS = new Set(['Balance Sheet']);
-const OTHER_TABS = ['Going Concern', 'Management Override', 'Subsequent Events', 'Permanent', 'Disclosure'] as const;
+const OTHER_TABS = ['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Permanent', 'Disclosure'] as const;
 type OtherTab = typeof OTHER_TABS[number];
 
 // Statutory format order by framework
@@ -814,6 +815,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
       {activeOtherTab === 'Management Override' && (
         <JournalRiskPanel engagementId={engagementId} periodStartDate={periodStartDate} periodEndDate={periodEndDate} />
+      )}
+      {activeOtherTab === 'SRMM Memos' && (
+        <SRMMPanel engagementId={engagementId} />
       )}
       {activeOtherTab === 'Disclosure' && (
         <div className="p-6 text-center">

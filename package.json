@@ -39,6 +39,7 @@
     "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "docx": "^9.6.1",
     "exceljs": "^4.4.0",
     "idb-keyval": "^6.2.2",
     "ioredis": "^5.10.1",
