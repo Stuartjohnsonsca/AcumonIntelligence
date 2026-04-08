@@ -45,6 +45,7 @@ const APPENDIX_TEMPLATE_TYPES = [
   { key: 'completion_checklist_questions', label: 'Completion Checklist', sectionDefaults: ['Audit Summary Memo', 'Error Schedule', 'Subsequent Events', 'Going Concern', 'Management Representations', 'Communication with TCWG', 'Related Parties', 'Laws & Regulations', 'Fraud', 'Accounting Estimates', 'Fair Values', 'Opening Balances', 'Comparatives', 'Group Considerations', 'Final Analytical Review', 'Quality Control', 'Documentation', 'Engagement Sign-Off'] },
   { key: 'overall_review_fs_questions', label: 'Overall Review of FS', sectionDefaults: ['Presentation & Disclosure', 'Accounting Policies', 'True & Fair View', 'Consistency', 'Directors Report', 'Strategic Report', 'Notes Completeness', 'Comparative Information', 'Other Information'] },
   { key: 'subsequent_events_questions', label: 'Subsequent Events', sectionDefaults: ['Subsequent Events Review'] },
+  { key: 'tax_technical_categories', label: 'Tax Technical', sectionDefaults: ['Value Added Tax', 'Corporation Tax', 'Employment Taxes', 'Capital Allowances', 'Chargeable Gains', 'Stamp Duty Land Tax', 'Stamp Duty Reserve Tax', 'Trade Losses Utilisation/Surrender'] },
 ];
 
 const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;

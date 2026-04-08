@@ -1681,6 +1681,7 @@ model AuditEngagement {
   auditPoints          AuditPoint[]
   analyticalReviews    AuditAnalyticalReview[]
   payrollTests         AuditPayrollTest[]
+  taxChats             AuditTaxChat[]
   journalRiskRuns      JournalRiskRun[]
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
@@ -2666,6 +2667,48 @@ model AuditPoint {
   @@index([engagementId, pointType])
   @@index([engagementId, pointType, status])
   @@map("audit_points")
+}
+
+// ─── Tax Technical Chats ────────────────────────────────────────────────────
+
+model AuditTaxChat {
+  id              String    @id @default(uuid())
+  engagementId    String    @map("engagement_id")
+  taxCategory     String    @map("tax_category")           // vat, corporation_tax, employment_taxes, etc.
+  chatNumber      Int       @map("chat_number")
+  status          String    @default("open")                // open | concluded | referred
+  businessBackground String? @map("business_background") @db.Text  // Sent with first message
+
+  // Conclusion
+  conclusion      String?   @db.Text                        // Tax technical's conclusion
+  conclusionStatus String?  @map("conclusion_status")       // correct | incorrect | needs_adjustment | inconclusive
+
+  // Creator (audit team member)
+  createdById     String    @map("created_by_id")
+  createdByName   String    @map("created_by_name")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Assigned tax specialist
+  assignedToId    String?   @map("assigned_to_id")          // User ID (internal) or specialist name
+  assignedToName  String?   @map("assigned_to_name")
+  assignedToType  String    @default("internal") @map("assigned_to_type") // internal | external
+  delegatedToId   String?   @map("delegated_to_id")         // If reassigned by the specialist
+  delegatedToName String?   @map("delegated_to_name")
+
+  // Messages: [{ id, userId, userName, role, message, attachments, createdAt }]
+  // role: 'audit_team' | 'tax_specialist'
+  messages        Json      @default("[]")
+
+  // Attachments: [{name, url, type, size}]
+  attachments     Json?
+
+  engagement      AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId, taxCategory])
+  @@index([engagementId, status])
+  @@index([assignedToId])
+  @@map("audit_tax_chats")
 }
 
 // ─── Action-Based Test Pipeline ─────────────────────────────────────────────
