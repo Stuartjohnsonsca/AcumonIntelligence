@@ -985,21 +985,42 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 const effectiveFsNote = activeNote || rmmMatch?.fsNote || row.fsNoteLevel;
                 const effectiveStatement = activeStatement || rmmMatch?.fsStatement;
 
-                // Determine risk classification from admin table.
-                // If Significant Risk or Area of Focus → pick up relevant tests for that classification
-                // If no RMM flag but value > PM → show Normal category tests
-                // If below PM → no substantive tests needed (just AR/Mandatory)
+                // Determine risk classification.
+                // 1. Check row-level RMM match first
+                // 2. If no row match, check if the FS Level tab has an RMM entry (inherit from level)
+                // 3. If no RMM at all but value > PM → Normal tests
+                // 4. Below PM → AR/Mandatory only
                 const rowValue = Math.abs(Number(row.currentYear) || 0);
+
+                // Also try to find an RMM match at the FS Level (not just individual account)
+                const levelRmmMatch = !rmmMatch ? rmmItems.find(r => {
+                  const li = r.lineItem.toLowerCase().trim();
+                  return li === activeLevelLower || li === rowFsLevel || li === canonRowLevel;
+                }) : null;
+                const effectiveRmm = rmmMatch || levelRmmMatch;
+
                 let rowClassification: string | null = null;
-                if (rmmMatch?.overallRisk) {
-                  rowClassification = riskClassificationTable?.[rmmMatch.overallRisk] || (
-                    rmmMatch.overallRisk === 'High' || rmmMatch.overallRisk === 'Very High' ? 'Significant Risk'
-                    : rmmMatch.overallRisk === 'Medium' ? 'Area of Focus' : 'AR'
-                  );
+                if (effectiveRmm?.overallRisk) {
+                  const mapped = riskClassificationTable?.[effectiveRmm.overallRisk];
+                  if (mapped) {
+                    rowClassification = mapped;
+                  } else if (effectiveRmm.overallRisk === 'High' || effectiveRmm.overallRisk === 'Very High') {
+                    rowClassification = 'Significant Risk';
+                  } else if (effectiveRmm.overallRisk === 'Medium') {
+                    rowClassification = 'Area of Focus';
+                  } else if (effectiveRmm.overallRisk === 'Low') {
+                    // Low risk WITH RMM entry → Normal tests (not AR)
+                    rowClassification = 'Normal';
+                  } else {
+                    rowClassification = 'Normal';
+                  }
                 } else if (performanceMateriality > 0 && rowValue > performanceMateriality) {
-                  rowClassification = 'Normal'; // Above PM, no RMM flag → Normal tests
+                  rowClassification = 'Normal';
+                } else if (performanceMateriality > 0) {
+                  rowClassification = 'AR';
                 } else {
-                  rowClassification = 'AR'; // Below PM → only AR/Mandatory
+                  // PM not set yet — show all tests (backwards compatible)
+                  rowClassification = null;
                 }
                 const tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rmmMatch?.assertions || null, effectiveStatement || undefined, rowClassification);
                 const rowKey = row.id || row.accountCode;
