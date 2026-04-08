@@ -106,16 +106,23 @@ export function Navbar() {
                     <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">Grant Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
                     <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">CASS Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
                     <Link href="/tools/methodology/group" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Group Audit</Link>
-                    <div className="border-t border-slate-100 mt-1 pt-1">
-                      <div className="px-4 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Tools</div>
-                      {[
-                        { label: 'Financial Data Extraction', prefix: 'DateExtraction' },
-                        { label: 'Sample Calculator', prefix: 'Sampling' },
-                        { label: 'Document Summary', prefix: 'DocSummary' },
-                        { label: 'Financial Statement Review', prefix: 'FSChecker' },
-                      ].map(item => (
-                        <button key={item.prefix} onClick={() => { setAuditOpen(false); handleProductClick(item.prefix); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">{item.label}</button>
-                      ))}
+                    <div className="border-t border-slate-100 mt-1 pt-1 relative group/tools">
+                      <button className="w-full text-left px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center justify-between">
+                        Tools
+                        <ChevronDown className="h-3.5 w-3.5 -rotate-90 text-slate-400" />
+                      </button>
+                      <div className="absolute left-full top-0 pl-1 w-64 hidden group-hover/tools:block">
+                        <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
+                          {[
+                            { label: 'Financial Data Extraction', prefix: 'DateExtraction' },
+                            { label: 'Sample Calculator', prefix: 'Sampling' },
+                            { label: 'Document Summary', prefix: 'DocSummary' },
+                            { label: 'Financial Statement Review', prefix: 'FSChecker' },
+                          ].map(item => (
+                            <button key={item.prefix} onClick={() => { setAuditOpen(false); handleProductClick(item.prefix); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">{item.label}</button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
