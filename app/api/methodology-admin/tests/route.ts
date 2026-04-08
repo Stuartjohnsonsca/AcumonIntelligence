@@ -2,10 +2,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
-// GET: List all tests for the firm
-export async function GET() {
+// GET: List all tests for the firm, or single test with steps
+export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  const url = new URL(req.url);
+  const testId = url.searchParams.get('id');
+  const includeSteps = url.searchParams.get('includeSteps') === 'true';
+
+  // Single test with action steps
+  if (testId && includeSteps) {
+    const test = await prisma.methodologyTest.findFirst({
+      where: { id: testId, firmId: session.user.firmId },
+      include: {
+        actionSteps: {
+          include: { actionDefinition: true },
+          orderBy: { stepOrder: 'asc' },
+        },
+      },
+    });
+    if (!test) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return NextResponse.json({ test });
+  }
 
   const tests = await prisma.methodologyTest.findMany({
     where: { firmId: session.user.firmId, isActive: true },

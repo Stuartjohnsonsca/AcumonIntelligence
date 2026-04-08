@@ -45,13 +45,47 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
   const [actions, setActions] = useState<ActionDefinitionItem[]>([]);
   const [loadingActions, setLoadingActions] = useState(true);
 
-  // Load action definitions
+  // Load action definitions AND saved steps for this test
   useEffect(() => {
-    fetch('/api/methodology-admin/action-definitions')
-      .then(r => r.json())
-      .then(data => { setActions(data.actions || []); setLoadingActions(false); })
-      .catch(() => setLoadingActions(false));
-  }, []);
+    let cancelled = false;
+    (async () => {
+      try {
+        // Fetch action definitions and saved steps in parallel
+        const [actionsRes, stepsRes] = await Promise.all([
+          fetch('/api/methodology-admin/action-definitions'),
+          fetch(`/api/methodology-admin/tests?id=${testId}&includeSteps=true`),
+        ]);
+        if (cancelled) return;
+
+        const actionsData = actionsRes.ok ? await actionsRes.json() : { actions: [] };
+        const actionsList: ActionDefinitionItem[] = actionsData.actions || [];
+        setActions(actionsList);
+
+        if (stepsRes.ok) {
+          const stepsData = await stepsRes.json();
+          const savedSteps = stepsData.test?.actionSteps || [];
+          if (savedSteps.length > 0 && actionsList.length > 0) {
+            setSteps(savedSteps.map((s: any, i: number) => {
+              const actionDef = s.actionDefinition || actionsList.find((a: ActionDefinitionItem) => a.id === s.actionDefinitionId);
+              return {
+                id: s.id || uid(),
+                actionDefinitionId: s.actionDefinitionId,
+                actionDefinition: actionDef || { id: s.actionDefinitionId, code: '', name: 'Unknown Action', description: null, category: 'general', icon: null, color: null, isSystem: false, inputSchema: [], outputSchema: [] },
+                stepOrder: i,
+                inputBindings: s.inputBindings || {},
+                isExpanded: i === 0,
+              };
+            }));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load pipeline data:', err);
+      } finally {
+        if (!cancelled) setLoadingActions(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [testId]);
 
   const handleAddAction = useCallback((action: ActionDefinitionItem) => {
     const newStep: PipelineStep = {
