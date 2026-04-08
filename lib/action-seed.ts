@@ -28,11 +28,10 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
         { value: 'payment_voucher', label: 'Payment Voucher' },
         { value: 'other', label: 'Other' },
       ]},
-      { code: 'accepted_responses', label: 'Accepted Response Types', type: 'multiselect', required: false, source: 'user', group: 'Request Details', defaultValue: ['single_file', 'multiple_files', 'zip', 'chat'], description: 'What the client can provide. The action auto-detects the format received and handles accordingly (e.g. unzips archives, collects multiple uploads, accepts chat explanations).', options: [
-        { value: 'single_file', label: 'Single File' },
-        { value: 'multiple_files', label: 'Multiple Files' },
-        { value: 'zip', label: 'Zip Archive' },
-        { value: 'chat', label: 'Chat Response' },
+      { code: 'expected_document_match', label: 'Document Matching', type: 'select', required: false, source: 'user', group: 'Request Details', defaultValue: 'one_per_transaction', description: 'How received files should map to the requested items. The action auto-detects format (single file, multiple files, zip, chat) and processes accordingly — unzipping, splitting, or combining as needed.', options: [
+        { value: 'one_per_transaction', label: 'One document per transaction' },
+        { value: 'single_combined', label: 'Single document covers all transactions' },
+        { value: 'any', label: 'Any — let me match manually' },
       ]},
       { code: 'area_of_work', label: 'Area of Work', type: 'text', required: false, source: 'user', group: 'Request Details' },
       { code: 'transactions', label: 'Requested Transactions', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data', description: 'Table with Date, Ref Number, CounterParty, Gross Amount, Net Amount, Account Code columns.' },
