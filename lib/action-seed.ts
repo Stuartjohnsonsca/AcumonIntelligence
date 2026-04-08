@@ -33,7 +33,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
         { value: 'single_combined', label: 'Single document covers all transactions' },
         { value: 'any', label: 'Any — let me match manually' },
       ]},
-      { code: 'area_of_work', label: 'Area of Work', type: 'text', required: false, source: 'user', group: 'Request Details' },
+      { code: 'area_of_work', label: 'Area of Work', type: 'text', required: false, source: 'auto', autoMapFrom: '$ctx.test.fsLine', group: 'Request Details', description: 'Auto-populated from the FS Line being tested (e.g. Revenue, Trade Debtors). Can be overridden.' },
       { code: 'transactions', label: 'Requested Transactions', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data', description: 'Table with Date, Ref Number, CounterParty, Gross Amount, Net Amount, Account Code columns.' },
       { code: 'request_id', label: 'Request ID', type: 'text', required: false, source: 'auto', autoMapFrom: '$prev.request_id' },
       { code: 'document_ids', label: 'Document IDs', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$prev.document_ids' },
