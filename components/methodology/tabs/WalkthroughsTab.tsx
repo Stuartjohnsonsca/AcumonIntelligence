@@ -217,6 +217,23 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
     }).catch(() => {});
   }, [engagementId, processKey]);
 
+  // Fetch portal uploads and merge into evidence (self-healing — one small GET)
+  useEffect(() => {
+    if (!status.portalRequestId) return;
+    if ((status.evidence || []).some(e => e.storagePath)) return;
+    fetch(`/api/portal/upload?requestId=${status.portalRequestId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data?.uploads?.length) return;
+        const existingIds = new Set((status.evidence || []).map(e => e.id));
+        const newEvidence = data.uploads
+          .filter((u: any) => !existingIds.has(u.id))
+          .map((u: any) => ({ id: u.id, name: u.originalName, type: u.mimeType || 'application/octet-stream', storagePath: u.storagePath }));
+        if (newEvidence.length > 0) saveStatus({ evidence: [...(status.evidence || []), ...newEvidence] });
+      })
+      .catch(() => {});
+  }, [status.portalRequestId]);
+
   const save = useCallback(async () => {
     setSaving(true);
     try {

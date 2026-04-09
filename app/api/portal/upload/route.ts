@@ -3,6 +3,24 @@ import { prisma } from '@/lib/db';
 import { uploadToInbox, generateSasUrl } from '@/lib/azure-blob';
 
 /**
+ * GET /api/portal/upload?requestId=X
+ * List uploads linked to a portal request.
+ */
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const requestId = searchParams.get('requestId');
+  if (!requestId) return NextResponse.json({ error: 'requestId required' }, { status: 400 });
+
+  const uploads = await prisma.portalUpload.findMany({
+    where: { portalRequestId: requestId },
+    select: { id: true, originalName: true, storagePath: true, containerName: true, mimeType: true, fileSize: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  return NextResponse.json({ uploads });
+}
+
+/**
  * POST /api/portal/upload
  * Upload a file from the client portal response.
  * Stores in Azure Blob and creates a PortalUpload record scoped to the engagement.
