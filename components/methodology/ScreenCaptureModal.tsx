@@ -14,6 +14,7 @@ type Tool = 'crop' | 'rect' | 'freehand';
 
 export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }: Props) {
   const [phase, setPhase] = useState<'capturing' | 'editing' | 'uploading'>('capturing');
+  const [renderKey, setRenderKey] = useState(0);
   const [tool, setTool] = useState<Tool>('crop');
   const [drawColor, setDrawColor] = useState('#ef4444');
   const [uploading, setUploading] = useState(false);
@@ -35,22 +36,49 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     try {
       setPhase('capturing');
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      const track = stream.getVideoTracks()[0];
       const video = document.createElement('video');
       video.srcObject = stream;
       video.muted = true;
-      await video.play();
+
+      // Wait for video to have actual dimensions and a rendered frame
+      await new Promise<void>((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play().then(() => {
+            // Wait for at least one frame to be painted
+            const checkFrame = () => {
+              if (video.videoWidth > 0 && video.videoHeight > 0) resolve();
+              else requestAnimationFrame(checkFrame);
+            };
+            requestAnimationFrame(checkFrame);
+          });
+        };
+      });
+
+      // Small delay to ensure frame is fully rendered
+      await new Promise(r => setTimeout(r, 200));
 
       // Grab frame at full resolution
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      console.log('[ScreenCapture] Captured frame:', w, 'x', h);
+
       const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext('2d')!.drawImage(video, 0, 0);
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d')!.drawImage(video, 0, 0, w, h);
 
       stream.getTracks().forEach(t => t.stop());
       video.remove();
 
+      // Verify we got actual pixels
+      if (w === 0 || h === 0) {
+        console.error('[ScreenCapture] Captured 0-size frame');
+        onClose();
+        return;
+      }
+
       // Convert to image for clean handling
+      const dataUrl = canvas.toDataURL('image/png');
       const img = new Image();
       img.onload = () => {
         fullImageRef.current = img;
@@ -59,7 +87,7 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
         setCropBox(null);
         annotationSnapshotRef.current = null;
       };
-      img.src = canvas.toDataURL('image/png');
+      img.src = dataUrl;
     } catch (err) {
       console.error('Screen capture cancelled or failed:', err);
       onClose();
@@ -89,7 +117,7 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       annotationSnapshotRef.current = null;
     }
-  }, [phase]);
+  }, [phase, renderKey]);
 
   // Mouse position relative to overlay
   const getPos = (e: React.MouseEvent) => {
@@ -164,9 +192,7 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
       fullImageRef.current = img;
       setCropBox(null);
       setTool('rect');
-      // Re-trigger display
-      setPhase('capturing');
-      setTimeout(() => setPhase('editing'), 10);
+      setRenderKey(k => k + 1); // Re-trigger canvas draw
     };
     img.src = cropped.toDataURL('image/png');
   }, [cropBox]);
