@@ -57,6 +57,16 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingDocId, setUploadingDocId] = useState<string | null>(null);
 
+  // Generate from Template state
+  const [showGenerate, setShowGenerate] = useState(false);
+  const [templates, setTemplates] = useState<{ id: string; name: string; category: string }[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [generateAction, setGenerateAction] = useState<'download' | 'send_email' | 'send_portal'>('download');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [generateResult, setGenerateResult] = useState<string | null>(null);
+
   // Custom types added by user during this engagement
   const [customDocTypes, setCustomDocTypes] = useState<string[]>([]);
   const [addingCustomType, setAddingCustomType] = useState(false);
@@ -120,6 +130,55 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
     await postAction({ action: 'update_categories', documentId: docId, [field]: value || null });
   }
 
+  // Load templates when Generate panel opens
+  async function loadTemplates() {
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/generate-document`);
+      if (res.ok) { const data = await res.json(); setTemplates(data.templates || []); }
+    } catch { /* ignore */ }
+  }
+
+  async function handleGenerate() {
+    if (!selectedTemplate) return;
+    setGenerating(true);
+    setGenerateResult(null);
+    try {
+      const body: Record<string, string> = { templateId: selectedTemplate, action: generateAction };
+      if (generateAction === 'send_email') { body.recipientEmail = recipientEmail; body.recipientName = recipientName; }
+
+      if (generateAction === 'download') {
+        const res = await fetch(`/api/engagements/${engagementId}/generate-document`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, action: 'preview' }),
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `document.pdf`;
+          a.click();
+          URL.revokeObjectURL(url);
+          setGenerateResult('PDF downloaded and saved to Document Repository');
+          loadDocuments();
+        } else {
+          setGenerateResult('Failed to generate PDF');
+        }
+      } else {
+        const res = await fetch(`/api/engagements/${engagementId}/generate-document`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          setGenerateResult(generateAction === 'send_email' ? 'Email sent successfully' : 'Pushed to client portal');
+          loadDocuments();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          setGenerateResult(`Failed: ${data.error || res.status}`);
+        }
+      }
+    } catch (err: any) { setGenerateResult(`Error: ${err.message}`); }
+    finally { setGenerating(false); }
+  }
+
   function addCustomDocType() {
     const t = customTypeInput.trim();
     if (!t || allDocTypes.includes(t)) return;
@@ -145,10 +204,16 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
     <div>
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-base font-semibold text-slate-800">Document Repository</h2>
-        <button onClick={() => setShowForm(!showForm)}
-          className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 font-medium">
-          + Request Document
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => { setShowGenerate(!showGenerate); setShowForm(false); if (!showGenerate) loadTemplates(); }}
+            className="text-xs px-3 py-1.5 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 font-medium">
+            Generate from Template
+          </button>
+          <button onClick={() => { setShowForm(!showForm); setShowGenerate(false); }}
+            className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 font-medium">
+            + Request Document
+          </button>
+        </div>
       </div>
 
       {/* Filter bar */}
@@ -177,6 +242,59 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
           {hasActiveFilters ? `${filtered.length} of ${documents.length}` : `${documents.length}`} document{documents.length !== 1 ? 's' : ''}
         </span>
       </div>
+
+      {/* Generate from Template */}
+      {showGenerate && (
+        <div className="mb-4 border border-purple-200 rounded-lg p-4 bg-purple-50/30">
+          <h3 className="text-sm font-medium text-slate-700 mb-2">Generate Document from Template</h3>
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Template *</label>
+              <select value={selectedTemplate} onChange={e => setSelectedTemplate(e.target.value)}
+                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400">
+                <option value="">— Select template —</option>
+                {templates.map(t => <option key={t.id} value={t.id}>{t.name} ({t.category})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Action</label>
+              <select value={generateAction} onChange={e => setGenerateAction(e.target.value as any)}
+                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400">
+                <option value="download">Download PDF</option>
+                <option value="send_email">Send via Email</option>
+                <option value="send_portal">Push to Client Portal</option>
+              </select>
+            </div>
+          </div>
+          {generateAction === 'send_email' && (
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Recipient Name</label>
+                <input type="text" value={recipientName} onChange={e => setRecipientName(e.target.value)}
+                  className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400" placeholder="e.g. John Smith" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Recipient Email *</label>
+                <input type="email" value={recipientEmail} onChange={e => setRecipientEmail(e.target.value)}
+                  className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400" placeholder="e.g. john@client.com" />
+              </div>
+            </div>
+          )}
+          {generateResult && (
+            <div className={`text-xs mb-2 p-2 rounded ${generateResult.includes('Failed') || generateResult.includes('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+              {generateResult}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button onClick={handleGenerate}
+              disabled={!selectedTemplate || generating || (generateAction === 'send_email' && !recipientEmail)}
+              className="text-xs px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 font-medium">
+              {generating ? 'Generating...' : generateAction === 'download' ? 'Generate & Download' : generateAction === 'send_email' ? 'Generate & Send Email' : 'Generate & Push to Portal'}
+            </button>
+            <button onClick={() => setShowGenerate(false)} className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* Request Form */}
       {showForm && (
