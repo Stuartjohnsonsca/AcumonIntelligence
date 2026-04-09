@@ -194,14 +194,18 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
   const [requesting, setRequesting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [analysing, setAnalysing] = useState(false);
+  const [showAllDocs, setShowAllDocs] = useState(false);
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({ narrative: true, controls: true, flowchart: true, evidence: true });
 
   // Load data + fetch portal uploads in one chain (avoids race condition)
   useEffect(() => {
+    const uploadsUrl = showAllDocs
+      ? `/api/portal/upload?engagementId=${engagementId}`
+      : `/api/portal/upload?engagementId=${engagementId}&section=walkthroughs`;
     Promise.all([
       fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_${processKey}`).then(r => r.ok ? r.json() : null),
       fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_${processKey}_status`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/portal/upload?engagementId=${engagementId}`).then(r => r.ok ? r.json() : null),
+      fetch(uploadsUrl).then(r => r.ok ? r.json() : null),
     ]).then(([content, statusData, uploadsData]) => {
       const answers = content?.data || content?.answers || {};
       setNarrative(answers.narrative || '');
@@ -232,7 +236,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
       if (!st.stage) st.stage = 'draft';
       setStatus(st);
     }).catch(() => {});
-  }, [engagementId, processKey]);
+  }, [engagementId, processKey, showAllDocs]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -574,7 +578,12 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
         </button>
         {sectionOpen.evidence && (
           <div className="p-3 space-y-2">
-            <p className="text-[10px] text-slate-400">Attach supporting documents from portal messages, local files, or screenshots.</p>
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] text-slate-400">Documents from portal walkthrough requests{showAllDocs ? ' and all other sources' : ''}.</p>
+              <button onClick={() => setShowAllDocs(prev => !prev)} className="text-[9px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-100">
+                {showAllDocs ? 'Walkthrough Only' : 'Show All Documents'}
+              </button>
+            </div>
             <div className="flex gap-2">
               <label className="text-[10px] px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1">
                 <Upload className="h-3 w-3" /> Upload File

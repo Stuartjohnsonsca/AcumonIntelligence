@@ -22,14 +22,20 @@ export async function GET(req: Request) {
   }
 
   if (engagementId) {
-    // Find all walkthrough-related portal requests for this engagement + process
+    const section = searchParams.get('section'); // 'walkthroughs' or null for all
     const where: any = { engagementId, status: { in: ['responded', 'verified', 'committed', 'outstanding'] } };
+    if (section) {
+      where.OR = [
+        { section },
+        { question: { contains: '[Walkthrough:' } },
+      ];
+    }
     if (processLabel) {
       where.question = { contains: processLabel };
     }
     const requests = await prisma.portalRequest.findMany({
       where,
-      select: { id: true },
+      select: { id: true, section: true, question: true },
     });
     if (requests.length === 0) return NextResponse.json({ uploads: [] });
 
