@@ -250,15 +250,23 @@ const defaultEdgeOptions = {
 
 // ─── Layout: convert FlowStep[] ↔ ReactFlow nodes/edges ───
 
+function normalizeNext(next: any): string[] {
+  if (Array.isArray(next)) return next;
+  if (typeof next === 'string') return next ? [next] : [];
+  return [];
+}
+
 function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[] } {
   if (!steps.length) return { nodes: [], edges: [] };
 
-  const stepMap = new Map(steps.map(s => [s.id, s]));
+  // Normalize next field — AI sometimes returns a string instead of array
+  const normalized = steps.map(s => ({ ...s, next: normalizeNext(s.next) }));
+  const stepMap = new Map(normalized.map(s => [s.id, s]));
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
   // BFS for top-down layout
-  const startStep = steps.find(s => s.type === 'start') || steps[0];
+  const startStep = normalized.find(s => s.type === 'start') || normalized[0];
   const visited = new Set<string>();
   const levels: string[][] = [];
   const queue: { id: string; level: number }[] = [{ id: startStep.id, level: 0 }];
@@ -280,7 +288,7 @@ function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[]
   }
 
   // Add any orphan nodes not reached by BFS
-  for (const step of steps) {
+  for (const step of normalized) {
     if (!visited.has(step.id)) {
       const lastLevel = levels.length;
       if (!levels[lastLevel]) levels[lastLevel] = [];
@@ -310,7 +318,7 @@ function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[]
   }
 
   // Create edges
-  for (const step of steps) {
+  for (const step of normalized) {
     if (step.type === 'decision' && step.next.length >= 2) {
       edges.push({
         id: `e-${step.id}-${step.next[0]}`,
