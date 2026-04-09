@@ -21,21 +21,101 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Trash2, Diamond, Circle, Square, X } from 'lucide-react';
+import { Plus, Trash2, Diamond, Circle, Square, X, FileText as FileIcon, User, ArrowDownToLine, ArrowUpFromLine, MapPin, Paperclip } from 'lucide-react';
 
 // ─── Types ───
+interface StepSignOff { name: string; at: string; status: 'blank' | 'red' | 'green'; }
 interface FlowStep {
-  id: string;
-  label: string;
-  type: 'start' | 'action' | 'decision' | 'end';
-  next: string[];
-  condition?: string;
+  id: string; label: string; type: 'start' | 'action' | 'decision' | 'end'; next: string[]; condition?: string;
+  sourceDoc?: string; outputDoc?: string; responsible?: string; docLocation?: string;
+  attachments?: { id: string; name: string; storagePath: string }[];
+  stepSignOffs?: { preparer?: StepSignOff; reviewer?: StepSignOff; ri?: StepSignOff };
 }
 
 interface WalkthroughFlowEditorProps {
   steps: FlowStep[];
   onStepsChange: (steps: FlowStep[]) => void;
   readOnly?: boolean;
+}
+
+// ─── Shared: Metadata badges + Sign-off dots ───
+
+const SIGNOFF_COLORS = { blank: 'bg-slate-300', red: 'bg-red-500', green: 'bg-green-500' };
+
+function StepSignOffDots({ data, nodeId }: { data: any; nodeId: string }) {
+  const { setNodes } = useReactFlow();
+  const readOnly = data._readOnly as boolean;
+  const signOffs = (data.stepSignOffs || {}) as Record<string, StepSignOff | undefined>;
+
+  function cycle(role: string) {
+    if (readOnly) return;
+    const current = signOffs[role]?.status || 'blank';
+    const nextStatus = current === 'blank' ? 'red' : current === 'red' ? 'green' : 'blank';
+    const updated = { ...signOffs, [role]: { name: 'Current User', at: new Date().toISOString(), status: nextStatus } };
+    if (nextStatus === 'blank') updated[role] = undefined;
+    setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, stepSignOffs: updated } } : n));
+  }
+
+  return (
+    <div className="flex items-center gap-0.5 mt-1">
+      {['preparer', 'reviewer', 'ri'].map(role => (
+        <button key={role} onClick={(e) => { e.stopPropagation(); cycle(role); }}
+          title={`${role === 'ri' ? 'RI' : role.charAt(0).toUpperCase() + role.slice(1)}${signOffs[role] ? ` — ${signOffs[role]!.name}, ${new Date(signOffs[role]!.at).toLocaleDateString('en-GB')}` : ''}`}
+          className={`w-2.5 h-2.5 rounded-full ${SIGNOFF_COLORS[signOffs[role]?.status || 'blank']} hover:ring-2 hover:ring-offset-1 hover:ring-slate-400 transition-all`} />
+      ))}
+    </div>
+  );
+}
+
+function MetadataBadges({ data }: { data: any }) {
+  const src = data.sourceDoc as string;
+  const out = data.outputDoc as string;
+  const resp = data.responsible as string;
+  const atts = (data.attachments as any[]) || [];
+  if (!src && !out && !resp && atts.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1 mt-1">
+      {src && <span className="text-[7px] px-1 py-0 bg-blue-100 text-blue-600 rounded inline-flex items-center gap-0.5"><ArrowDownToLine className="h-2 w-2" />{src}</span>}
+      {out && <span className="text-[7px] px-1 py-0 bg-green-100 text-green-600 rounded inline-flex items-center gap-0.5"><ArrowUpFromLine className="h-2 w-2" />{out}</span>}
+      {resp && <span className="text-[7px] px-1 py-0 bg-purple-100 text-purple-600 rounded inline-flex items-center gap-0.5"><User className="h-2 w-2" />{resp}</span>}
+      {atts.length > 0 && <span className="text-[7px] px-1 py-0 bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5"><Paperclip className="h-2 w-2" />{atts.length}</span>}
+    </div>
+  );
+}
+
+function StepEditPanel({ data, nodeId, onClose, isDecision }: { data: any; nodeId: string; onClose: () => void; isDecision?: boolean }) {
+  const { setNodes } = useReactFlow();
+  const [label, setLabel] = useState((data.label as string) || '');
+  const [sourceDoc, setSourceDoc] = useState((data.sourceDoc as string) || '');
+  const [outputDoc, setOutputDoc] = useState((data.outputDoc as string) || '');
+  const [responsible, setResponsible] = useState((data.responsible as string) || '');
+  const [docLocation, setDocLocation] = useState((data.docLocation as string) || '');
+  const [condition, setCondition] = useState((data.condition as string) || '');
+
+  function save() {
+    setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: {
+      ...n.data, label: label.trim() || data.label,
+      sourceDoc: sourceDoc.trim() || undefined, outputDoc: outputDoc.trim() || undefined,
+      responsible: responsible.trim() || undefined, docLocation: docLocation.trim() || undefined,
+      condition: isDecision ? (condition.trim() || undefined) : n.data.condition,
+    } } : n));
+    onClose();
+  }
+
+  return (
+    <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-300 rounded-lg shadow-lg p-2 space-y-1.5 min-w-[220px]" onClick={e => e.stopPropagation()}>
+      <div><label className="text-[8px] text-slate-500 block">Label</label><input value={label} onChange={e => setLabel(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" /></div>
+      <div><label className="text-[8px] text-slate-500 block">Source Document / Action</label><input value={sourceDoc} onChange={e => setSourceDoc(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. Purchase Order" /></div>
+      <div><label className="text-[8px] text-slate-500 block">Output Document / Action</label><input value={outputDoc} onChange={e => setOutputDoc(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. Invoice" /></div>
+      <div><label className="text-[8px] text-slate-500 block">Responsible (Role)</label><input value={responsible} onChange={e => setResponsible(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. AP Clerk" /></div>
+      <div><label className="text-[8px] text-slate-500 block">Document Location</label><input value={docLocation} onChange={e => setDocLocation(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. Section 3.2, Page 5" /></div>
+      {isDecision && <div><label className="text-[8px] text-slate-500 block">Condition</label><input value={condition} onChange={e => setCondition(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5 italic" /></div>}
+      <div className="flex gap-1 pt-1">
+        <button onClick={save} className="text-[9px] px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
+        <button onClick={onClose} className="text-[9px] px-2 py-0.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Cancel</button>
+      </div>
+    </div>
+  );
 }
 
 // ─── Custom Nodes ───
@@ -63,43 +143,30 @@ function WtStartNode({ id, data }: NodeProps) {
 
 function WtActionNode({ id, data, selected }: NodeProps) {
   const [editing, setEditing] = useState(false);
-  const [editVal, setEditVal] = useState(data.label as string);
   const { setNodes } = useReactFlow();
   const readOnly = data._readOnly as boolean;
-
-  const commitEdit = useCallback(() => {
-    setEditing(false);
-    if (editVal.trim() && editVal !== data.label) {
-      setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, label: editVal.trim() } } : n));
-    }
-  }, [editVal, data.label, id, setNodes]);
 
   const onDelete = useCallback(() => {
     setNodes(nds => nds.filter(n => n.id !== id));
   }, [id, setNodes]);
 
   return (
-    <div className={`relative px-4 py-2 rounded-lg bg-blue-50 border-2 text-blue-800 text-xs text-center min-w-[160px] max-w-[260px] group ${selected ? 'border-blue-500 shadow-md' : 'border-blue-300'}`}>
+    <div className={`relative px-4 py-2 rounded-lg bg-blue-50 border-2 text-blue-800 text-xs text-center min-w-[180px] max-w-[280px] group ${selected ? 'border-blue-500 shadow-md' : 'border-blue-300'}`}>
       <Handle type="target" position={Position.Top} className="!bg-blue-400 !w-2.5 !h-2.5" />
-      {editing && !readOnly ? (
-        <input
-          autoFocus
-          value={editVal}
-          onChange={e => setEditVal(e.target.value)}
-          onBlur={commitEdit}
-          onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') { setEditVal(data.label as string); setEditing(false); } }}
-          className="w-full text-xs text-center bg-transparent border-b border-blue-400 outline-none"
-        />
-      ) : (
-        <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
-          {data.label as string}
-        </div>
-      )}
+      <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
+        {data.label as string}
+      </div>
+      <MetadataBadges data={data} />
+      <div className="flex items-center justify-between">
+        <StepSignOffDots data={data} nodeId={id} />
+        {data.docLocation ? <span className="text-[7px] text-slate-400 inline-flex items-center gap-0.5"><MapPin className="h-2 w-2" />{String(data.docLocation)}</span> : null}
+      </div>
       {!readOnly && (
         <button onClick={onDelete} className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] hidden group-hover:flex items-center justify-center hover:bg-red-600">
           <X className="h-2.5 w-2.5" />
         </button>
       )}
+      {editing && <StepEditPanel data={data} nodeId={id} onClose={() => setEditing(false)} />}
       <Handle type="source" position={Position.Bottom} className="!bg-blue-400 !w-2.5 !h-2.5" />
     </div>
   );
@@ -107,46 +174,32 @@ function WtActionNode({ id, data, selected }: NodeProps) {
 
 function WtDecisionNode({ id, data, selected }: NodeProps) {
   const [editing, setEditing] = useState(false);
-  const [editLabel, setEditLabel] = useState(data.label as string);
-  const [editCondition, setEditCondition] = useState((data.condition as string) || '');
   const { setNodes } = useReactFlow();
   const readOnly = data._readOnly as boolean;
-
-  const commitEdit = useCallback(() => {
-    setEditing(false);
-    setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, label: editLabel.trim() || data.label, condition: editCondition.trim() || undefined } } : n));
-  }, [editLabel, editCondition, data.label, id, setNodes]);
 
   const onDelete = useCallback(() => {
     setNodes(nds => nds.filter(n => n.id !== id));
   }, [id, setNodes]);
 
   return (
-    <div className={`relative px-4 py-2 rounded-lg bg-amber-50 border-2 border-dashed text-amber-800 text-xs text-center min-w-[180px] max-w-[280px] group ${selected ? 'border-amber-500 shadow-md' : 'border-amber-400'}`}>
+    <div className={`relative px-4 py-2 rounded-lg bg-amber-50 border-2 border-dashed text-amber-800 text-xs text-center min-w-[200px] max-w-[300px] group ${selected ? 'border-amber-500 shadow-md' : 'border-amber-400'}`}>
       <Handle type="target" position={Position.Top} className="!bg-amber-500 !w-2.5 !h-2.5" />
       <span className="text-[8px] text-amber-500 font-bold block">DECISION</span>
-      {editing && !readOnly ? (
-        <div className="space-y-1">
-          <input autoFocus value={editLabel} onChange={e => setEditLabel(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') { setEditLabel(data.label as string); setEditCondition((data.condition as string) || ''); setEditing(false); } }}
-            className="w-full text-xs text-center bg-transparent border-b border-amber-400 outline-none" placeholder="Label..." />
-          <input value={editCondition} onChange={e => setEditCondition(e.target.value)}
-            onBlur={commitEdit}
-            onKeyDown={e => { if (e.key === 'Enter') commitEdit(); }}
-            className="w-full text-[10px] text-center bg-transparent border-b border-amber-300 outline-none italic" placeholder="Condition..." />
-        </div>
-      ) : (
-        <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
-          {data.label as string}
-          {data.condition ? <div className="text-[9px] text-amber-600 mt-0.5 italic">{String(data.condition)}</div> : null}
-        </div>
-      )}
+      <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
+        {data.label as string}
+        {data.condition ? <div className="text-[9px] text-amber-600 mt-0.5 italic">{String(data.condition)}</div> : null}
+      </div>
+      <MetadataBadges data={data} />
+      <div className="flex items-center justify-between">
+        <StepSignOffDots data={data} nodeId={id} />
+        {data.docLocation ? <span className="text-[7px] text-slate-400 inline-flex items-center gap-0.5"><MapPin className="h-2 w-2" />{String(data.docLocation)}</span> : null}
+      </div>
       {!readOnly && (
         <button onClick={onDelete} className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] hidden group-hover:flex items-center justify-center hover:bg-red-600">
           <X className="h-2.5 w-2.5" />
         </button>
       )}
-      {/* Yes handle (left) and No handle (right) */}
+      {editing && <StepEditPanel data={data} nodeId={id} onClose={() => setEditing(false)} isDecision />}
       <Handle type="source" position={Position.Bottom} id="yes" className="!bg-green-500 !w-2.5 !h-2.5" style={{ left: '30%' }} />
       <Handle type="source" position={Position.Bottom} id="no" className="!bg-red-500 !w-2.5 !h-2.5" style={{ left: '70%' }} />
     </div>
@@ -155,30 +208,17 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
 
 function WtEndNode({ id, data, selected }: NodeProps) {
   const [editing, setEditing] = useState(false);
-  const [editVal, setEditVal] = useState(data.label as string);
   const { setNodes } = useReactFlow();
   const readOnly = data._readOnly as boolean;
 
-  const commitEdit = useCallback(() => {
-    setEditing(false);
-    if (editVal.trim() && editVal !== data.label) {
-      setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, label: editVal.trim() } } : n));
-    }
-  }, [editVal, data.label, id, setNodes]);
-
   return (
-    <div className={`px-6 py-2 rounded-full bg-red-100 border-2 text-red-800 text-xs font-semibold text-center min-w-[120px] ${selected ? 'border-red-500 shadow-md' : 'border-red-300'}`}>
+    <div className={`relative px-6 py-2 rounded-full bg-red-100 border-2 text-red-800 text-xs font-semibold text-center min-w-[120px] ${selected ? 'border-red-500 shadow-md' : 'border-red-300'}`}>
       <Handle type="target" position={Position.Top} className="!bg-red-400 !w-2.5 !h-2.5" />
-      {editing && !readOnly ? (
-        <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)}
-          onBlur={commitEdit}
-          onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') { setEditVal(data.label as string); setEditing(false); } }}
-          className="w-full text-xs text-center bg-transparent border-b border-red-400 outline-none" />
-      ) : (
-        <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
-          {data.label as string || 'Process End'}
-        </div>
-      )}
+      <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
+        {data.label as string || 'Process End'}
+      </div>
+      <StepSignOffDots data={data} nodeId={id} />
+      {editing && <StepEditPanel data={data} nodeId={id} onClose={() => setEditing(false)} />}
     </div>
   );
 }
@@ -252,7 +292,7 @@ function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[]
         id: step.id,
         type: step.type,
         position: { x: startX + col * X_GAP, y: lvl * Y_GAP },
-        data: { label: step.label, condition: step.condition },
+        data: { label: step.label, condition: step.condition, sourceDoc: step.sourceDoc, outputDoc: step.outputDoc, responsible: step.responsible, docLocation: step.docLocation, attachments: step.attachments, stepSignOffs: step.stepSignOffs },
       });
     }
   }
@@ -320,6 +360,12 @@ function reactFlowToFlowSteps(nodes: Node[], edges: Edge[]): FlowStep[] {
       type: node.type as FlowStep['type'],
       next,
       condition: (node.data.condition as string) || undefined,
+      sourceDoc: (node.data.sourceDoc as string) || undefined,
+      outputDoc: (node.data.outputDoc as string) || undefined,
+      responsible: (node.data.responsible as string) || undefined,
+      docLocation: (node.data.docLocation as string) || undefined,
+      attachments: (node.data.attachments as any[]) || undefined,
+      stepSignOffs: (node.data.stepSignOffs as any) || undefined,
     };
   });
 }

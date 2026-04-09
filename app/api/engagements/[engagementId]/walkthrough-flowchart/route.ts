@@ -126,6 +126,9 @@ Return ONLY a valid JSON array of steps (no markdown, no explanation, no preambl
 - type: one of "start", "action", "decision", "end"
 - next: array of step IDs this connects to
 - condition: (only for decisions) the condition text from the documentation
+- sourceDoc: (optional) the input document, form, or trigger for this step (e.g. "Purchase Order", "Customer Email")
+- outputDoc: (optional) the document, report, or output produced by this step (e.g. "Invoice", "Approval Form")
+- responsible: (optional) the person, role, or department responsible (e.g. "Accounts Payable Clerk", "Finance Manager")
 
 Rules:
 - Always start with exactly one "start" step
@@ -134,6 +137,7 @@ Rules:
 - Include controls as actions where they occur in the process
 - ONLY include steps that are described in the client documentation
 - If the documentation is vague, include only what is explicitly stated
+- Extract sourceDoc, outputDoc, and responsible where mentioned in the documentation
 - Return ONLY the JSON array — no text before or after it`,
         },
         {
