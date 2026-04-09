@@ -10,81 +10,98 @@ interface Props {
   onClose: () => void;
 }
 
-type DrawMode = 'none' | 'crop' | 'rect' | 'freehand';
+type Tool = 'crop' | 'rect' | 'freehand';
 
 export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }: Props) {
-  const [phase, setPhase] = useState<'idle' | 'captured' | 'annotating' | 'uploading'>('idle');
-  const [capturedImage, setCapturedImage] = useState<HTMLCanvasElement | null>(null);
-  const [drawMode, setDrawMode] = useState<DrawMode>('crop');
+  const [phase, setPhase] = useState<'capturing' | 'editing' | 'uploading'>('capturing');
+  const [tool, setTool] = useState<Tool>('crop');
   const [drawColor, setDrawColor] = useState('#ef4444');
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const overlayRef = useRef<HTMLCanvasElement>(null);
-  const drawStartRef = useRef<{ x: number; y: number } | null>(null);
-  const annotationsRef = useRef<ImageData | null>(null);
-  const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  // Start screen capture
-  const startCapture = useCallback(async () => {
+  // Full-resolution captured image (never scaled)
+  const fullImageRef = useRef<HTMLImageElement | null>(null);
+  // Displayed canvas (scaled to fit modal)
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Annotation overlay (same size as display canvas)
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+
+  const drawingRef = useRef(false);
+  const startPosRef = useRef<{ x: number; y: number } | null>(null);
+  const annotationSnapshotRef = useRef<ImageData | null>(null);
+  const [cropBox, setCropBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  // Capture screen immediately
+  const capture = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: 'monitor' } as any });
+      setPhase('capturing');
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const track = stream.getVideoTracks()[0];
-      const settings = track.getSettings();
       const video = document.createElement('video');
       video.srcObject = stream;
+      video.muted = true;
       await video.play();
 
-      // Wait a frame for video to render
-      await new Promise(r => requestAnimationFrame(r));
-
+      // Grab frame at full resolution
       const canvas = document.createElement('canvas');
-      canvas.width = settings.width || video.videoWidth;
-      canvas.height = settings.height || video.videoHeight;
-      const ctx = canvas.getContext('2d')!;
-      ctx.drawImage(video, 0, 0);
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d')!.drawImage(video, 0, 0);
 
-      // Stop the stream
       stream.getTracks().forEach(t => t.stop());
       video.remove();
 
-      setCapturedImage(canvas);
-      setPhase('captured');
-      setDrawMode('crop');
-      setCropRect(null);
+      // Convert to image for clean handling
+      const img = new Image();
+      img.onload = () => {
+        fullImageRef.current = img;
+        setPhase('editing');
+        setTool('crop');
+        setCropBox(null);
+        annotationSnapshotRef.current = null;
+      };
+      img.src = canvas.toDataURL('image/png');
     } catch (err) {
-      console.error('Screen capture failed:', err);
+      console.error('Screen capture cancelled or failed:', err);
+      onClose();
     }
-  }, []);
+  }, [onClose]);
 
-  // Draw captured image to display canvas
+  // Draw full image to display canvas (scaled to fit)
   useEffect(() => {
-    if (!capturedImage || !canvasRef.current) return;
+    if (phase !== 'editing' || !fullImageRef.current || !canvasRef.current) return;
+    const img = fullImageRef.current;
     const canvas = canvasRef.current;
-    const maxW = 900, maxH = 600;
-    const scale = Math.min(maxW / capturedImage.width, maxH / capturedImage.height, 1);
-    canvas.width = capturedImage.width * scale;
-    canvas.height = capturedImage.height * scale;
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(capturedImage, 0, 0, canvas.width, canvas.height);
 
-    // Init overlay canvas
+    // Use nearly full viewport
+    const maxW = window.innerWidth - 80;
+    const maxH = window.innerHeight - 200;
+    const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+
     if (overlayRef.current) {
       overlayRef.current.width = canvas.width;
       overlayRef.current.height = canvas.height;
+      const ctx = overlayRef.current.getContext('2d')!;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      annotationSnapshotRef.current = null;
     }
-  }, [capturedImage, phase]);
+  }, [phase]);
 
-  // Mouse handlers for crop & draw
+  // Mouse position relative to overlay
   const getPos = (e: React.MouseEvent) => {
-    const rect = (overlayRef.current || canvasRef.current)!.getBoundingClientRect();
+    const rect = overlayRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
   const onMouseDown = (e: React.MouseEvent) => {
+    if (phase !== 'editing') return;
     const pos = getPos(e);
-    drawStartRef.current = pos;
+    startPosRef.current = pos;
+    drawingRef.current = true;
 
-    if (drawMode === 'freehand' && overlayRef.current) {
+    if (tool === 'freehand' && overlayRef.current) {
       const ctx = overlayRef.current.getContext('2d')!;
       ctx.beginPath();
       ctx.moveTo(pos.x, pos.y);
@@ -95,20 +112,22 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
-    if (!drawStartRef.current) return;
+    if (!drawingRef.current || !startPosRef.current) return;
     const pos = getPos(e);
-    const start = drawStartRef.current;
+    const start = startPosRef.current;
 
-    if (drawMode === 'crop') {
-      setCropRect({ x: Math.min(start.x, pos.x), y: Math.min(start.y, pos.y), w: Math.abs(pos.x - start.x), h: Math.abs(pos.y - start.y) });
-    } else if (drawMode === 'freehand' && overlayRef.current) {
+    if (tool === 'crop') {
+      setCropBox({
+        x: Math.min(start.x, pos.x), y: Math.min(start.y, pos.y),
+        w: Math.abs(pos.x - start.x), h: Math.abs(pos.y - start.y),
+      });
+    } else if (tool === 'freehand' && overlayRef.current) {
       const ctx = overlayRef.current.getContext('2d')!;
       ctx.lineTo(pos.x, pos.y);
       ctx.stroke();
-    } else if (drawMode === 'rect' && overlayRef.current) {
+    } else if (tool === 'rect' && overlayRef.current) {
       const ctx = overlayRef.current.getContext('2d')!;
-      // Restore previous state then draw new rect
-      if (annotationsRef.current) ctx.putImageData(annotationsRef.current, 0, 0);
+      if (annotationSnapshotRef.current) ctx.putImageData(annotationSnapshotRef.current, 0, 0);
       else ctx.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height);
       ctx.strokeStyle = drawColor;
       ctx.lineWidth = 3;
@@ -117,170 +136,166 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
   };
 
   const onMouseUp = () => {
-    if (drawMode === 'rect' || drawMode === 'freehand') {
-      if (overlayRef.current) {
-        annotationsRef.current = overlayRef.current.getContext('2d')!.getImageData(0, 0, overlayRef.current.width, overlayRef.current.height);
-      }
+    drawingRef.current = false;
+    startPosRef.current = null;
+    if ((tool === 'rect' || tool === 'freehand') && overlayRef.current) {
+      annotationSnapshotRef.current = overlayRef.current.getContext('2d')!.getImageData(0, 0, overlayRef.current.width, overlayRef.current.height);
     }
-    drawStartRef.current = null;
   };
 
-  // Apply crop
+  // Apply crop — replace fullImage with cropped region at full resolution
   const applyCrop = useCallback(() => {
-    if (!cropRect || !canvasRef.current || !capturedImage) return;
-    const scale = capturedImage.width / canvasRef.current.width;
-    const cropped = document.createElement('canvas');
-    cropped.width = cropRect.w * scale;
-    cropped.height = cropRect.h * scale;
-    const ctx = cropped.getContext('2d')!;
-    ctx.drawImage(capturedImage, cropRect.x * scale, cropRect.y * scale, cropped.width, cropped.height, 0, 0, cropped.width, cropped.height);
-    setCapturedImage(cropped);
-    setCropRect(null);
-    setPhase('annotating');
-    setDrawMode('rect');
-    annotationsRef.current = null;
-  }, [cropRect, capturedImage]);
+    if (!cropBox || !fullImageRef.current || !canvasRef.current) return;
+    const displayScale = fullImageRef.current.width / canvasRef.current.width;
+    const sx = Math.round(cropBox.x * displayScale);
+    const sy = Math.round(cropBox.y * displayScale);
+    const sw = Math.round(cropBox.w * displayScale);
+    const sh = Math.round(cropBox.h * displayScale);
 
-  // Clear annotations
+    const cropped = document.createElement('canvas');
+    cropped.width = sw;
+    cropped.height = sh;
+    cropped.getContext('2d')!.drawImage(fullImageRef.current, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    const img = new Image();
+    img.onload = () => {
+      fullImageRef.current = img;
+      setCropBox(null);
+      setTool('rect');
+      // Re-trigger display
+      setPhase('capturing');
+      setTimeout(() => setPhase('editing'), 10);
+    };
+    img.src = cropped.toDataURL('image/png');
+  }, [cropBox]);
+
   const clearAnnotations = () => {
     if (overlayRef.current) {
       overlayRef.current.getContext('2d')!.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height);
-      annotationsRef.current = null;
+      annotationSnapshotRef.current = null;
     }
   };
 
-  // Upload final image
+  // Upload — flatten annotations onto full-res image
   const upload = useCallback(async () => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || !fullImageRef.current) return;
     setUploading(true);
 
-    // Flatten annotations onto canvas
-    const finalCanvas = document.createElement('canvas');
-    finalCanvas.width = canvasRef.current.width;
-    finalCanvas.height = canvasRef.current.height;
-    const ctx = finalCanvas.getContext('2d')!;
+    // Build final at display resolution (includes annotations)
+    const final = document.createElement('canvas');
+    final.width = canvasRef.current.width;
+    final.height = canvasRef.current.height;
+    const ctx = final.getContext('2d')!;
     ctx.drawImage(canvasRef.current, 0, 0);
     if (overlayRef.current) ctx.drawImage(overlayRef.current, 0, 0);
 
-    finalCanvas.toBlob(async (blob) => {
+    final.toBlob(async (blob) => {
       if (!blob) { setUploading(false); return; }
       const formData = new FormData();
       formData.append('file', blob, `capture_${Date.now()}.png`);
       formData.append('engagementId', engagementId);
       formData.append('stepId', stepId);
-
       try {
         const res = await fetch('/api/walkthrough/upload', { method: 'POST', body: formData });
         if (res.ok) {
-          const data = await res.json();
-          onCapture({ id: data.id, name: data.name, storagePath: data.storagePath });
+          const d = await res.json();
+          onCapture({ id: d.id, name: d.name, storagePath: d.storagePath });
           onClose();
         }
-      } catch (err) {
-        console.error('Upload failed:', err);
-      } finally { setUploading(false); }
+      } catch (err) { console.error('Upload failed:', err); }
+      finally { setUploading(false); }
     }, 'image/png');
   }, [engagementId, stepId, onCapture, onClose]);
 
-  // Auto-start capture on mount
-  useEffect(() => { startCapture(); }, []);
+  // Auto-start capture
+  useEffect(() => { capture(); }, []);
+
+  if (phase === 'capturing' && !fullImageRef.current) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center">
+        <div className="bg-white rounded-xl shadow-2xl px-8 py-6 text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-blue-500" />
+          <p className="text-sm text-slate-600">Select a screen or window to capture...</p>
+          <button onClick={onClose} className="mt-3 text-xs text-slate-400 hover:text-slate-600">Cancel</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl max-w-[960px] max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-          <div className="flex items-center gap-2">
-            <Camera className="h-4 w-4 text-blue-600" />
-            <span className="text-sm font-semibold text-slate-800">
-              {phase === 'idle' ? 'Capturing Screen...' : phase === 'captured' ? 'Crop Region' : phase === 'annotating' ? 'Annotate & Save' : 'Uploading...'}
-            </span>
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
-        </div>
+    <div className="fixed inset-0 z-[9999] bg-black/70 flex flex-col" onClick={onClose}>
+      {/* Toolbar */}
+      <div className="shrink-0 bg-slate-900 px-4 py-2 flex items-center gap-3" onClick={e => e.stopPropagation()}>
+        <Camera className="h-4 w-4 text-blue-400" />
+        <span className="text-sm font-medium text-white">Screen Capture</span>
+        <span className="text-slate-500">|</span>
 
-        {/* Toolbar */}
-        {(phase === 'captured' || phase === 'annotating') && (
-          <div className="px-4 py-2 border-b border-slate-100 flex items-center gap-2 bg-slate-50">
-            {phase === 'captured' && (
-              <>
-                <button onClick={() => setDrawMode('crop')} className={`text-[10px] px-2 py-1 rounded inline-flex items-center gap-1 ${drawMode === 'crop' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                  <Crop className="h-3 w-3" /> Crop
-                </button>
-                {cropRect && cropRect.w > 10 && (
-                  <button onClick={applyCrop} className="text-[10px] px-2 py-1 bg-green-600 text-white rounded inline-flex items-center gap-1 hover:bg-green-700">
-                    <Check className="h-3 w-3" /> Apply Crop
-                  </button>
-                )}
-                <span className="text-slate-300">|</span>
-                <button onClick={() => { setCropRect(null); setPhase('annotating'); setDrawMode('rect'); }} className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">
-                  Skip Crop
-                </button>
-              </>
-            )}
-            {phase === 'annotating' && (
-              <>
-                <button onClick={() => setDrawMode('rect')} className={`text-[10px] px-2 py-1 rounded inline-flex items-center gap-1 ${drawMode === 'rect' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                  <Square className="h-3 w-3" /> Rectangle
-                </button>
-                <button onClick={() => setDrawMode('freehand')} className={`text-[10px] px-2 py-1 rounded inline-flex items-center gap-1 ${drawMode === 'freehand' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                  <Pencil className="h-3 w-3" /> Freehand
-                </button>
-                <span className="text-slate-300">|</span>
-                {['#ef4444', '#f59e0b', '#22c55e', '#3b82f6'].map(c => (
-                  <button key={c} onClick={() => setDrawColor(c)} className={`w-5 h-5 rounded-full border-2 ${drawColor === c ? 'border-slate-800 scale-110' : 'border-slate-300'}`} style={{ backgroundColor: c }} />
-                ))}
-                <span className="text-slate-300">|</span>
-                <button onClick={clearAnnotations} className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 inline-flex items-center gap-1">
-                  <RotateCcw className="h-3 w-3" /> Clear
-                </button>
-              </>
-            )}
-          </div>
+        <button onClick={() => { setTool('crop'); setCropBox(null); }} className={`text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1 ${tool === 'crop' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+          <Crop className="h-3 w-3" /> Crop
+        </button>
+        {cropBox && cropBox.w > 10 && tool === 'crop' && (
+          <button onClick={applyCrop} className="text-[11px] px-2.5 py-1 bg-green-600 text-white rounded inline-flex items-center gap-1 hover:bg-green-500">
+            <Check className="h-3 w-3" /> Apply Crop
+          </button>
         )}
 
-        {/* Canvas area */}
-        <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-100 min-h-[300px] relative">
-          {phase === 'idle' && (
-            <div className="text-center text-slate-500">
-              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
-              <p className="text-sm">Select a screen or window to share...</p>
+        <span className="text-slate-600">|</span>
+
+        <button onClick={() => setTool('rect')} className={`text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1 ${tool === 'rect' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+          <Square className="h-3 w-3" /> Highlight
+        </button>
+        <button onClick={() => setTool('freehand')} className={`text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1 ${tool === 'freehand' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+          <Pencil className="h-3 w-3" /> Draw
+        </button>
+
+        {['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#ffffff'].map(c => (
+          <button key={c} onClick={() => setDrawColor(c)} className={`w-5 h-5 rounded-full border-2 ${drawColor === c ? 'border-white scale-110' : 'border-slate-500'}`} style={{ backgroundColor: c }} />
+        ))}
+
+        <button onClick={clearAnnotations} className="text-[11px] px-2.5 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 inline-flex items-center gap-1 ml-1">
+          <RotateCcw className="h-3 w-3" /> Clear
+        </button>
+
+        <div className="flex-1" />
+
+        <button onClick={capture} className="text-[11px] px-2.5 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 inline-flex items-center gap-1">
+          <Camera className="h-3 w-3" /> Recapture
+        </button>
+        <button onClick={upload} disabled={uploading} className="text-[11px] px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 inline-flex items-center gap-1">
+          {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+          {uploading ? 'Saving...' : 'Save & Attach'}
+        </button>
+        <button onClick={onClose} className="text-slate-400 hover:text-white ml-2"><X className="h-5 w-5" /></button>
+      </div>
+
+      {/* Canvas area — full remaining viewport */}
+      <div className="flex-1 overflow-auto flex items-center justify-center p-2" onClick={e => e.stopPropagation()}>
+        <div className="relative inline-block">
+          <canvas ref={canvasRef} className="rounded shadow-2xl" />
+          <canvas
+            ref={overlayRef}
+            className="absolute inset-0"
+            style={{ cursor: tool === 'crop' ? 'crosshair' : tool === 'rect' ? 'crosshair' : 'default' }}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+          />
+          {/* Crop overlay */}
+          {cropBox && tool === 'crop' && (
+            <div className="absolute inset-0 pointer-events-none">
+              <svg width="100%" height="100%" className="absolute inset-0">
+                <defs>
+                  <mask id="cropMask">
+                    <rect width="100%" height="100%" fill="white" />
+                    <rect x={cropBox.x} y={cropBox.y} width={cropBox.w} height={cropBox.h} fill="black" />
+                  </mask>
+                </defs>
+                <rect width="100%" height="100%" fill="rgba(0,0,0,0.5)" mask="url(#cropMask)" />
+              </svg>
+              <div className="absolute border-2 border-white border-dashed" style={{ left: cropBox.x, top: cropBox.y, width: cropBox.w, height: cropBox.h }} />
             </div>
           )}
-          <div className="relative inline-block">
-            <canvas ref={canvasRef} className="max-w-full rounded shadow-lg" />
-            <canvas
-              ref={overlayRef}
-              className="absolute inset-0 cursor-crosshair"
-              onMouseDown={onMouseDown}
-              onMouseMove={onMouseMove}
-              onMouseUp={onMouseUp}
-              onMouseLeave={onMouseUp}
-            />
-            {/* Crop overlay */}
-            {cropRect && phase === 'captured' && (
-              <>
-                <div className="absolute inset-0 bg-black/40 pointer-events-none" />
-                <div className="absolute border-2 border-white border-dashed pointer-events-none" style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h, boxShadow: '0 0 0 9999px rgba(0,0,0,0.4)' }} />
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="px-4 py-3 border-t border-slate-200 flex items-center justify-between bg-slate-50">
-          <button onClick={startCapture} className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 inline-flex items-center gap-1">
-            <Camera className="h-3 w-3" /> Recapture
-          </button>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Cancel</button>
-            {(phase === 'annotating' || phase === 'captured') && (
-              <button onClick={upload} disabled={uploading} className="text-xs px-4 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1">
-                {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                {uploading ? 'Uploading...' : 'Save & Attach'}
-              </button>
-            )}
-          </div>
         </div>
       </div>
     </div>
