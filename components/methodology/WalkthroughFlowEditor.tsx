@@ -40,10 +40,22 @@ interface WalkthroughFlowEditorProps {
 
 // ─── Custom Nodes ───
 
-function WtStartNode({ data }: NodeProps) {
+function WtStartNode({ id, data }: NodeProps) {
+  const { setNodes } = useReactFlow();
+  const readOnly = data._readOnly as boolean;
+
+  const onDelete = useCallback(() => {
+    setNodes(nds => nds.filter(n => n.id !== id));
+  }, [id, setNodes]);
+
   return (
-    <div className="px-6 py-2 rounded-full bg-green-100 border-2 border-green-400 text-green-800 text-xs font-semibold text-center min-w-[120px]">
+    <div className="relative px-6 py-2 rounded-full bg-green-100 border-2 border-green-400 text-green-800 text-xs font-semibold text-center min-w-[120px] group">
       {data.label as string || 'Process Start'}
+      {!readOnly && (
+        <button onClick={onDelete} className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] hidden group-hover:flex items-center justify-center hover:bg-red-600">
+          <X className="h-2.5 w-2.5" />
+        </button>
+      )}
       <Handle type="source" position={Position.Bottom} className="!bg-green-500 !w-2.5 !h-2.5" />
     </div>
   );
@@ -374,7 +386,7 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
     if (readOnly) return;
     if (event.key === 'Delete' || event.key === 'Backspace') {
       setNodes(nds => {
-        const toDelete = nds.filter(n => n.selected && n.type !== 'start').map(n => n.id);
+        const toDelete = nds.filter(n => n.selected).map(n => n.id);
         if (toDelete.length === 0) return nds;
         setEdges(eds => eds.filter(e => !toDelete.includes(e.source) && !toDelete.includes(e.target)));
         return nds.filter(n => !toDelete.includes(n.id));
@@ -388,6 +400,8 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
       {!readOnly && (
         <div className="w-36 shrink-0 bg-slate-50 border border-slate-200 rounded-lg p-2 space-y-1.5 overflow-y-auto">
           <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Add Nodes</p>
+          <DraggableItem label="Start" icon={<Circle className="h-3 w-3 text-green-500" />} color="bg-green-50 border-green-200"
+            nodeType="start" data={{ label: 'Process Start' }} />
           <DraggableItem label="Action" icon={<Square className="h-3 w-3 text-blue-500" />} color="bg-blue-50 border-blue-200"
             nodeType="action" data={{ label: 'New Action' }} />
           <DraggableItem label="Decision" icon={<Diamond className="h-3 w-3 text-amber-500" />} color="bg-amber-50 border-amber-200"
