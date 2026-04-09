@@ -7,10 +7,12 @@ import { processPdf } from '@/lib/pdf-to-images';
 const apiKey = process.env.TOGETHER_API_KEY || process.env.TOGETHER_DOC_SUMMARY_KEY || '';
 const MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
 
+// Rough char-to-token ratio; keep well within 128k context
+const MAX_DOC_CHARS = 80_000;
+
 /**
  * POST /api/engagements/[engagementId]/walkthrough-flowchart
  * Takes process narrative + controls (and optionally evidence files) and generates a structured flowchart.
- * When evidenceFiles are provided, downloads them from Azure Blob, extracts text, and uses that for generation.
  */
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -20,6 +22,7 @@ export async function POST(req: NextRequest) {
 
   let documentText = narrative?.trim() || '';
   let extractedNarrative = '';
+  const extractionErrors: string[] = [];
 
   // If evidence files provided, extract text from them
   if (evidenceFiles && Array.isArray(evidenceFiles) && evidenceFiles.length > 0) {
@@ -27,31 +30,61 @@ export async function POST(req: NextRequest) {
 
     for (const file of evidenceFiles) {
       try {
+        console.log('[walkthrough-flowchart] Downloading:', file.name, file.storagePath);
         const buffer = await downloadBlob(file.storagePath, 'upload-inbox');
-        const mime = (file.mimeType || '').toLowerCase();
+        const mime = (file.mimeType || file.name || '').toLowerCase();
 
-        if (mime.includes('pdf')) {
+        if (mime.includes('pdf') || file.name?.toLowerCase().endsWith('.pdf')) {
           const result = await processPdf(buffer, 20);
           if (result.mode === 'text' && result.text) {
-            extractedParts.push(`--- ${file.name} ---\n${result.text}`);
+            console.log('[walkthrough-flowchart] Extracted', result.text.length, 'chars from PDF:', file.name);
+            extractedParts.push(`--- ${file.name} (${result.pageCount} pages) ---\n${result.text}`);
+          } else {
+            extractionErrors.push(`${file.name}: PDF had no extractable text`);
           }
-        } else if (mime.includes('text') || mime.includes('csv')) {
-          extractedParts.push(`--- ${file.name} ---\n${buffer.toString('utf-8')}`);
-        } else if (mime.includes('word') || mime.includes('docx')) {
-          // Try basic text extraction from docx
-          try {
-            const text = buffer.toString('utf-8').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            if (text.length > 50) extractedParts.push(`--- ${file.name} ---\n${text}`);
-          } catch {}
+        } else if (mime.includes('text') || mime.includes('csv') || file.name?.toLowerCase().endsWith('.txt') || file.name?.toLowerCase().endsWith('.csv')) {
+          const text = buffer.toString('utf-8').trim();
+          if (text.length > 10) {
+            extractedParts.push(`--- ${file.name} ---\n${text}`);
+          }
+        } else if (mime.includes('word') || mime.includes('docx') || file.name?.toLowerCase().endsWith('.docx') || file.name?.toLowerCase().endsWith('.doc')) {
+          // Extract readable text from docx XML
+          const raw = buffer.toString('utf-8');
+          // Pull text from <w:t> tags in docx XML
+          const wMatches = raw.match(/<w:t[^>]*>([^<]+)<\/w:t>/g);
+          if (wMatches && wMatches.length > 0) {
+            const text = wMatches.map(m => m.replace(/<[^>]+>/g, '')).join(' ').trim();
+            if (text.length > 20) {
+              console.log('[walkthrough-flowchart] Extracted', text.length, 'chars from DOCX:', file.name);
+              extractedParts.push(`--- ${file.name} ---\n${text}`);
+            } else {
+              extractionErrors.push(`${file.name}: DOCX had minimal text`);
+            }
+          } else {
+            // Try plain text fallback (works for .doc sometimes)
+            const plainText = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (plainText.length > 50) {
+              extractedParts.push(`--- ${file.name} ---\n${plainText.substring(0, 50000)}`);
+            } else {
+              extractionErrors.push(`${file.name}: could not extract text from document`);
+            }
+          }
+        } else {
+          extractionErrors.push(`${file.name}: unsupported file type (${mime})`);
         }
-        // Images (jpg, png) — skip text extraction, they'd need vision model
       } catch (err: any) {
         console.error(`[walkthrough-flowchart] Failed to extract ${file.name}:`, err.message);
+        extractionErrors.push(`${file.name}: ${err.message}`);
       }
     }
 
     if (extractedParts.length > 0) {
       extractedNarrative = extractedParts.join('\n\n');
+      // Truncate if too long for model context
+      if (extractedNarrative.length > MAX_DOC_CHARS) {
+        console.log('[walkthrough-flowchart] Truncating extracted text from', extractedNarrative.length, 'to', MAX_DOC_CHARS);
+        extractedNarrative = extractedNarrative.substring(0, MAX_DOC_CHARS) + '\n\n[... truncated for length ...]';
+      }
       documentText = documentText
         ? `${documentText}\n\n--- Extracted from client documents ---\n${extractedNarrative}`
         : extractedNarrative;
@@ -59,8 +92,13 @@ export async function POST(req: NextRequest) {
   }
 
   if (!documentText) {
-    return NextResponse.json({ error: 'No documentation available. Please provide a narrative or upload documents with extractable text.' }, { status: 400 });
+    const reason = extractionErrors.length > 0
+      ? `Could not extract text from the selected files:\n${extractionErrors.join('\n')}`
+      : 'No documentation available. Please provide a narrative or upload documents with extractable text.';
+    return NextResponse.json({ error: reason }, { status: 400 });
   }
+
+  console.log('[walkthrough-flowchart] Total document text:', documentText.length, 'chars');
 
   const controlsText = (controls || []).map((c: any, i: number) =>
     `${i + 1}. ${c.description} (${c.type}, ${c.frequency})`
@@ -78,7 +116,7 @@ export async function POST(req: NextRequest) {
 
 CRITICAL: You must ONLY use information explicitly stated in the client's documentation. Do NOT invent, assume, or fabricate any steps, controls, or details that are not in the provided text. If the documentation is insufficient, return fewer steps rather than making things up.
 
-Return ONLY a JSON array of steps. Each step has:
+Return ONLY a valid JSON array of steps (no markdown, no explanation, no preamble). Each step has:
 - id: unique string (e.g. "step_1", "decision_1")
 - label: short description of the step (max 50 words) — must be derived from the provided text
 - type: one of "start", "action", "decision", "end"
@@ -92,7 +130,7 @@ Rules:
 - Include controls as actions where they occur in the process
 - ONLY include steps that are described in the client documentation
 - If the documentation is vague, include only what is explicitly stated
-- Return ONLY the JSON array, no other text`,
+- Return ONLY the JSON array — no text before or after it`,
         },
         {
           role: 'user',
@@ -103,7 +141,7 @@ ${documentText}
 
 ${controlsText ? `Controls identified:\n${controlsText}` : ''}
 
-Generate a structured flowchart for this process.`,
+Generate a structured flowchart JSON array for this process.`,
         },
       ],
       max_tokens: 4096,
@@ -111,16 +149,45 @@ Generate a structured flowchart for this process.`,
     });
 
     const responseText = completion.choices[0]?.message?.content || '';
+    console.log('[walkthrough-flowchart] AI response length:', responseText.length, 'first 200 chars:', responseText.substring(0, 200));
+
     let jsonStr = responseText.trim();
+    // Strip markdown code fences
     if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-
-    const steps = JSON.parse(jsonStr);
-
-    if (!Array.isArray(steps) || steps.length === 0) {
-      return NextResponse.json({ error: 'Invalid flowchart generated' }, { status: 500 });
+    // Strip any leading text before the JSON array
+    const arrayStart = jsonStr.indexOf('[');
+    const arrayEnd = jsonStr.lastIndexOf(']');
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      jsonStr = jsonStr.substring(arrayStart, arrayEnd + 1);
     }
 
-    return NextResponse.json({ steps, processKey, extractedNarrative: extractedNarrative || undefined });
+    let steps: any[];
+    try {
+      steps = JSON.parse(jsonStr);
+    } catch (parseErr: any) {
+      console.error('[walkthrough-flowchart] JSON parse failed:', parseErr.message, 'Raw response:', responseText.substring(0, 500));
+      return NextResponse.json({
+        error: `AI returned invalid JSON. This can happen with very large documents. Try selecting fewer files.`,
+        extractionErrors: extractionErrors.length > 0 ? extractionErrors : undefined,
+      }, { status: 500 });
+    }
+
+    if (!Array.isArray(steps) || steps.length === 0) {
+      console.error('[walkthrough-flowchart] Empty or non-array result:', typeof steps);
+      return NextResponse.json({
+        error: 'AI could not generate a flowchart from the provided documents. The content may not describe a clear process. Try selecting specific process documentation files.',
+        extractionErrors: extractionErrors.length > 0 ? extractionErrors : undefined,
+      }, { status: 500 });
+    }
+
+    console.log('[walkthrough-flowchart] Generated flowchart with', steps.length, 'steps');
+
+    return NextResponse.json({
+      steps,
+      processKey,
+      extractedNarrative: extractedNarrative || undefined,
+      extractionErrors: extractionErrors.length > 0 ? extractionErrors : undefined,
+    });
   } catch (err: any) {
     console.error('[walkthrough-flowchart] AI generation failed:', err.message);
     return NextResponse.json({ error: 'Failed to generate flowchart: ' + err.message }, { status: 500 });
