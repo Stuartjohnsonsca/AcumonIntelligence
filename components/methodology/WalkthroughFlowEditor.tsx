@@ -28,6 +28,7 @@ interface StepSignOff { name: string; at: string; status: 'blank' | 'red' | 'gre
 interface FlowStep {
   id: string; label: string; type: 'start' | 'action' | 'decision' | 'end'; next: string[]; condition?: string;
   sourceDoc?: string; outputDoc?: string; responsible?: string; docLocation?: string;
+  isSignificantControl?: boolean;
   attachments?: { id: string; name: string; storagePath: string }[];
   stepSignOffs?: { preparer?: StepSignOff; reviewer?: StepSignOff; ri?: StepSignOff };
 }
@@ -91,6 +92,7 @@ function StepEditPanel({ data, nodeId, onClose, isDecision }: { data: any; nodeI
   const [responsible, setResponsible] = useState((data.responsible as string) || '');
   const [docLocation, setDocLocation] = useState((data.docLocation as string) || '');
   const [condition, setCondition] = useState((data.condition as string) || '');
+  const [significantControl, setSignificantControl] = useState(!!(data.isSignificantControl));
 
   function save() {
     setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: {
@@ -98,6 +100,7 @@ function StepEditPanel({ data, nodeId, onClose, isDecision }: { data: any; nodeI
       sourceDoc: sourceDoc.trim() || undefined, outputDoc: outputDoc.trim() || undefined,
       responsible: responsible.trim() || undefined, docLocation: docLocation.trim() || undefined,
       condition: isDecision ? (condition.trim() || undefined) : n.data.condition,
+      isSignificantControl: isDecision ? significantControl : n.data.isSignificantControl,
     } } : n));
     onClose();
   }
@@ -110,6 +113,12 @@ function StepEditPanel({ data, nodeId, onClose, isDecision }: { data: any; nodeI
       <div><label className="text-[8px] text-slate-500 block">Responsible (Role)</label><input value={responsible} onChange={e => setResponsible(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. AP Clerk" /></div>
       <div><label className="text-[8px] text-slate-500 block">Document Location</label><input value={docLocation} onChange={e => setDocLocation(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. Section 3.2, Page 5" /></div>
       {isDecision && <div><label className="text-[8px] text-slate-500 block">Condition</label><input value={condition} onChange={e => setCondition(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5 italic" /></div>}
+      {isDecision && (
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" checked={significantControl} onChange={e => setSignificantControl(e.target.checked)} className="w-3 h-3 rounded border-red-300 text-red-600 focus:ring-red-500" />
+          <span className="text-[9px] text-red-700 font-medium">Significant Control</span>
+        </label>
+      )}
       <div className="flex gap-1 pt-1">
         <button onClick={save} className="text-[9px] px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
         <button onClick={onClose} className="text-[9px] px-2 py-0.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Cancel</button>
@@ -182,9 +191,12 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
   }, [id, setNodes]);
 
   return (
-    <div className={`relative px-4 py-2 rounded-lg bg-amber-50 border-2 border-dashed text-amber-800 text-xs text-center min-w-[200px] max-w-[300px] group ${selected ? 'border-amber-500 shadow-md' : 'border-amber-400'}`}>
+    <div className={`relative px-4 py-2 rounded-lg bg-amber-50 border-dashed text-amber-800 text-xs text-center min-w-[200px] max-w-[300px] group ${data.isSignificantControl ? 'border-[3px] border-red-600 shadow-red-100 shadow-md' : `border-2 ${selected ? 'border-amber-500 shadow-md' : 'border-amber-400'}`}`}>
       <Handle type="target" position={Position.Top} className="!bg-amber-500 !w-2.5 !h-2.5" />
-      <span className="text-[8px] text-amber-500 font-bold block">DECISION</span>
+      <div className="flex items-center justify-center gap-1">
+        <span className="text-[8px] text-amber-500 font-bold">DECISION</span>
+        {data.isSignificantControl ? <span className="text-[7px] px-1 bg-red-100 text-red-700 rounded font-bold">SIGNIFICANT CONTROL</span> : null}
+      </div>
       <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
         {data.label as string}
         {data.condition ? <div className="text-[9px] text-amber-600 mt-0.5 italic">{String(data.condition)}</div> : null}
@@ -292,7 +304,7 @@ function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[]
         id: step.id,
         type: step.type,
         position: { x: startX + col * X_GAP, y: lvl * Y_GAP },
-        data: { label: step.label, condition: step.condition, sourceDoc: step.sourceDoc, outputDoc: step.outputDoc, responsible: step.responsible, docLocation: step.docLocation, attachments: step.attachments, stepSignOffs: step.stepSignOffs },
+        data: { label: step.label, condition: step.condition, sourceDoc: step.sourceDoc, outputDoc: step.outputDoc, responsible: step.responsible, docLocation: step.docLocation, isSignificantControl: step.isSignificantControl, attachments: step.attachments, stepSignOffs: step.stepSignOffs },
       });
     }
   }
@@ -364,6 +376,7 @@ function reactFlowToFlowSteps(nodes: Node[], edges: Edge[]): FlowStep[] {
       outputDoc: (node.data.outputDoc as string) || undefined,
       responsible: (node.data.responsible as string) || undefined,
       docLocation: (node.data.docLocation as string) || undefined,
+      isSignificantControl: (node.data.isSignificantControl as boolean) || undefined,
       attachments: (node.data.attachments as any[]) || undefined,
       stepSignOffs: (node.data.stepSignOffs as any) || undefined,
     };
@@ -391,14 +404,24 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
     [nodes, readOnly]
   );
 
-  // Propagate changes back (debounced)
+  // Propagate changes back (debounced, flush on unmount)
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+  nodesRef.current = nodes;
+  edgesRef.current = edges;
+
   useEffect(() => {
     clearTimeout(changeTimerRef.current);
     changeTimerRef.current = setTimeout(() => {
       const flowSteps = reactFlowToFlowSteps(nodes, edges);
       onStepsChange(flowSteps);
     }, 800);
-    return () => clearTimeout(changeTimerRef.current);
+    return () => {
+      clearTimeout(changeTimerRef.current);
+      // Flush on unmount so changes aren't lost when switching tabs
+      const flowSteps = reactFlowToFlowSteps(nodesRef.current, edgesRef.current);
+      onStepsChange(flowSteps);
+    };
   }, [nodes, edges]);
 
   const onConnect = useCallback((params: Connection) => {
