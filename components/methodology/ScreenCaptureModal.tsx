@@ -220,40 +220,20 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     );
   }
 
-  // Editing phase
+  // Editing phase — just the image + Save / Cancel
   return (
-    <div className="fixed inset-0 z-[9999] bg-black/70 flex flex-col" onClick={onClose}>
-      <div className="shrink-0 bg-slate-900 px-4 py-2 flex items-center gap-3" onClick={e => e.stopPropagation()}>
-        <Scissors className="h-4 w-4 text-blue-400" />
-        <span className="text-sm font-medium text-white">Annotate & Save</span>
-        <span className="text-slate-500">|</span>
-        <button onClick={() => setTool('rect')} className={`text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1 ${tool === 'rect' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-          <Square className="h-3 w-3" /> Highlight
-        </button>
-        <button onClick={() => setTool('freehand')} className={`text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1 ${tool === 'freehand' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-          <Pencil className="h-3 w-3" /> Draw
-        </button>
-        {['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#ffffff'].map(c => (
-          <button key={c} onClick={() => setDrawColor(c)} className={`w-5 h-5 rounded-full border-2 ${drawColor === c ? 'border-white scale-110' : 'border-slate-500'}`} style={{ backgroundColor: c }} />
-        ))}
-        <button onClick={clearAnnotations} className="text-[11px] px-2.5 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 inline-flex items-center gap-1 ml-1">
-          <RotateCcw className="h-3 w-3" /> Clear
-        </button>
-        <div className="flex-1" />
-        <button onClick={() => { setPhase('waiting'); startPolling(); }} className="text-[11px] px-2.5 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600">
-          New Capture
-        </button>
-        <button onClick={upload} disabled={uploading} className="text-[11px] px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 inline-flex items-center gap-1">
-          {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-          {uploading ? 'Saving...' : 'Save & Attach'}
-        </button>
-        <button onClick={onClose} className="text-slate-400 hover:text-white ml-2"><X className="h-5 w-5" /></button>
-      </div>
-      <div className="flex-1 overflow-auto flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
-        <div className="relative inline-block">
-          <canvas ref={canvasRef} className="rounded shadow-2xl" />
-          <canvas ref={overlayRef} className="absolute inset-0 cursor-crosshair"
-            onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} />
+    <div className="fixed inset-0 z-[9999] bg-black/70 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-slate-900 rounded-2xl shadow-2xl overflow-hidden max-w-[90vw] max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex-1 overflow-auto p-4 flex items-center justify-center">
+          <canvas ref={canvasRef} className="rounded shadow-lg max-w-full" />
+          <canvas ref={overlayRef} className="hidden" />
+        </div>
+        <div className="px-5 py-3 bg-slate-800 border-t border-slate-700 flex items-center justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-xs text-slate-400 hover:text-white rounded-lg hover:bg-slate-700">Cancel</button>
+          <button onClick={upload} disabled={uploading} className="px-5 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-500 disabled:opacity-50 inline-flex items-center gap-2">
+            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            {uploading ? 'Saving...' : 'Save'}
+          </button>
         </div>
       </div>
     </div>
