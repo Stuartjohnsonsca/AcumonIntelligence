@@ -672,6 +672,7 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false, userRole, eng
       {/* Canvas */}
       <div className="flex-1 border border-slate-200 rounded-lg overflow-hidden bg-white" onKeyDown={onKeyDown} tabIndex={0}>
         <ReactFlow
+          proOptions={{ hideAttribution: true }}
           nodes={enrichedNodes}
           edges={edges}
           nodeTypes={nodeTypes}
