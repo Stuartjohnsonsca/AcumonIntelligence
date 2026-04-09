@@ -85,7 +85,7 @@ interface Props {
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 const THREE_LEVEL_STATEMENTS = new Set(['Balance Sheet']);
-const OTHER_TABS = ['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Permanent', 'Disclosure'] as const;
+const OTHER_TABS = ['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Tax Technical', 'Permanent', 'Disclosure'] as const;
 type OtherTab = typeof OTHER_TABS[number];
 
 // Statutory format order by framework

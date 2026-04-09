@@ -55,8 +55,6 @@ const TABS = [
   { key: 'outstanding', label: 'Outstanding' },
   { key: 'portal', label: 'Portal' },
   { key: 'communication', label: 'Communication' },
-  { key: 'subsequent-events', label: 'Subsequent Events' },
-  { key: 'tax-technical', label: 'Tax Technical' },
 ] as const;
 
 // Tabs that get sign-off dots — everything except Documents and Portal
@@ -318,10 +316,6 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         return <ContinuanceTab engagementId={engagement.id} />;
       case 'new-client':
         return <NewClientTab engagementId={engagement.id} />;
-      case 'subsequent-events':
-        return <SubsequentEventsTab engagementId={engagement.id} />;
-      case 'tax-technical':
-        return <TaxTechnicalTab engagementId={engagement.id} clientName={clientName} />;
       case 'tb':
         return <TrialBalanceTab engagementId={engagement.id} isGroupAudit={engagement.isGroupAudit} showCategory={tbShowCategory} onShowCategoryChange={setTbShowCategory} periodEndDate={periodEndDate} periodStartDate={periodStartDate} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'materiality':
