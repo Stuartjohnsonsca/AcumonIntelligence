@@ -137,12 +137,23 @@ export async function POST(req: Request) {
             if (!pf.sectionKey.endsWith('_status')) continue;
             const statusData = pf.data as any;
             if (statusData?.portalRequestId === requestId && statusData?.stage === 'requested') {
-              // Advance stage to 'received'
+              // Fetch portal uploads linked to this request
+              const portalUploads = await prisma.portalUpload.findMany({ where: { portalRequestId: requestId } });
+
+              // Advance stage to 'received' and add uploads to evidence
+              const existingEvidence = statusData.evidence || [];
+              const newEvidence = portalUploads.map(u => ({
+                id: u.id,
+                name: u.originalName,
+                type: u.mimeType || 'application/octet-stream',
+                storagePath: u.storagePath,
+              }));
               await prisma.auditPermanentFile.update({
                 where: { id: pf.id },
-                data: { data: { ...statusData, stage: 'received' } },
+                data: { data: { ...statusData, stage: 'received', evidence: [...existingEvidence, ...newEvidence] } },
               });
-              // Also import the client response text into the walkthrough narrative
+
+              // Import the client response text into the walkthrough narrative
               const processKey = pf.sectionKey.replace('_status', '');
               const narrativePf = await prisma.auditPermanentFile.findFirst({
                 where: { engagementId: updated.engagementId, sectionKey: processKey },
@@ -153,6 +164,26 @@ export async function POST(req: Request) {
                   where: { id: narrativePf.id },
                   data: { data: { ...narrativeData, narrative: updated.response || narrativeData.narrative } },
                 });
+              }
+
+              // Register files in the Document Repository for the engagement
+              if (portalUploads.length > 0 && updated.engagementId) {
+                for (const u of portalUploads) {
+                  await prisma.auditDocument.create({
+                    data: {
+                      engagementId: updated.engagementId,
+                      documentName: u.originalName,
+                      storagePath: u.storagePath,
+                      containerName: u.containerName || 'upload-inbox',
+                      fileSize: u.fileSize,
+                      mimeType: u.mimeType,
+                      source: 'Client Portal',
+                      documentType: 'Walkthrough Documentation',
+                      receivedAt: new Date(),
+                      receivedByName: updated.respondedByName || 'Portal Client',
+                    },
+                  });
+                }
               }
               break;
             }
