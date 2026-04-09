@@ -217,11 +217,10 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
     }).catch(() => {});
   }, [engagementId, processKey]);
 
-  // Fetch portal uploads and merge into evidence (self-healing — one small GET)
+  // Fetch portal uploads for this walkthrough process and merge into evidence
   useEffect(() => {
-    if (!status.portalRequestId) return;
     if ((status.evidence || []).some(e => e.storagePath)) return;
-    fetch(`/api/portal/upload?requestId=${status.portalRequestId}`)
+    fetch(`/api/portal/upload?engagementId=${engagementId}&processLabel=${encodeURIComponent(processLabel)}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data?.uploads?.length) return;
@@ -232,7 +231,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
         if (newEvidence.length > 0) saveStatus({ evidence: [...(status.evidence || []), ...newEvidence] });
       })
       .catch(() => {});
-  }, [status.portalRequestId]);
+  }, [engagementId, processLabel]);
 
   const save = useCallback(async () => {
     setSaving(true);

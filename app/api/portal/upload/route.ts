@@ -3,21 +3,45 @@ import { prisma } from '@/lib/db';
 import { uploadToInbox, generateSasUrl } from '@/lib/azure-blob';
 
 /**
- * GET /api/portal/upload?requestId=X
- * List uploads linked to a portal request.
+ * GET /api/portal/upload?requestId=X  — uploads for a specific portal request
+ * GET /api/portal/upload?engagementId=X&processLabel=Y — uploads for walkthrough requests matching a process
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const requestId = searchParams.get('requestId');
-  if (!requestId) return NextResponse.json({ error: 'requestId required' }, { status: 400 });
+  const engagementId = searchParams.get('engagementId');
+  const processLabel = searchParams.get('processLabel');
 
-  const uploads = await prisma.portalUpload.findMany({
-    where: { portalRequestId: requestId },
-    select: { id: true, originalName: true, storagePath: true, containerName: true, mimeType: true, fileSize: true },
-    orderBy: { createdAt: 'asc' },
-  });
+  if (requestId) {
+    const uploads = await prisma.portalUpload.findMany({
+      where: { portalRequestId: requestId },
+      select: { id: true, originalName: true, storagePath: true, containerName: true, mimeType: true, fileSize: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return NextResponse.json({ uploads });
+  }
 
-  return NextResponse.json({ uploads });
+  if (engagementId) {
+    // Find all walkthrough-related portal requests for this engagement + process
+    const where: any = { engagementId, status: { in: ['responded', 'verified', 'committed', 'outstanding'] } };
+    if (processLabel) {
+      where.question = { contains: processLabel };
+    }
+    const requests = await prisma.portalRequest.findMany({
+      where,
+      select: { id: true },
+    });
+    if (requests.length === 0) return NextResponse.json({ uploads: [] });
+
+    const uploads = await prisma.portalUpload.findMany({
+      where: { portalRequestId: { in: requests.map(r => r.id) } },
+      select: { id: true, originalName: true, storagePath: true, containerName: true, mimeType: true, fileSize: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return NextResponse.json({ uploads });
+  }
+
+  return NextResponse.json({ error: 'requestId or engagementId required' }, { status: 400 });
 }
 
 /**
