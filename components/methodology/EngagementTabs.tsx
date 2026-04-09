@@ -178,6 +178,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       .catch(() => {});
   }, [engagement.id]);
   const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
+  const [scheduleOrder, setScheduleOrder] = useState<string[] | null>(null); // ordered schedule keys from config
   const [outstandingTeamCount, setOutstandingTeamCount] = useState(0);
   const [outstandingClientCount, setOutstandingClientCount] = useState(0);
   const handleOutstandingCounts = useCallback((team: number, client: number) => {
@@ -256,13 +257,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   // Re-fetch tab sign-offs when switching tabs (to pick up changes made inside SignOffHeader)
   useEffect(() => { loadTabSignOffs(); }, [activeTab, loadTabSignOffs]);
 
-  // Fetch audit type → schedule mapping
+  // Fetch audit type → schedule mapping (with order)
   useEffect(() => {
     fetch('/api/methodology-admin/audit-type-schedules')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (data?.mappings?.[auditType]) {
-          setEnabledSchedules(new Set(data.mappings[auditType]));
+          const orderedKeys = data.mappings[auditType] as string[];
+          setEnabledSchedules(new Set(orderedKeys));
+          setScheduleOrder(orderedKeys);
         }
         // If no mapping configured, all tabs are enabled (null = show all)
       })
@@ -270,6 +273,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   }, [auditType]);
 
   // Filter tabs based on engagement status, audit type schedule config, and continuance/new-client
+  // Then sort by configured order
   const visibleTabs = TABS.filter(tab => {
     if (tab.key === 'opening') return true; // Opening always visible
     if (isPreStart) return false; // Only show Opening until audit is started
@@ -281,6 +285,19 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     if (!enabledSchedules) return true; // Not loaded yet or no config = show all
     const scheduleKey = TAB_TO_SCHEDULE[tab.key];
     return scheduleKey ? enabledSchedules.has(scheduleKey) : true;
+  }).sort((a, b) => {
+    if (!scheduleOrder) return 0; // No order config = keep hardcoded order
+    if (a.key === 'opening') return -1; // Opening always first
+    if (b.key === 'opening') return 1;
+    const aKey = TAB_TO_SCHEDULE[a.key];
+    const bKey = TAB_TO_SCHEDULE[b.key];
+    const aIdx = aKey ? scheduleOrder.indexOf(aKey) : -1;
+    const bIdx = bKey ? scheduleOrder.indexOf(bKey) : -1;
+    // Tabs in config sort by their position; tabs not in config go to end
+    if (aIdx >= 0 && bIdx >= 0) return aIdx - bIdx;
+    if (aIdx >= 0) return -1;
+    if (bIdx >= 0) return 1;
+    return 0;
   });
 
   function switchTab(key: TabKey) {

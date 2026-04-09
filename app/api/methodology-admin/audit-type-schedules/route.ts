@@ -2,13 +2,32 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
+const DEFAULT_MASTER_SCHEDULES = [
+  { key: 'permanent_file_questions', label: 'Permanent File', stage: 'planning' },
+  { key: 'ethics_questions', label: 'Ethics', stage: 'planning' },
+  { key: 'continuance_questions', label: 'Continuance', stage: 'planning' },
+  { key: 'new_client_takeon_questions', label: 'New Client Take-On', stage: 'planning' },
+  { key: 'prior_period', label: 'Prior Period', stage: 'planning' },
+  { key: 'trial_balance', label: 'TBCYvPY', stage: 'planning' },
+  { key: 'materiality_questions', label: 'Materiality', stage: 'planning' },
+  { key: 'par', label: 'PAR', stage: 'fieldwork' },
+  { key: 'walkthroughs', label: 'Walkthroughs', stage: 'fieldwork' },
+  { key: 'rmm', label: 'Identifying & Assessing RMM', stage: 'fieldwork' },
+  { key: 'documents', label: 'Documents', stage: 'fieldwork' },
+  { key: 'communication', label: 'Communication', stage: 'fieldwork' },
+  { key: 'outstanding', label: 'Outstanding', stage: 'completion' },
+  { key: 'portal', label: 'Portal', stage: 'completion' },
+  { key: 'subsequent_events_questions', label: 'Subsequent Events', stage: 'completion' },
+  { key: 'tax_technical_categories', label: 'Tax Technical', stage: 'completion' },
+];
+
 export async function GET(req: Request) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const firmId = session.user.firmId;
 
-  const [scheduleTemplates, frameworkTemplates, fwOptionsTemplate] = await Promise.all([
+  const [scheduleTemplates, frameworkTemplates, fwOptionsTemplate, masterRow] = await Promise.all([
     prisma.methodologyTemplate.findMany({
       where: { firmId, templateType: 'audit_type_schedules' },
     }),
@@ -17,6 +36,9 @@ export async function GET(req: Request) {
     }),
     prisma.methodologyTemplate.findFirst({
       where: { firmId, templateType: 'audit_type_schedules', auditType: '__framework_options' },
+    }),
+    prisma.methodologyRiskTable.findUnique({
+      where: { firmId_tableType: { firmId, tableType: 'master_schedules' } },
     }),
   ]);
 
@@ -35,7 +57,10 @@ export async function GET(req: Request) {
 
   const frameworkOptions = fwOptionsTemplate ? fwOptionsTemplate.items as string[] : [];
 
-  return NextResponse.json({ mappings, frameworks, frameworkOptions });
+  // Master schedules
+  const masterSchedules = (masterRow?.data as any)?.schedules || DEFAULT_MASTER_SCHEDULES;
+
+  return NextResponse.json({ mappings, frameworks, frameworkOptions, masterSchedules });
 }
 
 export async function PUT(req: Request) {
@@ -45,12 +70,27 @@ export async function PUT(req: Request) {
   }
 
   const body = await req.json();
+  const firmId = session.user.firmId;
+
+  // Save master schedule list
+  if (body.action === 'save_master') {
+    const { schedules } = body;
+    if (!Array.isArray(schedules)) return NextResponse.json({ error: 'schedules array required' }, { status: 400 });
+
+    await prisma.methodologyRiskTable.upsert({
+      where: { firmId_tableType: { firmId, tableType: 'master_schedules' } },
+      create: { firmId, tableType: 'master_schedules', data: { schedules } },
+      update: { data: { schedules } },
+    });
+
+    return NextResponse.json({ success: true });
+  }
+
+  // Save per-audit-type schedules (existing behaviour)
   const { auditType, schedules, framework } = body;
   if (!auditType || !Array.isArray(schedules)) {
     return NextResponse.json({ error: 'auditType and schedules array required' }, { status: 400 });
   }
-
-  const firmId = session.user.firmId;
 
   // Save schedules
   await prisma.methodologyTemplate.upsert({
