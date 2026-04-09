@@ -179,7 +179,7 @@ export function WalkthroughsTab({ engagementId }: Props) {
       </div>
 
       {/* Active process content */}
-      <WalkthroughProcess engagementId={engagementId} processKey={activeTab} processLabel={processes.find(p => p.key === activeTab)?.label || activeTab} onStatusChange={(s) => onProcessStatusChange(activeTab, s)} />
+      <WalkthroughProcess key={activeTab} engagementId={engagementId} processKey={activeTab} processLabel={processes.find(p => p.key === activeTab)?.label || activeTab} onStatusChange={(s) => onProcessStatusChange(activeTab, s)} />
     </div>
   );
 }
