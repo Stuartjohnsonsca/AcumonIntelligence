@@ -17,12 +17,7 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
   const [tool, setTool] = useState<Tool>('rect');
   const [drawColor, setDrawColor] = useState('#ef4444');
   const [uploading, setUploading] = useState(false);
-  const [extensionDetected, setExtensionDetected] = useState(false);
-
-  // Detect extension on mount
-  useEffect(() => {
-    setExtensionDetected(document.documentElement.hasAttribute('data-acumon-ext'));
-  }, []);
+  const [extensionDetected] = useState(() => document.documentElement.hasAttribute('data-acumon-ext'));
 
   const fullImageRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -139,6 +134,11 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     setTimeout(() => window.removeEventListener('message', handler), 10000);
   }, []);
 
+  // Auto-capture on mount if extension is installed — no dialog, instant
+  useEffect(() => {
+    if (extensionDetected) extensionCapture();
+  }, [extensionDetected, extensionCapture]);
+
   // Draw image to display canvas
   useEffect(() => {
     if (phase !== 'editing' || !fullImageRef.current || !canvasRef.current) return;
@@ -242,8 +242,20 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     }, 'image/png');
   }, [engagementId, stepId, onCapture, onClose]);
 
-  // Waiting phase — prompt to capture
+  // Waiting phase — if extension is capturing, show spinner; otherwise show options
   if (phase === 'waiting') {
+    // Extension auto-capture in progress — just show a brief spinner
+    if (extensionDetected) {
+      return (
+        <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-2xl px-8 py-6 text-center">
+            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-blue-500" />
+            <p className="text-xs text-slate-500">Capturing...</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center" onClick={onClose}>
         <div className="bg-white rounded-xl shadow-2xl w-[420px] overflow-hidden" onClick={e => e.stopPropagation()}>
