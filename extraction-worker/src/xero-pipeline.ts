@@ -100,7 +100,7 @@ const aiClient = new OpenAI({
 });
 
 const MODELS = [
-  'Qwen/Qwen3-VL-8B-Instruct',
+  'Qwen/Qwen3.5-9B',
   'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
   'moonshotai/Kimi-K2.5',
   'google/gemma-3n-E4B-it',
