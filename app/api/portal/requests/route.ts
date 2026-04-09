@@ -29,6 +29,7 @@ export async function GET(req: Request) {
   const requests = await prisma.portalRequest.findMany({
     where: where as any,
     orderBy: { requestedAt: 'desc' },
+    include: { uploads: { select: { id: true, originalName: true, storagePath: true, containerName: true, mimeType: true, fileSize: true } } },
   });
 
   return NextResponse.json({ requests });

@@ -12,7 +12,7 @@ interface ChatMessage {
   name: string;
   message: string;
   timestamp: string;
-  attachments?: { name: string; url: string; size?: number }[];
+  attachments?: { name: string; url?: string; uploadId?: string; storagePath?: string; size?: number }[];
 }
 
 interface OutstandingItem {
@@ -86,12 +86,26 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
 
       if (respondedRes.ok) {
         const data = await respondedRes.json();
-        setTeamItems((data.requests || []).map((r: any) => ({
-          id: r.id, type: 'client' as const, question: r.question, response: r.response,
-          status: r.status, requestedByName: r.requestedByName, requestedAt: r.requestedAt,
-          respondedByName: r.respondedByName, respondedAt: r.respondedAt,
-          assignedTo: r.assignedTo, engagementId: r.engagementId, chatHistory: r.chatHistory || [],
-        })));
+        setTeamItems((data.requests || []).map((r: any) => {
+          // Merge PortalUpload records into chat history attachments as fallback
+          const chatHistory = (r.chatHistory || []).map((msg: any) => {
+            if (msg.attachments?.length > 0) return msg;
+            return msg;
+          });
+          // If chat history has no attachments but uploads exist, inject them into the last client message
+          const uploads = (r.uploads || []).map((u: any) => ({ name: u.originalName, uploadId: u.id, storagePath: u.storagePath }));
+          const hasHistoryAttachments = chatHistory.some((m: any) => m.attachments?.length > 0);
+          if (uploads.length > 0 && !hasHistoryAttachments) {
+            const lastClientMsg = [...chatHistory].reverse().find((m: any) => m.from === 'client');
+            if (lastClientMsg) lastClientMsg.attachments = uploads;
+          }
+          return {
+            id: r.id, type: 'client' as const, question: r.question, response: r.response,
+            status: r.status, requestedByName: r.requestedByName, requestedAt: r.requestedAt,
+            respondedByName: r.respondedByName, respondedAt: r.respondedAt,
+            assignedTo: r.assignedTo, engagementId: r.engagementId, chatHistory,
+          };
+        }));
       }
 
       if (outstandingRes.ok) {
@@ -236,14 +250,39 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
                     <p className="text-sm text-slate-800 font-medium">{question}</p>
                     {source && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded inline-block mt-0.5">{source}</span>}
                   </>); })()}
-                  {item.response && (
-                    <div className="mt-2 px-3 py-2 bg-blue-50 rounded-lg border border-blue-100">
-                      <p className="text-[10px] text-blue-500 font-medium mb-0.5">
-                        {item.respondedByName || 'Response'} &middot; {item.respondedAt ? formatDate(item.respondedAt) : ''}
-                      </p>
-                      <p className="text-xs text-slate-700">{item.response}</p>
-                    </div>
-                  )}
+                  {item.response && (() => {
+                    // Strip [Attachments: ...] text from response and show actual file links
+                    const cleanResponse = item.response.replace(/\n?\[Attachments:.*?\]/g, '').trim();
+                    // Collect attachments from chat history
+                    const allAttachments = (item.chatHistory || [])
+                      .flatMap(m => m.attachments || [])
+                      .filter(a => a.name);
+                    return (
+                      <div className="mt-2 px-3 py-2 bg-blue-50 rounded-lg border border-blue-100">
+                        <p className="text-[10px] text-blue-500 font-medium mb-0.5">
+                          {item.respondedByName || 'Response'} &middot; {item.respondedAt ? formatDate(item.respondedAt) : ''}
+                        </p>
+                        {cleanResponse && <p className="text-xs text-slate-700">{cleanResponse}</p>}
+                        {allAttachments.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {allAttachments.map((a, ai) => (
+                              <button key={ai} onClick={async () => {
+                                try {
+                                  const params = a.uploadId ? `uploadId=${a.uploadId}` : a.storagePath ? `storagePath=${encodeURIComponent(a.storagePath)}` : '';
+                                  if (!params && a.url) { window.open(a.url, '_blank'); return; }
+                                  if (!params) return;
+                                  const res = await fetch(`/api/portal/download?${params}`);
+                                  if (res.ok) { const d = await res.json(); window.open(d.url, '_blank'); }
+                                } catch {}
+                              }} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white rounded text-[9px] text-blue-600 border border-blue-200 hover:bg-blue-50 cursor-pointer">
+                                📎 {a.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -297,9 +336,17 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
                           {msg.attachments && msg.attachments.length > 0 && (
                             <div className="mt-1 flex flex-wrap gap-1">
                               {msg.attachments.map((a, ai) => (
-                                <a key={ai} href={a.url || '#'} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white/50 rounded text-[9px] text-blue-600 border hover:bg-blue-50 hover:border-blue-300 cursor-pointer">
+                                <button key={ai} onClick={async () => {
+                                  try {
+                                    const params = a.uploadId ? `uploadId=${a.uploadId}` : a.storagePath ? `storagePath=${encodeURIComponent(a.storagePath)}` : '';
+                                    if (!params && a.url) { window.open(a.url, '_blank'); return; }
+                                    if (!params) return;
+                                    const res = await fetch(`/api/portal/download?${params}`);
+                                    if (res.ok) { const data = await res.json(); window.open(data.url, '_blank'); }
+                                  } catch {}
+                                }} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white/50 rounded text-[9px] text-blue-600 border hover:bg-blue-50 hover:border-blue-300 cursor-pointer">
                                   📎 {a.name}
-                                </a>
+                                </button>
                               ))}
                             </div>
                           )}

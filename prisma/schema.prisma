@@ -962,7 +962,8 @@ model PortalRequest {
   chatHistory   Json?     @map("chat_history") // Array of { from, name, message, timestamp }
   evidenceTag   String?   @map("evidence_tag") // Structured tag for evidence type (e.g. bank_statements, invoices)
 
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client  Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  uploads PortalUpload[]
 
   @@index([clientId])
   @@index([clientId, status])
@@ -1046,6 +1047,8 @@ model PortalUpload {
   fileSize        Int?     @map("file_size")
   mimeType        String?  @map("mime_type")
   createdAt       DateTime @default(now()) @map("created_at")
+
+  portalRequest PortalRequest @relation(fields: [portalRequestId], references: [id], onDelete: Cascade)
 
   @@index([portalRequestId])
   @@index([engagementId])
