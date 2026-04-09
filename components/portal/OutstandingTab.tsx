@@ -50,7 +50,7 @@ function cleanQuestion(text: string): { question: string; source: string | null 
 export function OutstandingTab({ clientId, token, engagementId, onCountChange, viewMode = 'team', portalUserName }: Props) {
   const [items, setItems] = useState<PortalRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(SECTIONS.map(s => s.key)));
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [responses, setResponses] = useState<Record<string, string>>({});
   const [responseFiles, setResponseFiles] = useState<Record<string, File[]>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
