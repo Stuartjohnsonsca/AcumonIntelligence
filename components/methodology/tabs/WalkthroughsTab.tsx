@@ -201,7 +201,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
     Promise.all([
       fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_${processKey}`).then(r => r.ok ? r.json() : null),
       fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_${processKey}_status`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/portal/upload?engagementId=${engagementId}&processLabel=${encodeURIComponent(processLabel)}`).then(r => r.ok ? r.json() : null),
+      fetch(`/api/portal/upload?engagementId=${engagementId}`).then(r => r.ok ? r.json() : null),
     ]).then(([content, statusData, uploadsData]) => {
       const answers = content?.data || content?.answers || {};
       setNarrative(answers.narrative || '');
