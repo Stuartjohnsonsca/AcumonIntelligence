@@ -1,0 +1,461 @@
+'use client';
+
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import {
+  ReactFlow,
+  Controls,
+  Background,
+  BackgroundVariant,
+  addEdge,
+  useNodesState,
+  useEdgesState,
+  useReactFlow,
+  ReactFlowProvider,
+  Handle,
+  Position,
+  MarkerType,
+  type Connection,
+  type Node,
+  type Edge,
+  type NodeProps,
+  type NodeTypes,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Plus, Trash2, Diamond, Circle, Square, X } from 'lucide-react';
+
+// ─── Types ───
+interface FlowStep {
+  id: string;
+  label: string;
+  type: 'start' | 'action' | 'decision' | 'end';
+  next: string[];
+  condition?: string;
+}
+
+interface WalkthroughFlowEditorProps {
+  steps: FlowStep[];
+  onStepsChange: (steps: FlowStep[]) => void;
+  readOnly?: boolean;
+}
+
+// ─── Custom Nodes ───
+
+function WtStartNode({ data }: NodeProps) {
+  return (
+    <div className="px-6 py-2 rounded-full bg-green-100 border-2 border-green-400 text-green-800 text-xs font-semibold text-center min-w-[120px]">
+      {data.label as string || 'Process Start'}
+      <Handle type="source" position={Position.Bottom} className="!bg-green-500 !w-2.5 !h-2.5" />
+    </div>
+  );
+}
+
+function WtActionNode({ id, data, selected }: NodeProps) {
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState(data.label as string);
+  const { setNodes } = useReactFlow();
+  const readOnly = data._readOnly as boolean;
+
+  const commitEdit = useCallback(() => {
+    setEditing(false);
+    if (editVal.trim() && editVal !== data.label) {
+      setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, label: editVal.trim() } } : n));
+    }
+  }, [editVal, data.label, id, setNodes]);
+
+  const onDelete = useCallback(() => {
+    setNodes(nds => nds.filter(n => n.id !== id));
+  }, [id, setNodes]);
+
+  return (
+    <div className={`relative px-4 py-2 rounded-lg bg-blue-50 border-2 text-blue-800 text-xs text-center min-w-[160px] max-w-[260px] group ${selected ? 'border-blue-500 shadow-md' : 'border-blue-300'}`}>
+      <Handle type="target" position={Position.Top} className="!bg-blue-400 !w-2.5 !h-2.5" />
+      {editing && !readOnly ? (
+        <input
+          autoFocus
+          value={editVal}
+          onChange={e => setEditVal(e.target.value)}
+          onBlur={commitEdit}
+          onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') { setEditVal(data.label as string); setEditing(false); } }}
+          className="w-full text-xs text-center bg-transparent border-b border-blue-400 outline-none"
+        />
+      ) : (
+        <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
+          {data.label as string}
+        </div>
+      )}
+      {!readOnly && (
+        <button onClick={onDelete} className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] hidden group-hover:flex items-center justify-center hover:bg-red-600">
+          <X className="h-2.5 w-2.5" />
+        </button>
+      )}
+      <Handle type="source" position={Position.Bottom} className="!bg-blue-400 !w-2.5 !h-2.5" />
+    </div>
+  );
+}
+
+function WtDecisionNode({ id, data, selected }: NodeProps) {
+  const [editing, setEditing] = useState(false);
+  const [editLabel, setEditLabel] = useState(data.label as string);
+  const [editCondition, setEditCondition] = useState((data.condition as string) || '');
+  const { setNodes } = useReactFlow();
+  const readOnly = data._readOnly as boolean;
+
+  const commitEdit = useCallback(() => {
+    setEditing(false);
+    setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, label: editLabel.trim() || data.label, condition: editCondition.trim() || undefined } } : n));
+  }, [editLabel, editCondition, data.label, id, setNodes]);
+
+  const onDelete = useCallback(() => {
+    setNodes(nds => nds.filter(n => n.id !== id));
+  }, [id, setNodes]);
+
+  return (
+    <div className={`relative px-4 py-2 rounded-lg bg-amber-50 border-2 border-dashed text-amber-800 text-xs text-center min-w-[180px] max-w-[280px] group ${selected ? 'border-amber-500 shadow-md' : 'border-amber-400'}`}>
+      <Handle type="target" position={Position.Top} className="!bg-amber-500 !w-2.5 !h-2.5" />
+      <span className="text-[8px] text-amber-500 font-bold block">DECISION</span>
+      {editing && !readOnly ? (
+        <div className="space-y-1">
+          <input autoFocus value={editLabel} onChange={e => setEditLabel(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') { setEditLabel(data.label as string); setEditCondition((data.condition as string) || ''); setEditing(false); } }}
+            className="w-full text-xs text-center bg-transparent border-b border-amber-400 outline-none" placeholder="Label..." />
+          <input value={editCondition} onChange={e => setEditCondition(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={e => { if (e.key === 'Enter') commitEdit(); }}
+            className="w-full text-[10px] text-center bg-transparent border-b border-amber-300 outline-none italic" placeholder="Condition..." />
+        </div>
+      ) : (
+        <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
+          {data.label as string}
+          {data.condition ? <div className="text-[9px] text-amber-600 mt-0.5 italic">{String(data.condition)}</div> : null}
+        </div>
+      )}
+      {!readOnly && (
+        <button onClick={onDelete} className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] hidden group-hover:flex items-center justify-center hover:bg-red-600">
+          <X className="h-2.5 w-2.5" />
+        </button>
+      )}
+      {/* Yes handle (left) and No handle (right) */}
+      <Handle type="source" position={Position.Bottom} id="yes" className="!bg-green-500 !w-2.5 !h-2.5" style={{ left: '30%' }} />
+      <Handle type="source" position={Position.Bottom} id="no" className="!bg-red-500 !w-2.5 !h-2.5" style={{ left: '70%' }} />
+    </div>
+  );
+}
+
+function WtEndNode({ id, data, selected }: NodeProps) {
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState(data.label as string);
+  const { setNodes } = useReactFlow();
+  const readOnly = data._readOnly as boolean;
+
+  const commitEdit = useCallback(() => {
+    setEditing(false);
+    if (editVal.trim() && editVal !== data.label) {
+      setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, label: editVal.trim() } } : n));
+    }
+  }, [editVal, data.label, id, setNodes]);
+
+  return (
+    <div className={`px-6 py-2 rounded-full bg-red-100 border-2 text-red-800 text-xs font-semibold text-center min-w-[120px] ${selected ? 'border-red-500 shadow-md' : 'border-red-300'}`}>
+      <Handle type="target" position={Position.Top} className="!bg-red-400 !w-2.5 !h-2.5" />
+      {editing && !readOnly ? (
+        <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)}
+          onBlur={commitEdit}
+          onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') { setEditVal(data.label as string); setEditing(false); } }}
+          className="w-full text-xs text-center bg-transparent border-b border-red-400 outline-none" />
+      ) : (
+        <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
+          {data.label as string || 'Process End'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const nodeTypes: NodeTypes = {
+  start: WtStartNode,
+  action: WtActionNode,
+  decision: WtDecisionNode,
+  end: WtEndNode,
+};
+
+const defaultEdgeOptions = {
+  type: 'smoothstep' as const,
+  markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+  style: { strokeWidth: 2, stroke: '#94a3b8' },
+};
+
+// ─── Layout: convert FlowStep[] ↔ ReactFlow nodes/edges ───
+
+function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[] } {
+  if (!steps.length) return { nodes: [], edges: [] };
+
+  const stepMap = new Map(steps.map(s => [s.id, s]));
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+
+  // BFS for top-down layout
+  const startStep = steps.find(s => s.type === 'start') || steps[0];
+  const visited = new Set<string>();
+  const levels: string[][] = [];
+  const queue: { id: string; level: number }[] = [{ id: startStep.id, level: 0 }];
+  visited.add(startStep.id);
+
+  while (queue.length > 0) {
+    const { id, level } = queue.shift()!;
+    if (!levels[level]) levels[level] = [];
+    levels[level].push(id);
+
+    const step = stepMap.get(id);
+    if (!step) continue;
+    for (const nextId of step.next) {
+      if (!visited.has(nextId) && stepMap.has(nextId)) {
+        visited.add(nextId);
+        queue.push({ id: nextId, level: level + 1 });
+      }
+    }
+  }
+
+  // Add any orphan nodes not reached by BFS
+  for (const step of steps) {
+    if (!visited.has(step.id)) {
+      const lastLevel = levels.length;
+      if (!levels[lastLevel]) levels[lastLevel] = [];
+      levels[lastLevel].push(step.id);
+    }
+  }
+
+  // Position nodes
+  const Y_GAP = 130;
+  const X_GAP = 260;
+  const CENTER_X = 400;
+
+  for (let lvl = 0; lvl < levels.length; lvl++) {
+    const ids = levels[lvl];
+    const totalWidth = (ids.length - 1) * X_GAP;
+    const startX = CENTER_X - totalWidth / 2;
+
+    for (let col = 0; col < ids.length; col++) {
+      const step = stepMap.get(ids[col])!;
+      nodes.push({
+        id: step.id,
+        type: step.type,
+        position: { x: startX + col * X_GAP, y: lvl * Y_GAP },
+        data: { label: step.label, condition: step.condition },
+      });
+    }
+  }
+
+  // Create edges
+  for (const step of steps) {
+    if (step.type === 'decision' && step.next.length >= 2) {
+      edges.push({
+        id: `e-${step.id}-${step.next[0]}`,
+        source: step.id,
+        target: step.next[0],
+        sourceHandle: 'yes',
+        label: 'Yes',
+        ...defaultEdgeOptions,
+        style: { ...defaultEdgeOptions.style, stroke: '#22c55e' },
+      });
+      edges.push({
+        id: `e-${step.id}-${step.next[1]}`,
+        source: step.id,
+        target: step.next[1],
+        sourceHandle: 'no',
+        label: 'No',
+        ...defaultEdgeOptions,
+        style: { ...defaultEdgeOptions.style, stroke: '#ef4444' },
+      });
+      // Additional branches beyond yes/no
+      for (let i = 2; i < step.next.length; i++) {
+        edges.push({
+          id: `e-${step.id}-${step.next[i]}`,
+          source: step.id,
+          target: step.next[i],
+          ...defaultEdgeOptions,
+        });
+      }
+    } else {
+      for (const nextId of step.next) {
+        edges.push({
+          id: `e-${step.id}-${nextId}`,
+          source: step.id,
+          target: nextId,
+          ...defaultEdgeOptions,
+        });
+      }
+    }
+  }
+
+  return { nodes, edges };
+}
+
+function reactFlowToFlowSteps(nodes: Node[], edges: Edge[]): FlowStep[] {
+  return nodes.map(node => {
+    const outgoing = edges.filter(e => e.source === node.id);
+    // For decisions, order yes before no
+    const yesEdges = outgoing.filter(e => e.sourceHandle === 'yes');
+    const noEdges = outgoing.filter(e => e.sourceHandle === 'no');
+    const otherEdges = outgoing.filter(e => e.sourceHandle !== 'yes' && e.sourceHandle !== 'no');
+
+    const next = node.type === 'decision'
+      ? [...yesEdges.map(e => e.target), ...noEdges.map(e => e.target), ...otherEdges.map(e => e.target)]
+      : outgoing.map(e => e.target);
+
+    return {
+      id: node.id,
+      label: (node.data.label as string) || '',
+      type: node.type as FlowStep['type'],
+      next,
+      condition: (node.data.condition as string) || undefined,
+    };
+  });
+}
+
+// ─── ID Generator ───
+let _idCounter = 0;
+function nextId(prefix = 'step') {
+  return `${prefix}_${Date.now()}_${++_idCounter}`;
+}
+
+// ─── Main Editor (inner, needs ReactFlowProvider) ───
+
+function FlowEditorInner({ steps, onStepsChange, readOnly = false }: WalkthroughFlowEditorProps) {
+  const { nodes: initialNodes, edges: initialEdges } = useMemo(() => flowStepsToReactFlow(steps), []);
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const reactFlowInstance = useReactFlow();
+  const changeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Inject readOnly flag into all node data
+  const enrichedNodes = useMemo(() =>
+    nodes.map(n => ({ ...n, data: { ...n.data, _readOnly: readOnly } })),
+    [nodes, readOnly]
+  );
+
+  // Propagate changes back (debounced)
+  useEffect(() => {
+    clearTimeout(changeTimerRef.current);
+    changeTimerRef.current = setTimeout(() => {
+      const flowSteps = reactFlowToFlowSteps(nodes, edges);
+      onStepsChange(flowSteps);
+    }, 800);
+    return () => clearTimeout(changeTimerRef.current);
+  }, [nodes, edges]);
+
+  const onConnect = useCallback((params: Connection) => {
+    if (readOnly) return;
+    const handleLabels: Record<string, string> = { yes: 'Yes', no: 'No' };
+    const handleColors: Record<string, string> = { yes: '#22c55e', no: '#ef4444' };
+    const handle = params.sourceHandle || '';
+    const label = handleLabels[handle];
+    const color = handleColors[handle];
+    const style = color ? { stroke: color, strokeWidth: 2 } : undefined;
+    setEdges(eds => addEdge({ ...params, label, style, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 } }, eds));
+  }, [readOnly, setEdges]);
+
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const onDrop = useCallback((event: React.DragEvent) => {
+    if (readOnly) return;
+    event.preventDefault();
+    const dataStr = event.dataTransfer.getData('application/reactflow');
+    if (!dataStr || !reactFlowInstance) return;
+    const nodeData = JSON.parse(dataStr);
+    const position = reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    setNodes(nds => [...nds, { id: nextId(nodeData.nodeType), type: nodeData.nodeType, position, data: nodeData.data }]);
+  }, [readOnly, reactFlowInstance, setNodes]);
+
+  // Delete selected nodes on key press (except start)
+  const onKeyDown = useCallback((event: React.KeyboardEvent) => {
+    if (readOnly) return;
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      setNodes(nds => {
+        const toDelete = nds.filter(n => n.selected && n.type !== 'start').map(n => n.id);
+        if (toDelete.length === 0) return nds;
+        setEdges(eds => eds.filter(e => !toDelete.includes(e.source) && !toDelete.includes(e.target)));
+        return nds.filter(n => !toDelete.includes(n.id));
+      });
+    }
+  }, [readOnly, setNodes, setEdges]);
+
+  return (
+    <div className="flex gap-2" style={{ height: 450 }}>
+      {/* Toolbar */}
+      {!readOnly && (
+        <div className="w-36 shrink-0 bg-slate-50 border border-slate-200 rounded-lg p-2 space-y-1.5 overflow-y-auto">
+          <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Add Nodes</p>
+          <DraggableItem label="Action" icon={<Square className="h-3 w-3 text-blue-500" />} color="bg-blue-50 border-blue-200"
+            nodeType="action" data={{ label: 'New Action' }} />
+          <DraggableItem label="Decision" icon={<Diamond className="h-3 w-3 text-amber-500" />} color="bg-amber-50 border-amber-200"
+            nodeType="decision" data={{ label: 'New Decision', condition: '' }} />
+          <DraggableItem label="End" icon={<Circle className="h-3 w-3 text-red-500" />} color="bg-red-50 border-red-200"
+            nodeType="end" data={{ label: 'Process End' }} />
+        </div>
+      )}
+
+      {/* Canvas */}
+      <div className="flex-1 border border-slate-200 rounded-lg overflow-hidden bg-white" onKeyDown={onKeyDown} tabIndex={0}>
+        <ReactFlow
+          nodes={enrichedNodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          onNodesChange={readOnly ? undefined : onNodesChange}
+          onEdgesChange={readOnly ? undefined : onEdgesChange}
+          onConnect={onConnect}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          defaultEdgeOptions={defaultEdgeOptions}
+          fitView
+          fitViewOptions={{ padding: 0.3 }}
+          nodesDraggable={!readOnly}
+          nodesConnectable={!readOnly}
+          panOnScroll
+          zoomOnScroll
+          minZoom={0.3}
+          maxZoom={2}
+          deleteKeyCode={null}
+        >
+          <Controls showInteractive={false} />
+          <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#e2e8f0" />
+        </ReactFlow>
+      </div>
+    </div>
+  );
+}
+
+// ─── Draggable Palette Item ───
+
+function DraggableItem({ label, icon, color, nodeType, data }: {
+  label: string;
+  icon: React.ReactNode;
+  color: string;
+  nodeType: string;
+  data: Record<string, any>;
+}) {
+  const onDragStart = (event: React.DragEvent) => {
+    event.dataTransfer.setData('application/reactflow', JSON.stringify({ nodeType, data }));
+    event.dataTransfer.effectAllowed = 'move';
+  };
+
+  return (
+    <div draggable onDragStart={onDragStart}
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-md border cursor-grab active:cursor-grabbing hover:shadow-sm transition-shadow ${color}`}>
+      {icon}
+      <span className="text-[10px] font-medium text-slate-700">{label}</span>
+    </div>
+  );
+}
+
+// ─── Exported Wrapper (with ReactFlowProvider) ───
+
+export function WalkthroughFlowEditor(props: WalkthroughFlowEditorProps) {
+  return (
+    <ReactFlowProvider>
+      <FlowEditorInner {...props} />
+    </ReactFlowProvider>
+  );
+}

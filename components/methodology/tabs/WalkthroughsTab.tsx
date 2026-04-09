@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X } from 'lucide-react';
+import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X, AlertTriangle } from 'lucide-react';
+import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
 
 // ─── Types ───
 interface ProcessTab { key: string; label: string; }
@@ -13,6 +14,8 @@ interface ProcessStatus {
   verificationRequestId?: string;
   schedulingMethod?: 'teams' | 'onsite' | 'message';
   flowchart?: FlowStep[];
+  flowchartConfirmedAt?: string;
+  flowchartEditedAfterConfirm?: boolean;
   evidence?: { id: string; name: string; type: string; storagePath?: string; annotations?: { x: number; y: number }[] }[];
   signOffs?: { preparer?: { name: string; at: string }; reviewer?: { name: string; at: string }; ri?: { name: string; at: string } };
 }
@@ -201,7 +204,15 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
       setNarrative(answers.narrative || '');
       setControls(answers.controls || []);
       const st = statusData?.data || statusData?.answers || {};
-      if (st.stage) setStatus(st);
+      if (st.stage) {
+        // Auto-set flowchartConfirmedAt when stage is verified+ but field is missing (e.g. portal trigger updated stage)
+        const verifiedStages = ['verified', 'scheduling', 'walkthrough_in_progress', 'complete'];
+        if (verifiedStages.includes(st.stage) && st.flowchart?.length && !st.flowchartConfirmedAt) {
+          st.flowchartConfirmedAt = new Date().toISOString();
+          st.flowchartEditedAfterConfirm = false;
+        }
+        setStatus(st);
+      }
     }).catch(() => {});
   }, [engagementId, processKey]);
 
@@ -343,62 +354,78 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
         </div>
       </div>
 
-      {/* Action buttons based on stage */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {stage === 'draft' && (
-          <>
-            <button onClick={save} disabled={saving} className="text-[10px] px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-              {saving ? 'Saving...' : 'Save'}
-            </button>
-            <button onClick={requestFromClient} disabled={requesting || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 inline-flex items-center gap-1">
-              <Send className="h-3 w-3" /> {requesting ? 'Sending...' : 'Request from Client'}
-            </button>
-          </>
-        )}
-        {stage === 'requested' && (
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">Awaiting client response...</span>
+      {/* Action buttons based on flowchart state */}
+      {(() => {
+        const hasFlowchart = status.flowchart && status.flowchart.length > 0;
+        const isConfirmed = !!status.flowchartConfirmedAt && !status.flowchartEditedAfterConfirm;
+        const needsReconfirm = !!status.flowchartConfirmedAt && status.flowchartEditedAfterConfirm;
+
+        return (
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Request from Client — visible until flowchart exists */}
+            {!hasFlowchart && (
+              <>
+                <button onClick={requestFromClient} disabled={requesting || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 inline-flex items-center gap-1">
+                  <Send className="h-3 w-3" /> {requesting ? 'Sending...' : 'Request from Client'}
+                </button>
+                {stage === 'requested' && (
+                  <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">Awaiting client response...</span>
+                )}
+                {(stage === 'received' || stage === 'draft') && narrative.trim() && (
+                  <button onClick={generateFlowchart} disabled={generating || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1">
+                    {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Generate Flowchart
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Send to Client to Confirm — once flowchart exists and not yet confirmed (or edited after confirm) */}
+            {hasFlowchart && (!isConfirmed || needsReconfirm) && stage !== 'walkthrough_in_progress' && stage !== 'complete' && (
+              <>
+                <button onClick={sendForVerification} className="text-[10px] px-3 py-1.5 bg-orange-600 text-white rounded hover:bg-orange-700 inline-flex items-center gap-1">
+                  <Send className="h-3 w-3" /> Send to Client to Confirm
+                </button>
+                {needsReconfirm && (
+                  <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200 inline-flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" /> Flowchart edited since last confirmation
+                  </span>
+                )}
+                {stage === 'sent_for_verification' && (
+                  <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded border border-orange-200">Awaiting client confirmation...</span>
+                )}
+              </>
+            )}
+
+            {/* Scheduling — once confirmed and not edited */}
+            {hasFlowchart && isConfirmed && stage !== 'walkthrough_in_progress' && stage !== 'complete' && (
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-slate-500 mr-1">Schedule Walkthrough:</span>
+                <button onClick={() => scheduleWalkthrough('teams')} className="text-[10px] px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 inline-flex items-center gap-1">
+                  <Video className="h-3 w-3" /> Teams Meeting
+                </button>
+                <button onClick={() => scheduleWalkthrough('onsite')} className="text-[10px] px-2.5 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100 inline-flex items-center gap-1">
+                  <MapPin className="h-3 w-3" /> On-Site Visit
+                </button>
+                <button onClick={() => scheduleWalkthrough('message')} className="text-[10px] px-2.5 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 inline-flex items-center gap-1">
+                  <MessageSquare className="h-3 w-3" /> Message Exchange
+                </button>
+              </div>
+            )}
+
+            {/* Mark Complete */}
+            {stage === 'walkthrough_in_progress' && (
+              <button onClick={() => saveStatus({ stage: 'complete' })} className="text-[10px] px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-700 inline-flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3" /> Mark Complete
+              </button>
+            )}
+
+            {/* Save always available */}
             <button onClick={save} disabled={saving} className="text-[10px] px-3 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded hover:bg-slate-200 disabled:opacity-50">
               {saving ? 'Saving...' : 'Save'}
             </button>
           </div>
-        )}
-        {stage === 'received' && (
-          <button onClick={generateFlowchart} disabled={generating || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1">
-            {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Generate Flowchart from Client Documentation
-          </button>
-        )}
-        {stage === 'flowchart_generated' && (
-          <button onClick={sendForVerification} className="text-[10px] px-3 py-1.5 bg-orange-600 text-white rounded hover:bg-orange-700 inline-flex items-center gap-1">
-            <Send className="h-3 w-3" /> Send for Client Verification
-          </button>
-        )}
-        {stage === 'verified' && (
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] text-slate-500 mr-1">Schedule Walkthrough:</span>
-            <button onClick={() => scheduleWalkthrough('teams')} className="text-[10px] px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 inline-flex items-center gap-1">
-              <Video className="h-3 w-3" /> Teams Meeting
-            </button>
-            <button onClick={() => scheduleWalkthrough('onsite')} className="text-[10px] px-2.5 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100 inline-flex items-center gap-1">
-              <MapPin className="h-3 w-3" /> On-Site Visit
-            </button>
-            <button onClick={() => scheduleWalkthrough('message')} className="text-[10px] px-2.5 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 inline-flex items-center gap-1">
-              <MessageSquare className="h-3 w-3" /> Message Exchange
-            </button>
-          </div>
-        )}
-        {stage === 'walkthrough_in_progress' && (
-          <button onClick={() => saveStatus({ stage: 'complete' })} className="text-[10px] px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-700 inline-flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3" /> Mark Complete
-          </button>
-        )}
-        {/* Save is always available */}
-        {stage !== 'draft' && (
-          <button onClick={save} disabled={saving} className="text-[10px] px-3 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded hover:bg-slate-200 disabled:opacity-50">
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-        )}
-      </div>
+        );
+      })()}
 
       {/* Narrative section */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
@@ -467,7 +494,15 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
           </button>
           {sectionOpen.flowchart && (
             <div className="p-3">
-              <FlowchartDisplay steps={status.flowchart} />
+              <WalkthroughFlowEditor
+                steps={status.flowchart}
+                onStepsChange={(newSteps) => {
+                  const updates: Partial<ProcessStatus> = { flowchart: newSteps };
+                  if (status.flowchartConfirmedAt) updates.flowchartEditedAfterConfirm = true;
+                  saveStatus(updates);
+                }}
+                readOnly={stage === 'complete'}
+              />
             </div>
           )}
         </div>
@@ -510,32 +545,3 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
   );
 }
 
-// ─── Structured Flowchart Display ───
-function FlowchartDisplay({ steps }: { steps: FlowStep[] }) {
-  return (
-    <div className="space-y-1">
-      {steps.map((step, i) => {
-        const isStart = step.type === 'start';
-        const isEnd = step.type === 'end';
-        const isDecision = step.type === 'decision';
-        const bg = isStart ? 'bg-green-100 border-green-300 text-green-800'
-          : isEnd ? 'bg-red-100 border-red-300 text-red-800'
-          : isDecision ? 'bg-amber-50 border-amber-300 text-amber-800'
-          : 'bg-blue-50 border-blue-200 text-blue-800';
-        const shape = isDecision ? 'rotate-0' : '';
-
-        return (
-          <div key={step.id} className="flex flex-col items-center">
-            {i > 0 && <div className="w-px h-3 bg-slate-300" />}
-            {i > 0 && <div className="w-0 h-0 border-l-[4px] border-r-[4px] border-t-[5px] border-l-transparent border-r-transparent border-t-slate-300 -mt-px" />}
-            <div className={`px-4 py-1.5 rounded-lg border text-[10px] font-medium text-center max-w-md ${bg} ${isDecision ? 'transform rotate-0 border-dashed' : ''}`}>
-              {isDecision && <span className="text-[8px] text-amber-500 block">DECISION</span>}
-              {step.label}
-              {step.condition && <div className="text-[8px] text-slate-500 mt-0.5 italic">Condition: {step.condition}</div>}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
