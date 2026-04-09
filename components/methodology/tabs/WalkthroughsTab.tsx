@@ -485,28 +485,26 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
         )}
       </div>
 
-      {/* Flowchart section (shown after generation) */}
-      {status.flowchart && status.flowchart.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-          <button onClick={() => toggleSection('flowchart')} className="w-full flex items-center gap-2 px-3 py-2 bg-purple-50 hover:bg-purple-100 transition-colors">
-            {sectionOpen.flowchart ? <ChevronDown className="h-3.5 w-3.5 text-purple-400" /> : <ChevronRight className="h-3.5 w-3.5 text-purple-400" />}
-            <span className="text-xs font-semibold text-purple-700">Process Flowchart ({status.flowchart.length} steps)</span>
-          </button>
-          {sectionOpen.flowchart && (
-            <div className="p-3">
-              <WalkthroughFlowEditor
-                steps={status.flowchart}
-                onStepsChange={(newSteps) => {
-                  const updates: Partial<ProcessStatus> = { flowchart: newSteps };
-                  if (status.flowchartConfirmedAt) updates.flowchartEditedAfterConfirm = true;
-                  saveStatus(updates);
-                }}
-                readOnly={stage === 'complete'}
-              />
-            </div>
-          )}
-        </div>
-      )}
+      {/* Flowchart section — always visible per process */}
+      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        <button onClick={() => toggleSection('flowchart')} className="w-full flex items-center gap-2 px-3 py-2 bg-purple-50 hover:bg-purple-100 transition-colors">
+          {sectionOpen.flowchart ? <ChevronDown className="h-3.5 w-3.5 text-purple-400" /> : <ChevronRight className="h-3.5 w-3.5 text-purple-400" />}
+          <span className="text-xs font-semibold text-purple-700">Process Flowchart{status.flowchart?.length ? ` (${status.flowchart.length} steps)` : ''}</span>
+        </button>
+        {sectionOpen.flowchart && (
+          <div className="p-3">
+            <WalkthroughFlowEditor
+              steps={status.flowchart || []}
+              onStepsChange={(newSteps) => {
+                const updates: Partial<ProcessStatus> = { flowchart: newSteps };
+                if (status.flowchartConfirmedAt) updates.flowchartEditedAfterConfirm = true;
+                saveStatus(updates);
+              }}
+              readOnly={stage === 'complete'}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Evidence section */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
