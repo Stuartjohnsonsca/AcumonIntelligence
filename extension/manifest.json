@@ -7,7 +7,7 @@
   "host_permissions": [
     "*://acumon-intelligence.vercel.app/*",
     "*://www.acumonintelligence.com/*",
-    "*://localhost:3000/*"
+    "http://localhost/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -17,7 +17,7 @@
       "matches": [
         "*://acumon-intelligence.vercel.app/*",
         "*://www.acumonintelligence.com/*",
-        "*://localhost:3000/*"
+        "http://localhost/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
