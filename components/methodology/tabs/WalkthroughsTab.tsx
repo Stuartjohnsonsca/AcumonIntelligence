@@ -671,6 +671,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
         {sectionOpen.flowchart && (
           <div className="p-3">
             <WalkthroughFlowEditor
+              key={`fc-${(status.flowchart || []).length}-${status.stage}`}
               steps={status.flowchart || []}
               onStepsChange={(newSteps) => {
                 const updates: Partial<ProcessStatus> = { flowchart: newSteps };

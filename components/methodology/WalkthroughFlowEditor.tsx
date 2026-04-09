@@ -415,6 +415,7 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
   // Propagate changes back (debounced, flush on unmount)
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
+  const initialStepCount = useRef(steps.length);
   nodesRef.current = nodes;
   edgesRef.current = edges;
 
@@ -426,9 +427,11 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
     }, 800);
     return () => {
       clearTimeout(changeTimerRef.current);
-      // Flush on unmount so changes aren't lost when switching tabs
-      const flowSteps = reactFlowToFlowSteps(nodesRef.current, edgesRef.current);
-      onStepsChange(flowSteps);
+      // Flush on unmount — but only if we have nodes (don't overwrite with empty)
+      if (nodesRef.current.length > 0) {
+        const flowSteps = reactFlowToFlowSteps(nodesRef.current, edgesRef.current);
+        onStepsChange(flowSteps);
+      }
     };
   }, [nodes, edges]);
 
