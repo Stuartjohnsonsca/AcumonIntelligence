@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   const { processKey, processLabel, narrative, controls } = await req.json();
 
   if (!narrative?.trim()) {
-    return NextResponse.json({ error: 'Narrative is required to generate a flowchart' }, { status: 400 });
+    return NextResponse.json({ error: 'Client-provided process documentation is required before generating a flowchart. The narrative must contain information received from the client.' }, { status: 400 });
   }
 
   const controlsText = (controls || []).map((c: any, i: number) =>
@@ -31,21 +31,24 @@ export async function POST(req: NextRequest) {
       messages: [
         {
           role: 'system',
-          content: `You are a business process analyst. Given a description of a business process and its controls, extract and structure it into a flowchart.
+          content: `You are an audit process analyst. You are given client-provided documentation describing a business process and its controls. Your job is to EXTRACT and structure the described process into a flowchart.
+
+CRITICAL: You must ONLY use information explicitly stated in the client's documentation. Do NOT invent, assume, or fabricate any steps, controls, or details that are not in the provided text. If the documentation is insufficient, return fewer steps rather than making things up.
 
 Return ONLY a JSON array of steps. Each step has:
 - id: unique string (e.g. "step_1", "decision_1")
-- label: short description of the step (max 50 words)
+- label: short description of the step (max 50 words) — must be derived from the provided text
 - type: one of "start", "action", "decision", "end"
 - next: array of step IDs this connects to
-- condition: (only for decisions) the condition text
+- condition: (only for decisions) the condition text from the documentation
 
 Rules:
 - Always start with exactly one "start" step
 - Always end with at least one "end" step
 - Decisions must have 2+ next steps with conditions
 - Include controls as actions where they occur in the process
-- Keep it practical — 8-20 steps typical
+- ONLY include steps that are described in the client documentation
+- If the documentation is vague, include only what is explicitly stated
 - Return ONLY the JSON array, no other text`,
         },
         {

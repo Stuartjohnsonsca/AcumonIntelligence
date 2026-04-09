@@ -355,9 +355,17 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
             </button>
           </>
         )}
-        {(stage === 'requested' || stage === 'received') && (
+        {stage === 'requested' && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">Awaiting client response...</span>
+            <button onClick={save} disabled={saving} className="text-[10px] px-3 py-1.5 bg-slate-100 text-slate-600 border border-slate-200 rounded hover:bg-slate-200 disabled:opacity-50">
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        )}
+        {stage === 'received' && (
           <button onClick={generateFlowchart} disabled={generating || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1">
-            {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Generate Flowchart
+            {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Generate Flowchart from Client Documentation
           </button>
         )}
         {stage === 'flowchart_generated' && (
