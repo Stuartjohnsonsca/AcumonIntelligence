@@ -66,14 +66,18 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
     try {
       let url = `/api/portal/requests?clientId=${clientId}&status=outstanding`;
       if (engagementId) url += `&engagementId=${engagementId}`;
+      console.log('[OutstandingTab] Fetching:', url);
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         const reqs = data.requests || [];
+        console.log('[OutstandingTab] Loaded', reqs.length, 'items, sections:', [...new Set(reqs.map((r: any) => r.section))]);
         setItems(reqs);
         onCountChange?.(reqs.length);
+      } else {
+        console.error('[OutstandingTab] Fetch failed:', res.status);
       }
-    } catch {}
+    } catch (err) { console.error('[OutstandingTab] Error:', err); }
     setLoading(false);
   }
 

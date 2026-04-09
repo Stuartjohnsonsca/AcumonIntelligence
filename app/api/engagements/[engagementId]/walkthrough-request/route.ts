@@ -33,5 +33,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     },
   });
 
-  return NextResponse.json({ id: portalRequest.id, status: 'outstanding' });
+  return NextResponse.json({ id: portalRequest.id, status: 'outstanding', clientId: engagement.clientId, section: section || 'walkthroughs' });
 }
