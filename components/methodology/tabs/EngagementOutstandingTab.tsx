@@ -35,8 +35,9 @@ interface Props {
   clientId: string;
   currentUserId: string;
   currentUserRole?: string;
-  teamMembers?: { userId: string; userName: string; role: string }[];
+  teamMembers?: { userId: string; userName: any; role: string }[];
   specialists?: { name: string; specialistType: string }[];
+  onCountsChange?: (team: number, client: number) => void;
 }
 
 function formatDate(d: string) {

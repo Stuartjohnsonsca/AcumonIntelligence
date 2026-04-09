@@ -326,7 +326,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'prior-period':
         return <PriorPeriodTab engagementId={engagement.id} teamMembers={teamMembers} />;
       case 'permanent-file':
-        return <PermanentFileTab engagementId={engagement.id} teamMembers={teamMembers} />;
+        return <PermanentFileTab engagementId={engagement.id} />;
       case 'ethics':
         return <EthicsTab engagementId={engagement.id} />;
       case 'continuance':

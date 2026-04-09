@@ -2,8 +2,8 @@
 
 export type AuditType = 'SME' | 'PIE' | 'SME_CONTROLS' | 'PIE_CONTROLS' | 'GROUP';
 export type EngagementStatus = 'pre_start' | 'active' | 'review' | 'complete' | 'archived';
-export type TeamRole = 'Junior' | 'Manager' | 'RI';
-export type SpecialistType = 'Specialist' | 'Expert' | 'EthicsPartner' | 'TechnicalAdvisor';
+export type TeamRole = 'Junior' | 'Manager' | 'RI' | 'Partner';
+export type SpecialistType = 'Specialist' | 'Expert' | 'EthicsPartner' | 'TechnicalAdvisor' | 'Ethics' | 'Technical';
 export type InfoRequestType = 'preliminary' | 'standard';
 export type ProgressStatus = 'Not Started' | 'In Progress' | 'Complete' | 'Overdue';
 export type ToolAvailability = 'unavailable' | 'discretion' | 'available';
