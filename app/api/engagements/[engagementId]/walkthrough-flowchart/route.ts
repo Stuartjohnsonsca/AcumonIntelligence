@@ -19,7 +19,32 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { processKey, processLabel, narrative, controls, evidenceFiles } = await req.json();
+  const body = await req.json();
+
+  // Handle transcript summarisation action
+  if (body.action === 'summarise_transcript') {
+    const { transcript, processLabel: procLabel } = body;
+    if (!transcript) return NextResponse.json({ error: 'transcript required' }, { status: 400 });
+
+    const client = new OpenAI({ apiKey, baseURL: 'https://api.together.xyz/v1' });
+    try {
+      const completion = await client.chat.completions.create({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: `You are an audit process analyst. Extract a structured business process description from this walkthrough call transcript. Focus on: how transactions are initiated, what authorisation is required, how they are recorded, what reconciliations are performed, and what systems are used. Write it as a clear, numbered process narrative suitable for generating a flowchart. Use only information explicitly discussed in the call.` },
+          { role: 'user', content: `Process: ${procLabel || 'Business Process'}\n\nTranscript:\n${transcript.substring(0, 15000)}` },
+        ],
+        max_tokens: 2048,
+        temperature: 0.2,
+      });
+      const narrative = completion.choices[0]?.message?.content?.trim() || '';
+      return NextResponse.json({ narrative });
+    } catch (err: any) {
+      return NextResponse.json({ error: 'Summarisation failed: ' + err.message }, { status: 500 });
+    }
+  }
+
+  const { processKey, processLabel, narrative, controls, evidenceFiles } = body;
 
   let documentText = narrative?.trim() || '';
   let extractedNarrative = '';

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { extractMeetingMinutes } from '@/lib/meeting-minutes-ai';
-import { listRecentMeetings, getMeetingTranscript, isTeamsConfigured } from '@/lib/teams-meetings';
+import { listRecentMeetings, getMeetingTranscript, createTeamsMeeting, isTeamsConfigured } from '@/lib/teams-meetings';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -93,6 +93,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       },
     });
     return NextResponse.json({ meeting }, { status: 201 });
+  }
+
+  // Create a Teams online meeting via Graph API
+  if (action === 'create_teams') {
+    const { subject, startDateTime, durationMinutes } = body;
+    if (!startDateTime) return NextResponse.json({ error: 'startDateTime required' }, { status: 400 });
+
+    const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { entraObjectId: true } });
+    const userObjectId = user?.entraObjectId;
+    if (!userObjectId) return NextResponse.json({ error: 'User not linked to Azure AD. Please set your Entra Object ID in user settings.' }, { status: 400 });
+
+    const result = await createTeamsMeeting(userObjectId, subject || 'Walkthrough Meeting', startDateTime, durationMinutes || 60);
+    if (!result) return NextResponse.json({ error: 'Failed to create Teams meeting. Check Azure AD permissions.' }, { status: 500 });
+
+    const meeting = await prisma.auditMeeting.create({
+      data: {
+        engagementId,
+        title: subject || 'Walkthrough Meeting',
+        meetingDate: new Date(result.startDateTime),
+        meetingType: 'walkthrough',
+        source: 'teams',
+        teamsEventId: result.eventId,
+        createdById: session.user.id,
+      },
+    });
+
+    return NextResponse.json({ meeting: { ...meeting, joinUrl: result.joinUrl } }, { status: 201 });
   }
 
   // Save meeting (update title, transcript, minutes, attendees)

@@ -174,6 +174,49 @@ function parseVttToPlainText(vtt: string): string {
 }
 
 /**
+ * Create a Teams online meeting via Graph API.
+ * Requires Calendars.ReadWrite app permission.
+ */
+export async function createTeamsMeeting(
+  userObjectId: string,
+  subject: string,
+  startDateTime: string,
+  durationMinutes = 60,
+): Promise<{ eventId: string; joinUrl: string; startDateTime: string; endDateTime: string } | null> {
+  const token = await getGraphToken();
+
+  const startDate = new Date(startDateTime);
+  const endDate = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
+
+  const body = {
+    subject,
+    start: { dateTime: startDate.toISOString(), timeZone: 'UTC' },
+    end: { dateTime: endDate.toISOString(), timeZone: 'UTC' },
+    isOnlineMeeting: true,
+    onlineMeetingProvider: 'teamsForBusiness',
+  };
+
+  const res = await fetch(`${GRAPH_BASE}/users/${userObjectId}/calendar/events`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    console.error('[Teams] Failed to create meeting:', res.status, await res.text().catch(() => ''));
+    return null;
+  }
+
+  const event = await res.json();
+  return {
+    eventId: event.id,
+    joinUrl: event.onlineMeeting?.joinUrl || '',
+    startDateTime: event.start?.dateTime || startDateTime,
+    endDateTime: event.end?.dateTime || endDate.toISOString(),
+  };
+}
+
+/**
  * Check if Teams integration is configured (has Azure AD credentials).
  */
 export function isTeamsConfigured(): boolean {

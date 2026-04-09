@@ -311,6 +311,13 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
   const [generating, setGenerating] = useState(false);
   const [analysing, setAnalysing] = useState(false);
   const [showAllDocs, setShowAllDocs] = useState(false);
+  const [showTeamsModal, setShowTeamsModal] = useState(false);
+  const [teamsMeetings, setTeamsMeetings] = useState<any[]>([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
+  const [importingMeeting, setImportingMeeting] = useState<string | null>(null);
+  const [schedulingTeams, setSchedulingTeams] = useState(false);
+  const [newMeetingDate, setNewMeetingDate] = useState('');
+  const [newMeetingTime, setNewMeetingTime] = useState('10:00');
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({ narrative: true, controls: true, flowchart: true, evidence: true });
 
   // Load data + fetch portal uploads in one chain (avoids race condition)
@@ -459,6 +466,74 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
     } finally { setAnalysing(false); }
   }
 
+  // Fetch recent Teams meetings for import
+  async function fetchTeamsMeetings() {
+    setTeamsLoading(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/meetings`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'fetch_teams' }),
+      });
+      if (res.ok) { const data = await res.json(); setTeamsMeetings(data.meetings || []); }
+    } catch {} finally { setTeamsLoading(false); }
+  }
+
+  // Import a Teams meeting, get transcript, summarise into narrative
+  async function importTeamsMeeting(meeting: any) {
+    setImportingMeeting(meeting.id);
+    try {
+      // Import the meeting + transcript
+      const res = await fetch(`/api/engagements/${engagementId}/meetings`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'import_teams', meeting }),
+      });
+      if (!res.ok) { alert('Failed to import meeting'); return; }
+      const data = await res.json();
+
+      // Summarise transcript into process narrative
+      if (data.meeting?.transcriptRaw) {
+        const sumRes = await fetch(`/api/engagements/${engagementId}/walkthrough-flowchart`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'summarise_transcript', transcript: data.meeting.transcriptRaw, processLabel }),
+        });
+        if (sumRes.ok) {
+          const sumData = await sumRes.json();
+          if (sumData.narrative) {
+            setNarrative(prev => prev ? `${prev}\n\n--- From Teams call: ${meeting.subject || 'Walkthrough'} ---\n${sumData.narrative}` : sumData.narrative);
+            await save();
+          }
+        }
+      }
+      setShowTeamsModal(false);
+    } catch (err) {
+      console.error('[Walkthrough] Import Teams meeting error:', err);
+    } finally { setImportingMeeting(null); }
+  }
+
+  // Schedule a new Teams meeting
+  async function scheduleTeamsMeeting() {
+    if (!newMeetingDate) { alert('Please select a date'); return; }
+    setSchedulingTeams(true);
+    try {
+      const startDateTime = `${newMeetingDate}T${newMeetingTime}:00`;
+      const res = await fetch(`/api/engagements/${engagementId}/meetings`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create_teams', subject: `${processLabel} — Walkthrough`, startDateTime, durationMinutes: 60 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.meeting?.joinUrl) window.open(data.meeting.joinUrl, '_blank');
+        await saveStatus({ stage: 'walkthrough_in_progress', schedulingMethod: 'teams' });
+        setShowTeamsModal(false);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to create meeting: ${err.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('[Walkthrough] Schedule Teams meeting error:', err);
+    } finally { setSchedulingTeams(false); }
+  }
+
   // Send flowchart for client verification
   async function sendForVerification() {
     try {
@@ -542,23 +617,32 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
 
         return (
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Request from Client — visible until flowchart exists */}
+            {/* Documentation methods — visible until flowchart exists */}
             {!hasFlowchart && (
-              <>
-                {stage === 'draft' && (
-                  <button onClick={requestFromClient} disabled={requesting || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 inline-flex items-center gap-1">
-                    <Send className="h-3 w-3" /> {requesting ? 'Sending...' : 'Request from Client'}
+              <div className="flex flex-col gap-2 w-full">
+                <p className="text-[10px] text-slate-500 font-medium">How would you like to document this process?</p>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {/* Type description + generate */}
+                  {narrative.trim() && (stage === 'draft' || stage === 'received') && (
+                    <button onClick={generateFlowchart} disabled={generating} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1">
+                      {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Generate Flowchart from Description
+                    </button>
+                  )}
+                  {/* Teams call */}
+                  <button onClick={() => setShowTeamsModal(true)} className="text-[10px] px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 inline-flex items-center gap-1">
+                    <Video className="h-3 w-3" /> Teams Call
                   </button>
-                )}
-                {stage === 'requested' && (
-                  <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">Awaiting client response...</span>
-                )}
-                {stage === 'received' && narrative.trim() && (
-                  <button onClick={generateFlowchart} disabled={generating || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1">
-                    {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Generate Flowchart
-                  </button>
-                )}
-              </>
+                  {/* Request from client */}
+                  {stage === 'draft' && (
+                    <button onClick={requestFromClient} disabled={requesting || !narrative.trim()} className="text-[10px] px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 inline-flex items-center gap-1">
+                      <Send className="h-3 w-3" /> {requesting ? 'Sending...' : 'Request from Client'}
+                    </button>
+                  )}
+                  {stage === 'requested' && (
+                    <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">Awaiting client response...</span>
+                  )}
+                </div>
+              </div>
             )}
 
             {/* Send to Client to Confirm — once flowchart exists and not yet confirmed (or edited after confirm) */}
@@ -757,6 +841,82 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
           </div>
         )}
       </div>
+
+      {/* Teams Meeting Modal */}
+      {showTeamsModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/30" onClick={() => setShowTeamsModal(false)}>
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-[500px] max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-800">Teams Walkthrough Call — {processLabel}</h3>
+              <button onClick={() => setShowTeamsModal(false)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Schedule new meeting */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-xs font-semibold text-blue-700 mb-2">Schedule New Teams Call</p>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div>
+                    <label className="text-[10px] text-slate-600 block mb-0.5">Date</label>
+                    <input type="date" value={newMeetingDate} onChange={e => setNewMeetingDate(e.target.value)}
+                      className="w-full text-xs border rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-400" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-600 block mb-0.5">Time</label>
+                    <input type="time" value={newMeetingTime} onChange={e => setNewMeetingTime(e.target.value)}
+                      className="w-full text-xs border rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-400" />
+                  </div>
+                </div>
+                <button onClick={scheduleTeamsMeeting} disabled={schedulingTeams || !newMeetingDate}
+                  className="w-full px-3 py-2 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 inline-flex items-center justify-center gap-1">
+                  {schedulingTeams ? <Loader2 className="h-3 w-3 animate-spin" /> : <Video className="h-3 w-3" />}
+                  {schedulingTeams ? 'Creating...' : 'Schedule Teams Meeting'}
+                </button>
+              </div>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 border-t border-slate-200" />
+                <span className="text-[10px] text-slate-400">or import an existing call</span>
+                <div className="flex-1 border-t border-slate-200" />
+              </div>
+
+              {/* Import existing meeting */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-slate-700">Recent Teams Meetings</p>
+                  <button onClick={fetchTeamsMeetings} disabled={teamsLoading}
+                    className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 disabled:opacity-50">
+                    {teamsLoading ? 'Loading...' : 'Refresh'}
+                  </button>
+                </div>
+                {teamsMeetings.length === 0 && !teamsLoading && (
+                  <p className="text-xs text-slate-400 italic py-4 text-center">Click Refresh to load recent Teams meetings</p>
+                )}
+                {teamsLoading && (
+                  <div className="flex items-center justify-center py-4 gap-2 text-slate-400">
+                    <Loader2 className="h-4 w-4 animate-spin" /><span className="text-xs">Loading meetings...</span>
+                  </div>
+                )}
+                <div className="space-y-1.5 max-h-[250px] overflow-y-auto">
+                  {teamsMeetings.map((m: any) => (
+                    <div key={m.id} className="flex items-center justify-between px-3 py-2 border rounded-lg hover:bg-slate-50">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-slate-700 truncate">{m.subject || 'Untitled Meeting'}</p>
+                        <p className="text-[10px] text-slate-400">{new Date(m.startDateTime).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                        {m.hasTranscript && <span className="text-[9px] px-1 bg-green-100 text-green-700 rounded">Has transcript</span>}
+                      </div>
+                      <button onClick={() => importTeamsMeeting(m)} disabled={importingMeeting === m.id}
+                        className="shrink-0 ml-2 text-[10px] px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                        {importingMeeting === m.id ? 'Importing...' : 'Import & Summarise'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
