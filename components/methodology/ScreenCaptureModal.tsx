@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { X, Camera, Crop, Pencil, Square, RotateCcw, Check, Loader2 } from 'lucide-react';
+import { X, Clipboard, Pencil, Square, RotateCcw, Check, Loader2, Scissors, Camera } from 'lucide-react';
 
 interface Props {
   engagementId: string;
@@ -10,102 +10,116 @@ interface Props {
   onClose: () => void;
 }
 
-type Tool = 'crop' | 'rect' | 'freehand';
+type Tool = 'rect' | 'freehand';
 
 export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }: Props) {
-  const [phase, setPhase] = useState<'capturing' | 'editing' | 'uploading'>('capturing');
-  const [renderKey, setRenderKey] = useState(0);
-  const [tool, setTool] = useState<Tool>('crop');
+  const [phase, setPhase] = useState<'waiting' | 'editing' | 'uploading'>('waiting');
+  const [tool, setTool] = useState<Tool>('rect');
   const [drawColor, setDrawColor] = useState('#ef4444');
   const [uploading, setUploading] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
 
-  // Full-resolution captured image (never scaled)
   const fullImageRef = useRef<HTMLImageElement | null>(null);
-  // Displayed canvas (scaled to fit modal)
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Annotation overlay (same size as display canvas)
   const overlayRef = useRef<HTMLCanvasElement>(null);
-
   const drawingRef = useRef(false);
   const startPosRef = useRef<{ x: number; y: number } | null>(null);
   const annotationSnapshotRef = useRef<ImageData | null>(null);
-  const [cropBox, setCropBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
-  // Capture screen immediately
-  const capture = useCallback(async () => {
+  // Read image from clipboard
+  const pasteFromClipboard = useCallback(async () => {
     try {
-      setPhase('capturing');
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find(t => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            fullImageRef.current = img;
+            setPhase('editing');
+            annotationSnapshotRef.current = null;
+          };
+          img.src = url;
+          return;
+        }
+      }
+      alert('No image found in clipboard. Press Win+Shift+S first to capture a screen region.');
+    } catch (err) {
+      alert('Could not read clipboard. Please allow clipboard access or try Ctrl+V.');
+    }
+  }, []);
+
+  // Listen for paste events (Ctrl+V)
+  useEffect(() => {
+    function handlePaste(e: ClipboardEvent) {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          const blob = item.getAsFile();
+          if (!blob) continue;
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            fullImageRef.current = img;
+            setPhase('editing');
+            annotationSnapshotRef.current = null;
+          };
+          img.src = url;
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
+
+  // Fallback: getDisplayMedia with auto-capture after 3s countdown
+  const screenCapture = useCallback(async () => {
+    try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const video = document.createElement('video');
       video.srcObject = stream;
       video.muted = true;
 
-      // Wait for video to have actual dimensions and a rendered frame
-      await new Promise<void>((resolve) => {
-        video.onloadedmetadata = () => {
-          video.play().then(() => {
-            // Wait for at least one frame to be painted
-            const checkFrame = () => {
-              if (video.videoWidth > 0 && video.videoHeight > 0) resolve();
-              else requestAnimationFrame(checkFrame);
-            };
-            requestAnimationFrame(checkFrame);
-          });
-        };
+      await new Promise<void>(resolve => {
+        video.onloadedmetadata = () => video.play().then(() => {
+          const check = () => { if (video.videoWidth > 0) resolve(); else requestAnimationFrame(check); };
+          requestAnimationFrame(check);
+        });
       });
-
-      // Small delay to ensure frame is fully rendered
-      await new Promise(r => setTimeout(r, 200));
-
-      // Grab frame at full resolution
-      const w = video.videoWidth;
-      const h = video.videoHeight;
-      console.log('[ScreenCapture] Captured frame:', w, 'x', h);
+      await new Promise(r => setTimeout(r, 300));
 
       const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      canvas.getContext('2d')!.drawImage(video, 0, 0, w, h);
-
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d')!.drawImage(video, 0, 0);
       stream.getTracks().forEach(t => t.stop());
       video.remove();
 
-      // Verify we got actual pixels
-      if (w === 0 || h === 0) {
-        console.error('[ScreenCapture] Captured 0-size frame');
-        onClose();
-        return;
-      }
+      if (canvas.width === 0) { onClose(); return; }
 
-      // Convert to image for clean handling
-      const dataUrl = canvas.toDataURL('image/png');
       const img = new Image();
       img.onload = () => {
         fullImageRef.current = img;
         setPhase('editing');
-        setTool('crop');
-        setCropBox(null);
         annotationSnapshotRef.current = null;
       };
-      img.src = dataUrl;
-    } catch (err) {
-      console.error('Screen capture cancelled or failed:', err);
-      onClose();
-    }
+      img.src = canvas.toDataURL('image/png');
+    } catch { /* user cancelled */ }
   }, [onClose]);
 
-  // Draw full image to display canvas (scaled to fit)
+  // Draw image to display canvas
   useEffect(() => {
     if (phase !== 'editing' || !fullImageRef.current || !canvasRef.current) return;
     const img = fullImageRef.current;
     const canvas = canvasRef.current;
-
-    // Render large enough that text is readable (min 75% of original, scrollable)
-    // On high-DPI screens the captured image can be 2-3x viewport size,
-    // so we cap at viewport width to keep it usable while allowing scroll
-    const minScale = 0.75;
-    const viewportScale = Math.min(window.innerWidth / img.width, 1);
-    const scale = Math.max(viewportScale, minScale);
+    const maxW = window.innerWidth - 80;
+    const maxH = window.innerHeight - 160;
+    const scale = Math.min(maxW / img.width, maxH / img.height, 1);
     canvas.width = Math.round(img.width * scale);
     canvas.height = Math.round(img.height * scale);
     canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -113,13 +127,12 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     if (overlayRef.current) {
       overlayRef.current.width = canvas.width;
       overlayRef.current.height = canvas.height;
-      const ctx = overlayRef.current.getContext('2d')!;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      overlayRef.current.getContext('2d')!.clearRect(0, 0, canvas.width, canvas.height);
       annotationSnapshotRef.current = null;
     }
-  }, [phase, renderKey]);
+  }, [phase]);
 
-  // Mouse position relative to overlay
+  // Drawing handlers
   const getPos = (e: React.MouseEvent) => {
     const rect = overlayRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -130,7 +143,6 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     const pos = getPos(e);
     startPosRef.current = pos;
     drawingRef.current = true;
-
     if (tool === 'freehand' && overlayRef.current) {
       const ctx = overlayRef.current.getContext('2d')!;
       ctx.beginPath();
@@ -142,21 +154,15 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
-    if (!drawingRef.current || !startPosRef.current) return;
+    if (!drawingRef.current || !startPosRef.current || !overlayRef.current) return;
     const pos = getPos(e);
     const start = startPosRef.current;
+    const ctx = overlayRef.current.getContext('2d')!;
 
-    if (tool === 'crop') {
-      setCropBox({
-        x: Math.min(start.x, pos.x), y: Math.min(start.y, pos.y),
-        w: Math.abs(pos.x - start.x), h: Math.abs(pos.y - start.y),
-      });
-    } else if (tool === 'freehand' && overlayRef.current) {
-      const ctx = overlayRef.current.getContext('2d')!;
+    if (tool === 'freehand') {
       ctx.lineTo(pos.x, pos.y);
       ctx.stroke();
-    } else if (tool === 'rect' && overlayRef.current) {
-      const ctx = overlayRef.current.getContext('2d')!;
+    } else if (tool === 'rect') {
       if (annotationSnapshotRef.current) ctx.putImageData(annotationSnapshotRef.current, 0, 0);
       else ctx.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height);
       ctx.strokeStyle = drawColor;
@@ -168,34 +174,10 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
   const onMouseUp = () => {
     drawingRef.current = false;
     startPosRef.current = null;
-    if ((tool === 'rect' || tool === 'freehand') && overlayRef.current) {
+    if (overlayRef.current) {
       annotationSnapshotRef.current = overlayRef.current.getContext('2d')!.getImageData(0, 0, overlayRef.current.width, overlayRef.current.height);
     }
   };
-
-  // Apply crop — replace fullImage with cropped region at full resolution
-  const applyCrop = useCallback(() => {
-    if (!cropBox || !fullImageRef.current || !canvasRef.current) return;
-    const displayScale = fullImageRef.current.width / canvasRef.current.width;
-    const sx = Math.round(cropBox.x * displayScale);
-    const sy = Math.round(cropBox.y * displayScale);
-    const sw = Math.round(cropBox.w * displayScale);
-    const sh = Math.round(cropBox.h * displayScale);
-
-    const cropped = document.createElement('canvas');
-    cropped.width = sw;
-    cropped.height = sh;
-    cropped.getContext('2d')!.drawImage(fullImageRef.current, sx, sy, sw, sh, 0, 0, sw, sh);
-
-    const img = new Image();
-    img.onload = () => {
-      fullImageRef.current = img;
-      setCropBox(null);
-      setTool('rect');
-      setRenderKey(k => k + 1); // Re-trigger canvas draw
-    };
-    img.src = cropped.toDataURL('image/png');
-  }, [cropBox]);
 
   const clearAnnotations = () => {
     if (overlayRef.current) {
@@ -204,12 +186,10 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     }
   };
 
-  // Upload — flatten annotations onto full-res image
+  // Upload
   const upload = useCallback(async () => {
-    if (!canvasRef.current || !fullImageRef.current) return;
+    if (!canvasRef.current) return;
     setUploading(true);
-
-    // Build final at display resolution (includes annotations)
     const final = document.createElement('canvas');
     final.width = canvasRef.current.width;
     final.height = canvasRef.current.height;
@@ -235,39 +215,51 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     }, 'image/png');
   }, [engagementId, stepId, onCapture, onClose]);
 
-  // Auto-start capture
-  useEffect(() => { capture(); }, []);
-
-  if (phase === 'capturing' && !fullImageRef.current) {
+  // Waiting phase — prompt to paste
+  if (phase === 'waiting') {
     return (
-      <div className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center">
-        <div className="bg-white rounded-xl shadow-2xl px-8 py-6 text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-3 text-blue-500" />
-          <p className="text-sm text-slate-600">Select a screen or window to capture...</p>
-          <button onClick={onClose} className="mt-3 text-xs text-slate-400 hover:text-slate-600">Cancel</button>
+      <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center" onClick={onClose}>
+        <div className="bg-white rounded-xl shadow-2xl w-[420px] overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+            <span className="text-sm font-semibold text-slate-800">Capture Evidence</span>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="p-6 space-y-4">
+            {/* Primary: clipboard paste */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+              <p className="text-xs text-blue-700 font-semibold mb-2">Fastest Method</p>
+              <p className="text-[11px] text-blue-600 mb-3">Press <kbd className="px-1.5 py-0.5 bg-white border rounded text-[10px] font-mono">Win + Shift + S</kbd> to snip your screen, then:</p>
+              <button onClick={pasteFromClipboard} className="px-4 py-2 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 inline-flex items-center gap-2">
+                <Clipboard className="h-4 w-4" /> Paste from Clipboard
+              </button>
+              <p className="text-[10px] text-blue-500 mt-2">Or just press <kbd className="px-1 py-0.5 bg-white border rounded text-[9px] font-mono">Ctrl+V</kbd> anywhere</p>
+            </div>
+
+            {/* Divider */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 border-t border-slate-200" />
+              <span className="text-[10px] text-slate-400">or</span>
+              <div className="flex-1 border-t border-slate-200" />
+            </div>
+
+            {/* Secondary: screen share */}
+            <button onClick={screenCapture} className="w-full px-4 py-2.5 bg-slate-100 text-slate-600 text-xs rounded-lg hover:bg-slate-200 inline-flex items-center justify-center gap-2">
+              <Camera className="h-3.5 w-3.5" /> Full Screen Capture (browser dialog)
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
+  // Editing phase
   return (
     <div className="fixed inset-0 z-[9999] bg-black/70 flex flex-col" onClick={onClose}>
       {/* Toolbar */}
       <div className="shrink-0 bg-slate-900 px-4 py-2 flex items-center gap-3" onClick={e => e.stopPropagation()}>
-        <Camera className="h-4 w-4 text-blue-400" />
-        <span className="text-sm font-medium text-white">Screen Capture</span>
+        <Scissors className="h-4 w-4 text-blue-400" />
+        <span className="text-sm font-medium text-white">Annotate & Save</span>
         <span className="text-slate-500">|</span>
-
-        <button onClick={() => { setTool('crop'); setCropBox(null); }} className={`text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1 ${tool === 'crop' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
-          <Crop className="h-3 w-3" /> Crop
-        </button>
-        {cropBox && cropBox.w > 10 && tool === 'crop' && (
-          <button onClick={applyCrop} className="text-[11px] px-2.5 py-1 bg-green-600 text-white rounded inline-flex items-center gap-1 hover:bg-green-500">
-            <Check className="h-3 w-3" /> Apply Crop
-          </button>
-        )}
-
-        <span className="text-slate-600">|</span>
 
         <button onClick={() => setTool('rect')} className={`text-[11px] px-2.5 py-1 rounded inline-flex items-center gap-1 ${tool === 'rect' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
           <Square className="h-3 w-3" /> Highlight
@@ -286,8 +278,8 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
 
         <div className="flex-1" />
 
-        <button onClick={capture} className="text-[11px] px-2.5 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600 inline-flex items-center gap-1">
-          <Camera className="h-3 w-3" /> Recapture
+        <button onClick={() => setPhase('waiting')} className="text-[11px] px-2.5 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600">
+          New Capture
         </button>
         <button onClick={upload} disabled={uploading} className="text-[11px] px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 inline-flex items-center gap-1">
           {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
@@ -296,34 +288,18 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
         <button onClick={onClose} className="text-slate-400 hover:text-white ml-2"><X className="h-5 w-5" /></button>
       </div>
 
-      {/* Canvas area — full remaining viewport */}
-      <div className="flex-1 overflow-auto flex items-center justify-center p-2" onClick={e => e.stopPropagation()}>
+      {/* Canvas */}
+      <div className="flex-1 overflow-auto flex items-center justify-center p-4" onClick={e => e.stopPropagation()}>
         <div className="relative inline-block">
           <canvas ref={canvasRef} className="rounded shadow-2xl" />
           <canvas
             ref={overlayRef}
-            className="absolute inset-0"
-            style={{ cursor: tool === 'crop' ? 'crosshair' : tool === 'rect' ? 'crosshair' : 'default' }}
+            className="absolute inset-0 cursor-crosshair"
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
             onMouseLeave={onMouseUp}
           />
-          {/* Crop overlay */}
-          {cropBox && tool === 'crop' && (
-            <div className="absolute inset-0 pointer-events-none">
-              <svg width="100%" height="100%" className="absolute inset-0">
-                <defs>
-                  <mask id="cropMask">
-                    <rect width="100%" height="100%" fill="white" />
-                    <rect x={cropBox.x} y={cropBox.y} width={cropBox.w} height={cropBox.h} fill="black" />
-                  </mask>
-                </defs>
-                <rect width="100%" height="100%" fill="rgba(0,0,0,0.5)" mask="url(#cropMask)" />
-              </svg>
-              <div className="absolute border-2 border-white border-dashed" style={{ left: cropBox.x, top: cropBox.y, width: cropBox.w, height: cropBox.h }} />
-            </div>
-          )}
         </div>
       </div>
     </div>
