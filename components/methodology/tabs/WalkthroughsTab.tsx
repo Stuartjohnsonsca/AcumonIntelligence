@@ -39,9 +39,9 @@ const STAGE_COLORS: Record<string, string> = {
   walkthrough_in_progress: 'bg-indigo-100 text-indigo-700', complete: 'bg-green-200 text-green-800',
 };
 
-interface Props { engagementId: string; }
+interface Props { engagementId: string; userRole?: string; }
 
-export function WalkthroughsTab({ engagementId }: Props) {
+export function WalkthroughsTab({ engagementId, userRole }: Props) {
   const [processes, setProcesses] = useState<ProcessTab[]>([
     { key: 'sales', label: 'Sales Process' },
     { key: 'purchases', label: 'Purchase Process' },
@@ -292,7 +292,7 @@ export function WalkthroughsTab({ engagementId }: Props) {
           ? activeProcess?.children?.find(c => c.key === activeSubProcess)?.label || activeSubProcess
           : activeProcess?.label || activeTab;
         return (
-          <WalkthroughProcess key={activeKey} engagementId={engagementId} processKey={activeKey} processLabel={activeLabel} onStatusChange={(s) => onProcessStatusChange(activeKey, s)} />
+          <WalkthroughProcess key={activeKey} engagementId={engagementId} processKey={activeKey} processLabel={activeLabel} userRole={userRole} onStatusChange={(s) => onProcessStatusChange(activeKey, s)} />
         );
       })()}
     </div>
@@ -300,7 +300,7 @@ export function WalkthroughsTab({ engagementId }: Props) {
 }
 
 // ─── Single Process Walkthrough ───
-function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusChange }: { engagementId: string; processKey: string; processLabel: string; onStatusChange?: (s: ProcessStatus) => void }) {
+function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, onStatusChange }: { engagementId: string; processKey: string; processLabel: string; userRole?: string; onStatusChange?: (s: ProcessStatus) => void }) {
   const [narrative, setNarrative] = useState('');
   const [controls, setControls] = useState<Control[]>([]);
   const [status, setStatus] = useState<ProcessStatus>({ stage: 'draft' });
@@ -673,6 +673,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
             <WalkthroughFlowEditor
               key={`fc-${(status.flowchart || []).length}-${status.stage}`}
               steps={status.flowchart || []}
+              userRole={userRole}
               onStepsChange={(newSteps) => {
                 const updates: Partial<ProcessStatus> = { flowchart: newSteps };
                 if (status.flowchartConfirmedAt) updates.flowchartEditedAfterConfirm = true;

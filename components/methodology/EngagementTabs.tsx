@@ -329,7 +329,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'par':
         return <PARTab engagementId={engagement.id} userId={currentUserId} userName={teamMembers.find(m => m.userId === currentUserId)?.userName} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'walkthroughs':
-        return <WalkthroughsTab engagementId={engagement.id} />;
+        return <WalkthroughsTab engagementId={engagement.id} userRole={teamMembers.find(m => m.userId === currentUserId)?.role} />;
       case 'rmm':
         return <RMMTab engagementId={engagement.id} auditType={auditType} teamMembers={teamMembers} showCategoryOption={tbShowCategory} />;
       case 'documents':

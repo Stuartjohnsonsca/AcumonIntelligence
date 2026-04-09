@@ -37,33 +37,57 @@ interface WalkthroughFlowEditorProps {
   steps: FlowStep[];
   onStepsChange: (steps: FlowStep[]) => void;
   readOnly?: boolean;
+  userRole?: string; // 'Junior' | 'Manager' | 'RI' etc
 }
 
 // ─── Shared: Metadata badges + Sign-off dots ───
 
 const SIGNOFF_COLORS = { blank: 'bg-slate-300', red: 'bg-red-500', green: 'bg-green-500' };
 
+// Role authority: Junior→preparer, Manager→reviewer+preparer, RI→all
+const ROLE_AUTHORITY: Record<string, string[]> = {
+  Junior: ['preparer'], Manager: ['preparer', 'reviewer'], RI: ['preparer', 'reviewer', 'ri'],
+  Partner: ['preparer', 'reviewer', 'ri'], Admin: ['preparer', 'reviewer', 'ri'],
+};
+
 function StepSignOffDots({ data, nodeId }: { data: any; nodeId: string }) {
   const { setNodes } = useReactFlow();
   const readOnly = data._readOnly as boolean;
+  const userRole = (data._userRole as string) || '';
+  const allowed = ROLE_AUTHORITY[userRole] || [];
   const signOffs = (data.stepSignOffs || {}) as Record<string, StepSignOff | undefined>;
 
   function cycle(role: string) {
-    if (readOnly) return;
+    if (readOnly || !allowed.includes(role)) return;
     const current = signOffs[role]?.status || 'blank';
     const nextStatus = current === 'blank' ? 'red' : current === 'red' ? 'green' : 'blank';
     const updated = { ...signOffs, [role]: { name: 'Current User', at: new Date().toISOString(), status: nextStatus } };
     if (nextStatus === 'blank') updated[role] = undefined;
+    // Higher roles auto-commit lower roles when approving green
+    if (nextStatus === 'green') {
+      if (role === 'reviewer' && !signOffs.preparer?.status) {
+        updated.preparer = { name: 'Current User', at: new Date().toISOString(), status: 'green' };
+      }
+      if (role === 'ri') {
+        if (!signOffs.preparer?.status) updated.preparer = { name: 'Current User', at: new Date().toISOString(), status: 'green' };
+        if (!signOffs.reviewer?.status) updated.reviewer = { name: 'Current User', at: new Date().toISOString(), status: 'green' };
+      }
+    }
     setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, stepSignOffs: updated } } : n));
   }
 
   return (
     <div className="flex items-center gap-0.5 mt-1">
-      {['preparer', 'reviewer', 'ri'].map(role => (
-        <button key={role} onClick={(e) => { e.stopPropagation(); cycle(role); }}
-          title={`${role === 'ri' ? 'RI' : role.charAt(0).toUpperCase() + role.slice(1)}${signOffs[role] ? ` — ${signOffs[role]!.name}, ${new Date(signOffs[role]!.at).toLocaleDateString('en-GB')}` : ''}`}
-          className={`w-2.5 h-2.5 rounded-full ${SIGNOFF_COLORS[signOffs[role]?.status || 'blank']} hover:ring-2 hover:ring-offset-1 hover:ring-slate-400 transition-all`} />
-      ))}
+      {['preparer', 'reviewer', 'ri'].map(role => {
+        const canClick = allowed.includes(role);
+        const so = signOffs[role];
+        return (
+          <button key={role} onClick={(e) => { e.stopPropagation(); cycle(role); }}
+            disabled={!canClick}
+            title={`${role === 'ri' ? 'RI' : role.charAt(0).toUpperCase() + role.slice(1)}${so ? ` — ${so.name}, ${new Date(so.at).toLocaleDateString('en-GB')}` : ''}${!canClick ? ' (no authority)' : ''}`}
+            className={`w-2.5 h-2.5 rounded-full ${SIGNOFF_COLORS[so?.status || 'blank']} ${canClick ? 'hover:ring-2 hover:ring-offset-1 hover:ring-slate-400 cursor-pointer' : 'cursor-not-allowed opacity-60'} transition-all`} />
+        );
+      })}
     </div>
   );
 }
@@ -106,22 +130,63 @@ function StepEditPanel({ data, nodeId, onClose, isDecision }: { data: any; nodeI
   }
 
   return (
-    <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-300 rounded-lg shadow-lg p-2 space-y-1.5 min-w-[220px]" onClick={e => e.stopPropagation()}>
-      <div><label className="text-[8px] text-slate-500 block">Label</label><input value={label} onChange={e => setLabel(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" /></div>
-      <div><label className="text-[8px] text-slate-500 block">Source Document / Action</label><input value={sourceDoc} onChange={e => setSourceDoc(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. Purchase Order" /></div>
-      <div><label className="text-[8px] text-slate-500 block">Output Document / Action</label><input value={outputDoc} onChange={e => setOutputDoc(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. Invoice" /></div>
-      <div><label className="text-[8px] text-slate-500 block">Responsible (Role)</label><input value={responsible} onChange={e => setResponsible(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. AP Clerk" /></div>
-      <div><label className="text-[8px] text-slate-500 block">Document Location</label><input value={docLocation} onChange={e => setDocLocation(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5" placeholder="e.g. Section 3.2, Page 5" /></div>
-      {isDecision && <div><label className="text-[8px] text-slate-500 block">Condition</label><input value={condition} onChange={e => setCondition(e.target.value)} className="w-full text-[10px] border rounded px-1.5 py-0.5 italic" /></div>}
-      {isDecision && (
-        <label className="flex items-center gap-1.5 cursor-pointer">
-          <input type="checkbox" checked={significantControl} onChange={e => setSignificantControl(e.target.checked)} className="w-3 h-3 rounded border-red-300 text-red-600 focus:ring-red-500" />
-          <span className="text-[9px] text-red-700 font-medium">Significant Control</span>
-        </label>
-      )}
-      <div className="flex gap-1 pt-1">
-        <button onClick={save} className="text-[9px] px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
-        <button onClick={onClose} className="text-[9px] px-2 py-0.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Cancel</button>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/30" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-[420px] max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-800">Edit Step</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="text-[10px] font-medium text-slate-600 block mb-0.5">Step Label</label>
+            <textarea value={label} onChange={e => setLabel(e.target.value)} rows={2}
+              className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-400 resize-y" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-medium text-slate-600 block mb-0.5">Source Document / Action</label>
+              <input value={sourceDoc} onChange={e => setSourceDoc(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-400" placeholder="e.g. Purchase Order" />
+            </div>
+            <div>
+              <label className="text-[10px] font-medium text-slate-600 block mb-0.5">Output Document / Action</label>
+              <input value={outputDoc} onChange={e => setOutputDoc(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-400" placeholder="e.g. Invoice" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-medium text-slate-600 block mb-0.5">Responsible (Role)</label>
+              <input value={responsible} onChange={e => setResponsible(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-400" placeholder="e.g. AP Clerk" />
+            </div>
+            <div>
+              <label className="text-[10px] font-medium text-slate-600 block mb-0.5">Document Location</label>
+              <input value={docLocation} onChange={e => setDocLocation(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-400" placeholder="e.g. Section 3.2, Page 5" />
+            </div>
+          </div>
+          {isDecision && (
+            <div>
+              <label className="text-[10px] font-medium text-slate-600 block mb-0.5">Condition</label>
+              <input value={condition} onChange={e => setCondition(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-400 italic" placeholder="e.g. Amount > threshold?" />
+            </div>
+          )}
+          {isDecision && (
+            <label className="flex items-center gap-2 cursor-pointer px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+              <input type="checkbox" checked={significantControl} onChange={e => setSignificantControl(e.target.checked)} className="w-4 h-4 rounded border-red-300 text-red-600 focus:ring-red-500" />
+              <div>
+                <span className="text-xs text-red-700 font-semibold">Significant Control</span>
+                <p className="text-[10px] text-red-500">Highlights this decision with a thick red border</p>
+              </div>
+            </label>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200">Cancel</button>
+          <button onClick={save} className="text-xs px-4 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Changes</button>
+        </div>
       </div>
     </div>
   );
@@ -399,17 +464,17 @@ function nextId(prefix = 'step') {
 
 // ─── Main Editor (inner, needs ReactFlowProvider) ───
 
-function FlowEditorInner({ steps, onStepsChange, readOnly = false }: WalkthroughFlowEditorProps) {
+function FlowEditorInner({ steps, onStepsChange, readOnly = false, userRole }: WalkthroughFlowEditorProps) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(() => flowStepsToReactFlow(steps), []);
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const reactFlowInstance = useReactFlow();
   const changeTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Inject readOnly flag into all node data
+  // Inject readOnly flag and userRole into all node data
   const enrichedNodes = useMemo(() =>
-    nodes.map(n => ({ ...n, data: { ...n.data, _readOnly: readOnly } })),
-    [nodes, readOnly]
+    nodes.map(n => ({ ...n, data: { ...n.data, _readOnly: readOnly, _userRole: userRole || '' } })),
+    [nodes, readOnly, userRole]
   );
 
   // Propagate changes back (debounced, flush on unmount)
