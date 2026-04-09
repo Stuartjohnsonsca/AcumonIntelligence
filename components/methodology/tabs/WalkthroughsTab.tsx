@@ -190,56 +190,54 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
   const [controls, setControls] = useState<Control[]>([]);
   const [status, setStatus] = useState<ProcessStatus>({ stage: 'draft' });
   const [saving, setSaving] = useState(false);
+  const [selectedEvidence, setSelectedEvidence] = useState<Set<string>>(new Set());
   const [requesting, setRequesting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [analysing, setAnalysing] = useState(false);
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({ narrative: true, controls: true, flowchart: true, evidence: true });
 
-  // Load data
+  // Load data + fetch portal uploads in one chain (avoids race condition)
   useEffect(() => {
     Promise.all([
       fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_${processKey}`).then(r => r.ok ? r.json() : null),
       fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_${processKey}_status`).then(r => r.ok ? r.json() : null),
-    ]).then(([content, statusData]) => {
+      fetch(`/api/portal/upload?engagementId=${engagementId}&processLabel=${encodeURIComponent(processLabel)}`).then(r => r.ok ? r.json() : null),
+    ]).then(([content, statusData, uploadsData]) => {
       const answers = content?.data || content?.answers || {};
       setNarrative(answers.narrative || '');
       setControls(answers.controls || []);
+
       const st = statusData?.data || statusData?.answers || {};
       if (st.stage) {
-        // Auto-set flowchartConfirmedAt when stage is verified+ but field is missing (e.g. portal trigger updated stage)
         const verifiedStages = ['verified', 'scheduling', 'walkthrough_in_progress', 'complete'];
         if (verifiedStages.includes(st.stage) && st.flowchart?.length && !st.flowchartConfirmedAt) {
           st.flowchartConfirmedAt = new Date().toISOString();
           st.flowchartEditedAfterConfirm = false;
         }
-        setStatus(st);
       }
+
+      // Merge portal uploads into evidence (deduplicate by storagePath)
+      const uploads = uploadsData?.uploads || [];
+      if (uploads.length > 0) {
+        const existingEvidence: any[] = st.evidence || [];
+        const existingPaths = new Set(existingEvidence.map((e: any) => e.storagePath).filter(Boolean));
+        const existingIds = new Set(existingEvidence.map((e: any) => e.id));
+        const newFromUploads = uploads
+          .filter((u: any) => !existingIds.has(u.id) && !existingPaths.has(u.storagePath))
+          .map((u: any) => ({ id: u.id, name: u.originalName, type: u.mimeType || 'application/octet-stream', storagePath: u.storagePath }));
+        if (newFromUploads.length > 0) {
+          st.evidence = [...existingEvidence, ...newFromUploads];
+          // Persist the merged evidence
+          fetch(`/api/engagements/${engagementId}/permanent-file`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sectionKey: `walkthrough_${processKey}_status`, data: st }),
+          }).catch(() => {});
+        }
+      }
+
+      setStatus(st.stage ? st : { stage: 'draft' });
     }).catch(() => {});
   }, [engagementId, processKey]);
-
-  // Fetch portal uploads for this walkthrough process and merge into evidence
-  const [uploadsFetched, setUploadsFetched] = useState(false);
-  useEffect(() => {
-    if (uploadsFetched) return;
-    const url = `/api/portal/upload?engagementId=${engagementId}&processLabel=${encodeURIComponent(processLabel)}`;
-    console.log('[Walkthrough Evidence] Fetching uploads:', url);
-    fetch(url)
-      .then(r => { console.log('[Walkthrough Evidence] Response status:', r.status); return r.ok ? r.json() : null; })
-      .then(data => {
-        console.log('[Walkthrough Evidence] Uploads returned:', data?.uploads?.length || 0, data?.uploads?.map((u: any) => u.originalName));
-        if (!data?.uploads?.length) { setUploadsFetched(true); return; }
-        const existingIds = new Set((status.evidence || []).map(e => e.id));
-        const newEvidence = data.uploads
-          .filter((u: any) => !existingIds.has(u.id))
-          .map((u: any) => ({ id: u.id, name: u.originalName, type: u.mimeType || 'application/octet-stream', storagePath: u.storagePath }));
-        console.log('[Walkthrough Evidence] New evidence to merge:', newEvidence.length);
-        if (newEvidence.length > 0) {
-          saveStatus({ evidence: [...(status.evidence || []), ...newEvidence] });
-        }
-        setUploadsFetched(true);
-      })
-      .catch(err => { console.error('[Walkthrough Evidence] Fetch error:', err); setUploadsFetched(true); });
-  }, [engagementId, processLabel, uploadsFetched]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -312,14 +310,14 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
     } catch {} finally { setGenerating(false); }
   }
 
-  // Analyse evidence documents, extract text, and generate flowchart
+  // Analyse selected evidence documents, extract text, and generate flowchart
   async function analyseAndGenerate() {
     setAnalysing(true);
     try {
       const evidenceFiles = (status.evidence || [])
-        .filter(e => e.storagePath)
+        .filter(e => e.storagePath && selectedEvidence.has(e.id))
         .map(e => ({ storagePath: e.storagePath!, name: e.name, mimeType: e.type }));
-      if (evidenceFiles.length === 0) { alert('No documents with stored files to analyse.'); return; }
+      if (evidenceFiles.length === 0) { alert('Please select at least one document to analyse.'); setAnalysing(false); return; }
 
       const res = await fetch(`/api/engagements/${engagementId}/walkthrough-flowchart`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -595,6 +593,11 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
             </div>
             {(status.evidence || []).map(doc => (
               <div key={doc.id} className="flex items-center gap-2 text-xs border rounded px-2 py-1">
+                {doc.storagePath && (
+                  <input type="checkbox" checked={selectedEvidence.has(doc.id)}
+                    onChange={() => setSelectedEvidence(prev => { const next = new Set(prev); next.has(doc.id) ? next.delete(doc.id) : next.add(doc.id); return next; })}
+                    className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500" />
+                )}
                 <FileText className="h-3.5 w-3.5 text-slate-400" />
                 <span className="text-slate-700 flex-1">{doc.name}</span>
                 {doc.storagePath ? (
@@ -603,18 +606,26 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
                       const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(doc.storagePath!)}`);
                       if (res.ok) { const data = await res.json(); window.open(data.url, '_blank'); }
                     } catch {}
-                  }} className="text-slate-400 hover:text-blue-600" title="Download"><Eye className="h-3 w-3" /></button>
+                  }} className="text-blue-500 hover:text-blue-700" title="Download"><Eye className="h-3 w-3" /></button>
                 ) : (
-                  <span className="text-slate-300"><Eye className="h-3 w-3" /></span>
+                  <span className="text-slate-300 text-[9px] italic">local only</span>
                 )}
-                <button onClick={() => saveStatus({ evidence: (status.evidence || []).filter(d => d.id !== doc.id) })} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
+                <button onClick={() => { saveStatus({ evidence: (status.evidence || []).filter(d => d.id !== doc.id) }); setSelectedEvidence(prev => { const next = new Set(prev); next.delete(doc.id); return next; }); }} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
               </div>
             ))}
             {(status.evidence || []).some(e => e.storagePath) && (
-              <button onClick={analyseAndGenerate} disabled={analysing} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1 mt-1">
-                {analysing ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-                {analysing ? 'Analysing Documents...' : 'Analyse Documents & Generate Flowchart'}
-              </button>
+              <div className="flex items-center gap-2 mt-2">
+                <button onClick={() => {
+                  const allIds = (status.evidence || []).filter(e => e.storagePath).map(e => e.id);
+                  setSelectedEvidence(prev => prev.size === allIds.length ? new Set() : new Set(allIds));
+                }} className="text-[9px] text-slate-500 hover:text-slate-700 underline">
+                  {selectedEvidence.size === (status.evidence || []).filter(e => e.storagePath).length ? 'Deselect All' : 'Select All'}
+                </button>
+                <button onClick={analyseAndGenerate} disabled={analysing || selectedEvidence.size === 0} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1">
+                  {analysing ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+                  {analysing ? 'Analysing...' : `Analyse ${selectedEvidence.size > 0 ? selectedEvidence.size + ' ' : ''}Selected & Generate Flowchart`}
+                </button>
+              </div>
             )}
           </div>
         )}
