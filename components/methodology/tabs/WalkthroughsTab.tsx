@@ -229,6 +229,9 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
   async function requestFromClient() {
     setRequesting(true);
     try {
+      // Save narrative first so it persists
+      await save();
+
       const res = await fetch(`/api/engagements/${engagementId}/walkthrough-request`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -240,8 +243,14 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
       if (res.ok) {
         const data = await res.json();
         await saveStatus({ stage: 'requested', portalRequestId: data.id });
+      } else {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        console.error('[Walkthrough] Request failed:', err);
+        alert(`Request failed: ${err.error || res.status}`);
       }
-    } catch {} finally { setRequesting(false); }
+    } catch (err) {
+      console.error('[Walkthrough] Request error:', err);
+    } finally { setRequesting(false); }
   }
 
   // Generate flowchart from documentation

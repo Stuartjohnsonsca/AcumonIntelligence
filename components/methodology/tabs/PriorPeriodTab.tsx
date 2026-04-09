@@ -79,54 +79,31 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
 
   async function runAIReview(docKey: string, documentName: string) {
     setReviewing(docKey);
-    setReviewProgress('Starting...');
+    setReviewProgress('AI is reviewing the document...');
     try {
       const res = await fetch(`/api/engagements/${engagementId}/prior-period`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'ai_review', docKey, documentName }),
       });
       if (!res.ok) {
-        const errBody = await res.text().catch(() => '');
-        setReviewProgress(`Failed: ${res.status} ${errBody.slice(0, 100)}`);
-        setTimeout(() => { setReviewing(null); setReviewProgress(null); }, 4000);
+        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setReviewProgress(`Error: ${errData.error || res.status}`);
+        setTimeout(() => { setReviewing(null); setReviewProgress(null); }, 5000);
         return;
       }
-      const { taskId } = await res.json();
-      if (!taskId) { setReviewing(null); return; }
-
-      // Poll for completion
-      let hadError = false;
-      for (let i = 0; i < 120; i++) {
-        await new Promise(r => setTimeout(r, 2000));
-        const pollRes = await fetch(`/api/engagements/${engagementId}/prior-period`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'poll_task', taskId }),
-        });
-        if (!pollRes.ok) continue;
-        const pollData = await pollRes.json();
-
-        if (pollData.progress?.message) setReviewProgress(pollData.progress.message);
-
-        if (pollData.status === 'completed') {
-          if (pollData.result?.points) {
-            setPoints(prev => ({ ...prev, [pollData.result.docKey || docKey]: pollData.result.points }));
-          }
-          loadData(); // Refresh all data including summaries
-          break;
-        }
-        if (pollData.status === 'error') {
-          hadError = true;
-          setReviewProgress(`Error: ${pollData.error}`);
-          setTimeout(() => { setReviewing(null); setReviewProgress(null); }, 5000);
-          break;
-        }
+      const data = await res.json();
+      if (data.points) {
+        setPoints(prev => ({ ...prev, [data.docKey || docKey]: data.points }));
       }
-      if (!hadError) { setReviewing(null); setReviewProgress(null); }
-    } catch (err) {
+      loadData(); // Refresh all data including summaries
+    } catch (err: any) {
       console.error('AI review failed:', err);
-      setReviewProgress('Failed — check console');
-      setTimeout(() => { setReviewing(null); setReviewProgress(null); }, 4000);
+      setReviewProgress(`Failed: ${err.message || 'Network error'}`);
+      setTimeout(() => { setReviewing(null); setReviewProgress(null); }, 5000);
+      return;
     }
+    setReviewing(null);
+    setReviewProgress(null);
   }
 
   async function updatePoints(docKey: string, updatedPoints: ReviewPoint[]) {
