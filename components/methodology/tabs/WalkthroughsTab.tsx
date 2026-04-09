@@ -678,6 +678,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
               key={`fc-${(status.flowchart || []).length}-${status.stage}`}
               steps={status.flowchart || []}
               userRole={userRole}
+              engagementId={engagementId}
               onStepsChange={(newSteps) => {
                 const updates: Partial<ProcessStatus> = { flowchart: newSteps };
                 if (status.flowchartConfirmedAt) updates.flowchartEditedAfterConfirm = true;

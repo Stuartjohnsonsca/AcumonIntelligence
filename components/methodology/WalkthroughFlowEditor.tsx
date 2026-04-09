@@ -21,7 +21,8 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Trash2, Diamond, Circle, Square, X, FileText as FileIcon, User, ArrowDownToLine, ArrowUpFromLine, MapPin, Paperclip } from 'lucide-react';
+import { Plus, Trash2, Diamond, Circle, Square, X, FileText as FileIcon, User, ArrowDownToLine, ArrowUpFromLine, MapPin, Paperclip, Camera, Upload, Eye } from 'lucide-react';
+import { ScreenCaptureModal } from './ScreenCaptureModal';
 
 // ─── Types ───
 interface StepSignOff { name: string; at: string; status: 'blank' | 'red' | 'green'; }
@@ -37,7 +38,8 @@ interface WalkthroughFlowEditorProps {
   steps: FlowStep[];
   onStepsChange: (steps: FlowStep[]) => void;
   readOnly?: boolean;
-  userRole?: string; // 'Junior' | 'Manager' | 'RI' etc
+  userRole?: string;
+  engagementId?: string;
 }
 
 // ─── Shared: Metadata badges + Sign-off dots ───
@@ -113,6 +115,88 @@ function MetadataBadges({ data }: { data: any }) {
       {out ? <span className="text-[7px] px-1 py-0 bg-green-100 text-green-600 rounded inline-flex items-center gap-0.5"><ArrowUpFromLine className="h-2 w-2" />{out}</span> : null}
       {resp ? <span className="text-[7px] px-1 py-0 bg-purple-100 text-purple-600 rounded inline-flex items-center gap-0.5"><User className="h-2 w-2" />{resp}</span> : null}
       {atts.length > 0 ? <span className="text-[7px] px-1 py-0 bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5"><Paperclip className="h-2 w-2" />{atts.length}</span> : null}
+    </div>
+  );
+}
+
+// ─── Attachment buttons (capture + upload) + hover preview ───
+
+function StepAttachmentButtons({ data, nodeId }: { data: any; nodeId: string }) {
+  const { setNodes } = useReactFlow();
+  const readOnly = data._readOnly as boolean;
+  const engagementId = (data._engagementId as string) || '';
+  const [showCapture, setShowCapture] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const atts = Array.isArray(data.attachments) ? data.attachments : [];
+
+  function addAttachment(att: { id: string; name: string; storagePath: string }) {
+    setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, attachments: [...(Array.isArray(n.data.attachments) ? n.data.attachments : []), att] } } : n));
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !engagementId) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('engagementId', engagementId);
+    formData.append('stepId', nodeId);
+    try {
+      const res = await fetch('/api/walkthrough/upload', { method: 'POST', body: formData });
+      if (res.ok) { const d = await res.json(); addAttachment({ id: d.id, name: d.name, storagePath: d.storagePath }); }
+    } catch {}
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  if (readOnly && atts.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-0.5 mt-1 relative">
+      {!readOnly && (
+        <>
+          <button onClick={(e) => { e.stopPropagation(); setShowCapture(true); }} title="Capture screen" className="w-4 h-4 rounded bg-blue-50 text-blue-500 hover:bg-blue-100 flex items-center justify-center">
+            <Camera className="h-2.5 w-2.5" />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} title="Upload file" className="w-4 h-4 rounded bg-slate-50 text-slate-500 hover:bg-slate-100 flex items-center justify-center">
+            <Upload className="h-2.5 w-2.5" />
+          </button>
+          <input ref={fileInputRef} type="file" className="hidden" accept="image/*,.pdf,.doc,.docx" onChange={handleFileUpload} />
+        </>
+      )}
+      {atts.length > 0 && (
+        <div className="relative" onMouseEnter={() => setShowPreview(true)} onMouseLeave={() => setShowPreview(false)}>
+          <span className="text-[7px] px-1 py-0 bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5 cursor-pointer">
+            <Paperclip className="h-2 w-2" />{atts.length}
+          </span>
+          {showPreview && (
+            <div className="absolute bottom-full left-0 mb-1 z-50 bg-white border border-slate-200 rounded-lg shadow-xl p-2 min-w-[180px] max-w-[280px]" onClick={e => e.stopPropagation()}>
+              <p className="text-[8px] font-bold text-slate-500 mb-1">Attachments</p>
+              <div className="space-y-1">
+                {atts.map((a: any, i: number) => (
+                  <div key={i} className="flex items-center gap-1.5 text-[9px]">
+                    {a.storagePath && (a.name?.match(/\.(png|jpg|jpeg|gif|webp)$/i)) ? (
+                      <img src={`/api/portal/download?storagePath=${encodeURIComponent(a.storagePath)}&redirect=1`} alt={a.name} className="w-10 h-10 rounded border object-cover shrink-0" onError={e => (e.currentTarget.style.display = 'none')} />
+                    ) : (
+                      <div className="w-10 h-10 rounded border bg-slate-50 flex items-center justify-center shrink-0"><FileIcon className="h-4 w-4 text-slate-300" /></div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-slate-700 truncate">{a.name}</p>
+                      <button onClick={async () => {
+                        if (!a.storagePath) return;
+                        const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(a.storagePath)}`);
+                        if (res.ok) { const d = await res.json(); window.open(d.url, '_blank'); }
+                      }} className="text-blue-500 hover:text-blue-700 text-[8px]">Open</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {showCapture && engagementId && (
+        <ScreenCaptureModal engagementId={engagementId} stepId={nodeId} onCapture={addAttachment} onClose={() => setShowCapture(false)} />
+      )}
     </div>
   );
 }
@@ -242,6 +326,7 @@ function WtActionNode({ id, data, selected }: NodeProps) {
       <MetadataBadges data={data} />
       <div className="flex items-center justify-between">
         <StepSignOffDots data={data} nodeId={id} />
+        <StepAttachmentButtons data={data} nodeId={id} />
         {data.docLocation ? <span className="text-[7px] text-slate-400 inline-flex items-center gap-0.5"><MapPin className="h-2 w-2" />{String(data.docLocation)}</span> : null}
       </div>
       {!readOnly && (
@@ -278,6 +363,7 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
       <MetadataBadges data={data} />
       <div className="flex items-center justify-between">
         <StepSignOffDots data={data} nodeId={id} />
+        <StepAttachmentButtons data={data} nodeId={id} />
         {data.docLocation ? <span className="text-[7px] text-slate-400 inline-flex items-center gap-0.5"><MapPin className="h-2 w-2" />{String(data.docLocation)}</span> : null}
       </div>
       {!readOnly && (
@@ -473,17 +559,17 @@ function nextId(prefix = 'step') {
 
 // ─── Main Editor (inner, needs ReactFlowProvider) ───
 
-function FlowEditorInner({ steps, onStepsChange, readOnly = false, userRole }: WalkthroughFlowEditorProps) {
+function FlowEditorInner({ steps, onStepsChange, readOnly = false, userRole, engagementId }: WalkthroughFlowEditorProps) {
   const { nodes: initialNodes, edges: initialEdges } = useMemo(() => flowStepsToReactFlow(steps), []);
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const reactFlowInstance = useReactFlow();
   const changeTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Inject readOnly flag and userRole into all node data
+  // Inject readOnly flag, userRole, and engagementId into all node data
   const enrichedNodes = useMemo(() =>
-    nodes.map(n => ({ ...n, data: { ...n.data, _readOnly: readOnly, _userRole: userRole || '' } })),
-    [nodes, readOnly, userRole]
+    nodes.map(n => ({ ...n, data: { ...n.data, _readOnly: readOnly, _userRole: userRole || '', _engagementId: engagementId || '' } })),
+    [nodes, readOnly, userRole, engagementId]
   );
 
   // Propagate changes back (debounced, flush on unmount)
