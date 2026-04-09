@@ -126,6 +126,7 @@ model User {
   methodologyConfigsCreated  MethodologyConfig[]
   firmEthicsPartnerOf        Firm[]                     @relation("FirmEthicsPartner")
   journalRiskRuns            JournalRiskRun[]           @relation("JournalRiskRunBy")
+  meetingsCreated            AuditMeeting[]             @relation("MeetingCreator")
   // Resource planning relations
   resourceStaffSetting       ResourceStaffSetting?
   resourceAllocations        ResourceAllocation[]
@@ -1683,6 +1684,7 @@ model AuditEngagement {
   payrollTests         AuditPayrollTest[]
   taxChats             AuditTaxChat[]
   journalRiskRuns      JournalRiskRun[]
+  meetings             AuditMeeting[]
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -2819,4 +2821,29 @@ model JournalRiskEntry {
   @@index([runId])
   @@index([runId, selected])
   @@map("journal_risk_entries")
+}
+
+// ─── Meetings & Minutes ────────────────────────────────────────────────────
+
+model AuditMeeting {
+  id              String    @id @default(uuid())
+  engagementId    String    @map("engagement_id")
+  title           String
+  meetingDate     DateTime  @map("meeting_date")
+  meetingType     String    @default("other") @map("meeting_type") // planning | interim | final | other
+  attendees       Json?     // [{name, role}]
+  source          String    @default("manual")                     // teams | manual
+  teamsEventId    String?   @map("teams_event_id")
+  transcriptRaw   String?   @map("transcript_raw") @db.Text
+  minutes         Json?     // MeetingMinutes structured object
+  minutesStatus   String    @default("draft") @map("minutes_status") // draft | generated | reviewed | signed_off
+  createdById     String    @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  createdBy  User            @relation("MeetingCreator", fields: [createdById], references: [id])
+
+  @@index([engagementId])
+  @@map("audit_meetings")
 }
