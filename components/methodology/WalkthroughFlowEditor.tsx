@@ -381,10 +381,13 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
     setNodes(nds => [...nds, { id: nextId(nodeData.nodeType), type: nodeData.nodeType, position, data: nodeData.data }]);
   }, [readOnly, reactFlowInstance, setNodes]);
 
-  // Delete selected nodes on key press (except start)
+  // Delete selected nodes AND edges on key press
   const onKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (readOnly) return;
     if (event.key === 'Delete' || event.key === 'Backspace') {
+      // Delete selected edges
+      setEdges(eds => eds.filter(e => !e.selected));
+      // Delete selected nodes and their connected edges
       setNodes(nds => {
         const toDelete = nds.filter(n => n.selected).map(n => n.id);
         if (toDelete.length === 0) return nds;
@@ -393,6 +396,14 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
       });
     }
   }, [readOnly, setNodes, setEdges]);
+
+  // Click on edge to delete it
+  const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
+    if (readOnly) return;
+    if (window.confirm(`Delete connection from "${nodes.find(n => n.id === edge.source)?.data?.label || edge.source}" to "${nodes.find(n => n.id === edge.target)?.data?.label || edge.target}"?`)) {
+      setEdges(eds => eds.filter(e => e.id !== edge.id));
+    }
+  }, [readOnly, nodes, setEdges]);
 
   return (
     <div className="flex gap-2" style={{ height: 450 }}>
@@ -420,6 +431,7 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
           onNodesChange={readOnly ? undefined : onNodesChange}
           onEdgesChange={readOnly ? undefined : onEdgesChange}
           onConnect={onConnect}
+          onEdgeClick={onEdgeClick}
           onDragOver={onDragOver}
           onDrop={onDrop}
           defaultEdgeOptions={defaultEdgeOptions}
@@ -427,6 +439,8 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false }: Walkthrough
           fitViewOptions={{ padding: 0.3 }}
           nodesDraggable={!readOnly}
           nodesConnectable={!readOnly}
+          edgesFocusable={!readOnly}
+          elementsSelectable={!readOnly}
           panOnScroll
           zoomOnScroll
           minZoom={0.3}
