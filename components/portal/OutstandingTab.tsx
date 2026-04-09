@@ -34,6 +34,7 @@ interface Props {
 
 const SECTIONS = [
   { key: 'questions', label: 'Questions & Answers' },
+  { key: 'walkthroughs', label: 'Walkthrough Documentation' },
   { key: 'calculations', label: 'Financial Calculations' },
   { key: 'evidence', label: 'Evidence' },
   { key: 'connections', label: 'Connections' },
