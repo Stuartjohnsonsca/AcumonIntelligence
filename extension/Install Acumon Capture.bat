@@ -1,0 +1,3 @@
+@echo off
+echo Installing Acumon Screen Capture Extension...
+powershell -ExecutionPolicy Bypass -File "%~dp0install.ps1"

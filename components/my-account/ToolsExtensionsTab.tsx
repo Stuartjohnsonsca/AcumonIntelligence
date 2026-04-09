@@ -17,25 +17,13 @@ interface PlatformInstruction {
 
 const INSTRUCTIONS: PlatformInstruction[] = [
   {
-    platform: 'Windows', icon: <Monitor className="h-4 w-4" />, method: 'extension', browser: 'Chrome',
+    platform: 'Windows', icon: <Monitor className="h-4 w-4" />, method: 'extension', browser: 'Chrome & Edge',
     steps: [
-      'Download the extension ZIP file below',
-      'Extract the ZIP to a folder on your computer',
-      'Open Chrome and go to chrome://extensions',
-      'Enable "Developer mode" (toggle in top-right)',
-      'Click "Load unpacked" and select the extracted folder',
-      'The Acumon capture icon will appear — you\'re ready!',
-    ],
-  },
-  {
-    platform: 'Windows', icon: <Monitor className="h-4 w-4" />, method: 'extension', browser: 'Edge',
-    steps: [
-      'Download the extension ZIP file below',
-      'Extract the ZIP to a folder on your computer',
-      'Open Edge and go to edge://extensions',
-      'Enable "Developer mode" (toggle in bottom-left)',
-      'Click "Load unpacked" and select the extracted folder',
-      'The Acumon capture icon will appear — you\'re ready!',
+      'Download the extension package below',
+      'Extract the ZIP to a folder (right-click → Extract All)',
+      'Double-click "Install Acumon Capture.bat" in the extracted folder',
+      'The installer registers the extension with Chrome and Edge automatically',
+      'Restart your browser — the extension will be active on Acumon pages',
     ],
   },
   {
@@ -49,22 +37,14 @@ const INSTRUCTIONS: PlatformInstruction[] = [
     ],
   },
   {
-    platform: 'Mac', icon: <Apple className="h-4 w-4" />, method: 'extension', browser: 'Chrome',
+    platform: 'Mac', icon: <Apple className="h-4 w-4" />, method: 'extension', browser: 'Chrome & Edge',
     steps: [
-      'Download the extension ZIP file below',
+      'Download the extension package below',
       'Extract the ZIP (double-click in Finder)',
-      'Open Chrome and go to chrome://extensions',
-      'Enable "Developer mode" (toggle in top-right)',
-      'Click "Load unpacked" and select the extracted folder',
-    ],
-  },
-  {
-    platform: 'Mac', icon: <Apple className="h-4 w-4" />, method: 'extension', browser: 'Edge',
-    steps: [
-      'Download the extension ZIP file below',
-      'Extract the ZIP (double-click in Finder)',
-      'Open Edge and go to edge://extensions',
-      'Enable "Developer mode" and click "Load unpacked"',
+      'Open Terminal in the extracted folder',
+      'Run: chmod +x install.sh && ./install.sh (if available), or:',
+      'Open Chrome → chrome://extensions → Enable Developer Mode → Load unpacked → select folder',
+      'Restart your browser',
     ],
   },
   {
