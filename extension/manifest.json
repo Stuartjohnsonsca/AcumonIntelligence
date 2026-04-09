@@ -5,9 +5,7 @@
   "description": "One-click screen capture for Acumon Intelligence audit methodology walkthroughs.",
   "permissions": ["activeTab"],
   "host_permissions": [
-    "*://acumon-intelligence.vercel.app/*",
-    "*://www.acumonintelligence.com/*",
-    "http://localhost/*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"
