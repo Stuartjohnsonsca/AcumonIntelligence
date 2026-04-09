@@ -230,10 +230,15 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
     const updated = { ...status, ...newStatus };
     setStatus(updated);
     onStatusChange?.(updated);
-    await fetch(`/api/engagements/${engagementId}/permanent-file`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sectionKey: `walkthrough_${processKey}_status`, data: updated }),
-    }).catch(() => {});
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/permanent-file`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKey: `walkthrough_${processKey}_status`, data: updated }),
+      });
+      if (!res.ok) console.error('[Walkthrough] saveStatus failed:', res.status, await res.text().catch(() => ''));
+    } catch (err) {
+      console.error('[Walkthrough] saveStatus error:', err);
+    }
   }
 
   // Request documentation from client
@@ -243,21 +248,24 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
       // Save narrative first so it persists
       await save();
 
+      const requestBody = {
+        section: 'walkthroughs',
+        title: `${processLabel} — Documentation Request`,
+        question: `[Walkthrough: ${processLabel}] Please provide your ${processLabel.toLowerCase()} documentation. This can be:\n• Process maps or flowcharts\n• Procedure manuals\n• A written description of the process from start to finish\n\nPlease upload files or type your description below.`,
+      };
+      console.log('[Walkthrough] Sending request:', { engagementId, processKey, requestBody });
       const res = await fetch(`/api/engagements/${engagementId}/walkthrough-request`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          section: 'walkthroughs',
-          title: `${processLabel} — Documentation Request`,
-          question: `[Walkthrough: ${processLabel}] Please provide your ${processLabel.toLowerCase()} documentation. This can be:\n• Process maps or flowcharts\n• Procedure manuals\n• A written description of the process from start to finish\n\nPlease upload files or type your description below.`,
-        }),
+        body: JSON.stringify(requestBody),
       });
+      const data = await res.json();
+      console.log('[Walkthrough] Response:', { status: res.status, data });
       if (res.ok) {
-        const data = await res.json();
         await saveStatus({ stage: 'requested', portalRequestId: data.id });
+        console.log('[Walkthrough] Status saved as requested, portalRequestId:', data.id);
       } else {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        console.error('[Walkthrough] Request failed:', err);
-        alert(`Request failed: ${err.error || res.status}`);
+        console.error('[Walkthrough] Request failed:', data);
+        alert(`Request failed: ${data.error || res.status}`);
       }
     } catch (err) {
       console.error('[Walkthrough] Request error:', err);

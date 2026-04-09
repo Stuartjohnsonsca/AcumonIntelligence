@@ -34,6 +34,7 @@ interface Props {
 
 const SECTION_LABELS: Record<string, string> = {
   questions: 'Questions & Answers',
+  walkthroughs: 'Walkthrough Documentation',
   calculations: 'Financial Calculations',
   evidence: 'Evidence',
   connections: 'Connections',
