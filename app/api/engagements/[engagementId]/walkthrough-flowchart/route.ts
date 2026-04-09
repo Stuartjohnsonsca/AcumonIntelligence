@@ -1,22 +1,65 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import OpenAI from 'openai';
+import { downloadBlob } from '@/lib/azure-blob';
+import { processPdf } from '@/lib/pdf-to-images';
 
 const apiKey = process.env.TOGETHER_API_KEY || process.env.TOGETHER_DOC_SUMMARY_KEY || '';
 const MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
 
 /**
  * POST /api/engagements/[engagementId]/walkthrough-flowchart
- * Takes process narrative + controls and generates a structured flowchart
+ * Takes process narrative + controls (and optionally evidence files) and generates a structured flowchart.
+ * When evidenceFiles are provided, downloads them from Azure Blob, extracts text, and uses that for generation.
  */
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { processKey, processLabel, narrative, controls } = await req.json();
+  const { processKey, processLabel, narrative, controls, evidenceFiles } = await req.json();
 
-  if (!narrative?.trim()) {
-    return NextResponse.json({ error: 'Client-provided process documentation is required before generating a flowchart. The narrative must contain information received from the client.' }, { status: 400 });
+  let documentText = narrative?.trim() || '';
+  let extractedNarrative = '';
+
+  // If evidence files provided, extract text from them
+  if (evidenceFiles && Array.isArray(evidenceFiles) && evidenceFiles.length > 0) {
+    const extractedParts: string[] = [];
+
+    for (const file of evidenceFiles) {
+      try {
+        const buffer = await downloadBlob(file.storagePath, 'upload-inbox');
+        const mime = (file.mimeType || '').toLowerCase();
+
+        if (mime.includes('pdf')) {
+          const result = await processPdf(buffer, 20);
+          if (result.mode === 'text' && result.text) {
+            extractedParts.push(`--- ${file.name} ---\n${result.text}`);
+          }
+        } else if (mime.includes('text') || mime.includes('csv')) {
+          extractedParts.push(`--- ${file.name} ---\n${buffer.toString('utf-8')}`);
+        } else if (mime.includes('word') || mime.includes('docx')) {
+          // Try basic text extraction from docx
+          try {
+            const text = buffer.toString('utf-8').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (text.length > 50) extractedParts.push(`--- ${file.name} ---\n${text}`);
+          } catch {}
+        }
+        // Images (jpg, png) — skip text extraction, they'd need vision model
+      } catch (err: any) {
+        console.error(`[walkthrough-flowchart] Failed to extract ${file.name}:`, err.message);
+      }
+    }
+
+    if (extractedParts.length > 0) {
+      extractedNarrative = extractedParts.join('\n\n');
+      documentText = documentText
+        ? `${documentText}\n\n--- Extracted from client documents ---\n${extractedNarrative}`
+        : extractedNarrative;
+    }
+  }
+
+  if (!documentText) {
+    return NextResponse.json({ error: 'No documentation available. Please provide a narrative or upload documents with extractable text.' }, { status: 400 });
   }
 
   const controlsText = (controls || []).map((c: any, i: number) =>
@@ -55,15 +98,15 @@ Rules:
           role: 'user',
           content: `Process: ${processLabel}
 
-Narrative:
-${narrative}
+Documentation:
+${documentText}
 
 ${controlsText ? `Controls identified:\n${controlsText}` : ''}
 
 Generate a structured flowchart for this process.`,
         },
       ],
-      max_tokens: 2048,
+      max_tokens: 4096,
       temperature: 0.2,
     });
 
@@ -73,12 +116,11 @@ Generate a structured flowchart for this process.`,
 
     const steps = JSON.parse(jsonStr);
 
-    // Validate structure
     if (!Array.isArray(steps) || steps.length === 0) {
       return NextResponse.json({ error: 'Invalid flowchart generated' }, { status: 500 });
     }
 
-    return NextResponse.json({ steps, processKey });
+    return NextResponse.json({ steps, processKey, extractedNarrative: extractedNarrative || undefined });
   } catch (err: any) {
     console.error('[walkthrough-flowchart] AI generation failed:', err.message);
     return NextResponse.json({ error: 'Failed to generate flowchart: ' + err.message }, { status: 500 });

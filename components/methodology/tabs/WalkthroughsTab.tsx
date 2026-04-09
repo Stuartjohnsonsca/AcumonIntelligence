@@ -192,6 +192,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
   const [saving, setSaving] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [analysing, setAnalysing] = useState(false);
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({ narrative: true, controls: true, flowchart: true, evidence: true });
 
   // Load data
@@ -272,7 +273,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
     } finally { setRequesting(false); }
   }
 
-  // Generate flowchart from documentation
+  // Generate flowchart from narrative text
   async function generateFlowchart() {
     setGenerating(true);
     try {
@@ -285,6 +286,36 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
         await saveStatus({ stage: 'flowchart_generated', flowchart: data.steps || [] });
       }
     } catch {} finally { setGenerating(false); }
+  }
+
+  // Analyse evidence documents, extract text, and generate flowchart
+  async function analyseAndGenerate() {
+    setAnalysing(true);
+    try {
+      const evidenceFiles = (status.evidence || [])
+        .filter(e => e.storagePath)
+        .map(e => ({ storagePath: e.storagePath!, name: e.name, mimeType: e.type }));
+      if (evidenceFiles.length === 0) { alert('No documents with stored files to analyse.'); return; }
+
+      const res = await fetch(`/api/engagements/${engagementId}/walkthrough-flowchart`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ processKey, processLabel, narrative, controls, evidenceFiles }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // If extracted narrative was returned, update the narrative field
+        if (data.extractedNarrative) {
+          setNarrative(prev => prev ? `${prev}\n\n--- Extracted from documents ---\n${data.extractedNarrative}` : data.extractedNarrative);
+          await save();
+        }
+        await saveStatus({ stage: 'flowchart_generated', flowchart: data.steps || [] });
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        alert(`Analysis failed: ${err.error || res.status}`);
+      }
+    } catch (err) {
+      console.error('[Walkthrough] Analyse error:', err);
+    } finally { setAnalysing(false); }
   }
 
   // Send flowchart for client verification
@@ -542,10 +573,25 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
               <div key={doc.id} className="flex items-center gap-2 text-xs border rounded px-2 py-1">
                 <FileText className="h-3.5 w-3.5 text-slate-400" />
                 <span className="text-slate-700 flex-1">{doc.name}</span>
-                <button className="text-slate-400 hover:text-blue-600"><Eye className="h-3 w-3" /></button>
+                {doc.storagePath ? (
+                  <button onClick={async () => {
+                    try {
+                      const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(doc.storagePath!)}`);
+                      if (res.ok) { const data = await res.json(); window.open(data.url, '_blank'); }
+                    } catch {}
+                  }} className="text-slate-400 hover:text-blue-600" title="Download"><Eye className="h-3 w-3" /></button>
+                ) : (
+                  <span className="text-slate-300"><Eye className="h-3 w-3" /></span>
+                )}
                 <button onClick={() => saveStatus({ evidence: (status.evidence || []).filter(d => d.id !== doc.id) })} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
               </div>
             ))}
+            {(status.evidence || []).some(e => e.storagePath) && (
+              <button onClick={analyseAndGenerate} disabled={analysing} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1 mt-1">
+                {analysing ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+                {analysing ? 'Analysing Documents...' : 'Analyse Documents & Generate Flowchart'}
+              </button>
+            )}
           </div>
         )}
       </div>
