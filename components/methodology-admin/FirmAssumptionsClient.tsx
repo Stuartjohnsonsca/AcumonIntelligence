@@ -824,6 +824,9 @@ export function FirmAssumptionsClient({
 
       {/* ═══ Revenue Recognition ═══ */}
       <RevenueRecognitionSection firmId={firmId} onSave={() => setSaved(true)} />
+
+      {/* ═══ Communication Headings ═══ */}
+      <CommunicationHeadingsSection firmId={firmId} onSave={() => setSaved(true)} />
     </div>
   );
 }
@@ -1318,6 +1321,117 @@ function RevenueRecognitionSection({ firmId, onSave }: { firmId: string; onSave:
               Save
             </Button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Communication Headings (Board Minutes + TCWG) ──────────────────
+const DEFAULT_BOARD_HEADINGS = ['Litigation', 'Committed Capital Expenditure', 'Performance Concerns', 'Significant Disposals', 'Fraud'];
+const DEFAULT_TCWG_HEADINGS_CFG = ['Valuations', 'Accounting Policies', 'Cashflow', 'Significant Transactions', 'Fraud', 'Audit Matters', 'Control Breaches', 'Regulator Issues'];
+
+function CommunicationHeadingsSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [boardHeadings, setBoardHeadings] = useState<string[]>(DEFAULT_BOARD_HEADINGS);
+  const [tcwgHeadings, setTcwgHeadings] = useState<string[]>(DEFAULT_TCWG_HEADINGS_CFG);
+  const [newBoardHeading, setNewBoardHeading] = useState('');
+  const [newTcwgHeading, setNewTcwgHeading] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    if (loaded) return;
+    try {
+      const res = await fetch('/api/methodology-admin/communication-headings');
+      if (res.ok) {
+        const d = await res.json();
+        if (Array.isArray(d.boardMinutesHeadings) && d.boardMinutesHeadings.length > 0) setBoardHeadings(d.boardMinutesHeadings);
+        if (Array.isArray(d.tcwgHeadings) && d.tcwgHeadings.length > 0) setTcwgHeadings(d.tcwgHeadings);
+      }
+    } catch {}
+    setLoaded(true);
+  }, [loaded]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await fetch('/api/methodology-admin/communication-headings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ boardMinutesHeadings: boardHeadings, tcwgHeadings }),
+      });
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => { setExpanded(!expanded); if (!expanded) load(); }}
+        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+      >
+        <h2 className="text-sm font-semibold text-slate-800">Communication Headings (Board Minutes &amp; TCWG)</h2>
+        {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+      {expanded && (
+        <div className="p-4 space-y-5">
+          {/* Board Minutes Headings */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Board Minutes Headings</h3>
+            <p className="text-[10px] text-slate-400 mb-2">AI will extract content from uploaded board minutes under these headings</p>
+            <div className="border rounded-lg divide-y">
+              {boardHeadings.map((h, i) => (
+                <div key={i} className="grid grid-cols-[1fr,40px] gap-2 px-3 py-1.5 items-center">
+                  <input type="text" value={h} onChange={e => {
+                    const next = [...boardHeadings];
+                    next[i] = e.target.value;
+                    setBoardHeadings(next);
+                  }} className="border rounded px-2 py-1 text-sm" />
+                  <button onClick={() => setBoardHeadings(boardHeadings.filter((_, j) => j !== i))}
+                    className="text-red-400 hover:text-red-600 text-center"><X className="h-3.5 w-3.5 mx-auto" /></button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <input type="text" value={newBoardHeading} onChange={e => setNewBoardHeading(e.target.value)}
+                placeholder="New heading..." className="border rounded px-2 py-1 text-sm flex-1"
+                onKeyDown={e => { if (e.key === 'Enter' && newBoardHeading.trim()) { setBoardHeadings([...boardHeadings, newBoardHeading.trim()]); setNewBoardHeading(''); } }} />
+              <button onClick={() => { if (newBoardHeading.trim()) { setBoardHeadings([...boardHeadings, newBoardHeading.trim()]); setNewBoardHeading(''); } }}
+                className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ Add</button>
+            </div>
+          </div>
+
+          {/* TCWG Headings */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Audit Committee / TCWG Headings</h3>
+            <p className="text-[10px] text-slate-400 mb-2">AI will extract content from uploaded TCWG minutes under these headings</p>
+            <div className="border rounded-lg divide-y">
+              {tcwgHeadings.map((h, i) => (
+                <div key={i} className="grid grid-cols-[1fr,40px] gap-2 px-3 py-1.5 items-center">
+                  <input type="text" value={h} onChange={e => {
+                    const next = [...tcwgHeadings];
+                    next[i] = e.target.value;
+                    setTcwgHeadings(next);
+                  }} className="border rounded px-2 py-1 text-sm" />
+                  <button onClick={() => setTcwgHeadings(tcwgHeadings.filter((_, j) => j !== i))}
+                    className="text-red-400 hover:text-red-600 text-center"><X className="h-3.5 w-3.5 mx-auto" /></button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <input type="text" value={newTcwgHeading} onChange={e => setNewTcwgHeading(e.target.value)}
+                placeholder="New heading..." className="border rounded px-2 py-1 text-sm flex-1"
+                onKeyDown={e => { if (e.key === 'Enter' && newTcwgHeading.trim()) { setTcwgHeadings([...tcwgHeadings, newTcwgHeading.trim()]); setNewTcwgHeading(''); } }} />
+              <button onClick={() => { if (newTcwgHeading.trim()) { setTcwgHeadings([...tcwgHeadings, newTcwgHeading.trim()]); setNewTcwgHeading(''); } }}
+                className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ Add</button>
+            </div>
+          </div>
+
+          <Button onClick={handleSave} size="sm" disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+            Save Communication Headings
+          </Button>
         </div>
       )}
     </div>

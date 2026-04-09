@@ -126,3 +126,97 @@ export async function sendPARManagementEmail(
 
   await sendEmail(to, `Management Inquiry — ${clientName} Analytical Review`, html, { displayName: contactName });
 }
+
+/** Sent when meeting action items need to be shared with team members */
+export async function sendMeetingActionsEmail(
+  to: string,
+  recipientName: string,
+  clientName: string,
+  meetingTitle: string,
+  meetingDate: string,
+  summary: string,
+  actionItems: { action: string; assignedTo: string; deadline: string | null }[],
+): Promise<void> {
+  const actionRows = actionItems.map(item => `
+    <tr>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #334155;">${item.action}</td>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #334155;">${item.assignedTo}</td>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">${item.deadline || 'TBC'}</td>
+    </tr>
+  `).join('');
+
+  const html = brandedTemplate('Meeting Action Items', `
+    <p style="color: #334155; font-size: 14px;">Dear ${recipientName},</p>
+    <p style="color: #475569; font-size: 14px;">
+      The following action items were recorded from the meeting <strong>${meetingTitle}</strong>
+      (${meetingDate}) regarding <strong>${clientName}</strong>:
+    </p>
+    ${summary ? `<p style="color: #64748b; font-size: 13px; font-style: italic; margin: 12px 0;">${summary}</p>` : ''}
+    <table style="width: 100%; border-collapse: collapse; margin: 16px 0; border: 1px solid #e2e8f0; border-radius: 8px;">
+      <thead>
+        <tr style="background: #f8fafc;">
+          <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: #64748b; border-bottom: 2px solid #e2e8f0;">Action</th>
+          <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: #64748b; border-bottom: 2px solid #e2e8f0;">Assigned To</th>
+          <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: #64748b; border-bottom: 2px solid #e2e8f0;">Deadline</th>
+        </tr>
+      </thead>
+      <tbody>${actionRows}</tbody>
+    </table>
+    <p style="color: #475569; font-size: 14px;">
+      Please review and confirm the above action items.
+    </p>
+  `);
+
+  await sendEmail(to, `Meeting Actions — ${meetingTitle} (${clientName})`, html, { displayName: recipientName });
+}
+
+/** Sent to expert with meeting summary and actions for confirmation */
+export async function sendExpertActionEmail(
+  to: string,
+  expertName: string,
+  clientName: string,
+  meetingTitle: string,
+  meetingDate: string,
+  summary: string,
+  actionItems: { action: string; assignedTo: string; deadline: string | null }[],
+): Promise<void> {
+  const actionRows = actionItems.map(item => `
+    <tr>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #334155;">${item.action}</td>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #334155;">${item.assignedTo}</td>
+      <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">${item.deadline || 'TBC'}</td>
+    </tr>
+  `).join('');
+
+  const html = brandedTemplate('Expert Review — Meeting Summary & Actions', `
+    <p style="color: #334155; font-size: 14px;">Dear ${expertName},</p>
+    <p style="color: #475569; font-size: 14px;">
+      Please find below a summary of the meeting <strong>${meetingTitle}</strong>
+      (${meetingDate}) regarding <strong>${clientName}</strong>.
+    </p>
+    <div style="background: #f1f5f9; padding: 12px 16px; border-radius: 8px; margin: 16px 0; border-left: 4px solid #8b5cf6;">
+      <p style="color: #475569; font-size: 13px; margin: 0;">${summary}</p>
+    </div>
+    ${actionItems.length > 0 ? `
+    <p style="color: #475569; font-size: 14px;">
+      The following action items were identified:
+    </p>
+    <table style="width: 100%; border-collapse: collapse; margin: 16px 0; border: 1px solid #e2e8f0; border-radius: 8px;">
+      <thead>
+        <tr style="background: #f8fafc;">
+          <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: #64748b; border-bottom: 2px solid #e2e8f0;">Action</th>
+          <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: #64748b; border-bottom: 2px solid #e2e8f0;">Assigned To</th>
+          <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: #64748b; border-bottom: 2px solid #e2e8f0;">Deadline</th>
+        </tr>
+      </thead>
+      <tbody>${actionRows}</tbody>
+    </table>
+    ` : ''}
+    <p style="color: #475569; font-size: 14px;">
+      Please review this summary and confirm accuracy by replying to this email.
+      If any amendments are required, please detail them in your response.
+    </p>
+  `);
+
+  await sendEmail(to, `Expert Review — ${meetingTitle} (${clientName})`, html, { displayName: expertName });
+}

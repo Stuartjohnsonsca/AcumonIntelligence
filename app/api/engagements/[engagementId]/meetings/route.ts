@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { extractMeetingMinutes } from '@/lib/meeting-minutes-ai';
 import { listRecentMeetings, getMeetingTranscript, createTeamsMeeting, isTeamsConfigured } from '@/lib/teams-meetings';
+import { sendMeetingActionsEmail, sendExpertActionEmail } from '@/lib/audit-email';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -35,8 +36,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
+  const url = new URL(req.url);
+  const meetingTypeFilter = url.searchParams.get('meetingType');
+
+  const where: Record<string, unknown> = { engagementId };
+  if (meetingTypeFilter) where.meetingType = meetingTypeFilter;
+
   const meetings = await prisma.auditMeeting.findMany({
-    where: { engagementId },
+    where,
     include: { createdBy: { select: { name: true } } },
     orderBy: { meetingDate: 'desc' },
   });
@@ -188,7 +195,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   // Import a Teams meeting + transcript
   if (action === 'import_teams') {
-    const { eventId, subject, startDateTime, participants } = body;
+    const { eventId, subject, startDateTime, participants, meetingType: importMeetingType } = body;
     if (!eventId) return NextResponse.json({ error: 'eventId required' }, { status: 400 });
 
     const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { entraObjectId: true } });
@@ -208,7 +215,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         engagementId,
         title: subject || 'Teams Meeting',
         meetingDate: new Date(startDateTime || Date.now()),
-        meetingType: 'other',
+        meetingType: importMeetingType || 'other',
         attendees: (participants || []).map((p: string) => ({ name: p, role: '' })),
         source: 'teams',
         teamsEventId: eventId,
@@ -256,6 +263,62 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     }
 
     return NextResponse.json({ signOffs });
+  }
+
+  // Email action items to team or expert
+  if (action === 'email_actions') {
+    const { meetingId, emailType } = body;
+    if (!meetingId) return NextResponse.json({ error: 'meetingId required' }, { status: 400 });
+
+    const meeting = await prisma.auditMeeting.findUnique({
+      where: { id: meetingId },
+      include: { engagement: { select: { clientName: true, teamMembers: { include: { user: { select: { name: true, email: true } } } } } } },
+    });
+    if (!meeting) return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
+
+    const minutes = meeting.minutes as any;
+    if (!minutes?.actionItems?.length) return NextResponse.json({ error: 'No action items to email' }, { status: 400 });
+
+    const clientName = meeting.engagement?.clientName || 'Client';
+    const meetingDate = meeting.meetingDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const summary = minutes.summary || '';
+    const actionItems = minutes.actionItems;
+
+    if (emailType === 'expert') {
+      // Find expert attendee email (stored in attendees JSON)
+      const attendees = (meeting.attendees as any[]) || [];
+      const expertAttendee = attendees.find((a: any) => a.email);
+      if (!expertAttendee?.email) {
+        return NextResponse.json({ error: 'No expert email found. Add an attendee with an email address.' }, { status: 400 });
+      }
+      await sendExpertActionEmail(
+        expertAttendee.email,
+        expertAttendee.name || 'Expert',
+        clientName,
+        meeting.title,
+        meetingDate,
+        summary,
+        actionItems,
+      );
+    } else {
+      // Email all team members
+      const teamMembers = meeting.engagement?.teamMembers || [];
+      for (const member of teamMembers) {
+        if (member.user?.email) {
+          await sendMeetingActionsEmail(
+            member.user.email,
+            member.user.name || member.user.email,
+            clientName,
+            meeting.title,
+            meetingDate,
+            summary,
+            actionItems,
+          );
+        }
+      }
+    }
+
+    return NextResponse.json({ success: true });
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

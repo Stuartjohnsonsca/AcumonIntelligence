@@ -5,6 +5,9 @@ import { useSession } from 'next-auth/react';
 
 interface Props {
   engagementId: string;
+  meetingType?: string;
+  defaultMeetingType?: string;
+  onEmailActions?: (meeting: Meeting) => void;
 }
 
 interface Attendee {
@@ -59,7 +62,7 @@ const SIGN_OFF_ROLES = [
   { key: 'ri', label: 'RI', teamRole: 'RI' },
 ];
 
-export function MeetingsPanel({ engagementId }: Props) {
+export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMeetingType, onEmailActions }: Props) {
   const { data: session } = useSession();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [teamsEnabled, setTeamsEnabled] = useState(false);
@@ -76,14 +79,17 @@ export function MeetingsPanel({ engagementId }: Props) {
   // Create form state
   const [newTitle, setNewTitle] = useState('');
   const [newDate, setNewDate] = useState(new Date().toISOString().slice(0, 10));
-  const [newType, setNewType] = useState<string>('other');
+  const [newType, setNewType] = useState<string>(defaultMeetingType || 'other');
   const [newAttendees, setNewAttendees] = useState('');
   const [newTranscript, setNewTranscript] = useState('');
   const [creating, setCreating] = useState(false);
 
   const loadMeetings = useCallback(async () => {
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/meetings`);
+      const url = filterType
+        ? `/api/engagements/${engagementId}/meetings?meetingType=${filterType}`
+        : `/api/engagements/${engagementId}/meetings`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setMeetings(data.meetings || []);
@@ -91,7 +97,7 @@ export function MeetingsPanel({ engagementId }: Props) {
       }
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [engagementId]);
+  }, [engagementId, filterType]);
 
   useEffect(() => { loadMeetings(); }, [loadMeetings]);
 
@@ -107,7 +113,7 @@ export function MeetingsPanel({ engagementId }: Props) {
     if (!newTitle.trim()) return;
     setCreating(true);
     const attendees = newAttendees.split(',').map(s => s.trim()).filter(Boolean).map(name => ({ name, role: '' }));
-    const res = await postAction({ action: 'create', title: newTitle.trim(), meetingDate: newDate, meetingType: newType, attendees, transcriptRaw: newTranscript || null });
+    const res = await postAction({ action: 'create', title: newTitle.trim(), meetingDate: newDate, meetingType: defaultMeetingType || newType, attendees, transcriptRaw: newTranscript || null });
     if (res.ok) {
       setNewTitle(''); setNewTranscript(''); setNewAttendees(''); setShowCreate(false);
       await loadMeetings();
@@ -134,7 +140,7 @@ export function MeetingsPanel({ engagementId }: Props) {
   }
 
   async function handleImportTeams(tm: TeamsMeeting) {
-    const res = await postAction({ action: 'import_teams', eventId: tm.id, subject: tm.subject, startDateTime: tm.startDateTime, participants: tm.participants });
+    const res = await postAction({ action: 'import_teams', eventId: tm.id, subject: tm.subject, startDateTime: tm.startDateTime, participants: tm.participants, meetingType: defaultMeetingType || undefined });
     if (res.ok) {
       setShowTeamsImport(false);
       await loadMeetings();
@@ -229,12 +235,14 @@ export function MeetingsPanel({ engagementId }: Props) {
               <label className="block text-[10px] text-slate-500 mb-0.5">Date</label>
               <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5" />
             </div>
-            <div>
-              <label className="block text-[10px] text-slate-500 mb-0.5">Type</label>
-              <select value={newType} onChange={e => setNewType(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5">
-                {MEETING_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
-              </select>
-            </div>
+            {!defaultMeetingType && (
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">Type</label>
+                <select value={newType} onChange={e => setNewType(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5">
+                  {MEETING_TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                </select>
+              </div>
+            )}
           </div>
           <div className="mb-2">
             <label className="block text-[10px] text-slate-500 mb-0.5">Attendees (comma-separated)</label>
@@ -414,6 +422,14 @@ export function MeetingsPanel({ engagementId }: Props) {
                   {/* No minutes yet — show transcript if available */}
                   {!mins && meeting.hasTranscript && (
                     <div className="text-[10px] text-slate-400 italic">Transcript available. Click "Generate Minutes" to extract structured minutes.</div>
+                  )}
+
+                  {/* Email actions button */}
+                  {onEmailActions && mins?.actionItems && mins.actionItems.length > 0 && (
+                    <button onClick={() => onEmailActions(meeting)}
+                      className="text-[10px] px-3 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded hover:bg-emerald-100">
+                      Email Action Items ({mins.actionItems.length})
+                    </button>
                   )}
 
                   {/* Sign-off bar */}
