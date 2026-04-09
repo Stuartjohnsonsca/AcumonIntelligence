@@ -26,10 +26,12 @@ import { ScreenCaptureModal } from './ScreenCaptureModal';
 
 // ─── Types ───
 interface StepSignOff { name: string; at: string; status: 'blank' | 'red' | 'green'; }
+interface ApprovalLevel { level: number; role: string; threshold?: string; }
 interface FlowStep {
   id: string; label: string; type: 'start' | 'action' | 'decision' | 'end'; next: string[]; condition?: string;
   sourceDoc?: string; outputDoc?: string; responsible?: string; docLocation?: string;
   isSignificantControl?: boolean;
+  approvalChain?: ApprovalLevel[];
   attachments?: { id: string; name: string; storagePath: string }[];
   stepSignOffs?: { preparer?: StepSignOff; reviewer?: StepSignOff; ri?: StepSignOff };
 }
@@ -217,14 +219,19 @@ function StepEditPanel({ data, nodeId, onClose, isDecision }: { data: any; nodeI
   const [docLocation, setDocLocation] = useState((data.docLocation as string) || '');
   const [condition, setCondition] = useState((data.condition as string) || '');
   const [significantControl, setSignificantControl] = useState(!!(data.isSignificantControl));
+  const [approvalChain, setApprovalChain] = useState<ApprovalLevel[]>(
+    Array.isArray(data.approvalChain) ? data.approvalChain : []
+  );
 
   function save() {
+    const chain = approvalChain.filter(l => l.role.trim());
     setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: {
       ...n.data, label: label.trim() || data.label,
       sourceDoc: sourceDoc.trim() || undefined, outputDoc: outputDoc.trim() || undefined,
       responsible: responsible.trim() || undefined, docLocation: docLocation.trim() || undefined,
       condition: isDecision ? (condition.trim() || undefined) : n.data.condition,
       isSignificantControl: isDecision ? significantControl : n.data.isSignificantControl,
+      approvalChain: isDecision && chain.length > 0 ? chain : undefined,
     } } : n));
     onClose();
   }
@@ -281,6 +288,34 @@ function StepEditPanel({ data, nodeId, onClose, isDecision }: { data: any; nodeI
                 <p className="text-[10px] text-red-500">Highlights this decision with a thick red border</p>
               </div>
             </label>
+          )}
+          {isDecision && (
+            <div className="border border-amber-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-amber-50 flex items-center justify-between">
+                <span className="text-[10px] font-semibold text-amber-700">Approval Chain</span>
+                <button onClick={() => setApprovalChain(prev => [...prev, { level: prev.length + 1, role: '', threshold: '' }])}
+                  className="text-[9px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded hover:bg-amber-200">+ Add Level</button>
+              </div>
+              {approvalChain.length > 0 && (
+                <div className="p-2 space-y-1.5">
+                  {approvalChain.map((lvl, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="text-[9px] text-amber-500 font-bold w-5 shrink-0">L{lvl.level}</span>
+                      {i > 0 && <span className="text-[10px] text-amber-400">→</span>}
+                      <input value={lvl.role} onChange={e => { const c = [...approvalChain]; c[i] = { ...c[i], role: e.target.value }; setApprovalChain(c); }}
+                        className="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1 focus:outline-none focus:border-amber-400" placeholder="Role (e.g. Team Lead)" />
+                      <input value={lvl.threshold || ''} onChange={e => { const c = [...approvalChain]; c[i] = { ...c[i], threshold: e.target.value }; setApprovalChain(c); }}
+                        className="w-24 text-[10px] border border-slate-200 rounded px-2 py-1 focus:outline-none focus:border-amber-400" placeholder="Threshold" />
+                      <button onClick={() => setApprovalChain(prev => prev.filter((_, j) => j !== i).map((l, j) => ({ ...l, level: j + 1 })))}
+                        className="text-red-400 hover:text-red-600 text-xs">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {approvalChain.length === 0 && (
+                <p className="px-3 py-2 text-[10px] text-slate-400 italic">No approval levels defined</p>
+              )}
+            </div>
           )}
         </div>
         <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
@@ -367,6 +402,22 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
         {String(data.label || '')}
         {data.condition ? <div className="text-[9px] text-amber-600 mt-0.5 italic">{String(data.condition)}</div> : null}
       </div>
+      {/* Approval chain — visual mini tree */}
+      {Array.isArray(data.approvalChain) && data.approvalChain.length > 0 && (
+        <div className="mt-1.5 border-t border-amber-200 pt-1.5">
+          <span className="text-[7px] text-amber-500 font-bold block mb-0.5">APPROVAL CHAIN</span>
+          <div className="flex flex-col items-center gap-0.5">
+            {(data.approvalChain as ApprovalLevel[]).map((lvl, i) => (
+              <div key={i} className="flex items-center gap-1">
+                {i > 0 && <span className="text-[8px] text-amber-400">↓</span>}
+                <span className="text-[8px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full font-medium">
+                  L{lvl.level}: {lvl.role}{lvl.threshold ? ` (${lvl.threshold})` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <MetadataBadges data={data} />
       <div className="flex items-center justify-between">
         <StepSignOffDots data={data} nodeId={id} />
@@ -479,7 +530,7 @@ function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[]
         id: step.id,
         type: step.type,
         position: { x: startX + col * X_GAP, y: lvl * Y_GAP },
-        data: { label: step.label, condition: step.condition, sourceDoc: step.sourceDoc, outputDoc: step.outputDoc, responsible: step.responsible, docLocation: step.docLocation, isSignificantControl: step.isSignificantControl, attachments: step.attachments, stepSignOffs: step.stepSignOffs },
+        data: { label: step.label, condition: step.condition, sourceDoc: step.sourceDoc, outputDoc: step.outputDoc, responsible: step.responsible, docLocation: step.docLocation, isSignificantControl: step.isSignificantControl, approvalChain: step.approvalChain, attachments: step.attachments, stepSignOffs: step.stepSignOffs },
       });
     }
   }
@@ -552,6 +603,7 @@ function reactFlowToFlowSteps(nodes: Node[], edges: Edge[]): FlowStep[] {
       responsible: (node.data.responsible as string) || undefined,
       docLocation: (node.data.docLocation as string) || undefined,
       isSignificantControl: (node.data.isSignificantControl as boolean) || undefined,
+      approvalChain: (node.data.approvalChain as any[]) || undefined,
       attachments: (node.data.attachments as any[]) || undefined,
       stepSignOffs: (node.data.stepSignOffs as any) || undefined,
     };

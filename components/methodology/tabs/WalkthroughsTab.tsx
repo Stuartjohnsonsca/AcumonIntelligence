@@ -10,6 +10,7 @@ interface Control { description: string; type: string; frequency: string; tested
 interface FlowStep {
   id: string; label: string; type: 'start' | 'action' | 'decision' | 'end'; next: string[]; condition?: string;
   sourceDoc?: string; outputDoc?: string; responsible?: string; docLocation?: string; isSignificantControl?: boolean;
+  approvalChain?: { level: number; role: string; threshold?: string }[];
   attachments?: { id: string; name: string; storagePath: string }[];
   stepSignOffs?: { preparer?: { name: string; at: string; status: 'blank' | 'red' | 'green' }; reviewer?: { name: string; at: string; status: 'blank' | 'red' | 'green' }; ri?: { name: string; at: string; status: 'blank' | 'red' | 'green' } };
 }
