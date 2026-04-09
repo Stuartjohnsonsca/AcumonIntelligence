@@ -72,10 +72,12 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     const img = fullImageRef.current;
     const canvas = canvasRef.current;
 
-    // Use nearly full viewport
-    const maxW = window.innerWidth - 80;
-    const maxH = window.innerHeight - 200;
-    const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+    // Render large enough that text is readable (min 75% of original, scrollable)
+    // On high-DPI screens the captured image can be 2-3x viewport size,
+    // so we cap at viewport width to keep it usable while allowing scroll
+    const minScale = 0.75;
+    const viewportScale = Math.min(window.innerWidth / img.width, 1);
+    const scale = Math.max(viewportScale, minScale);
     canvas.width = Math.round(img.width * scale);
     canvas.height = Math.round(img.height * scale);
     canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);

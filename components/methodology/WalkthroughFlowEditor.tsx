@@ -164,33 +164,40 @@ function StepAttachmentButtons({ data, nodeId }: { data: any; nodeId: string }) 
         </>
       )}
       {atts.length > 0 && (
-        <div className="relative" onMouseEnter={() => setShowPreview(true)} onMouseLeave={() => setShowPreview(false)}>
-          <span className="text-[7px] px-1 py-0 bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5 cursor-pointer">
+        <div className="relative">
+          <button onClick={(e) => { e.stopPropagation(); setShowPreview(p => !p); }}
+            className="text-[7px] px-1 py-0 bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5 cursor-pointer hover:bg-amber-200">
             <Paperclip className="h-2 w-2" />{atts.length}
-          </span>
+          </button>
           {showPreview && (
-            <div className="absolute bottom-full left-0 mb-1 z-50 bg-white border border-slate-200 rounded-lg shadow-xl p-2 min-w-[180px] max-w-[280px]" onClick={e => e.stopPropagation()}>
-              <p className="text-[8px] font-bold text-slate-500 mb-1">Attachments</p>
-              <div className="space-y-1">
-                {atts.map((a: any, i: number) => (
-                  <div key={i} className="flex items-center gap-1.5 text-[9px]">
-                    {a.storagePath && (a.name?.match(/\.(png|jpg|jpeg|gif|webp)$/i)) ? (
-                      <img src={`/api/portal/download?storagePath=${encodeURIComponent(a.storagePath)}&redirect=1`} alt={a.name} className="w-10 h-10 rounded border object-cover shrink-0" onError={e => (e.currentTarget.style.display = 'none')} />
-                    ) : (
-                      <div className="w-10 h-10 rounded border bg-slate-50 flex items-center justify-center shrink-0"><FileIcon className="h-4 w-4 text-slate-300" /></div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-slate-700 truncate">{a.name}</p>
-                      <button onClick={async () => {
-                        if (!a.storagePath) return;
-                        const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(a.storagePath)}`);
-                        if (res.ok) { const d = await res.json(); window.open(d.url, '_blank'); }
-                      }} className="text-blue-500 hover:text-blue-700 text-[8px]">Open</button>
-                    </div>
+            <>
+              {/* Click-away backdrop */}
+              <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setShowPreview(false); }} />
+              <div className="absolute bottom-full left-0 mb-0 pb-1 z-50" onClick={e => e.stopPropagation()}>
+                <div className="bg-white border border-slate-200 rounded-lg shadow-xl p-2.5 min-w-[200px] max-w-[300px]">
+                  <p className="text-[9px] font-bold text-slate-500 mb-1.5">Attachments ({atts.length})</p>
+                  <div className="space-y-1.5">
+                    {atts.map((a: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 text-[10px]">
+                        {a.storagePath && (a.name?.match(/\.(png|jpg|jpeg|gif|webp)$/i)) ? (
+                          <img src={`/api/portal/download?storagePath=${encodeURIComponent(a.storagePath)}&redirect=1`} alt={a.name} className="w-12 h-12 rounded border object-cover shrink-0" onError={e => (e.currentTarget.style.display = 'none')} />
+                        ) : (
+                          <div className="w-12 h-12 rounded border bg-slate-50 flex items-center justify-center shrink-0"><FileIcon className="h-5 w-5 text-slate-300" /></div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-slate-700 truncate font-medium">{a.name}</p>
+                          <button onClick={async () => {
+                            if (!a.storagePath) return;
+                            const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(a.storagePath)}`);
+                            if (res.ok) { const d = await res.json(); window.open(d.url, '_blank'); }
+                          }} className="text-blue-600 hover:text-blue-800 text-[9px] font-medium">Open ↗</button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
+            </>
           )}
         </div>
       )}
