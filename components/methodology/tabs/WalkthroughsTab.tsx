@@ -216,26 +216,21 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
         }
       }
 
-      // Merge portal uploads into evidence (deduplicate by storagePath)
+      // Merge portal uploads into evidence in-memory (don't save yet — user actions trigger saves)
       const uploads = uploadsData?.uploads || [];
+      const existingEvidence: any[] = st.evidence || [];
       if (uploads.length > 0) {
-        const existingEvidence: any[] = st.evidence || [];
         const existingPaths = new Set(existingEvidence.map((e: any) => e.storagePath).filter(Boolean));
         const existingIds = new Set(existingEvidence.map((e: any) => e.id));
         const newFromUploads = uploads
           .filter((u: any) => !existingIds.has(u.id) && !existingPaths.has(u.storagePath))
           .map((u: any) => ({ id: u.id, name: u.originalName, type: u.mimeType || 'application/octet-stream', storagePath: u.storagePath }));
-        if (newFromUploads.length > 0) {
-          st.evidence = [...existingEvidence, ...newFromUploads];
-          // Persist the merged evidence
-          fetch(`/api/engagements/${engagementId}/permanent-file`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sectionKey: `walkthrough_${processKey}_status`, data: st }),
-          }).catch(() => {});
-        }
+        st.evidence = [...existingEvidence, ...newFromUploads];
       }
 
-      setStatus(st.stage ? st : { stage: 'draft' });
+      // Always ensure a valid stage
+      if (!st.stage) st.stage = 'draft';
+      setStatus(st);
     }).catch(() => {});
   }, [engagementId, processKey]);
 
