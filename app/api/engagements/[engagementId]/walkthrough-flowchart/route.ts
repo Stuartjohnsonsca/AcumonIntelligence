@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import OpenAI from 'openai';
+import JSZip from 'jszip';
 import { downloadBlob } from '@/lib/azure-blob';
 import { processPdf } from '@/lib/pdf-to-images';
 
@@ -48,26 +49,29 @@ export async function POST(req: NextRequest) {
             extractedParts.push(`--- ${file.name} ---\n${text}`);
           }
         } else if (mime.includes('word') || mime.includes('docx') || file.name?.toLowerCase().endsWith('.docx') || file.name?.toLowerCase().endsWith('.doc')) {
-          // Extract readable text from docx XML
-          const raw = buffer.toString('utf-8');
-          // Pull text from <w:t> tags in docx XML
-          const wMatches = raw.match(/<w:t[^>]*>([^<]+)<\/w:t>/g);
-          if (wMatches && wMatches.length > 0) {
-            const text = wMatches.map(m => m.replace(/<[^>]+>/g, '')).join(' ').trim();
-            if (text.length > 20) {
-              console.log('[walkthrough-flowchart] Extracted', text.length, 'chars from DOCX:', file.name);
-              extractedParts.push(`--- ${file.name} ---\n${text}`);
+          // DOCX files are ZIP archives — extract word/document.xml and pull text from <w:t> tags
+          try {
+            const zip = await JSZip.loadAsync(buffer);
+            const docXml = await zip.file('word/document.xml')?.async('string');
+            if (docXml) {
+              const wMatches = docXml.match(/<w:t[^>]*>([^<]*)<\/w:t>/g);
+              if (wMatches && wMatches.length > 0) {
+                const text = wMatches.map(m => m.replace(/<[^>]+>/g, '')).join(' ').trim();
+                if (text.length > 20) {
+                  console.log('[walkthrough-flowchart] Extracted', text.length, 'chars from DOCX:', file.name);
+                  extractedParts.push(`--- ${file.name} ---\n${text}`);
+                } else {
+                  extractionErrors.push(`${file.name}: DOCX had minimal extractable text`);
+                }
+              } else {
+                extractionErrors.push(`${file.name}: no text content found in DOCX`);
+              }
             } else {
-              extractionErrors.push(`${file.name}: DOCX had minimal text`);
+              extractionErrors.push(`${file.name}: could not find document.xml in DOCX`);
             }
-          } else {
-            // Try plain text fallback (works for .doc sometimes)
-            const plainText = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            if (plainText.length > 50) {
-              extractedParts.push(`--- ${file.name} ---\n${plainText.substring(0, 50000)}`);
-            } else {
-              extractionErrors.push(`${file.name}: could not extract text from document`);
-            }
+          } catch (zipErr: any) {
+            console.error('[walkthrough-flowchart] DOCX unzip failed for', file.name, zipErr.message);
+            extractionErrors.push(`${file.name}: failed to read DOCX — ${zipErr.message}`);
           }
         } else {
           extractionErrors.push(`${file.name}: unsupported file type (${mime})`);
