@@ -5,7 +5,7 @@ import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquar
 import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
 
 // ─── Types ───
-interface ProcessTab { key: string; label: string; }
+interface ProcessTab { key: string; label: string; children?: ProcessTab[]; }
 interface Control { description: string; type: string; frequency: string; tested: boolean; }
 interface FlowStep { id: string; label: string; type: 'start' | 'action' | 'decision' | 'end'; next: string[]; condition?: string; }
 interface ProcessStatus {
@@ -42,8 +42,11 @@ export function WalkthroughsTab({ engagementId }: Props) {
     { key: 'purchases', label: 'Purchase Process' },
   ]);
   const [activeTab, setActiveTab] = useState('sales');
+  const [activeSubProcess, setActiveSubProcess] = useState<string | null>(null);
   const [newProcessName, setNewProcessName] = useState('');
   const [showAddProcess, setShowAddProcess] = useState(false);
+  const [showAddSubProcess, setShowAddSubProcess] = useState(false);
+  const [newSubProcessName, setNewSubProcessName] = useState('');
   const [allStatuses, setAllStatuses] = useState<Record<string, ProcessStatus>>({});
 
   // Load custom processes and all statuses from permanent file
@@ -56,10 +59,21 @@ export function WalkthroughsTab({ engagementId }: Props) {
       }).catch(() => {});
   }, [engagementId]);
 
+  // Flatten process tree to get all keys (parents + children)
+  function getAllProcessKeys(procs: ProcessTab[]): { key: string }[] {
+    const keys: { key: string }[] = [];
+    for (const p of procs) {
+      keys.push({ key: p.key });
+      if (p.children) for (const c of p.children) keys.push({ key: c.key });
+    }
+    return keys;
+  }
+
   // Load all process statuses for overall sign-off calculation
   useEffect(() => {
     if (processes.length === 0) return;
-    Promise.all(processes.map(p =>
+    const allKeys = getAllProcessKeys(processes);
+    Promise.all(allKeys.map(p =>
       fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_${p.key}_status`)
         .then(r => r.ok ? r.json() : null)
         .then(data => ({ key: p.key, status: data?.data || data?.answers || {} }))
@@ -116,7 +130,38 @@ export function WalkthroughsTab({ engagementId }: Props) {
     if (processes.length <= 1) return;
     const updated = processes.filter(p => p.key !== key);
     setProcesses(updated);
-    if (activeTab === key) setActiveTab(updated[0].key);
+    if (activeTab === key) { setActiveTab(updated[0].key); setActiveSubProcess(null); }
+    fetch(`/api/engagements/${engagementId}/permanent-file`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sectionKey: 'walkthrough_processes', data: { processes: updated } }),
+    }).catch(() => {});
+  }
+
+  function addSubProcess() {
+    if (!newSubProcessName.trim()) return;
+    const childKey = `${activeTab}_${newSubProcessName.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')}`;
+    const parent = processes.find(p => p.key === activeTab);
+    if (!parent) return;
+    if (parent.children?.find(c => c.key === childKey)) return;
+    const updated = processes.map(p =>
+      p.key === activeTab ? { ...p, children: [...(p.children || []), { key: childKey, label: newSubProcessName.trim() }] } : p
+    );
+    setProcesses(updated);
+    setNewSubProcessName('');
+    setShowAddSubProcess(false);
+    setActiveSubProcess(childKey);
+    fetch(`/api/engagements/${engagementId}/permanent-file`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sectionKey: 'walkthrough_processes', data: { processes: updated } }),
+    }).catch(() => {});
+  }
+
+  function removeSubProcess(parentKey: string, childKey: string) {
+    const updated = processes.map(p =>
+      p.key === parentKey ? { ...p, children: (p.children || []).filter(c => c.key !== childKey) } : p
+    );
+    setProcesses(updated);
+    if (activeSubProcess === childKey) setActiveSubProcess(null);
     fetch(`/api/engagements/${engagementId}/permanent-file`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sectionKey: 'walkthrough_processes', data: { processes: updated } }),
@@ -147,17 +192,18 @@ export function WalkthroughsTab({ engagementId }: Props) {
         </div>
       </div>
 
-      {/* Process sub-tabs */}
+      {/* Process tabs (top row) */}
       <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
         {processes.map(tab => (
           <div key={tab.key} className="relative group">
             <button
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => { setActiveTab(tab.key); setActiveSubProcess(null); }}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                 activeTab === tab.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               {tab.label}
+              {tab.children && tab.children.length > 0 && <span className="ml-1 text-[9px] text-slate-400">▾</span>}
             </button>
             {processes.length > 1 && (
               <button onClick={() => removeProcess(tab.key)} className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 text-white rounded-full text-[8px] leading-none hidden group-hover:flex items-center justify-center">×</button>
@@ -172,14 +218,78 @@ export function WalkthroughsTab({ engagementId }: Props) {
             <button onClick={() => { setShowAddProcess(false); setNewProcessName(''); }} className="px-1 py-1 text-xs text-slate-400">✕</button>
           </div>
         ) : (
-          <button onClick={() => setShowAddProcess(true)} className="px-2 py-1.5 text-xs text-slate-400 hover:text-blue-600 transition-colors">
+          <button onClick={() => setShowAddProcess(true)} className="px-2 py-1.5 text-xs text-slate-400 hover:text-blue-600 transition-colors" title="Add process">
             <Plus className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
 
-      {/* Active process content */}
-      <WalkthroughProcess key={activeTab} engagementId={engagementId} processKey={activeTab} processLabel={processes.find(p => p.key === activeTab)?.label || activeTab} onStatusChange={(s) => onProcessStatusChange(activeTab, s)} />
+      {/* Sub-process tabs (second row) — shown when active process has children or adding */}
+      {(() => {
+        const activeProcess = processes.find(p => p.key === activeTab);
+        const children = activeProcess?.children || [];
+        if (children.length === 0 && !showAddSubProcess) {
+          // Show just the ⊕ button to start adding sub-processes
+          return (
+            <div className="flex items-center gap-1 ml-4">
+              <button onClick={() => setShowAddSubProcess(true)} className="px-2 py-1 text-[10px] text-slate-400 hover:text-blue-600 border border-dashed border-slate-300 rounded-md transition-colors inline-flex items-center gap-1" title="Add sub-process">
+                <Plus className="h-3 w-3" /> Sub-process
+              </button>
+            </div>
+          );
+        }
+        return (
+          <div className="flex items-center gap-1 ml-4 bg-slate-50 rounded-lg p-0.5">
+            {/* Parent process tab (always first) */}
+            <button
+              onClick={() => setActiveSubProcess(null)}
+              className={`px-2.5 py-1 text-[10px] font-medium rounded-md transition-colors ${
+                activeSubProcess === null ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              {activeProcess?.label || activeTab}
+            </button>
+            <span className="text-slate-300 text-[10px]">│</span>
+            {children.map(child => (
+              <div key={child.key} className="relative group">
+                <button
+                  onClick={() => setActiveSubProcess(child.key)}
+                  className={`px-2.5 py-1 text-[10px] font-medium rounded-md transition-colors ${
+                    activeSubProcess === child.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {child.label}
+                </button>
+                <button onClick={() => removeSubProcess(activeTab, child.key)} className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 text-white rounded-full text-[7px] leading-none hidden group-hover:flex items-center justify-center">×</button>
+              </div>
+            ))}
+            {showAddSubProcess ? (
+              <div className="flex items-center gap-1 ml-1">
+                <input type="text" value={newSubProcessName} onChange={e => setNewSubProcessName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addSubProcess()}
+                  className="px-1.5 py-0.5 text-[10px] border rounded w-28 focus:outline-none focus:border-blue-400" placeholder="Sub-process..." autoFocus />
+                <button onClick={addSubProcess} disabled={!newSubProcessName.trim()} className="px-1.5 py-0.5 text-[10px] bg-blue-600 text-white rounded disabled:opacity-50">Add</button>
+                <button onClick={() => { setShowAddSubProcess(false); setNewSubProcessName(''); }} className="px-1 py-0.5 text-[10px] text-slate-400">✕</button>
+              </div>
+            ) : (
+              <button onClick={() => setShowAddSubProcess(true)} className="px-1.5 py-1 text-slate-400 hover:text-blue-600 transition-colors" title="Add sub-process">
+                <Plus className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Active process/sub-process content */}
+      {(() => {
+        const activeKey = activeSubProcess || activeTab;
+        const activeProcess = processes.find(p => p.key === activeTab);
+        const activeLabel = activeSubProcess
+          ? activeProcess?.children?.find(c => c.key === activeSubProcess)?.label || activeSubProcess
+          : activeProcess?.label || activeTab;
+        return (
+          <WalkthroughProcess key={activeKey} engagementId={engagementId} processKey={activeKey} processLabel={activeLabel} onStatusChange={(s) => onProcessStatusChange(activeKey, s)} />
+        );
+      })()}
     </div>
   );
 }
