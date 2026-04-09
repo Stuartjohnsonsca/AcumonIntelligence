@@ -61,16 +61,25 @@ function StepSignOffDots({ data, nodeId }: { data: any; nodeId: string }) {
     if (readOnly || !allowed.includes(role)) return;
     const current = signOffs[role]?.status || 'blank';
     const nextStatus = current === 'blank' ? 'red' : current === 'red' ? 'green' : 'blank';
-    const updated = { ...signOffs, [role]: { name: 'Current User', at: new Date().toISOString(), status: nextStatus } };
-    if (nextStatus === 'blank') updated[role] = undefined;
-    // Higher roles auto-commit lower roles when approving green
-    if (nextStatus === 'green') {
-      if (role === 'reviewer' && !signOffs.preparer?.status) {
-        updated.preparer = { name: 'Current User', at: new Date().toISOString(), status: 'green' };
+    const stamp = { name: 'Current User', at: new Date().toISOString(), status: nextStatus as 'blank' | 'red' | 'green' };
+    const updated = { ...signOffs, [role]: nextStatus === 'blank' ? undefined : stamp };
+    // Higher roles auto-set lower roles to the same status
+    if (nextStatus !== 'blank') {
+      if (role === 'reviewer') {
+        updated.preparer = { ...stamp };
       }
       if (role === 'ri') {
-        if (!signOffs.preparer?.status) updated.preparer = { name: 'Current User', at: new Date().toISOString(), status: 'green' };
-        if (!signOffs.reviewer?.status) updated.reviewer = { name: 'Current User', at: new Date().toISOString(), status: 'green' };
+        updated.preparer = { ...stamp };
+        updated.reviewer = { ...stamp };
+      }
+    } else {
+      // Clearing a higher role also clears lower roles
+      if (role === 'reviewer') {
+        updated.preparer = undefined;
+      }
+      if (role === 'ri') {
+        updated.preparer = undefined;
+        updated.reviewer = undefined;
       }
     }
     setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, stepSignOffs: updated } } : n));
