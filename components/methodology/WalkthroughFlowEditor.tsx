@@ -93,24 +93,24 @@ function StepSignOffDots({ data, nodeId }: { data: any; nodeId: string }) {
 }
 
 function MetadataBadges({ data }: { data: any }) {
-  const src = data.sourceDoc as string;
-  const out = data.outputDoc as string;
-  const resp = data.responsible as string;
-  const atts = (data.attachments as any[]) || [];
+  const src = typeof data.sourceDoc === 'string' ? data.sourceDoc : '';
+  const out = typeof data.outputDoc === 'string' ? data.outputDoc : '';
+  const resp = typeof data.responsible === 'string' ? data.responsible : '';
+  const atts = Array.isArray(data.attachments) ? data.attachments : [];
   if (!src && !out && !resp && atts.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-1 mt-1">
-      {src && <span className="text-[7px] px-1 py-0 bg-blue-100 text-blue-600 rounded inline-flex items-center gap-0.5"><ArrowDownToLine className="h-2 w-2" />{src}</span>}
-      {out && <span className="text-[7px] px-1 py-0 bg-green-100 text-green-600 rounded inline-flex items-center gap-0.5"><ArrowUpFromLine className="h-2 w-2" />{out}</span>}
-      {resp && <span className="text-[7px] px-1 py-0 bg-purple-100 text-purple-600 rounded inline-flex items-center gap-0.5"><User className="h-2 w-2" />{resp}</span>}
-      {atts.length > 0 && <span className="text-[7px] px-1 py-0 bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5"><Paperclip className="h-2 w-2" />{atts.length}</span>}
+      {src ? <span className="text-[7px] px-1 py-0 bg-blue-100 text-blue-600 rounded inline-flex items-center gap-0.5"><ArrowDownToLine className="h-2 w-2" />{src}</span> : null}
+      {out ? <span className="text-[7px] px-1 py-0 bg-green-100 text-green-600 rounded inline-flex items-center gap-0.5"><ArrowUpFromLine className="h-2 w-2" />{out}</span> : null}
+      {resp ? <span className="text-[7px] px-1 py-0 bg-purple-100 text-purple-600 rounded inline-flex items-center gap-0.5"><User className="h-2 w-2" />{resp}</span> : null}
+      {atts.length > 0 ? <span className="text-[7px] px-1 py-0 bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5"><Paperclip className="h-2 w-2" />{atts.length}</span> : null}
     </div>
   );
 }
 
 function StepEditPanel({ data, nodeId, onClose, isDecision }: { data: any; nodeId: string; onClose: () => void; isDecision?: boolean }) {
   const { setNodes } = useReactFlow();
-  const [label, setLabel] = useState((data.label as string) || '');
+  const [label, setLabel] = useState((String(data.label || '')) || '');
   const [sourceDoc, setSourceDoc] = useState((data.sourceDoc as string) || '');
   const [outputDoc, setOutputDoc] = useState((data.outputDoc as string) || '');
   const [responsible, setResponsible] = useState((data.responsible as string) || '');
@@ -204,7 +204,7 @@ function WtStartNode({ id, data }: NodeProps) {
 
   return (
     <div className="relative px-6 py-2 rounded-full bg-green-100 border-2 border-green-400 text-green-800 text-xs font-semibold text-center min-w-[120px] group">
-      {data.label as string || 'Process Start'}
+      {String(data.label || '') || 'Process Start'}
       {!readOnly && (
         <button onClick={onDelete} className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] hidden group-hover:flex items-center justify-center hover:bg-red-600">
           <X className="h-2.5 w-2.5" />
@@ -228,7 +228,7 @@ function WtActionNode({ id, data, selected }: NodeProps) {
     <div className={`relative px-4 py-2 rounded-lg bg-blue-50 border-2 text-blue-800 text-xs text-center min-w-[180px] max-w-[280px] group ${selected ? 'border-blue-500 shadow-md' : 'border-blue-300'}`}>
       <Handle type="target" position={Position.Top} className="!bg-blue-400 !w-2.5 !h-2.5" />
       <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
-        {data.label as string}
+        {String(data.label || '')}
       </div>
       <MetadataBadges data={data} />
       <div className="flex items-center justify-between">
@@ -263,7 +263,7 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
         {data.isSignificantControl ? <span className="text-[7px] px-1 bg-red-100 text-red-700 rounded font-bold">SIGNIFICANT CONTROL</span> : null}
       </div>
       <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
-        {data.label as string}
+        {String(data.label || '')}
         {data.condition ? <div className="text-[9px] text-amber-600 mt-0.5 italic">{String(data.condition)}</div> : null}
       </div>
       <MetadataBadges data={data} />
@@ -292,7 +292,7 @@ function WtEndNode({ id, data, selected }: NodeProps) {
     <div className={`relative px-6 py-2 rounded-full bg-red-100 border-2 text-red-800 text-xs font-semibold text-center min-w-[120px] ${selected ? 'border-red-500 shadow-md' : 'border-red-300'}`}>
       <Handle type="target" position={Position.Top} className="!bg-red-400 !w-2.5 !h-2.5" />
       <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
-        {data.label as string || 'Process End'}
+        {String(data.label || '') || 'Process End'}
       </div>
       <StepSignOffDots data={data} nodeId={id} />
       {editing && <StepEditPanel data={data} nodeId={id} onClose={() => setEditing(false)} />}
@@ -441,7 +441,7 @@ function reactFlowToFlowSteps(nodes: Node[], edges: Edge[]): FlowStep[] {
 
     return {
       id: node.id,
-      label: (node.data.label as string) || '',
+      label: String(node.data.label || ''),
       type: node.type as FlowStep['type'],
       next,
       condition: (node.data.condition as string) || undefined,

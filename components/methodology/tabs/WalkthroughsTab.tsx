@@ -426,6 +426,10 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
 
   // Analyse selected evidence documents, extract text, and generate flowchart
   async function analyseAndGenerate() {
+    // Confirm if replacing existing flowchart
+    if (status.flowchart && status.flowchart.length > 0) {
+      if (!window.confirm('This will replace the current flowchart. Are you sure you wish to replace it?')) return;
+    }
     setAnalysing(true);
     try {
       const evidenceFiles = (status.evidence || [])
