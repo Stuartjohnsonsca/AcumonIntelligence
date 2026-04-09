@@ -3,10 +3,14 @@
   "name": "Acumon Screen Capture",
   "version": "1.0.0",
   "description": "One-click screen capture for Acumon Intelligence audit methodology walkthroughs.",
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "tabs"],
   "host_permissions": [
     "<all_urls>"
   ],
+  "action": {
+    "default_title": "Acumon Screen Capture",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png" }
+  },
   "background": {
     "service_worker": "background.js"
   },

@@ -22,10 +22,21 @@ window.addEventListener('message', (event) => {
 
   // Forward to background service worker
   chrome.runtime.sendMessage({ type: 'captureTab' }, (response) => {
+    if (chrome.runtime.lastError) {
+      window.postMessage({ type: 'ACUMON_CAPTURE_ERROR', error: chrome.runtime.lastError.message }, event.origin);
+      return;
+    }
     if (response?.dataUrl) {
       window.postMessage({ type: 'ACUMON_CAPTURE_RESULT', dataUrl: response.dataUrl }, event.origin);
     } else {
       window.postMessage({ type: 'ACUMON_CAPTURE_ERROR', error: response?.error || 'Capture failed' }, event.origin);
     }
   });
+});
+
+// Listen for capture triggered from extension icon click
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'ACUMON_CAPTURE_FROM_ICON' && msg.dataUrl) {
+    window.postMessage({ type: 'ACUMON_CAPTURE_RESULT', dataUrl: msg.dataUrl }, '*');
+  }
 });
