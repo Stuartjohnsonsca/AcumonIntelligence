@@ -218,20 +218,28 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, onStatusCh
   }, [engagementId, processKey]);
 
   // Fetch portal uploads for this walkthrough process and merge into evidence
+  const [uploadsFetched, setUploadsFetched] = useState(false);
   useEffect(() => {
-    if ((status.evidence || []).some(e => e.storagePath)) return;
-    fetch(`/api/portal/upload?engagementId=${engagementId}&processLabel=${encodeURIComponent(processLabel)}`)
-      .then(r => r.ok ? r.json() : null)
+    if (uploadsFetched) return;
+    const url = `/api/portal/upload?engagementId=${engagementId}&processLabel=${encodeURIComponent(processLabel)}`;
+    console.log('[Walkthrough Evidence] Fetching uploads:', url);
+    fetch(url)
+      .then(r => { console.log('[Walkthrough Evidence] Response status:', r.status); return r.ok ? r.json() : null; })
       .then(data => {
-        if (!data?.uploads?.length) return;
+        console.log('[Walkthrough Evidence] Uploads returned:', data?.uploads?.length || 0, data?.uploads?.map((u: any) => u.originalName));
+        if (!data?.uploads?.length) { setUploadsFetched(true); return; }
         const existingIds = new Set((status.evidence || []).map(e => e.id));
         const newEvidence = data.uploads
           .filter((u: any) => !existingIds.has(u.id))
           .map((u: any) => ({ id: u.id, name: u.originalName, type: u.mimeType || 'application/octet-stream', storagePath: u.storagePath }));
-        if (newEvidence.length > 0) saveStatus({ evidence: [...(status.evidence || []), ...newEvidence] });
+        console.log('[Walkthrough Evidence] New evidence to merge:', newEvidence.length);
+        if (newEvidence.length > 0) {
+          saveStatus({ evidence: [...(status.evidence || []), ...newEvidence] });
+        }
+        setUploadsFetched(true);
       })
-      .catch(() => {});
-  }, [engagementId, processLabel]);
+      .catch(err => { console.error('[Walkthrough Evidence] Fetch error:', err); setUploadsFetched(true); });
+  }, [engagementId, processLabel, uploadsFetched]);
 
   const save = useCallback(async () => {
     setSaving(true);
