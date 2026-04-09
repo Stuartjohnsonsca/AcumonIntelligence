@@ -9,7 +9,7 @@ interface ChatMessage {
   name: string;
   message: string;
   timestamp: string;
-  attachments?: { name: string; url: string }[];
+  attachments?: { name: string; url?: string; uploadId?: string; storagePath?: string }[];
 }
 
 interface PortalRequestItem {
@@ -229,7 +229,14 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
                                     {msg.attachments && msg.attachments.length > 0 && (
                                       <div className="mt-1 flex flex-wrap gap-1">
                                         {msg.attachments.map((a, ai) => (
-                                          <span key={ai} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white/50 rounded text-[9px] border">📎 {a.name}</span>
+                                          <button key={ai} onClick={async () => {
+                                            try {
+                                              const params = a.uploadId ? `uploadId=${a.uploadId}` : a.storagePath ? `storagePath=${encodeURIComponent(a.storagePath)}` : '';
+                                              if (!params && a.url) { window.open(a.url, '_blank'); return; }
+                                              const res = await fetch(`/api/portal/download?${params}`);
+                                              if (res.ok) { const data = await res.json(); window.open(data.url, '_blank'); }
+                                            } catch {}
+                                          }} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-white/50 rounded text-[9px] border text-blue-600 hover:text-blue-800 hover:bg-blue-50 cursor-pointer">📎 {a.name}</button>
                                         ))}
                                       </div>
                                     )}

@@ -182,7 +182,14 @@ export function RespondedTab({ clientId, token, engagementId, onUnacceptedCount,
                               <span className="text-[9px] text-slate-400 ml-1">{new Date(msg.timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                               <p className="text-slate-700 mt-0.5">{msg.message}</p>
                               {msg.attachments && msg.attachments.length > 0 && (
-                                <div className="flex gap-1 mt-0.5">{msg.attachments.map((a, ai) => <span key={ai} className="text-[9px] text-blue-600">📎 {a.name}</span>)}</div>
+                                <div className="flex gap-1 mt-0.5">{msg.attachments.map((a: any, ai: number) => <button key={ai} onClick={async () => {
+                                  try {
+                                    const params = a.uploadId ? `uploadId=${a.uploadId}` : a.storagePath ? `storagePath=${encodeURIComponent(a.storagePath)}` : '';
+                                    if (!params && a.url) { window.open(a.url, '_blank'); return; }
+                                    const res = await fetch(`/api/portal/download?${params}`);
+                                    if (res.ok) { const data = await res.json(); window.open(data.url, '_blank'); }
+                                  } catch {}
+                                }} className="text-[9px] text-blue-600 hover:text-blue-800 hover:underline cursor-pointer">📎 {a.name}</button>)}</div>
                               )}
                             </div>
                           ))}

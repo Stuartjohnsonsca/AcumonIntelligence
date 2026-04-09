@@ -25,7 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     data: {
       clientId: engagement.clientId,
       engagementId,
-      section: 'questions',
+      section: section || 'walkthroughs',
       question,
       status: 'outstanding',
       requestedById: session.user.id,

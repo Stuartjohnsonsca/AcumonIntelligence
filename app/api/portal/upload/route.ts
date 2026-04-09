@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { uploadToInbox } from '@/lib/azure-blob';
+import { uploadToInbox, generateSasUrl } from '@/lib/azure-blob';
 
 /**
  * POST /api/portal/upload
@@ -48,10 +48,14 @@ export async function POST(req: Request) {
       },
     });
 
+    // Generate a time-limited download URL
+    const url = generateSasUrl(blobName, 'upload-inbox', 60);
+
     return NextResponse.json({
       uploadId: upload.id,
       fileName: file.name,
       storagePath: blobName,
+      url,
     });
   } catch (error: any) {
     console.error('Portal file upload error:', error);

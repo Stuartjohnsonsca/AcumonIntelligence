@@ -42,7 +42,7 @@ export async function GET(req: Request) {
  */
 export async function POST(req: Request) {
   try {
-    const { requestId, response, respondedByName, respondedById } = await req.json();
+    const { requestId, response, respondedByName, respondedById, attachments } = await req.json();
 
     if (!requestId || !response) {
       return NextResponse.json({ error: 'requestId and response required' }, { status: 400 });
@@ -69,14 +69,23 @@ export async function POST(req: Request) {
       }, { status: 422 });
     }
 
-    // Append to chat history
+    // Append to chat history (include attachments if present)
     const existingHistory = (request.chatHistory as any[] || []);
-    existingHistory.push({
+    const chatEntry: Record<string, any> = {
       from: 'client',
       name: respondedByName || 'Portal User',
       message: response,
       timestamp: new Date().toISOString(),
-    });
+    };
+    if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+      chatEntry.attachments = attachments.map((a: any) => ({
+        name: a.name || a.fileName,
+        url: a.url || '',
+        uploadId: a.uploadId || '',
+        storagePath: a.storagePath || '',
+      }));
+    }
+    existingHistory.push(chatEntry);
 
     const updated = await prisma.portalRequest.update({
       where: { id: requestId },
@@ -114,6 +123,43 @@ export async function POST(req: Request) {
           data: { status: 'awaiting_team', responseData: { response: updated.response, respondedByName: updated.respondedByName, respondedAt: updated.respondedAt?.toISOString() } as any },
         });
       } catch {}
+
+      // Auto-advance walkthrough stage: if this portal request originated from a walkthrough,
+      // update the permanent file stage to 'received' and import the client response as narrative
+      if (request.section === 'walkthroughs' && updated.engagementId) {
+        try {
+          // Find which walkthrough process this request belongs to by checking all process statuses
+          const allPf = await prisma.auditPermanentFile.findMany({
+            where: { engagementId: updated.engagementId, sectionKey: { startsWith: 'walkthrough_' } },
+          });
+          for (const pf of allPf) {
+            if (!pf.sectionKey.endsWith('_status')) continue;
+            const statusData = pf.data as any;
+            if (statusData?.portalRequestId === requestId && statusData?.stage === 'requested') {
+              // Advance stage to 'received'
+              await prisma.auditPermanentFile.update({
+                where: { id: pf.id },
+                data: { data: { ...statusData, stage: 'received' } },
+              });
+              // Also import the client response text into the walkthrough narrative
+              const processKey = pf.sectionKey.replace('_status', '');
+              const narrativePf = await prisma.auditPermanentFile.findFirst({
+                where: { engagementId: updated.engagementId, sectionKey: processKey },
+              });
+              if (narrativePf) {
+                const narrativeData = narrativePf.data as any;
+                await prisma.auditPermanentFile.update({
+                  where: { id: narrativePf.id },
+                  data: { data: { ...narrativeData, narrative: updated.response || narrativeData.narrative } },
+                });
+              }
+              break;
+            }
+          }
+        } catch (err) {
+          console.error('[Walkthrough] Failed to auto-advance stage:', err);
+        }
+      }
 
       // Resume any paused test execution waiting on this portal request
       try {
