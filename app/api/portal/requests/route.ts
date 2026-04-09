@@ -127,7 +127,9 @@ export async function POST(req: Request) {
 
       // Auto-advance walkthrough stage: if this portal request originated from a walkthrough,
       // update the permanent file stage to 'received' and import the client response as narrative
-      if (request.section === 'walkthroughs' && updated.engagementId) {
+      const isWalkthrough = request.section === 'walkthroughs' || request.question?.includes('[Walkthrough:') || request.question?.includes('[Walkthrough Verification:');
+      console.log('[Portal Response] isWalkthrough:', isWalkthrough, 'section:', request.section, 'engagementId:', updated.engagementId, 'requestId:', requestId);
+      if (isWalkthrough && updated.engagementId) {
         try {
           // Find which walkthrough process this request belongs to by checking all process statuses
           const allPf = await prisma.auditPermanentFile.findMany({
@@ -136,11 +138,18 @@ export async function POST(req: Request) {
           for (const pf of allPf) {
             if (!pf.sectionKey.endsWith('_status')) continue;
             const statusData = pf.data as any;
-            if (statusData?.portalRequestId === requestId && statusData?.stage === 'requested') {
+            // Match by portalRequestId or verificationRequestId, and stage must be awaiting a response
+            const isMatch = (statusData?.portalRequestId === requestId || statusData?.verificationRequestId === requestId)
+              && ['requested', 'sent_for_verification'].includes(statusData?.stage);
+            console.log('[Portal Response] Checking PF:', pf.sectionKey, 'portalRequestId:', statusData?.portalRequestId, 'stage:', statusData?.stage, 'match:', isMatch);
+            if (isMatch) {
               // Fetch portal uploads linked to this request
               const portalUploads = await prisma.portalUpload.findMany({ where: { portalRequestId: requestId } });
 
-              // Advance stage to 'received' and add uploads to evidence
+              // Determine next stage based on current stage
+              const nextStage = statusData.stage === 'sent_for_verification' ? 'verified' : 'received';
+
+              // Add uploads to evidence and advance stage
               const existingEvidence = statusData.evidence || [];
               const newEvidence = portalUploads.map(u => ({
                 id: u.id,
@@ -148,10 +157,21 @@ export async function POST(req: Request) {
                 type: u.mimeType || 'application/octet-stream',
                 storagePath: u.storagePath,
               }));
+              const updatedStatus: any = {
+                ...statusData,
+                stage: nextStage,
+                evidence: [...existingEvidence, ...newEvidence],
+              };
+              // Set confirmation timestamp when client verifies
+              if (nextStage === 'verified') {
+                updatedStatus.flowchartConfirmedAt = new Date().toISOString();
+                updatedStatus.flowchartEditedAfterConfirm = false;
+              }
               await prisma.auditPermanentFile.update({
                 where: { id: pf.id },
-                data: { data: { ...statusData, stage: 'received', evidence: [...existingEvidence, ...newEvidence] } },
+                data: { data: updatedStatus },
               });
+              console.log('[Portal Response] Walkthrough auto-advanced:', pf.sectionKey, '→', nextStage, 'evidence:', newEvidence.length, 'files');
 
               // Import the client response text into the walkthrough narrative
               const processKey = pf.sectionKey.replace('_status', '');
