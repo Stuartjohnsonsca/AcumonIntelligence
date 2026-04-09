@@ -28,7 +28,7 @@ const ROLE_MAP: Record<string, string> = { Junior: 'operator', Manager: 'reviewe
 export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
   const { data: session } = useSession();
   const [docStatus, setDocStatus] = useState<DocStatus[]>([]);
-  const [repoDocs, setRepoDocs] = useState<{ id: string; documentName: string; uploadedDate: string | null }[]>([]);
+  const [repoDocs, setRepoDocs] = useState<{ id: string; documentName: string; uploadedDate: string | null; mappedItems?: unknown }[]>([]);
   const [points, setPoints] = useState<Record<string, ReviewPoint[]>>({});
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -296,7 +296,8 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                   const allLinks = docStatus.filter(d => d.documentId).map(d => d.documentId!);
                   const linkedDocIds = new Set(allLinks);
                   const sectionDocs = repoDocs.filter(rd => {
-                    const tags = rd.mappedItems as string[] | null;
+                    const raw = (rd as any).mappedItems;
+                    const tags = Array.isArray(raw) ? raw as string[] : null;
                     if (tags && tags.includes(doc.key)) return true; // Tagged for this section
                     if (!tags || tags.length === 0) return !linkedDocIds.has(rd.id); // Untagged and not linked elsewhere
                     return false;
