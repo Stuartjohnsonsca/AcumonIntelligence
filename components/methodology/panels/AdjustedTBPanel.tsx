@@ -4,8 +4,9 @@ import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from 'lucide-react';
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
+// Single grid template used at every level so that the three numeric columns (Original, Adjustments, Adjusted)
+// line up perfectly from statement header all the way down to account rows.
 const COL = 'grid grid-cols-[1fr_80px_80px_80px] gap-0 items-center';
-const COL_ACC = 'grid grid-cols-[60px_1fr_80px_80px_80px] gap-0 items-center';
 
 function f(n: number): string {
   if (n === 0) return '—';
@@ -118,7 +119,7 @@ export function AdjustedTBPanel({ engagementId }: { engagementId: string }) {
             </button>
 
             {isOpen && (
-              <div className="px-2 pb-2 space-y-1">
+              <div className="space-y-1 pb-1">
                 {Array.from(levels.entries()).map(([level, rows]) => {
                   const levelKey = `l:${stmt}:${level}`;
                   const isLevelOpen = expanded.has(levelKey);
@@ -126,11 +127,11 @@ export function AdjustedTBPanel({ engagementId }: { engagementId: string }) {
                   const lAdj = rows.reduce((s, r) => s + (adjByAccount.get(r.accountCode) || 0), 0);
 
                   return (
-                    <div key={level} className="bg-white rounded border border-slate-200 overflow-hidden">
+                    <div key={level} className="bg-white border-t border-slate-200 overflow-hidden">
                       <button onClick={() => toggle(levelKey)} className={`w-full ${COL} px-3 py-1.5 hover:bg-slate-50 transition-colors text-[11px]`}>
-                        <div className="flex items-center gap-1.5 text-left">
-                          {isLevelOpen ? <ChevronDown className="h-3 w-3 text-slate-400" /> : <ChevronRight className="h-3 w-3 text-slate-400" />}
-                          <span className="font-semibold text-slate-700">{level}</span>
+                        <div className="flex items-center gap-1.5 text-left min-w-0">
+                          {isLevelOpen ? <ChevronDown className="h-3 w-3 text-slate-400 flex-shrink-0" /> : <ChevronRight className="h-3 w-3 text-slate-400 flex-shrink-0" />}
+                          <span className="font-semibold text-slate-700 truncate">{level}</span>
                         </div>
                         <div className="text-right font-mono text-[10px]">{f(lOrig)}</div>
                         <div className={`text-right font-mono text-[10px] ${lAdj !== 0 ? 'text-amber-600' : 'text-slate-300'}`}>{lAdj !== 0 ? f(lAdj) : '—'}</div>
@@ -142,9 +143,11 @@ export function AdjustedTBPanel({ engagementId }: { engagementId: string }) {
                             const rOrig = Number(r.currentYear) || 0;
                             const rAdj = adjByAccount.get(r.accountCode) || 0;
                             return (
-                              <div key={r.id} className={`${COL_ACC} px-2 py-0.5 border-b border-slate-100/50 text-[10px]`}>
-                                <span className="font-mono text-slate-400">{r.accountCode}</span>
-                                <span className="text-slate-700 truncate">{r.description}</span>
+                              <div key={r.id} className={`${COL} px-3 py-0.5 border-b border-slate-100/50 text-[10px] bg-slate-50/30`}>
+                                <div className="flex items-center gap-2 text-left min-w-0 pl-5">
+                                  <span className="font-mono text-slate-400 w-14 flex-shrink-0">{r.accountCode}</span>
+                                  <span className="text-slate-700 truncate">{r.description}</span>
+                                </div>
                                 <span className="text-right font-mono">{f(rOrig)}</span>
                                 <span className={`text-right font-mono ${rAdj !== 0 ? 'text-amber-600 font-semibold' : 'text-slate-300'}`}>{rAdj !== 0 ? f(rAdj) : '—'}</span>
                                 <span className="text-right font-mono font-semibold">{f(rOrig + rAdj)}</span>

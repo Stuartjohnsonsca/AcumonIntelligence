@@ -271,7 +271,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                           {isLevelOpen && (
                             <div className="border-t">
                               {/* FS Level test summary — shows all tests for this level */}
-                              {lConcs.length > 0 && (
+                              {lConcs.length > 0 ? (
                                 <div className="px-3 py-1.5 bg-blue-50/30 border-b space-y-0.5">
                                   <div className="text-[8px] font-semibold text-blue-600 uppercase">Tests for {level} ({lConcs.length})</div>
                                   {lConcs.map(c => (
@@ -283,6 +283,10 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                                       {c.riSignedByName ? <span className="text-[8px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">RI: {c.riSignedByName}</span> : <span className="text-[8px] text-slate-300">No RI</span>}
                                     </div>
                                   ))}
+                                </div>
+                              ) : (
+                                <div className="px-3 py-1.5 bg-slate-50/50 border-b text-[10px] text-slate-400 italic">
+                                  No test conclusions at FS line level for {level}. Expand account rows below to view account-level tests, or run tests in the Audit Plan.
                                 </div>
                               )}
                               {/* FS Note sub-cards (if any) */}
@@ -366,16 +370,16 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
 
         return (
           <div key={r.id}>
-            {/* Account row */}
+            {/* Account row — always clickable so users can drill down even when no conclusions exist */}
             <button
-              onClick={() => hasConcs && toggle(rowKey)}
-              className={`w-full flex items-center gap-1.5 px-2 py-1 text-[10px] border-b border-slate-100/50 transition-colors ${
-                isOpen ? 'bg-blue-50/30' : hasConcs ? 'hover:bg-slate-50/50 cursor-pointer' : 'cursor-default'
+              onClick={() => toggle(rowKey)}
+              className={`w-full flex items-center gap-1.5 px-2 py-1 text-[10px] border-b border-slate-100/50 transition-colors cursor-pointer ${
+                isOpen ? 'bg-blue-50/30' : 'hover:bg-slate-50/50'
               }`}
             >
               {/* Expander */}
               <div className="w-4 flex-shrink-0 text-center">
-                {hasConcs && (isOpen ? <ChevronDown className="h-2.5 w-2.5 text-slate-400 inline" /> : <ChevronRight className="h-2.5 w-2.5 text-slate-400 inline" />)}
+                {isOpen ? <ChevronDown className="h-2.5 w-2.5 text-slate-400 inline" /> : <ChevronRight className="h-2.5 w-2.5 text-slate-400 inline" />}
               </div>
               {/* Code */}
               <span className="font-mono text-slate-400 w-14 text-left flex-shrink-0">{r.accountCode}</span>
@@ -394,9 +398,13 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
             </button>
 
             {/* Expanded: individual tests for this account */}
-            {isOpen && concs.length > 0 && (
+            {isOpen && (
               <div className="bg-blue-50/20 border-b border-slate-200 px-4 py-1.5">
-                {concs.map(c => (
+                {concs.length === 0 ? (
+                  <div className="py-1 text-[10px] text-slate-400 italic">
+                    No test conclusions recorded for {fsLineName} / {r.accountCode}. Run tests in the Audit Plan and save conclusions to populate this section.
+                  </div>
+                ) : concs.map(c => (
                   <div key={c.id} className="flex items-center gap-2 py-0.5 text-[10px]">
                     <Dot c={c.conclusion} />
                     <span className="text-slate-700 flex-1 truncate">{c.testDescription}</span>

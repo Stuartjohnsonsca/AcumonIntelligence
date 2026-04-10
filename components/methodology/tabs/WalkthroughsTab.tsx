@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X, AlertTriangle } from 'lucide-react';
+import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X, AlertTriangle, Edit3 } from 'lucide-react';
 import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
+import { DocumentAnnotator } from '../panels/DocumentAnnotator';
 
 // ─── Types ───
 interface ProcessTab { key: string; label: string; children?: ProcessTab[]; }
@@ -307,6 +308,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
   const [status, setStatus] = useState<ProcessStatus>({ stage: 'draft' });
   const [saving, setSaving] = useState(false);
   const [selectedEvidence, setSelectedEvidence] = useState<Set<string>>(new Set());
+  const [annotatingEvidenceId, setAnnotatingEvidenceId] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [analysing, setAnalysing] = useState(false);
@@ -812,12 +814,22 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
                 <FileText className="h-3.5 w-3.5 text-slate-400" />
                 <span className="text-slate-700 flex-1">{doc.name}</span>
                 {doc.storagePath ? (
-                  <button onClick={async () => {
-                    try {
-                      const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(doc.storagePath!)}`);
-                      if (res.ok) { const data = await res.json(); window.open(data.url, '_blank'); }
-                    } catch {}
-                  }} className="text-blue-500 hover:text-blue-700" title="Download"><Eye className="h-3 w-3" /></button>
+                  <>
+                    {(doc.annotations?.length || 0) > 0 && (
+                      <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded" title={`${doc.annotations!.length} annotation(s)`}>
+                        {doc.annotations!.length}
+                      </span>
+                    )}
+                    <button onClick={() => setAnnotatingEvidenceId(doc.id)} className="text-red-500 hover:text-red-700" title="Annotate">
+                      <Edit3 className="h-3 w-3" />
+                    </button>
+                    <button onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(doc.storagePath!)}`);
+                        if (res.ok) { const data = await res.json(); window.open(data.url, '_blank'); }
+                      } catch {}
+                    }} className="text-blue-500 hover:text-blue-700" title="Download"><Eye className="h-3 w-3" /></button>
+                  </>
                 ) : (
                   <span className="text-slate-300 text-[9px] italic">local only</span>
                 )}
@@ -917,6 +929,24 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
           </div>
         </div>
       )}
+
+      {/* Document Annotator Modal */}
+      {annotatingEvidenceId && (() => {
+        const evidence = (status.evidence || []).find(e => e.id === annotatingEvidenceId);
+        if (!evidence) return null;
+        return (
+          <DocumentAnnotator
+            evidence={evidence}
+            onClose={() => setAnnotatingEvidenceId(null)}
+            onSave={async (annotations) => {
+              const next = (status.evidence || []).map(e =>
+                e.id === annotatingEvidenceId ? { ...e, annotations } : e
+              );
+              await saveStatus({ evidence: next });
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
