@@ -180,6 +180,9 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
               <div className="text-center py-8">
                 <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-400" />
                 <p className="text-xs text-slate-500">No outstanding items</p>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Requests created from Walkthroughs, Documents, or Outstanding tabs will appear here with a <span className="font-medium">Batched / Separated</span> toggle.
+                </p>
               </div>
             ) : outstanding.map(item => {
               const { question, source } = cleanQuestion(item.question);
@@ -233,6 +236,9 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
               <div className="text-center py-8">
                 <Clock className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                 <p className="text-xs text-slate-500">No responses yet</p>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Client responses to portal requests will appear here with a <span className="font-medium">Batched / Separated</span> toggle per request.
+                </p>
               </div>
             ) : responded.map(item => {
               const { question, source } = cleanQuestion(item.question);
