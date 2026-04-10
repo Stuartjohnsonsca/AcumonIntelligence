@@ -101,6 +101,66 @@ export async function POST(
     return NextResponse.json({ status: task.status, progress: task.progress, error: task.error, result: task.result });
   }
 
+  // Standalone backfill: resolve fsLineId for existing TB rows without re-running AI classification
+  if (body.action === 'backfill_fs_line_ids') {
+    const fsLines = await prisma.methodologyFsLine.findMany({
+      where: { firmId, isActive: true },
+      select: { id: true, name: true, lineType: true, fsCategory: true },
+    });
+
+    const unresolved = await prisma.auditTBRow.findMany({
+      where: { engagementId, fsLevel: { not: null }, fsLineId: null },
+      select: { id: true, fsLevel: true, fsNoteLevel: true },
+    });
+
+    let backfilled = 0;
+    let skipped = 0;
+    for (const row of unresolved) {
+      const resolved = resolveFsLineId(fsLines, row.fsLevel, row.fsNoteLevel);
+      if (resolved) {
+        await prisma.auditTBRow.update({ where: { id: row.id }, data: { fsLineId: resolved } });
+        backfilled++;
+      } else {
+        skipped++;
+      }
+    }
+
+    // Also backfill test_executions and audit_test_conclusions using their fsLine name
+    // Both of these have fsLine as a required String, so we only filter on blank fsLineId.
+    let testExecBackfilled = 0;
+    const unresolvedExecs = await prisma.testExecution.findMany({
+      where: { engagementId, fsLineId: null },
+      select: { id: true, fsLine: true },
+    });
+    for (const exec of unresolvedExecs) {
+      const resolved = resolveFsLineId(fsLines, exec.fsLine, null);
+      if (resolved) {
+        await prisma.testExecution.update({ where: { id: exec.id }, data: { fsLineId: resolved } });
+        testExecBackfilled++;
+      }
+    }
+
+    let concBackfilled = 0;
+    const unresolvedConcs = await prisma.auditTestConclusion.findMany({
+      where: { engagementId, fsLineId: null },
+      select: { id: true, fsLine: true },
+    });
+    for (const conc of unresolvedConcs) {
+      const resolved = resolveFsLineId(fsLines, conc.fsLine, null);
+      if (resolved) {
+        await prisma.auditTestConclusion.update({ where: { id: conc.id }, data: { fsLineId: resolved } });
+        concBackfilled++;
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      tbRows: { total: unresolved.length, backfilled, skipped },
+      testExecutions: { total: unresolvedExecs.length, backfilled: testExecBackfilled },
+      testConclusions: { total: unresolvedConcs.length, backfilled: concBackfilled },
+    });
+  }
+
   const { rows } = body;
   if (!rows || !Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: 'rows array required' }, { status: 400 });

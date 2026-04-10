@@ -353,14 +353,56 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   // AI classify all rows at once
   const [aiAllLoading, setAiAllLoading] = useState(false);
   const [aiAllProgress, setAiAllProgress] = useState('');
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<string | null>(null);
+
+  async function handleBackfillFsLineIds() {
+    if (backfilling) return;
+    setBackfilling(true);
+    setBackfillResult(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'backfill_fs_line_ids' }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const tb = data.tbRows || {};
+      const te = data.testExecutions || {};
+      const tc = data.testConclusions || {};
+      setBackfillResult(
+        `Backfilled ${tb.backfilled || 0} TB row${tb.backfilled === 1 ? '' : 's'}` +
+        (tb.skipped ? ` (${tb.skipped} could not be resolved)` : '') +
+        `, ${te.backfilled || 0} test execution${te.backfilled === 1 ? '' : 's'}, ${tc.backfilled || 0} test conclusion${tc.backfilled === 1 ? '' : 's'}.` +
+        ` Rows with existing values were not touched.`
+      );
+      // Refresh TB rows
+      await loadData();
+    } catch (err: any) {
+      setBackfillResult(`Backfill failed: ${err.message}`);
+    } finally {
+      setBackfilling(false);
+    }
+  }
   const [importResult, setImportResult] = useState<string | null>(null);
 
   async function handleAiClassifyAll() {
+    setBackfillResult(null);
     const rowsToClassify = rows
       .map((r, i) => ({ index: i, accountCode: r.accountCode, description: r.description, currentYear: r.currentYear, category: r.category, sourceMetadata: (r as any).sourceMetadata, hasAllFs: !!(r.fsNoteLevel && r.fsLevel && r.fsStatement) }))
       .filter(r => (r.description || r.accountCode) && r.description !== '' && !r.hasAllFs);
 
-    if (rowsToClassify.length === 0) return;
+    console.log('[AI Classify All] rows in state:', rows.length, 'rows to classify:', rowsToClassify.length);
+
+    if (rowsToClassify.length === 0) {
+      setBackfillResult(
+        `Nothing to classify. All ${rows.length} row${rows.length === 1 ? '' : 's'} already have FS Note, FS Level, and FS Statement populated. ` +
+        `To re-classify a row, clear at least one of those three cells first. ` +
+        `If you need to populate the canonical FS Line IDs for existing rows, use the "Backfill FS Line IDs" button.`
+      );
+      return;
+    }
 
     setAiAllLoading(true);
     setAiAllProgress(`Starting classification of ${rowsToClassify.length} rows...`);
@@ -374,7 +416,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        setAiAllProgress(`Error: ${errData.error || res.status}`);
+        setBackfillResult(`AI Classify failed: ${errData.error || `HTTP ${res.status}`}`);
+        setAiAllProgress('');
         setAiAllLoading(false);
         return;
       }
@@ -397,13 +440,17 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             setTimeout(poll, 2000);
           } else if (data.status === 'completed') {
             const r = data.result || {};
-            setAiAllProgress(`Done! Classified ${r.classified || 0} of ${r.total || 0} rows.`);
             // Reload TB data from DB to get the server-saved classifications
             await loadData();
-            setTimeout(() => setAiAllProgress(''), 3000);
+            setBackfillResult(
+              `AI Classify complete. Classified ${r.classified || 0} of ${r.total || 0} row${r.total === 1 ? '' : 's'}.` +
+              (r.backfilled ? ` Also backfilled ${r.backfilled} canonical FS Line ID${r.backfilled === 1 ? '' : 's'}.` : '')
+            );
+            setAiAllProgress('');
             setAiAllLoading(false);
           } else {
-            setAiAllProgress(`Error: ${data.error || 'Classification failed'}`);
+            setBackfillResult(`AI Classify failed: ${data.error || 'Unknown error'}`);
+            setAiAllProgress('');
             setAiAllLoading(false);
           }
         } catch {
@@ -411,9 +458,10 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         }
       };
       setTimeout(poll, 2000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('AI classify all failed:', err);
-      setAiAllProgress('Failed');
+      setBackfillResult(`AI Classify failed: ${err?.message || 'Unknown error'}`);
+      setAiAllProgress('');
       setAiAllLoading(false);
     }
   }
@@ -611,6 +659,14 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             {aiAllLoading ? aiAllProgress : '⚡ AI Classify All'}
           </button>
           <button
+            onClick={handleBackfillFsLineIds}
+            disabled={backfilling}
+            className="text-xs px-3 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded hover:bg-indigo-100 disabled:opacity-50 font-medium"
+            title="Resolve missing FS Line IDs for rows that already have a classification. Only fills blanks — never overwrites existing values."
+          >
+            {backfilling ? '⏳ Backfilling...' : '🔗 Backfill FS Line IDs'}
+          </button>
+          <button
             onClick={exportCSV}
             className="text-xs px-3 py-1 bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 font-medium"
           >
@@ -624,6 +680,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           </button>
         </div>
       </div>
+
+      {backfillResult && (
+        <div className={`text-xs px-3 py-2 rounded-lg flex items-start justify-between gap-2 ${backfillResult.toLowerCase().includes('failed') ? 'bg-red-50 text-red-700' : backfillResult.toLowerCase().includes('nothing to classify') ? 'bg-amber-50 text-amber-800' : 'bg-indigo-50 text-indigo-700'}`}>
+          <span className="flex-1">{backfillResult}</span>
+          <button onClick={() => setBackfillResult(null)} className="text-current opacity-60 hover:opacity-100 flex-shrink-0">✕</button>
+        </div>
+      )}
 
       {importResult && (
         <div className={`text-xs px-3 py-2 rounded-lg ${importResult.includes('failed') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
