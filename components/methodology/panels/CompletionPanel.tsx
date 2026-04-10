@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
+import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, CheckCircle2, Loader2, Sparkles, ShieldAlert } from 'lucide-react';
 import { AuditTestSummaryPanel } from './AuditTestSummaryPanel';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
 import { FSReviewPanel } from './FSReviewPanel';
 import { AdjustedTBPanel } from './AdjustedTBPanel';
+import { SignificantRiskPanel } from './SignificantRiskPanel';
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout, CompletionTemplateData } from '@/types/methodology';
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
 
 const COMPLETION_TABS = [
   { key: 'summary-memo', label: 'Audit Summary Memo', icon: FileText, templateType: 'audit_summary_memo_questions' },
+  { key: 'significant-risk', label: 'Significant Risk', icon: ShieldAlert, templateType: null },
   { key: 'update-procedures', label: 'Update Procedures', icon: ClipboardList, templateType: 'update_procedures_questions' },
   { key: 'completion-checklist', label: 'Completion Checklist', icon: CheckSquare, templateType: 'completion_checklist_questions' },
   { key: 'test-summary', label: 'Test Summary Results', icon: BarChart3, templateType: null },
@@ -58,6 +60,7 @@ export function CompletionPanel({ engagementId, clientId, userRole, userId, user
         {activeTab === 'error-schedule' && <ErrorSchedulePanel engagementId={engagementId} />}
         {activeTab === 'fs-review' && <FSReviewPanel engagementId={engagementId} />}
         {activeTab === 'adj-tb' && <AdjustedTBPanel engagementId={engagementId} />}
+        {activeTab === 'significant-risk' && <SignificantRiskPanel engagementId={engagementId} userId={userId} userName={userName} />}
         {['summary-memo', 'update-procedures', 'completion-checklist', 'overall-review'].includes(activeTab) && (
           <StructuredScheduleTab
             engagementId={engagementId}
