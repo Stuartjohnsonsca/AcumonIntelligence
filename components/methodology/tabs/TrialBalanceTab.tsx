@@ -146,7 +146,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
   // AI lookup state for FS Note
   const [aiLookupRow, setAiLookupRow] = useState<number | null>(null);
-  const [aiLookupResults, setAiLookupResults] = useState<{ name: string; label: string }[]>([]);
+  const [aiLookupResults, setAiLookupResults] = useState<{ name: string; label: string; fsLevel?: string; fsStatement?: string }[]>([]);
   const [aiLookupLoading, setAiLookupLoading] = useState(false);
 
   function setShowCategory(show: boolean) {
@@ -223,7 +223,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     setRows(prev => [...prev, {
       id: '', accountCode: '', description: '', category: null,
       currentYear: null, priorYear: null, fsNoteLevel: null,
-      fsLevel: null, fsStatement: null, groupName: null,
+      fsLevel: null, fsStatement: null, groupName: null, aiConfidence: null,
       sortOrder: prev.length,
     }]);
   }
@@ -532,7 +532,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         updated.push({
           id: '', accountCode: '', description: '', category: null,
           currentYear: null, priorYear: null, fsNoteLevel: null,
-          fsLevel: null, fsStatement: null, groupName: null,
+          fsLevel: null, fsStatement: null, groupName: null, aiConfidence: null,
           sortOrder: updated.length,
         });
       }
