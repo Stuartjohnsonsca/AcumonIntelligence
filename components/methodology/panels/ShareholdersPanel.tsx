@@ -10,7 +10,7 @@ interface HeadingExtraction {
   flagged: boolean;
 }
 
-interface BoardMinutesRecord {
+interface ShareholdersRecord {
   id: string;
   title: string;
   meetingDate: string;
@@ -51,9 +51,9 @@ const SIGN_OFF_ROLES = [
 
 function fmtDate(d: string) { try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } }
 
-export function BoardMinutesPanel({ engagementId }: Props) {
+export function ShareholdersPanel({ engagementId }: Props) {
   const { data: session } = useSession();
-  const [records, setRecords] = useState<BoardMinutesRecord[]>([]);
+  const [records, setRecords] = useState<ShareholdersRecord[]>([]);
   const [headings, setHeadings] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedRecord, setExpandedRecord] = useState<string | null>(null);
@@ -74,7 +74,7 @@ export function BoardMinutesPanel({ engagementId }: Props) {
 
   const loadRecords = useCallback(async () => {
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/board-minutes?type=board_minutes`);
+      const res = await fetch(`/api/engagements/${engagementId}/board-minutes?type=shareholders`);
       if (res.ok) {
         const data = await res.json();
         setRecords(data.records || []);
@@ -97,10 +97,10 @@ export function BoardMinutesPanel({ engagementId }: Props) {
     // Expand any .zip files: each archive member becomes its own upload as if
     // the user had selected it directly. Non-zip files pass through unchanged.
     const expanded = await expandZipFiles(Array.from(files));
-    console.log(`[BoardMinutesPanel] Uploading ${expanded.length} file(s) (expanded from ${files.length}):`, expanded.map(f => f.name));
+    console.log(`[ShareholdersPanel] Uploading ${expanded.length} file(s) (expanded from ${files.length}):`, expanded.map(f => f.name));
 
     const formData = new FormData();
-    formData.append('type', 'board_minutes');
+    formData.append('type', 'shareholders');
     formData.append('meetingDate', uploadDate);
     if (uploadTitle.trim()) formData.append('title', uploadTitle.trim());
     for (const file of expanded) formData.append('files', file);
@@ -148,7 +148,7 @@ export function BoardMinutesPanel({ engagementId }: Props) {
   }
 
   async function handleDelete(meetingId: string) {
-    if (!confirm('Delete this board minutes record?')) return;
+    if (!confirm('Delete this shareholder meeting record?')) return;
     await fetch(`/api/engagements/${engagementId}/board-minutes`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
@@ -173,7 +173,7 @@ export function BoardMinutesPanel({ engagementId }: Props) {
     }
   }
 
-  async function handleOpenDocument(record: BoardMinutesRecord) {
+  async function handleOpenDocument(record: ShareholdersRecord) {
     if (!record.storagePath) return;
     try {
       const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(record.storagePath)}`);
@@ -189,7 +189,7 @@ export function BoardMinutesPanel({ engagementId }: Props) {
       const res = await fetch(`/api/engagements/${engagementId}/board-minutes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'period_summary', type: 'board_minutes' }),
+        body: JSON.stringify({ action: 'period_summary', type: 'shareholders' }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -201,14 +201,14 @@ export function BoardMinutesPanel({ engagementId }: Props) {
     setGeneratingSummary(false);
   }
 
-  if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading board minutes...</div>;
+  if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading shareholder meetings...</div>;
 
   return (
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold text-slate-700">
-          Board Minutes <span className="text-xs font-normal text-slate-400 ml-1">{records.length}</span>
+          Shareholder Meetings <span className="text-xs font-normal text-slate-400 ml-1">{records.length}</span>
         </h3>
         <div className="flex gap-2">
           {records.length >= 2 && (
@@ -328,8 +328,8 @@ export function BoardMinutesPanel({ engagementId }: Props) {
         {records.length === 0 ? (
           <div className="text-center py-12 border border-slate-200 rounded-lg">
             <FileText className="h-10 w-10 mx-auto mb-3 text-slate-300" />
-            <p className="text-sm text-slate-400">No board minutes uploaded yet</p>
-            <p className="text-xs text-slate-300 mt-1">Upload PDF or DOCX files of board minutes</p>
+            <p className="text-sm text-slate-400">No shareholder meetings uploaded yet</p>
+            <p className="text-xs text-slate-300 mt-1">Upload PDF or DOCX files of shareholder meetings</p>
           </div>
         ) : records.map(record => {
           const isExpanded = expandedRecord === record.id;

@@ -6,10 +6,13 @@ import { processPdf } from '@/lib/pdf-to-images';
 import { extractBoardMinutes, generatePeriodSummary, identifyCarryForward } from '@/lib/board-minutes-ai';
 import { uploadToInbox, CONTAINERS } from '@/lib/azure-blob';
 
-const MAX_DOC_CHARS = 80_000;
+const MAX_DOC_CHARS = 120_000;
 
 const DEFAULT_BOARD_HEADINGS = ['Litigation', 'Committed Capital Expenditure', 'Performance Concerns', 'Significant Disposals', 'Fraud'];
 const DEFAULT_TCWG_HEADINGS = ['Valuations', 'Accounting Policies', 'Cashflow', 'Significant Transactions', 'Fraud', 'Audit Matters', 'Control Breaches', 'Regulator Issues'];
+const DEFAULT_SHAREHOLDERS_HEADINGS = ['Dividends Declared', 'Share Issues and Buybacks', 'Director Appointments', 'Approval of Financial Statements', 'Related Party Matters', 'Auditor Appointment', 'Significant Resolutions'];
+
+type DocType = 'board_minutes' | 'tcwg' | 'shareholders';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -32,14 +35,21 @@ async function setSignOffs(engagementId: string, meetingId: string, data: Record
   });
 }
 
-async function getFirmHeadings(firmId: string, docType: 'board_minutes' | 'tcwg'): Promise<string[]> {
-  const tableType = docType === 'tcwg' ? 'tcwg_headings' : 'board_minutes_headings';
+async function getFirmHeadings(firmId: string, docType: DocType): Promise<string[]> {
+  const tableType =
+    docType === 'tcwg' ? 'tcwg_headings' :
+    docType === 'shareholders' ? 'shareholders_headings' :
+    'board_minutes_headings';
   const row = await prisma.methodologyRiskTable.findUnique({
     where: { firmId_tableType: { firmId, tableType } },
   });
   const headings = (row?.data as any)?.headings;
   if (Array.isArray(headings) && headings.length > 0) return headings;
-  return docType === 'tcwg' ? DEFAULT_TCWG_HEADINGS : DEFAULT_BOARD_HEADINGS;
+  return docType === 'tcwg'
+    ? DEFAULT_TCWG_HEADINGS
+    : docType === 'shareholders'
+    ? DEFAULT_SHAREHOLDERS_HEADINGS
+    : DEFAULT_BOARD_HEADINGS;
 }
 
 // DOCX text extraction (reuse walkthrough-flowchart pattern)
@@ -71,6 +81,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
 
   const results = await Promise.all(meetings.map(async m => {
     const signOffs = await getSignOffs(engagementId, m.id);
+    // Pull the storage metadata out of minutes JSON so the UI can render
+    // an "open document" button without a schema change. Kept as top-level
+    // fields so the client doesn't need to know the internal JSON shape.
+    const minutesObj = (m.minutes as Record<string, unknown>) || {};
+    const storagePath = typeof minutesObj._storagePath === 'string' ? minutesObj._storagePath : null;
+    const originalFileName = typeof minutesObj._originalFileName === 'string' ? minutesObj._originalFileName : null;
     return {
       id: m.id,
       title: m.title,
@@ -82,11 +98,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
       createdBy: m.createdBy?.name || 'Unknown',
       createdAt: m.createdAt,
       signOffs,
+      storagePath,
+      originalFileName,
     };
   }));
 
   // Load firm headings
-  const headings = await getFirmHeadings(session.user.firmId, docType as 'board_minutes' | 'tcwg');
+  const headings = await getFirmHeadings(session.user.firmId, docType as DocType);
 
   return NextResponse.json({ records: results, headings });
 }
@@ -113,65 +131,94 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
     if (!files.length) return NextResponse.json({ error: 'No files provided' }, { status: 400 });
 
-    const headings = await getFirmHeadings(session.user.firmId, docType as 'board_minutes' | 'tcwg');
+    const headings = await getFirmHeadings(session.user.firmId, docType as DocType);
     const results: any[] = [];
 
+    // Per-file results with per-file errors so the UI can tell the admin
+    // exactly which files succeeded and which failed (and why).
+    const errors: Array<{ fileName: string; error: string }> = [];
+
+    console.log(`[BoardMinutes] Received ${files.length} file(s) for ${docType}:`, files.map(f => f.name));
+
     for (const file of files) {
-      const buffer = Buffer.from(await file.arrayBuffer());
       const fileName = file.name || 'document.pdf';
-      const ext = fileName.toLowerCase().split('.').pop() || '';
-
-      // Extract text
-      let documentText = '';
-      if (ext === 'pdf') {
-        const pdfResult = await processPdf(buffer, 50);
-        documentText = (pdfResult.text || '').slice(0, MAX_DOC_CHARS);
-      } else if (ext === 'docx' || ext === 'doc') {
-        documentText = (await extractDocxText(buffer)).slice(0, MAX_DOC_CHARS);
-      } else if (ext === 'txt' || ext === 'csv') {
-        documentText = buffer.toString('utf-8').slice(0, MAX_DOC_CHARS);
-      } else {
-        results.push({ error: `Unsupported file type: ${ext}`, fileName });
-        continue;
-      }
-
-      if (!documentText.trim()) {
-        results.push({ error: 'No text could be extracted from the document', fileName });
-        continue;
-      }
-
-      // Upload to blob storage
-      const blobName = `board-minutes/${engagementId}/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-      await uploadToInbox(blobName, buffer, file.type || 'application/pdf');
-
-      // AI extraction
-      let extraction;
       try {
-        extraction = await extractBoardMinutes(documentText, headings, docType as 'board_minutes' | 'tcwg', meetingDateStr);
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const ext = fileName.toLowerCase().split('.').pop() || '';
+
+        // Extract text
+        let documentText = '';
+        if (ext === 'pdf') {
+          const pdfResult = await processPdf(buffer, 50);
+          documentText = (pdfResult.text || '').slice(0, MAX_DOC_CHARS);
+        } else if (ext === 'docx' || ext === 'doc') {
+          documentText = (await extractDocxText(buffer)).slice(0, MAX_DOC_CHARS);
+        } else if (ext === 'txt' || ext === 'csv' || ext === 'md' || ext === 'rtf') {
+          documentText = buffer.toString('utf-8').slice(0, MAX_DOC_CHARS);
+        } else {
+          const msg = `Unsupported file type: .${ext}`;
+          console.warn(`[BoardMinutes] ${fileName}: ${msg}`);
+          errors.push({ fileName, error: msg });
+          continue;
+        }
+
+        if (!documentText.trim()) {
+          const msg = 'No text could be extracted (possibly a scanned PDF — try running OCR first, or a DOCX export)';
+          console.warn(`[BoardMinutes] ${fileName}: ${msg}`);
+          errors.push({ fileName, error: msg });
+          continue;
+        }
+
+        // Upload to blob storage. Store the blobName so the UI can fetch a
+        // signed URL later and let the admin re-open the original file.
+        const blobName = `board-minutes/${engagementId}/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        try {
+          await uploadToInbox(blobName, buffer, file.type || 'application/pdf');
+        } catch (err: any) {
+          console.error(`[BoardMinutes] Blob upload failed for ${fileName}:`, err);
+          errors.push({ fileName, error: `Blob upload failed: ${err?.message || 'unknown'}` });
+          continue;
+        }
+
+        // AI extraction
+        let extraction: Record<string, unknown> | null = null;
+        try {
+          extraction = await extractBoardMinutes(documentText, headings, docType as DocType, meetingDateStr) as unknown as Record<string, unknown>;
+        } catch (err: any) {
+          console.error(`[BoardMinutes] AI extraction failed for ${fileName}:`, err);
+          errors.push({ fileName, error: `AI extraction failed: ${err?.message || 'unknown'}` });
+          // Continue — we still want to save the upload so the admin can manually extract or re-run.
+        }
+
+        // Attach storage metadata to the minutes JSON so the UI can render a
+        // download button without a schema change.
+        const minutesWithMeta: Record<string, unknown> = extraction
+          ? { ...extraction, _storagePath: blobName, _originalFileName: fileName, _mimeType: file.type || 'application/pdf' }
+          : { _storagePath: blobName, _originalFileName: fileName, _mimeType: file.type || 'application/pdf' };
+
+        // Create meeting record
+        const meeting = await prisma.auditMeeting.create({
+          data: {
+            engagementId,
+            title: title || fileName.replace(/\.[^.]+$/, ''),
+            meetingDate: meetingDateStr ? new Date(meetingDateStr) : new Date(),
+            meetingType: docType,
+            source: 'upload',
+            transcriptRaw: documentText,
+            minutes: minutesWithMeta as object,
+            minutesStatus: extraction ? 'generated' : 'draft',
+            createdById: session.user.id,
+          },
+        });
+
+        results.push({ id: meeting.id, title: meeting.title, extraction, fileName, storagePath: blobName });
       } catch (err: any) {
-        console.error('[BoardMinutes] AI extraction failed:', err);
-        extraction = null;
+        console.error(`[BoardMinutes] Unexpected failure processing ${fileName}:`, err);
+        errors.push({ fileName, error: `Unexpected error: ${err?.message || 'unknown'}` });
       }
-
-      // Create meeting record
-      const meeting = await prisma.auditMeeting.create({
-        data: {
-          engagementId,
-          title: title || fileName.replace(/\.[^.]+$/, ''),
-          meetingDate: meetingDateStr ? new Date(meetingDateStr) : new Date(),
-          meetingType: docType,
-          source: 'upload',
-          transcriptRaw: documentText,
-          minutes: extraction ? (extraction as object) : undefined,
-          minutesStatus: extraction ? 'generated' : 'draft',
-          createdById: session.user.id,
-        },
-      });
-
-      results.push({ id: meeting.id, title: meeting.title, extraction, fileName });
     }
 
-    return NextResponse.json({ results }, { status: 201 });
+    return NextResponse.json({ results, errors }, { status: 201 });
   }
 
   // Handle JSON actions
@@ -186,11 +233,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const meeting = await prisma.auditMeeting.findUnique({ where: { id: meetingId } });
     if (!meeting?.transcriptRaw) return NextResponse.json({ error: 'No document text available' }, { status: 400 });
 
-    const headings = await getFirmHeadings(session.user.firmId, meeting.meetingType as 'board_minutes' | 'tcwg');
+    const headings = await getFirmHeadings(session.user.firmId, meeting.meetingType as DocType);
     const extraction = await extractBoardMinutes(
       meeting.transcriptRaw,
       headings,
-      meeting.meetingType as 'board_minutes' | 'tcwg',
+      meeting.meetingType as DocType,
       meeting.meetingDate.toISOString().slice(0, 10),
     );
 
@@ -218,7 +265,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   // Generate period summary
   if (action === 'period_summary') {
-    const docType = body.type || 'board_minutes';
+    const docType = (body.type || 'board_minutes') as DocType;
     const headings = await getFirmHeadings(session.user.firmId, docType);
 
     const allMeetings = await prisma.auditMeeting.findMany({

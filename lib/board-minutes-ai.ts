@@ -24,19 +24,24 @@ export interface CarryForwardItem {
 /**
  * Extract structured content from board minutes / TCWG document text using firm-defined headings.
  */
+export type MinutesDocType = 'board_minutes' | 'tcwg' | 'shareholders';
+
 export async function extractBoardMinutes(
   documentText: string,
   headings: string[],
-  documentType: 'board_minutes' | 'tcwg',
+  documentType: MinutesDocType,
   meetingDate?: string,
 ): Promise<BoardMinutesExtraction> {
   const apiKey = process.env.TOGETHER_API_KEY;
   if (!apiKey) throw new Error('TOGETHER_API_KEY not configured');
 
   const headingsList = headings.map((h, i) => `${i + 1}. ${h}`).join('\n');
-  const typeLabel = documentType === 'tcwg' ? 'Audit Committee / Those Charged With Governance (TCWG)' : 'Board Minutes';
+  const typeLabel =
+    documentType === 'tcwg' ? 'Audit Committee / Those Charged With Governance (TCWG)' :
+    documentType === 'shareholders' ? 'Shareholder Meeting Minutes (AGM / EGM / General Meeting)' :
+    'Board Minutes';
 
-  const systemPrompt = `You are an expert UK audit assistant. Given the text of ${typeLabel}, extract content relevant to each of the following headings. For each heading, provide a concise summary of what the minutes say about that topic. If a heading contains content that may be of audit significance (e.g. litigation, fraud indicators, going concern issues, material transactions), set "flagged" to true.
+  const systemPrompt = `You are an expert UK audit assistant analysing ${typeLabel} for an external audit. Your task is to produce DETAILED, thorough summaries under each firm-defined heading so the audit team can rely on them without re-reading the original document.
 
 Headings to extract:
 ${headingsList}
@@ -44,24 +49,39 @@ ${headingsList}
 Return ONLY valid JSON with this exact structure:
 {
   "headings": {
-    "Heading Name": { "content": "summary of what the minutes say about this topic", "flagged": false },
+    "Heading Name": { "content": "detailed multi-paragraph or bulleted summary", "flagged": false },
     ...
   },
-  "otherMatters": "any significant matters not covered by the headings above"
+  "otherMatters": "detailed summary of any significant audit-relevant matters not covered by the headings above"
 }
 
-Rules:
-- Use professional audit terminology
-- Be concise but capture all audit-relevant points
-- If a heading has no relevant content in the document, set content to "" and flagged to false
-- Flag any content that could indicate material misstatement risk, going concern, or fraud
-- Return ONLY the JSON object, no markdown wrapping`;
+Content depth requirements (IMPORTANT)
+- Each heading's "content" should be a DETAILED summary, not one sentence. Aim for 3-8 sentences or a bulleted list when the document contains substantive material on that topic.
+- Capture specific facts: names of people, entities, counter-parties, dates, monetary amounts (in £ and any other currencies mentioned), percentages, deadlines, and reference numbers. Quote exact wording when the precise phrasing matters (e.g. a resolution passed, a specific undertaking, a disclosed figure).
+- Record decisions made, votes cast, approvals granted or withheld, and any dissent.
+- Record actions agreed, who is responsible, and target dates.
+- Note any matters explicitly deferred, escalated, or referred elsewhere.
+- When the topic touches on estimates, judgements, or assumptions, state what the judgement was and the basis for it.
+- When the topic was only touched on briefly, summarise what was said and note that it was brief — don't invent detail.
+- If a heading genuinely has no relevant content in the document, set content to "" and flagged to false.
+
+Flagging rules
+- Set "flagged": true for any content that could indicate: material misstatement risk, going concern concerns, fraud indicators or suspicions, significant litigation, regulatory investigation, covenant breaches, loss of key customer / supplier / personnel, control failures, related-party transactions on non-arm's-length terms, unusual or non-routine transactions, or post-balance-sheet events that affect the financial statements.
+- When flagging, make sure the "content" explains WHY it's flagged and what the audit implication is.
+
+Other matters
+- The "otherMatters" field is for anything audit-relevant that doesn't fit the configured headings — new business lines, changes to accounting policy, key personnel changes, remuneration decisions for directors, tax disputes, insurance claims, major capex decisions, M&A discussions, etc.
+- Make this detailed as well. Don't truncate.
+
+Return format
+- Return ONLY the JSON object, no markdown fencing, no commentary before or after.
+- Use professional UK audit terminology (ISA (UK), FRC, FRS 102 / IFRS as relevant, "those charged with governance", "material", "significant risk", "estimate", "judgement", etc.).`;
 
   const userMessage = [
     meetingDate ? `Meeting Date: ${meetingDate}` : '',
     '',
     `${typeLabel} Text:`,
-    documentText.slice(0, 40000),
+    documentText.slice(0, 60000),
   ].filter(Boolean).join('\n');
 
   const res = await fetch('https://api.together.xyz/v1/chat/completions', {
@@ -73,7 +93,7 @@ Rules:
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
       ],
-      max_tokens: 4000,
+      max_tokens: 8000,
       temperature: 0.2,
     }),
   });
@@ -111,12 +131,15 @@ Rules:
 export async function generatePeriodSummary(
   allExtractions: { meetingDate: string; headings: Record<string, { content: string; flagged: boolean }> }[],
   headings: string[],
-  documentType: 'board_minutes' | 'tcwg',
+  documentType: MinutesDocType,
 ): Promise<PeriodSummary> {
   const apiKey = process.env.TOGETHER_API_KEY;
   if (!apiKey) throw new Error('TOGETHER_API_KEY not configured');
 
-  const typeLabel = documentType === 'tcwg' ? 'TCWG / Audit Committee' : 'Board Minutes';
+  const typeLabel =
+    documentType === 'tcwg' ? 'TCWG / Audit Committee' :
+    documentType === 'shareholders' ? 'Shareholder Meetings' :
+    'Board Minutes';
 
   const minutesSummaries = allExtractions
     .sort((a, b) => new Date(a.meetingDate).getTime() - new Date(b.meetingDate).getTime())

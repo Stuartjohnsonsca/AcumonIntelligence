@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CommunicationOverallPanel } from '../panels/CommunicationOverallPanel';
 import { BoardMinutesPanel } from '../panels/BoardMinutesPanel';
+import { ShareholdersPanel } from '../panels/ShareholdersPanel';
 import { TCWGPanel } from '../panels/TCWGPanel';
 import { ClientMeetingsPanel } from '../panels/ClientMeetingsPanel';
 import { InternalMeetingsPanel } from '../panels/InternalMeetingsPanel';
@@ -13,11 +14,12 @@ interface Props {
   clientId: string;
 }
 
-type SubTab = 'overall' | 'board-minutes' | 'tcwg' | 'client' | 'internal' | 'expert';
+type SubTab = 'overall' | 'board-minutes' | 'shareholders' | 'tcwg' | 'client' | 'internal' | 'expert';
 
 const SUB_TABS: { key: SubTab; label: string }[] = [
   { key: 'overall', label: 'Overall' },
   { key: 'board-minutes', label: 'Board Minutes' },
+  { key: 'shareholders', label: 'Shareholders' },
   { key: 'tcwg', label: 'Audit Committee / TCWG' },
   { key: 'client', label: 'With Client' },
   { key: 'internal', label: 'Internal Team' },
@@ -50,6 +52,9 @@ export function CommunicationTab({ engagementId, clientId }: Props) {
       )}
       {subTab === 'board-minutes' && (
         <BoardMinutesPanel engagementId={engagementId} />
+      )}
+      {subTab === 'shareholders' && (
+        <ShareholdersPanel engagementId={engagementId} />
       )}
       {subTab === 'tcwg' && (
         <TCWGPanel engagementId={engagementId} />
