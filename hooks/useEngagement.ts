@@ -16,6 +16,10 @@ export interface EngagementData {
   hardCloseDate: string | null;
   isGroupAudit: boolean;
   isNewClient?: boolean | null;
+  /** True iff Client.isListed === true. Drives Listed-status schedule visibility. */
+  clientIsListed?: boolean;
+  /** True iff this engagement has a priorPeriodEngagementId set. Drives prior-period schedule visibility. */
+  hasPriorPeriodEngagement?: boolean;
   startedAt: string | null;
   createdAt: string;
   teamMembers: TeamMemberData[];

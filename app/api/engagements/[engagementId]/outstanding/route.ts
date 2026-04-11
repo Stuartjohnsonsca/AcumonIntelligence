@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { resumeExecution } from '@/lib/flow-engine';
@@ -28,6 +29,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ enga
   const { engagementId } = await params;
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const { itemId, responseData } = await req.json();
   if (!itemId) return NextResponse.json({ error: 'itemId required' }, { status: 400 });

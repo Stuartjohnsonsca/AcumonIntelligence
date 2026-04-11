@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
@@ -28,7 +29,7 @@ export async function GET(
         contacts: { orderBy: [{ isMainContact: 'desc' }, { name: 'asc' }] },
         agreedDates: { orderBy: { sortOrder: 'asc' } },
         informationRequests: { orderBy: { sortOrder: 'asc' } },
-        client: { select: { id: true, clientName: true, contactFirstName: true, contactSurname: true, contactEmail: true } },
+        client: { select: { id: true, clientName: true, contactFirstName: true, contactSurname: true, contactEmail: true, isListed: true } },
         period: { select: { id: true, startDate: true, endDate: true } },
       },
     });
@@ -42,6 +43,13 @@ export async function GET(
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
 
+    // Derived fields for schedule visibility conditions (Part A of the EQR / schedules overhaul)
+    const enrichedEngagement = {
+      ...engagement,
+      clientIsListed: engagement.client?.isListed ?? false,
+      hasPriorPeriodEngagement: !!engagement.priorPeriodEngagementId,
+    };
+
     // Check if prior engagement exists (for continuance vs new client logic)
     const url = new URL(req.url);
     if (url.searchParams.get('checkPriorAuditor') === 'true') {
@@ -54,10 +62,10 @@ export async function GET(
         },
         select: { id: true },
       });
-      return NextResponse.json({ engagement, hasPriorEngagement: !!priorEngagement });
+      return NextResponse.json({ engagement: enrichedEngagement, hasPriorEngagement: !!priorEngagement });
     }
 
-    return NextResponse.json({ engagement });
+    return NextResponse.json({ engagement: enrichedEngagement });
   } catch (err) {
     console.error('Error fetching engagement:', err);
     return NextResponse.json({ error: 'Failed to fetch engagement' }, { status: 500 });
@@ -75,6 +83,8 @@ export async function PUT(
   }
 
   const { engagementId } = await params;
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   try {
     const body = await req.json();

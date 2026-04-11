@@ -179,6 +179,9 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   }, [engagement.id]);
   const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
   const [scheduleOrder, setScheduleOrder] = useState<string[] | null>(null); // ordered schedule keys from config
+  // Per-schedule visibility conditions (from the new stage-keyed mapping shape, Part E)
+  const [scheduleConditions, setScheduleConditions] = useState<Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean }>>({});
+  const [stageKeyedMapping, setStageKeyedMapping] = useState<{ planning: string[]; fieldwork: string[]; completion: string[] } | null>(null);
   const [outstandingTeamCount, setOutstandingTeamCount] = useState(0);
   const [outstandingClientCount, setOutstandingClientCount] = useState(0);
   const handleOutstandingCounts = useCallback((team: number, client: number) => {
@@ -257,7 +260,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   // Re-fetch tab sign-offs when switching tabs (to pick up changes made inside SignOffHeader)
   useEffect(() => { loadTabSignOffs(); }, [activeTab, loadTabSignOffs]);
 
-  // Fetch audit type → schedule mapping (with order)
+  // Fetch audit type → schedule mapping (with order + visibility conditions + stage-keyed shape)
   useEffect(() => {
     fetch('/api/methodology-admin/audit-type-schedules')
       .then(r => r.ok ? r.json() : null)
@@ -267,10 +270,29 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           setEnabledSchedules(new Set(orderedKeys));
           setScheduleOrder(orderedKeys);
         }
+        if (data?.stageKeyedMappings?.[auditType]) {
+          const sk = data.stageKeyedMappings[auditType];
+          setStageKeyedMapping({ planning: sk.planning || [], fieldwork: sk.fieldwork || [], completion: sk.completion || [] });
+          setScheduleConditions(sk.conditions || {});
+        }
         // If no mapping configured, all tabs are enabled (null = show all)
       })
       .catch(() => {}); // Fail silently, show all tabs
   }, [auditType]);
+
+  // ── Visibility-condition evaluation (Part G) ──
+  // Build the context once per render from the engagement payload + team.
+  const clientIsListed = !!(engagement as any).clientIsListed;
+  const hasPriorPeriodEngagement = !!(engagement as any).hasPriorPeriodEngagement;
+  const teamHasEQR = engagement.teamMembers.some(m => m.role === 'EQR');
+  function scheduleConditionsPass(scheduleKey: string): boolean {
+    const c = scheduleConditions[scheduleKey];
+    if (!c) return true;
+    if (c.requiresListed && !clientIsListed) return false;
+    if (c.requiresEQR && !teamHasEQR) return false;
+    if (c.requiresPriorPeriod && !hasPriorPeriodEngagement) return false;
+    return true;
+  }
 
   // Filter tabs based on engagement status, audit type schedule config, and continuance/new-client
   // Then sort by configured order
@@ -284,7 +306,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
     if (!enabledSchedules) return true; // Not loaded yet or no config = show all
     const scheduleKey = TAB_TO_SCHEDULE[tab.key];
-    return scheduleKey ? enabledSchedules.has(scheduleKey) : true;
+    if (!scheduleKey) return true;
+    if (!enabledSchedules.has(scheduleKey)) return false;
+    // Visibility conditions (Part G)
+    return scheduleConditionsPass(scheduleKey);
   }).sort((a, b) => {
     if (!scheduleOrder) return 0; // No order config = keep hardcoded order
     if (a.key === 'opening') return -1; // Opening always first
@@ -485,6 +510,24 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               clientId={engagement.clientId}
               userRole={teamMembers.find(m => m.userId === currentUserId)?.role}
               userId={currentUserId}
+              userName={teamMembers.find(m => m.userId === currentUserId)?.userName}
+              teamMembers={teamMembers}
+              completionScheduleOrder={stageKeyedMapping?.completion}
+              scheduleConditions={scheduleConditions}
+              clientIsListed={clientIsListed}
+              hasPriorPeriodEngagement={hasPriorPeriodEngagement}
+              onNavigateMainTab={(key, params) => {
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('tab', key);
+                  if (params) {
+                    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+                  }
+                  window.history.replaceState({}, '', url.pathname + url.search);
+                } catch {}
+                setActiveTab(key as any);
+                setShowCompletion(false);
+              }}
               onClose={() => setShowCompletion(false)}
             />
           </div>

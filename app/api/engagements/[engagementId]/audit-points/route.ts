@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -36,6 +37,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { engagementId } = await params;
+  // EQR users are allowed into this route but only for review_point pointType.
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session, { allowEQR: true });
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
@@ -43,6 +47,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
 
   if (!pointType || !description?.trim()) {
     return NextResponse.json({ error: 'pointType and description required' }, { status: 400 });
+  }
+
+  // Additional EQR restriction: they can only create review points.
+  if (__eqrGuard.role === 'EQR' && pointType !== 'review_point') {
+    return NextResponse.json({ error: 'EQR users can only raise review points' }, { status: 403 });
   }
 
   // Auto-assign chat number (max + 1 for this type in this engagement)
@@ -75,6 +84,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { engagementId } = await params;
+  // EQR users may respond/close/update on review_point points only.
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session, { allowEQR: true });
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
@@ -83,6 +95,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
 
   const existing = await prisma.auditPoint.findUnique({ where: { id } });
   if (!existing || existing.engagementId !== engagementId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  if (__eqrGuard.role === 'EQR' && existing.pointType !== 'review_point') {
+    return NextResponse.json({ error: 'EQR users can only act on review points' }, { status: 403 });
+  }
 
   // Add response to thread
   if (action === 'respond') {

@@ -60,7 +60,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ created: created.length });
   }
 
-  const { clientName, software, contactFirstName, contactSurname, contactEmail, portfolioManagerId } = body;
+  const { clientName, software, contactFirstName, contactSurname, contactEmail, portfolioManagerId, isListed } = body;
   if (!clientName) return NextResponse.json({ error: 'clientName is required' }, { status: 400 });
 
   const client = await prisma.client.create({
@@ -71,6 +71,7 @@ export async function POST(req: Request) {
       contactSurname: contactSurname || null,
       contactEmail: contactEmail || null,
       portfolioManagerId: portfolioManagerId || null,
+      isListed: Boolean(isListed),
       firmId: targetFirmId,
     },
   });

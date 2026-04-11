@@ -1,4 +1,5 @@
 import { NextResponse, after } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getAccounts, getTrialBalanceReport, getValidAccessToken } from '@/lib/xero';
@@ -15,6 +16,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { engagementId } = await params;
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const body = await req.json().catch(() => ({}));
 

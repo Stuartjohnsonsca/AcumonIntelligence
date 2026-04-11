@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { runJournalRiskAnalysis } from '@/lib/journal-risk/engine';
@@ -67,6 +68,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { engagementId } = await params;
   const engagement = await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin);
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
   if (!engagement) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const contentType = req.headers.get('content-type') || '';

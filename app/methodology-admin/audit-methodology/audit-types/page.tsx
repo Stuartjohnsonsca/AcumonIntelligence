@@ -5,22 +5,33 @@ import { AuditTypeSchedulesClient } from '@/components/methodology-admin/AuditTy
 import { BackButton } from '@/components/methodology-admin/BackButton';
 
 const DEFAULT_MASTER_SCHEDULES = [
-  { key: 'permanent_file_questions', label: 'Permanent File', stage: 'planning' },
-  { key: 'ethics_questions', label: 'Ethics', stage: 'planning' },
-  { key: 'continuance_questions', label: 'Continuance', stage: 'planning' },
-  { key: 'new_client_takeon_questions', label: 'New Client Take-On', stage: 'planning' },
-  { key: 'prior_period', label: 'Prior Period', stage: 'planning' },
-  { key: 'trial_balance', label: 'TBCYvPY', stage: 'planning' },
-  { key: 'materiality_questions', label: 'Materiality', stage: 'planning' },
-  { key: 'par', label: 'PAR', stage: 'fieldwork' },
-  { key: 'walkthroughs', label: 'Walkthroughs', stage: 'fieldwork' },
-  { key: 'rmm', label: 'Identifying & Assessing RMM', stage: 'fieldwork' },
-  { key: 'documents', label: 'Documents', stage: 'fieldwork' },
-  { key: 'communication', label: 'Communication', stage: 'fieldwork' },
-  { key: 'outstanding', label: 'Outstanding', stage: 'completion' },
-  { key: 'portal', label: 'Portal', stage: 'completion' },
-  { key: 'subsequent_events_questions', label: 'Subsequent Events', stage: 'completion' },
-  { key: 'tax_technical_categories', label: 'Tax Technical', stage: 'completion' },
+  { key: 'permanent_file_questions', label: 'Permanent File', defaultStage: 'planning' },
+  { key: 'ethics_questions', label: 'Ethics', defaultStage: 'planning' },
+  { key: 'continuance_questions', label: 'Continuance', defaultStage: 'planning' },
+  { key: 'new_client_takeon_questions', label: 'New Client Take-On', defaultStage: 'planning' },
+  { key: 'prior_period', label: 'Prior Period', defaultStage: 'planning' },
+  { key: 'trial_balance', label: 'TBCYvPY', defaultStage: 'planning' },
+  { key: 'materiality_questions', label: 'Materiality', defaultStage: 'planning' },
+  { key: 'par', label: 'PAR', defaultStage: 'fieldwork' },
+  { key: 'walkthroughs', label: 'Walkthroughs', defaultStage: 'fieldwork' },
+  { key: 'rmm', label: 'Identifying & Assessing RMM', defaultStage: 'fieldwork' },
+  { key: 'documents', label: 'Documents', defaultStage: 'fieldwork' },
+  { key: 'communication', label: 'Communication', defaultStage: 'fieldwork' },
+  { key: 'outstanding', label: 'Outstanding', defaultStage: 'completion' },
+  { key: 'portal', label: 'Portal', defaultStage: 'completion' },
+  { key: 'subsequent_events_questions', label: 'Subsequent Events', defaultStage: 'completion' },
+  { key: 'tax_technical_categories', label: 'Tax Technical', defaultStage: 'completion' },
+  // Part F — Completion sub-tabs as first-class schedules
+  { key: 'audit_summary_memo', label: 'Audit Summary Memo', defaultStage: 'completion' },
+  { key: 'significant_risk_completion', label: 'Significant Risk (Completion)', defaultStage: 'completion' },
+  { key: 'update_procedures', label: 'Update Procedures', defaultStage: 'completion' },
+  { key: 'completion_checklist', label: 'Completion Checklist', defaultStage: 'completion' },
+  { key: 'test_summary_results', label: 'Test Summary Results', defaultStage: 'completion' },
+  { key: 'overall_review_fs', label: 'Overall Review of FS', defaultStage: 'completion' },
+  { key: 'fs_review', label: 'FS Review', defaultStage: 'completion' },
+  { key: 'adj_tb', label: 'Adj TB', defaultStage: 'completion' },
+  { key: 'error_schedule', label: 'Error Schedule', defaultStage: 'completion' },
+  { key: 'eqr_review', label: 'EQR Review', defaultStage: 'completion' },
 ];
 
 export default async function AuditTypesPage() {
@@ -43,13 +54,20 @@ export default async function AuditTypesPage() {
   ]);
 
   const mappings: Record<string, string[]> = {};
+  const stageKeyedMappings: Record<string, any> = {};
   let frameworkOptions: string[] = [];
 
   for (const t of templates) {
     if (t.auditType === '__framework_options') {
       frameworkOptions = t.items as string[];
     } else {
-      mappings[t.auditType] = t.items as string[];
+      const raw = t.items as any;
+      if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.planning)) {
+        stageKeyedMappings[t.auditType] = raw;
+        mappings[t.auditType] = [...raw.planning, ...raw.fieldwork, ...raw.completion];
+      } else if (Array.isArray(raw)) {
+        mappings[t.auditType] = raw as string[];
+      }
     }
   }
 
@@ -70,6 +88,7 @@ export default async function AuditTypesPage() {
       <AuditTypeSchedulesClient
         firmId={firmId}
         initialMappings={mappings}
+        initialStageKeyedMappings={stageKeyedMappings}
         initialFrameworks={frameworks}
         initialFrameworkOptions={frameworkOptions.length > 0 ? frameworkOptions : undefined}
         initialMasterSchedules={masterSchedules}

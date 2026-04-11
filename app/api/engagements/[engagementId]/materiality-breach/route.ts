@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
@@ -17,6 +18,8 @@ export async function POST(
   }
 
   const { engagementId } = await params;
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
   const { benchmark, actualPct, rangeRow, materiality } = await req.json();
 
   // Get engagement details
@@ -82,6 +85,8 @@ export async function PUT(
   }
 
   const { engagementId } = await params;
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
   const { action } = await req.json();
 
   // Load current materiality data

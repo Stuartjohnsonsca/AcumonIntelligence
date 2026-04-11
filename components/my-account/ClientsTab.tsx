@@ -42,6 +42,7 @@ interface Client {
   portfolioManagerId: string | null;
   portfolioManager: PortfolioManagerInfo | null;
   isActive: boolean;
+  isListed: boolean;
   createdAt: string;
   _count: { subscriptions: number; userAssignments: number };
   userAssignments: { user: AssignedUser }[];
@@ -62,7 +63,7 @@ type SortKey = 'clientName' | 'software' | 'contactFirstName' | 'contactEmail' |
 type SortDir = 'asc' | 'desc';
 type ViewMode = 'list' | 'add-manual' | 'add-csv' | 'assign' | 'import-crm';
 
-const EMPTY_FORM = { clientName: '', software: '', contactFirstName: '', contactSurname: '', contactEmail: '', portfolioManagerId: '' };
+const EMPTY_FORM = { clientName: '', software: '', contactFirstName: '', contactSurname: '', contactEmail: '', portfolioManagerId: '', isListed: false };
 
 interface Props {
   firmId: string;
@@ -170,6 +171,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
       contactSurname: c.contactSurname || '',
       contactEmail: c.contactEmail || '',
       portfolioManagerId: c.portfolioManagerId || '',
+      isListed: Boolean(c.isListed),
     });
   }
 
@@ -205,6 +207,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
       contactSurname: addForm.contactSurname || null,
       contactEmail: addForm.contactEmail || null,
       portfolioManagerId: addForm.portfolioManagerId || null,
+      isListed: addForm.isListed,
       firmId,
     };
     await fetch('/api/clients', {
@@ -247,6 +250,7 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
           contactSurname: contactSurnameIdx >= 0 ? cols[contactSurnameIdx] || '' : '',
           contactEmail: contactEmailIdx >= 0 ? cols[contactEmailIdx] || '' : '',
           portfolioManagerId: '',
+          isListed: false,
         };
       }).filter((r) => r.clientName);
 
@@ -459,6 +463,16 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                     <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                   ))}
                 </select>
+              </div>
+              <div className="sm:col-span-2 flex items-center gap-2">
+                <input
+                  id="add-client-is-listed"
+                  type="checkbox"
+                  checked={addForm.isListed}
+                  onChange={(e) => setAddForm({ ...addForm, isListed: e.target.checked })}
+                  className="h-4 w-4"
+                />
+                <Label htmlFor="add-client-is-listed" className="cursor-pointer">Listed entity</Label>
               </div>
               <div className="sm:col-span-2 flex gap-2">
                 <Button type="submit" disabled={addSaving} className="bg-blue-600 hover:bg-blue-700">
@@ -728,6 +742,15 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                         <>
                           <td className="px-3 py-2">
                             <Input value={editForm.clientName} onChange={(e) => setEditForm({ ...editForm, clientName: e.target.value })} className="h-8 text-sm" />
+                            <label className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editForm.isListed}
+                                onChange={(e) => setEditForm({ ...editForm, isListed: e.target.checked })}
+                                className="h-3 w-3"
+                              />
+                              Listed entity
+                            </label>
                           </td>
                           <td className="px-3 py-2">
                             <select
@@ -794,7 +817,12 @@ export function ClientsTab({ firmId, isPortfolioOwner, isFirmAdmin, isSuperAdmin
                         </>
                       ) : (
                         <>
-                          <td className="px-3 py-3 font-medium text-slate-800">{c.clientName}</td>
+                          <td className="px-3 py-3 font-medium text-slate-800">
+                            {c.clientName}
+                            {c.isListed && (
+                              <span className="ml-2 inline-block text-[9px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">Listed</span>
+                            )}
+                          </td>
                           <td className="px-3 py-3 text-slate-500">{c.software || '—'}</td>
                           <td className="px-3 py-3 text-slate-500">{`${c.contactFirstName || ''} ${c.contactSurname || ''}`.trim() || '—'}</td>
                           <td className="px-3 py-3 text-slate-500">{c.contactEmail || '—'}</td>

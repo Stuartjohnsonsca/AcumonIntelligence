@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { fireTrigger } from '@/lib/trigger-engine';
@@ -55,6 +56,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { engagementId } = await params;
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const body = await req.json();
   const { data, fieldMeta, sectionKey } = body as { data: Record<string, unknown>; fieldMeta?: Record<string, unknown>; sectionKey?: string };
@@ -87,6 +90,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { engagementId } = await params;
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const body = await req.json();
   const { action, role } = body as { action: string; role: string };

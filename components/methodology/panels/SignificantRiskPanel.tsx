@@ -64,17 +64,29 @@ interface RiskRecord {
   signOffs: Record<string, { userId: string; userName: string; timestamp: string }>;
 }
 
+type TeamMember = { userId: string; userName?: string; role: string };
+
 interface Props {
   engagementId: string;
   userId?: string;
   userName?: string;
+  teamMembers?: TeamMember[];
 }
 
-const SIGN_OFF_ROLES = [
+const SIGN_OFF_ROLES_BASE = [
   { key: 'preparer', label: 'Preparer' },
   { key: 'reviewer', label: 'Reviewer' },
   { key: 'ri', label: 'RI' },
 ];
+const SIGN_OFF_ROLES_WITH_EQR = [...SIGN_OFF_ROLES_BASE, { key: 'eqr', label: 'EQR' }];
+
+// Mirrors CompletionPanel's role map (preparer/reviewer/ri/eqr).
+const SIG_ROLE_MAP: Record<string, string> = { Junior: 'preparer', Manager: 'reviewer', RI: 'ri', EQR: 'eqr' };
+
+function canSignSigRisk(role: string, userId: string | undefined, teamMembers: TeamMember[] | undefined): boolean {
+  if (!userId || !teamMembers || teamMembers.length === 0) return false;
+  return teamMembers.some(m => SIG_ROLE_MAP[m.role] === role && m.userId === userId);
+}
 
 const AUDIT_EXPERT_QUESTIONS = [
   'Did the engagement team involve audit experts / specialists in addressing the significant risk?',
@@ -124,7 +136,7 @@ function Section({ title, children, defaultOpen = false }: { title: string; chil
 }
 
 // ─── Main Panel ───────────────────────────────────────────────────────
-export function SignificantRiskPanel({ engagementId, userId, userName }: Props) {
+export function SignificantRiskPanel({ engagementId, userId, userName, teamMembers }: Props) {
   const { data: session } = useSession();
   const [rmmRows, setRmmRows] = useState<RMMRow[]>([]);
   const [records, setRecords] = useState<Record<string, RiskRecord>>({});
@@ -233,6 +245,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName }: Props) 
   }
 
   async function handleSignOff(rmmRowId: string, role: string) {
+    if (!canSignSigRisk(role, session?.user?.id || userId, teamMembers)) return;
     const record = records[rmmRowId] || { answers: {}, signOffs: {} };
     const existing = record.signOffs[role];
     const isUnsigning = existing?.userId === (session?.user?.id || userId);
@@ -288,6 +301,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName }: Props) 
         {rmmRows.map(risk => {
           const record = records[risk.id];
           const isActive = activeRiskId === risk.id;
+          const visibleRoles = teamMembers?.some(m => m.role === 'EQR') ? SIGN_OFF_ROLES_WITH_EQR : SIGN_OFF_ROLES_BASE;
           return (
             <button key={risk.id} onClick={() => setActiveRiskId(risk.id)}
               className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
@@ -295,7 +309,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName }: Props) 
               }`}>
               <span>{risk.lineItem || 'Unnamed Risk'}</span>
               <div className="flex items-center gap-0.5">
-                {SIGN_OFF_ROLES.map(({ key }) => (
+                {visibleRoles.map(({ key }) => (
                   <span key={key} className={`w-2 h-2 rounded-full ${
                     record?.signOffs?.[key] ? 'bg-green-500' : 'border border-slate-300'
                   }`} />
@@ -320,19 +334,31 @@ export function SignificantRiskPanel({ engagementId, userId, userName }: Props) 
               </div>
               {activeRisk.riskIdentified && <p className="text-[11px] text-slate-600">{activeRisk.riskIdentified}</p>}
             </div>
-            {/* Sign-off dots */}
+            {/* Sign-off dots — EQR shown only when an EQR is on the team */}
             <div className="flex items-center gap-3">
-              {SIGN_OFF_ROLES.map(({ key, label }) => {
+              {(teamMembers?.some(m => m.role === 'EQR') ? SIGN_OFF_ROLES_WITH_EQR : SIGN_OFF_ROLES_BASE).map(({ key, label }) => {
                 const so = activeRecord?.signOffs?.[key];
                 const hasSigned = !!so?.timestamp;
+                const canSign = canSignSigRisk(key, session?.user?.id || userId, teamMembers);
                 return (
                   <div key={key} className="flex flex-col items-center gap-0.5">
                     <span className="text-[9px] text-slate-500">{label}</span>
-                    <button onClick={() => handleSignOff(activeRisk.id, key)}
+                    <button onClick={() => canSign && handleSignOff(activeRisk.id, key)}
+                      disabled={!canSign && !hasSigned}
                       className={`w-5 h-5 rounded-full border-2 transition-all ${
-                        hasSigned ? 'bg-green-500 border-green-500' : 'bg-white border-slate-300 hover:border-blue-400'
+                        hasSigned
+                          ? 'bg-green-500 border-green-500'
+                          : canSign
+                            ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
+                            : 'bg-white border-slate-200 cursor-not-allowed opacity-50'
                       }`}
-                      title={hasSigned ? `${so.userName} — ${new Date(so.timestamp).toLocaleString()}` : `Sign off as ${label}`}
+                      title={
+                        hasSigned ? `${so.userName} — ${new Date(so.timestamp).toLocaleString()}` :
+                        canSign ? `Sign off as ${label}` :
+                        key === 'ri' ? 'Only the RI can sign here' :
+                        key === 'eqr' ? 'Only the EQR can sign here' :
+                        `Only ${label}s can sign here`
+                      }
                     />
                   </div>
                 );

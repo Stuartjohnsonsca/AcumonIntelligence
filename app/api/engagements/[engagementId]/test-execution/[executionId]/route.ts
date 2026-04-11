@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { resumeExecution, processNextNode, resumePipelineExecution, processPipelineStep } from '@/lib/flow-engine';
@@ -70,9 +71,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
 
 // POST: Control execution (resume, cancel, retry)
 export async function POST(req: NextRequest, { params }: { params: Promise<{ engagementId: string; executionId: string }> }) {
-  const { executionId } = await params;
+  const { engagementId, executionId } = await params;
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const { action, responseData } = await req.json();
 

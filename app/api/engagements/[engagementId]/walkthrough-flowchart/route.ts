@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import OpenAI from 'openai';
 import JSZip from 'jszip';
@@ -15,9 +16,12 @@ const MAX_DOC_CHARS = 80_000;
  * POST /api/engagements/[engagementId]/walkthrough-flowchart
  * Takes process narrative + controls (and optionally evidence files) and generates a structured flowchart.
  */
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const { engagementId } = await params;
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const body = await req.json();
 

@@ -130,6 +130,8 @@ model User {
   // Resource planning relations
   resourceStaffSetting       ResourceStaffSetting?
   resourceAllocations        ResourceAllocation[]
+  // Team familiarity (Part H)
+  teamFamiliarityEntries     TeamFamiliarityEntry[]     @relation("UserTeamFamiliarity")
 
   @@map("users")
 }
@@ -183,6 +185,8 @@ model Client {
   crmAccountId        String?  @unique @map("crm_account_id") // Dynamics 365 account GUID
   isActive            Boolean  @default(true) @map("is_active")
   readOnly            Boolean  @default(false) @map("read_only")
+  isListed            Boolean  @default(false) @map("is_listed")
+  isPIE               Boolean  @default(false) @map("is_pie")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
@@ -215,8 +219,35 @@ model Client {
   resourceJobs           ResourceJob[]
   resourceClientSetting  ResourceClientSetting?
   portalRequests         PortalRequest[]
+  // Team familiarity (Part H)
+  teamFamiliarityEntries TeamFamiliarityEntry[]
 
   @@map("clients")
+}
+
+// ─── Team Familiarity (Part H) ───────────────────────────────────────────────
+// Tracks how long each team member has served each audit client in each role.
+// One row per (firmId, clientId, userId, role) tuple. Auto-derived from existing
+// engagement history; user can override the date fields.
+model TeamFamiliarityEntry {
+  id                  String   @id @default(uuid())
+  firmId              String   @map("firm_id")
+  clientId            String   @map("client_id")
+  userId              String   @map("user_id")
+  role                String   // Junior | Manager | RI | Partner | EQR
+  engagementStartDate DateTime? @map("engagement_start_date")
+  roleStartedDate     DateTime? @map("role_started_date")
+  ceasedActingDate    DateTime? @map("ceased_acting_date")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  client              Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user                User     @relation("UserTeamFamiliarity", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, clientId, userId, role])
+  @@index([firmId, clientId])
+  @@index([firmId, userId])
+  @@map("team_familiarity_entries")
 }
 
 model ClientApiKey {
@@ -1655,6 +1686,7 @@ model AuditEngagement {
   createdById           String    @map("created_by_id")
   startedAt             DateTime? @map("started_at")
   completedAt           DateTime? @map("completed_at")
+  priorPeriodEngagementId String? @map("prior_period_engagement_id")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
@@ -1663,6 +1695,8 @@ model AuditEngagement {
   firm                Firm                  @relation(fields: [firmId], references: [id])
   createdBy           User                  @relation("EngagementCreator", fields: [createdById], references: [id])
   methodologyVersion  MethodologyConfig?    @relation(fields: [methodologyVersionId], references: [id])
+  priorPeriodEngagement AuditEngagement?    @relation("EngagementPriorPeriod", fields: [priorPeriodEngagementId], references: [id], onDelete: SetNull)
+  nextPeriodEngagements AuditEngagement[]   @relation("EngagementPriorPeriod")
   teamMembers         AuditTeamMember[]
   specialists         AuditSpecialist[]
   contacts            AuditClientContact[]
@@ -1691,6 +1725,7 @@ model AuditEngagement {
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
+  @@index([priorPeriodEngagementId])
   @@map("audit_engagements")
 }
 

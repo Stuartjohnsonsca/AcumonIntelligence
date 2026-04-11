@@ -21,6 +21,7 @@ const TEAM_ROLES = [
   { value: 'Junior', label: 'Preparer' },
   { value: 'Manager', label: 'Reviewer' },
   { value: 'RI', label: 'Partner' },
+  { value: 'EQR', label: 'EQR' },
 ] as const;
 const SPECIALIST_TYPES = [
   { type: 'Specialist', label: 'Specialist' },

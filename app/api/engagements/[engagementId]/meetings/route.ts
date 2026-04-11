@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { extractMeetingMinutes } from '@/lib/meeting-minutes-ai';
@@ -78,6 +79,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const body = await req.json();
   const { action } = body;
@@ -332,6 +335,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ engag
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const body = await req.json();
   if (!body.meetingId) return NextResponse.json({ error: 'meetingId required' }, { status: 400 });

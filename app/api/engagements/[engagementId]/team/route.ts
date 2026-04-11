@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
+import { checkRIFamiliarityForAssignment } from '@/lib/team-familiarity';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
@@ -132,6 +134,8 @@ export async function PUT(
 
   const { engagementId } = await params;
   const access = await verifyEngagementAccess(engagementId, session.user.firmId, session.user.isSuperAdmin);
+  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
@@ -142,6 +146,37 @@ export async function PUT(
 
   // Update team members if provided
   if (teamMembers) {
+    // At most one EQR per engagement
+    const eqrCount = teamMembers.filter(m => m.role === 'EQR').length;
+    if (eqrCount > 1) {
+      return NextResponse.json({ error: 'Only one EQR can be assigned to an engagement' }, { status: 400 });
+    }
+
+    // Part H: RI familiarity hard block
+    // For each NEW RI assignment (not currently RI on this engagement), check the firm-wide limit.
+    const currentRIsForCheck = await prisma.auditTeamMember.findMany({
+      where: { engagementId, role: 'RI' },
+      select: { userId: true },
+    });
+    const currentRIUserIds = new Set(currentRIsForCheck.map(r => r.userId));
+    const proposedRIUserIds = teamMembers.filter(m => m.role === 'RI').map(m => m.userId);
+    const newRIUserIds = proposedRIUserIds.filter(uid => !currentRIUserIds.has(uid));
+
+    if (newRIUserIds.length > 0) {
+      const eng = await prisma.auditEngagement.findUnique({
+        where: { id: engagementId },
+        select: { clientId: true, firmId: true },
+      });
+      if (eng) {
+        for (const newRIUserId of newRIUserIds) {
+          const check = await checkRIFamiliarityForAssignment(eng.firmId, eng.clientId, newRIUserId);
+          if (!check.allowed) {
+            return NextResponse.json({ error: check.reason || 'RI familiarity limit exceeded' }, { status: 400 });
+          }
+        }
+      }
+    }
+
     // Detect RI (Partner) changes — get current RIs before update
     const currentRIs = await prisma.auditTeamMember.findMany({
       where: { engagementId, role: 'RI' },
