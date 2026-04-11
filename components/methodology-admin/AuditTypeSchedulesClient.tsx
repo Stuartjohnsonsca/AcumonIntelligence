@@ -34,6 +34,11 @@ type ScheduleVisibility = {
   requiresPriorPeriod?: boolean;
   /** Only show if this IS a first-year audit. Mutually exclusive with requiresPriorPeriod. */
   requiresFirstYear?: boolean;
+  /**
+   * Optional linkage group number. Schedules sharing the same number become visible
+   * together: if ANY member would be visible on its own, ALL members show.
+   */
+  linkGroup?: number;
 };
 
 type StageKeyedMapping = {
@@ -112,6 +117,7 @@ function ScheduleCard({
   label,
   conditions,
   onToggleCondition,
+  onSetLinkGroup,
   onRemove,
   isDragging,
 }: {
@@ -119,6 +125,7 @@ function ScheduleCard({
   label: string;
   conditions: ScheduleVisibility;
   onToggleCondition: (key: keyof ScheduleVisibility) => void;
+  onSetLinkGroup: (value: number | undefined) => void;
   onRemove: () => void;
   isDragging?: boolean;
 }) {
@@ -184,6 +191,20 @@ function ScheduleCard({
         >
           FY
         </button>
+        {/* Link group — schedules sharing the same number become visible together */}
+        <input
+          type="number"
+          min={1}
+          max={99}
+          value={conditions.linkGroup ?? ''}
+          onChange={(e) => {
+            const v = e.target.value ? parseInt(e.target.value, 10) : undefined;
+            onSetLinkGroup(Number.isFinite(v as number) ? (v as number) : undefined);
+          }}
+          placeholder="Link"
+          title="Link group number — schedules with the same number become visible together"
+          className="w-10 h-5 text-[9px] text-center border border-slate-200 rounded px-0.5 focus:outline-none focus:border-indigo-400"
+        />
       </div>
       <button
         onClick={onRemove}
@@ -202,6 +223,7 @@ function StageColumn({
   masterSchedules,
   conditions,
   onToggleCondition,
+  onSetLinkGroup,
   onRemoveKey,
 }: {
   stage: typeof STAGES[number];
@@ -209,6 +231,7 @@ function StageColumn({
   masterSchedules: MasterSchedule[];
   conditions: Record<string, ScheduleVisibility>;
   onToggleCondition: (key: string, cond: keyof ScheduleVisibility) => void;
+  onSetLinkGroup: (key: string, value: number | undefined) => void;
   onRemoveKey: (key: string) => void;
 }) {
   return (
@@ -229,6 +252,7 @@ function StageColumn({
               label={label}
               conditions={conditions[k] || {}}
               onToggleCondition={(cond) => onToggleCondition(k, cond)}
+              onSetLinkGroup={(v) => onSetLinkGroup(k, v)}
               onRemove={() => onRemoveKey(k)}
             />
           );
@@ -382,9 +406,30 @@ export function AuditTypeSchedulesClient({
       if (cond === 'requiresFirstYear' && toggled.requiresFirstYear) toggled.requiresPriorPeriod = false;
       if (cond === 'requiresPriorPeriod' && toggled.requiresPriorPeriod) toggled.requiresFirstYear = false;
       conditions[key] = toggled;
-      // Clean up empty
-      if (!toggled.requiresListed && !toggled.requiresEQR && !toggled.requiresPriorPeriod && !toggled.requiresFirstYear) {
+      // Clean up empty (linkGroup alone is a reason to keep the entry)
+      if (!toggled.requiresListed && !toggled.requiresEQR && !toggled.requiresPriorPeriod && !toggled.requiresFirstYear && toggled.linkGroup === undefined) {
         delete conditions[key];
+      }
+      am.conditions = conditions;
+      next[activeAuditType] = am;
+      return next;
+    });
+    setSaved(false);
+  }
+
+  function setLinkGroup(key: string, value: number | undefined) {
+    setStageMappings(prev => {
+      const next = { ...prev };
+      const am = { ...next[activeAuditType] };
+      const conditions = { ...am.conditions };
+      const existing = conditions[key] || {};
+      const updated = { ...existing, linkGroup: value };
+      if (value === undefined) delete (updated as any).linkGroup;
+      // If this entry is now empty, remove it
+      if (!updated.requiresListed && !updated.requiresEQR && !updated.requiresPriorPeriod && !updated.requiresFirstYear && updated.linkGroup === undefined) {
+        delete conditions[key];
+      } else {
+        conditions[key] = updated;
       }
       am.conditions = conditions;
       next[activeAuditType] = am;
@@ -710,6 +755,7 @@ export function AuditTypeSchedulesClient({
               masterSchedules={masterSchedules}
               conditions={activeMapping.conditions}
               onToggleCondition={toggleCondition}
+              onSetLinkGroup={setLinkGroup}
               onRemoveKey={removeKey}
             />
           ))}

@@ -8,6 +8,12 @@ type ScheduleVisibility = {
   requiresPriorPeriod?: boolean;
   /** Only show if this IS a first-year audit (no prior-period engagement). Mutually exclusive with requiresPriorPeriod. */
   requiresFirstYear?: boolean;
+  /**
+   * Optional linkage group number. Schedules sharing the same number become visible together:
+   * if ANY member of the group would be independently visible, ALL members are shown.
+   * If no member would be visible, none are shown.
+   */
+  linkGroup?: number;
 };
 
 type StageKeyedMapping = {

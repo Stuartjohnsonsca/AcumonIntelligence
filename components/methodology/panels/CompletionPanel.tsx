@@ -49,7 +49,7 @@ interface Props {
   /** Ordered list of schedule keys for the Completion stage (from Part E config) */
   completionScheduleOrder?: string[];
   /** Per-schedule visibility conditions (from Part E config) */
-  scheduleConditions?: Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean; requiresFirstYear?: boolean }>;
+  scheduleConditions?: Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean; requiresFirstYear?: boolean; linkGroup?: number }>;
   /** From engagement payload for visibility evaluation */
   clientIsListed?: boolean;
   hasPriorPeriodEngagement?: boolean;
@@ -81,7 +81,7 @@ export function CompletionPanel({
 
   // Visibility helper for sub-tabs (Part G applied to completion sub-tabs too)
   const teamHasEQR = !!teamMembers?.some(m => m.role === 'EQR');
-  function passesConditions(scheduleKey: string): boolean {
+  function rawConditionsPass(scheduleKey: string): boolean {
     const c = scheduleConditions?.[scheduleKey];
     if (!c) return true;
     if (c.requiresListed && !clientIsListed) return false;
@@ -89,6 +89,30 @@ export function CompletionPanel({
     if (c.requiresPriorPeriod && !hasPriorPeriodEngagement) return false;
     if (c.requiresFirstYear && hasPriorPeriodEngagement) return false;
     return true;
+  }
+
+  // Pre-compute link-group verdicts: if ANY member of a group passes its raw conditions,
+  // the whole group is visible.
+  const linkGroupVisible = (() => {
+    const groupPasses = new Map<number, boolean>();
+    if (!scheduleConditions) return groupPasses;
+    for (const [key, cond] of Object.entries(scheduleConditions)) {
+      if (cond.linkGroup === undefined) continue;
+      if (rawConditionsPass(key)) {
+        groupPasses.set(cond.linkGroup, true);
+      } else if (!groupPasses.has(cond.linkGroup)) {
+        groupPasses.set(cond.linkGroup, false);
+      }
+    }
+    return groupPasses;
+  })();
+
+  function passesConditions(scheduleKey: string): boolean {
+    const c = scheduleConditions?.[scheduleKey];
+    if (c?.linkGroup !== undefined) {
+      return linkGroupVisible.get(c.linkGroup) === true;
+    }
+    return rawConditionsPass(scheduleKey);
   }
 
   // Build the visible+ordered completion tab list from the schedule config (Part F).

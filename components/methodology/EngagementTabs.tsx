@@ -180,7 +180,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
   const [scheduleOrder, setScheduleOrder] = useState<string[] | null>(null); // ordered schedule keys from config
   // Per-schedule visibility conditions (from the new stage-keyed mapping shape, Part E)
-  const [scheduleConditions, setScheduleConditions] = useState<Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean; requiresFirstYear?: boolean }>>({});
+  const [scheduleConditions, setScheduleConditions] = useState<Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean; requiresFirstYear?: boolean; linkGroup?: number }>>({});
   const [stageKeyedMapping, setStageKeyedMapping] = useState<{ planning: string[]; fieldwork: string[]; completion: string[] } | null>(null);
   const [outstandingTeamCount, setOutstandingTeamCount] = useState(0);
   const [outstandingClientCount, setOutstandingClientCount] = useState(0);
@@ -285,7 +285,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const clientIsListed = !!(engagement as any).clientIsListed;
   const hasPriorPeriodEngagement = !!(engagement as any).hasPriorPeriodEngagement;
   const teamHasEQR = engagement.teamMembers.some(m => m.role === 'EQR');
-  function scheduleConditionsPass(scheduleKey: string): boolean {
+  // Raw per-schedule condition check (ignores link groups)
+  function rawConditionsPass(scheduleKey: string): boolean {
     const c = scheduleConditions[scheduleKey];
     if (!c) return true;
     if (c.requiresListed && !clientIsListed) return false;
@@ -294,6 +295,31 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     // First-year audit = no prior period. Hide any schedule tagged "FY" on a returning client.
     if (c.requiresFirstYear && hasPriorPeriodEngagement) return false;
     return true;
+  }
+
+  // Compute visible-by-linkgroup set. For every link group, if ANY member passes its own
+  // raw conditions, ALL members of that group are considered visible.
+  const linkGroupVisible = (() => {
+    const groupPasses = new Map<number, boolean>();
+    for (const [key, cond] of Object.entries(scheduleConditions)) {
+      if (cond.linkGroup === undefined) continue;
+      if (rawConditionsPass(key)) {
+        groupPasses.set(cond.linkGroup, true);
+      } else if (!groupPasses.has(cond.linkGroup)) {
+        groupPasses.set(cond.linkGroup, false);
+      }
+    }
+    return groupPasses;
+  })();
+
+  // Final visibility: if a schedule is in a link group, the group's verdict wins.
+  // Otherwise fall through to its own raw conditions.
+  function scheduleConditionsPass(scheduleKey: string): boolean {
+    const c = scheduleConditions[scheduleKey];
+    if (c?.linkGroup !== undefined) {
+      return linkGroupVisible.get(c.linkGroup) === true;
+    }
+    return rawConditionsPass(scheduleKey);
   }
 
   // Filter tabs based on engagement status, audit type schedule config, and continuance/new-client
