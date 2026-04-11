@@ -196,12 +196,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           ? { ...extraction, _storagePath: blobName, _originalFileName: fileName, _mimeType: file.type || 'application/pdf' }
           : { _storagePath: blobName, _originalFileName: fileName, _mimeType: file.type || 'application/pdf' };
 
+        // Resolve the meeting date in priority order:
+        //   1. User-provided date on the upload form (if any)
+        //   2. Date extracted by the AI from the document text
+        //   3. "now" as a last-resort fallback so the row still has a value
+        const aiDateRaw = typeof (extraction?.meetingDate) === 'string' ? (extraction!.meetingDate as string) : '';
+        const aiDate = /^\d{4}-\d{2}-\d{2}$/.test(aiDateRaw) ? aiDateRaw : '';
+        const resolvedDate = meetingDateStr
+          ? new Date(meetingDateStr)
+          : aiDate
+          ? new Date(aiDate)
+          : new Date();
+
         // Create meeting record
         const meeting = await prisma.auditMeeting.create({
           data: {
             engagementId,
             title: title || fileName.replace(/\.[^.]+$/, ''),
-            meetingDate: meetingDateStr ? new Date(meetingDateStr) : new Date(),
+            meetingDate: resolvedDate,
             meetingType: docType,
             source: 'upload',
             transcriptRaw: documentText,
@@ -211,7 +223,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           },
         });
 
-        results.push({ id: meeting.id, title: meeting.title, extraction, fileName, storagePath: blobName });
+        results.push({ id: meeting.id, title: meeting.title, extraction, fileName, storagePath: blobName, meetingDate: resolvedDate });
       } catch (err: any) {
         console.error(`[BoardMinutes] Unexpected failure processing ${fileName}:`, err);
         errors.push({ fileName, error: `Unexpected error: ${err?.message || 'unknown'}` });
@@ -241,9 +253,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       meeting.meetingDate.toISOString().slice(0, 10),
     );
 
+    // Preserve any storage metadata that was on the existing minutes JSON
+    // so regenerating never wipes out the blob pointer.
+    const prev = (meeting.minutes as Record<string, unknown>) || {};
+    const merged: Record<string, unknown> = {
+      ...extraction,
+      _storagePath: prev._storagePath,
+      _originalFileName: prev._originalFileName,
+      _mimeType: prev._mimeType,
+    };
+
+    // If the AI found a reliable meeting date in the document, let it override
+    // whatever was stored — this is the "updated if the extract finds a better
+    // one" case the user asked for. We only overwrite when the extracted date
+    // is in the strict YYYY-MM-DD form so malformed dates don't corrupt the row.
+    const aiDateRaw = typeof extraction.meetingDate === 'string' ? extraction.meetingDate : '';
+    const updateData: Record<string, unknown> = { minutes: merged as object, minutesStatus: 'generated' };
+    if (/^\d{4}-\d{2}-\d{2}$/.test(aiDateRaw)) {
+      updateData.meetingDate = new Date(aiDateRaw);
+    }
+
     await prisma.auditMeeting.update({
       where: { id: meetingId },
-      data: { minutes: extraction as object, minutesStatus: 'generated' },
+      data: updateData as any,
     });
 
     return NextResponse.json({ extraction });

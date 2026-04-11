@@ -56,7 +56,9 @@ export function TCWGPanel({ engagementId }: Props) {
   const [uploading, setUploading] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  const [uploadDate, setUploadDate] = useState(new Date().toISOString().slice(0, 10));
+  // Blank by default — the AI extracts the meeting date from the document text
+  // and the server falls back to that when this is empty.
+  const [uploadDate, setUploadDate] = useState('');
   const [uploadTitle, setUploadTitle] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -90,7 +92,9 @@ export function TCWGPanel({ engagementId }: Props) {
 
     const formData = new FormData();
     formData.append('type', 'tcwg');
-    formData.append('meetingDate', uploadDate);
+    // Only send a meeting date if the user explicitly chose one. When blank,
+    // the server uses the date the AI extracts from the document text.
+    if (uploadDate) formData.append('meetingDate', uploadDate);
     if (uploadTitle.trim()) formData.append('title', uploadTitle.trim());
     for (const file of expanded) formData.append('files', file);
 
@@ -199,7 +203,7 @@ export function TCWGPanel({ engagementId }: Props) {
                 className="w-full text-xs border border-slate-200 rounded px-2 py-1.5" placeholder="e.g. Audit Committee — Q1 2025" />
             </div>
             <div>
-              <label className="block text-[10px] text-slate-500 mb-0.5">Meeting Date</label>
+              <label className="block text-[10px] text-slate-500 mb-0.5">Meeting Date <span className="text-slate-400">(auto-detected if blank)</span></label>
               <input type="date" value={uploadDate} onChange={e => setUploadDate(e.target.value)}
                 className="w-full text-xs border border-slate-200 rounded px-2 py-1.5" />
             </div>

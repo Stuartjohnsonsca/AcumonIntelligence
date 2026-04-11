@@ -6,6 +6,12 @@
 export interface BoardMinutesExtraction {
   headings: Record<string, { content: string; flagged: boolean }>;
   otherMatters: string;
+  /**
+   * Meeting date extracted from the document text in YYYY-MM-DD form.
+   * Empty string when the AI could not find a reliable date in the document.
+   * Callers should fall back to a user-provided date or "now" when this is missing.
+   */
+  meetingDate: string;
 }
 
 export interface PeriodSummary {
@@ -48,12 +54,19 @@ ${headingsList}
 
 Return ONLY valid JSON with this exact structure:
 {
+  "meetingDate": "YYYY-MM-DD",
   "headings": {
     "Heading Name": { "content": "detailed multi-paragraph or bulleted summary", "flagged": false },
     ...
   },
   "otherMatters": "detailed summary of any significant audit-relevant matters not covered by the headings above"
 }
+
+Meeting date extraction (IMPORTANT)
+- Read the document carefully and identify the actual date of the meeting from the text (look in the header, title, "Date of meeting:", "Held on", minutes preamble, signatures, etc.).
+- Return it in strict ISO format "YYYY-MM-DD".
+- If the document references multiple dates (e.g. the meeting date plus the date the minutes were signed), use the DATE OF THE MEETING, not the signing date.
+- If no reliable meeting date can be determined from the text, return "meetingDate": "" (empty string). Never guess or fabricate a date.
 
 Content depth requirements (IMPORTANT)
 - Each heading's "content" should be a DETAILED summary, not one sentence. Aim for 3-8 sentences or a bulleted list when the document contains substantive material on that topic.
@@ -78,7 +91,7 @@ Return format
 - Use professional UK audit terminology (ISA (UK), FRC, FRS 102 / IFRS as relevant, "those charged with governance", "material", "significant risk", "estimate", "judgement", etc.).`;
 
   const userMessage = [
-    meetingDate ? `Meeting Date: ${meetingDate}` : '',
+    meetingDate ? `(Hint only — user-provided meeting date: ${meetingDate}. Still confirm / extract the true date from the text.)` : '(No user-provided meeting date — extract the meeting date directly from the text.)',
     '',
     `${typeLabel} Text:`,
     documentText.slice(0, 60000),
@@ -109,7 +122,13 @@ Return format
 
   try {
     const parsed = JSON.parse(content);
-    const result: BoardMinutesExtraction = { headings: {}, otherMatters: parsed.otherMatters || '' };
+    const rawDate = typeof parsed.meetingDate === 'string' ? parsed.meetingDate.trim() : '';
+    const extractedDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '';
+    const result: BoardMinutesExtraction = {
+      headings: {},
+      otherMatters: parsed.otherMatters || '',
+      meetingDate: extractedDate,
+    };
     for (const h of headings) {
       const entry = parsed.headings?.[h];
       result.headings[h] = {
@@ -119,7 +138,7 @@ Return format
     }
     return result;
   } catch {
-    const fallback: BoardMinutesExtraction = { headings: {}, otherMatters: content.slice(0, 500) };
+    const fallback: BoardMinutesExtraction = { headings: {}, otherMatters: content.slice(0, 500), meetingDate: '' };
     for (const h of headings) fallback.headings[h] = { content: '', flagged: false };
     return fallback;
   }
