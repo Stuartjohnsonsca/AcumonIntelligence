@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { useFirmVariables } from '@/hooks/useFirmVariables';
+import { slugifyQuestionText } from '@/lib/formula-engine';
 import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 
 interface Props {
@@ -420,26 +421,47 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                     <code className="bg-slate-100 px-1 rounded">ROUND(x, 2)</code>,{' '}
                                     <code className="bg-slate-100 px-1 rounded">SUM(a, b, c)</code>.
                                   </p>
-                                  {/* Available fields in this template */}
+                                  {/* Available fields in this template. Chips display the
+                                      question text; clicking inserts a slug derived from the
+                                      text (e.g. "Audit Fee" → audit_fee). The runtime resolves
+                                      the slug via buildFormulaValues so bare-identifier
+                                      references work regardless of whether the underlying id
+                                      is a GUID or a snake_case string. */}
                                   <div className="flex flex-wrap gap-1">
-                                    {questions
-                                      .filter(other => other.id !== q.id && other.id)
-                                      .slice(0, 40)
-                                      .map(other => (
-                                        <button
-                                          key={other.id}
-                                          type="button"
-                                          onClick={() => {
-                                            const current = q.formulaExpression || '';
-                                            const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
-                                            updateQuestion(q.id, { formulaExpression: current + sep + other.id });
-                                          }}
-                                          title={other.questionText || other.id}
-                                          className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
-                                        >
-                                          {other.id}
-                                        </button>
-                                      ))}
+                                    {(() => {
+                                      const usedSlugs = new Set<string>();
+                                      return questions
+                                        .filter(other => other.id !== q.id && other.id && (other.questionText || other.id))
+                                        .slice(0, 60)
+                                        .map(other => {
+                                          const base = slugifyQuestionText(other.questionText) || other.id;
+                                          let slug = base;
+                                          let n = 2;
+                                          while (usedSlugs.has(slug)) slug = `${base}_${n++}`;
+                                          usedSlugs.add(slug);
+                                          const label = other.questionText && other.questionText.trim().length > 0
+                                            ? other.questionText.length > 40
+                                              ? other.questionText.slice(0, 40) + '…'
+                                              : other.questionText
+                                            : other.id;
+                                          return (
+                                            <button
+                                              key={other.id}
+                                              type="button"
+                                              onClick={() => {
+                                                const current = q.formulaExpression || '';
+                                                const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
+                                                updateQuestion(q.id, { formulaExpression: current + sep + slug });
+                                              }}
+                                              title={`${other.questionText || other.id}  →  inserts "${slug}"`}
+                                              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                                            >
+                                              <span>{label}</span>
+                                              <span className="font-mono text-[9px] text-blue-500">{slug}</span>
+                                            </button>
+                                          );
+                                        });
+                                    })()}
                                     {/* Firm-wide variables — loaded dynamically from
                                          Methodology Admin → Firm-Wide Assumptions → Firm Variables */}
                                     {firmVariables.map(fv => (

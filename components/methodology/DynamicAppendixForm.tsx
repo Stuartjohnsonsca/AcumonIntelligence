@@ -5,7 +5,7 @@ import { FormField } from './FormField';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { useSignOff } from './SignOffHeader';
-import { evaluateFormula } from '@/lib/formula-engine';
+import { evaluateFormula, buildFormulaValues } from '@/lib/formula-engine';
 import type { TemplateQuestion } from '@/types/methodology';
 
 type FormValues = Record<string, string | number | boolean | null>;
@@ -94,13 +94,16 @@ export function DynamicAppendixForm({
 
   // Compute formula values. External variables (firm-wide + any explicit prop)
   // are merged into a read-only view passed to the formula engine so bare
-  // identifiers resolve — but they're never saved to the engagement.
+  // identifiers resolve. Then buildFormulaValues adds slug aliases of every
+  // question text so admins can write `audit_fee` even when the actual
+  // question id is a GUID. The slug aliases are never saved.
   const computedValues = useMemo(() => {
     const merged: FormValues = { ...firmVariablesMap, ...(externalValues || {}), ...values };
+    const withAliases = buildFormulaValues(questions, merged);
     const computed: FormValues = {};
     for (const q of questions) {
       if (q.inputType === 'formula' && q.formulaExpression) {
-        computed[q.id] = evaluateFormula(q.formulaExpression, merged, crossRefData);
+        computed[q.id] = evaluateFormula(q.formulaExpression, withAliases, crossRefData);
       }
     }
     return computed;

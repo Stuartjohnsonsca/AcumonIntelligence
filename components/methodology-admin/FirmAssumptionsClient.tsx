@@ -217,43 +217,97 @@ export function FirmAssumptionsClient({
     setSaved(false);
   }, []);
 
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       // Invalidate the firm-variables memo cache so schedule formulas reflect
       // any new / changed variables on the next DynamicAppendixForm render.
       const { invalidateFirmVariables } = await import('@/hooks/useFirmVariables');
       invalidateFirmVariables();
-      await Promise.all([
-        fetch('/api/methodology-admin/risk-tables', {
+
+      // Dedup firm variables by name — keeps the LAST entry so an admin editing a
+      // duplicate row sees their change take effect. Also strips blank-name rows
+      // so the admin doesn't accidentally save empty placeholders.
+      const cleanedFirmVariables = (() => {
+        const seen = new Map<string, { name: string; label: string; value: number }>();
+        for (const v of firmVariables) {
+          const trimmedName = (v.name || '').trim();
+          if (!trimmedName) continue;
+          seen.set(trimmedName, { name: trimmedName, label: v.label || trimmedName, value: Number(v.value) || 0 });
+        }
+        return Array.from(seen.values());
+      })();
+
+      // Save firm_variables in its own isolated call so an unrelated row failure
+      // in the batch below can't drop it.
+      async function saveTable(tableType: string, data: any) {
+        const r = await fetch('/api/methodology-admin/risk-tables', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            firmId,
-            tables: {
-              inherent: inherentRisk,
-              control: controlRisk,
-              riskClassification,
-              fxProvider: { provider: fxProvider },
-              assertions,
-              specialistRoles: { roles: specialistRoles },
-              testCategories: { categories: testCategories },
-              arConfidenceFactor: { confidenceFactor: arConfidenceFactor },
-              firm_variables: { variables: firmVariables },
-              large_unusual_scoring: { descriptionPatterns: luPatterns, thresholds: luThresholds, sizeScoring: initialLargeUnusualScoring?.sizeScoring, timingScoring: initialLargeUnusualScoring?.timingScoring, otherScoring: initialLargeUnusualScoring?.otherScoring },
-            },
-          }),
-        }),
-        fetch('/api/methodology-admin/confidence', {
+          body: JSON.stringify({ firmId, tableType, data }),
+        });
+        if (!r.ok) {
+          let detail = '';
+          try { detail = (await r.json()).error || ''; } catch {}
+          throw new Error(`${tableType}: ${r.status} ${detail}`);
+        }
+      }
+
+      // Critical tables first, isolated per call so we can tell which one failed
+      const errors: string[] = [];
+      for (const [tableType, data] of [
+        ['firm_variables', { variables: cleanedFirmVariables }],
+        ['inherent', inherentRisk],
+        ['control', controlRisk],
+        ['assertions', assertions],
+        ['specialistRoles', { roles: specialistRoles }],
+        ['testCategories', { categories: testCategories }],
+        ['arConfidenceFactor', { confidenceFactor: arConfidenceFactor }],
+        ['fxProvider', { provider: fxProvider }],
+        ['riskClassification', riskClassification ?? {}],
+        ['large_unusual_scoring', {
+          descriptionPatterns: luPatterns,
+          thresholds: luThresholds,
+          sizeScoring: initialLargeUnusualScoring?.sizeScoring,
+          timingScoring: initialLargeUnusualScoring?.timingScoring,
+          otherScoring: initialLargeUnusualScoring?.otherScoring,
+        }],
+      ] as const) {
+        try {
+          await saveTable(tableType, data);
+        } catch (e: any) {
+          errors.push(e?.message || String(e));
+        }
+      }
+
+      // Confidence is a separate endpoint
+      try {
+        const cr = await fetch('/api/methodology-admin/confidence', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ firmId, confidenceLevel }),
-        }),
-      ]);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (err) {
+        });
+        if (!cr.ok) throw new Error(`confidence: ${cr.status}`);
+      } catch (e: any) {
+        errors.push(e?.message || String(e));
+      }
+
+      // Reflect the cleaned list back into state so the admin sees exactly what
+      // was saved (empty rows gone, duplicates collapsed).
+      setFirmVariables(cleanedFirmVariables);
+
+      if (errors.length > 0) {
+        setSaveError(`Saved with errors: ${errors.join('; ')}`);
+      } else {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      }
+    } catch (err: any) {
       console.error('Save failed:', err);
+      setSaveError(err?.message || 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -261,8 +315,13 @@ export function FirmAssumptionsClient({
 
   return (
     <div className="space-y-6">
-      {/* Save button */}
-      <div className="flex justify-end">
+      {/* Save button + error banner */}
+      <div className="flex items-center justify-end gap-3">
+        {saveError && (
+          <div className="flex-1 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+            <strong>Save error:</strong> {saveError}
+          </div>
+        )}
         <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700">
           {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
           {saving ? 'Saving...' : saved ? 'Saved' : 'Save All'}

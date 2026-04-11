@@ -6,6 +6,53 @@
 
 type FormValues = Record<string, string | number | boolean | null>;
 
+/**
+ * Normalise a question's text into a snake_case identifier suitable for use
+ * as a formula variable name. "Audit Fee" → "audit_fee"; "% of Total Fees to
+ * Firm Fees" → "pct_of_total_fees_to_firm_fees". Empty / non-string input
+ * returns an empty string.
+ */
+export function slugifyQuestionText(text: string | null | undefined): string {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .toLowerCase()
+    .replace(/%/g, ' pct ')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+/**
+ * Build a FormValues map that exposes both the canonical id keys AND
+ * slug-derived aliases from each question's text. Collisions are
+ * disambiguated with a numeric suffix (_2, _3, …). Callers merge this with
+ * any engagement-level overrides and firm-wide variables before handing
+ * the result to evaluateFormula.
+ */
+export function buildFormulaValues(
+  questions: Array<{ id: string; questionText?: string | null }>,
+  values: FormValues,
+): FormValues {
+  const out: FormValues = { ...values };
+  const used = new Set<string>(Object.keys(out));
+  for (const q of questions) {
+    if (!q.id) continue;
+    const baseSlug = slugifyQuestionText(q.questionText);
+    if (!baseSlug) continue;
+    // Don't clobber an existing exact match (happens when a question's id
+    // itself is already snake_case, e.g. seeded templates).
+    if (baseSlug === q.id) continue;
+    let slug = baseSlug;
+    let n = 2;
+    while (used.has(slug) && out[slug] !== values[q.id]) {
+      slug = `${baseSlug}_${n++}`;
+    }
+    used.add(slug);
+    out[slug] = values[q.id] ?? null;
+  }
+  return out;
+}
+
 export function evaluateFormula(
   expression: string,
   values: FormValues,
