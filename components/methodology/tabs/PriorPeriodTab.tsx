@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
+import { expandZipFile } from '@/lib/client-unzip';
 
 interface Props {
   engagementId: string;
@@ -138,8 +139,8 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
     saveOB(rows);
   }
 
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = await expandZipFile(e.target.files?.[0]);
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
@@ -257,7 +258,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                     Upload File
                     <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.zip" className="hidden"
                       onChange={async (e) => {
-                        const file = e.target.files?.[0];
+                        const file = await expandZipFile(e.target.files?.[0]);
                         if (!file) return;
                         // Create document record — tag with section name for filtering
                         const createRes = await fetch(`/api/engagements/${engagementId}/documents`, {
@@ -429,7 +430,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
           <button onClick={() => { setObMode('paste'); }} className="text-xs px-3 py-1.5 bg-white border border-slate-200 rounded hover:bg-slate-50">📋 Paste</button>
           <button onClick={() => { setObRows([]); setObMode('data'); addBlankOBRow(); }} className="text-xs px-3 py-1.5 bg-white border border-slate-200 rounded hover:bg-slate-50">📄 Blank Spreadsheet</button>
           <button onClick={() => fileInputRef.current?.click()} className="text-xs px-3 py-1.5 bg-white border border-slate-200 rounded hover:bg-slate-50">📤 Upload Spreadsheet</button>
-          <input ref={fileInputRef} type="file" accept=".csv,.tsv,.txt" onChange={handleFileUpload} className="hidden" />
+          <input ref={fileInputRef} type="file" accept=".csv,.tsv,.txt,.zip" onChange={handleFileUpload} className="hidden" />
           <button disabled className="text-xs px-3 py-1.5 bg-white border border-slate-200 rounded text-slate-400 cursor-not-allowed">🔗 Import from Xero</button>
           {obRows.length > 0 && (
             <button onClick={extractFSLines} disabled={obExtractingFS}

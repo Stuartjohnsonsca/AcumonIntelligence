@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CheckCircle2, Loader2, Upload, Download, AlertTriangle, Calculator, Users, Building2, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { expandZipFile } from '@/lib/client-unzip';
 
 /**
  * PayrollTestPanel — Multi-tab workpaper for wages & salary substantive testing.
@@ -318,7 +319,7 @@ function PayrollReconTab({ data, payrollData, materiality, onChange, engagementI
 
   // Parse CSV/Excel payroll data
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const file = await expandZipFile(e.target.files?.[0]);
     if (!file) return;
     setUploading(true);
     try {
@@ -366,7 +367,7 @@ function PayrollReconTab({ data, payrollData, materiality, onChange, engagementI
             className="flex items-center gap-1 px-2 py-1 text-[9px] bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
             <Upload className="h-3 w-3" /> {uploading ? 'Uploading...' : 'Import CSV'}
           </button>
-          <input ref={fileRef} type="file" accept=".csv,.txt" onChange={handleFileUpload} className="hidden" />
+          <input ref={fileRef} type="file" accept=".csv,.txt,.zip" onChange={handleFileUpload} className="hidden" />
           {months.length === 0 && (
             <button onClick={addEmptyMonths} className="px-2 py-1 text-[9px] bg-slate-50 text-slate-600 rounded hover:bg-slate-100">
               Add 12 Empty Months

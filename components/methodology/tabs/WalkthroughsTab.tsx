@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X, AlertTriangle, Edit3 } from 'lucide-react';
 import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
 import { DocumentAnnotator } from '../panels/DocumentAnnotator';
+import { expandZipFile } from '@/lib/client-unzip';
 
 // ─── Types ───
 interface ProcessTab { key: string; label: string; children?: ProcessTab[]; }
@@ -796,8 +797,8 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
             <div className="flex gap-2">
               <label className="text-[10px] px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1">
                 <Upload className="h-3 w-3" /> Upload File
-                <input type="file" className="hidden" accept=".pdf,.jpg,.png,.doc,.docx,.xlsx" onChange={async (e) => {
-                  const file = e.target.files?.[0];
+                <input type="file" className="hidden" accept=".pdf,.jpg,.png,.doc,.docx,.xlsx,.zip" onChange={async (e) => {
+                  const file = await expandZipFile(e.target.files?.[0]);
                   if (!file) return;
                   const ev = status.evidence || [];
                   await saveStatus({ evidence: [...ev, { id: Date.now().toString(), name: file.name, type: file.type }] });

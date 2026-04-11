@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { expandZipFile } from '@/lib/client-unzip';
 
 interface Props {
   engagementId: string;
@@ -338,8 +339,8 @@ function FileDropZone({ label, file, onFile, accept, required, hint }: {
         file ? 'border-green-400 bg-green-50' : 'border-slate-300 hover:border-blue-400 hover:bg-blue-50/30'
       }`}
     >
-      <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={e => {
-        const f = e.target.files?.[0];
+      <input ref={inputRef} type="file" accept={accept ? `${accept},.zip` : '.zip'} className="hidden" onChange={async e => {
+        const f = await expandZipFile(e.target.files?.[0]);
         if (f) onFile(f);
         e.target.value = '';
       }} />

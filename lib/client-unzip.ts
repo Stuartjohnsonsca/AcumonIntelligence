@@ -56,6 +56,30 @@ function guessMimeType(name: string): string {
 }
 
 /**
+ * Single-file convenience wrapper around expandZipFiles, for upload widgets
+ * that only accept one file at a time. If the user drops a zip, extract and
+ * return the FIRST usable (non-metadata, non-nested-zip) file inside. If the
+ * zip contains multiple files, the rest are ignored — a warning is logged so
+ * devs can surface a notice if they want. If the zip is empty or invalid,
+ * the original file is returned so the server-side handler can report the
+ * error. Pass-through for non-zip files.
+ *
+ * Usage
+ *   const file = await expandZipFile(e.target.files?.[0]);
+ *   if (!file) return;
+ *   // ... proceed as if the user had picked `file` directly
+ */
+export async function expandZipFile(input: File | null | undefined): Promise<File | null> {
+  if (!input) return null;
+  const flat = await expandZipFiles([input]);
+  if (flat.length === 0) return input; // empty zip → pass through so server errors with a clear message
+  if (flat.length > 1) {
+    console.warn(`[expandZipFile] ${input.name} contained ${flat.length} files; using the first ("${flat[0].name}") and ignoring the rest.`);
+  }
+  return flat[0];
+}
+
+/**
  * Expand .zip files from a list of File objects. Non-zip files are returned
  * unchanged; .zip files are opened and each contained file becomes its own
  * File object with the same name (basename) and a best-effort mime type.

@@ -4,6 +4,7 @@ import { useState, useRef } from 'react';
 import { Upload, CheckCircle, FileText, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { expandZipFiles } from '@/lib/client-unzip';
 
 interface EvidenceChecklistItem {
   category: string;
@@ -45,12 +46,15 @@ export function EvidenceUploadList({
     setUploadError(null);
 
     try {
+      // Expand any .zip files before uploading — each archive member becomes
+      // its own upload.
+      const expanded = await expandZipFiles(Array.from(files));
       const formData = new FormData();
       formData.append('engagementId', engagementId);
       formData.append('clientId', clientId);
       formData.append('documentCategory', activeCategory);
-      for (let i = 0; i < files.length; i++) {
-        formData.append('files', files[i]);
+      for (const file of expanded) {
+        formData.append('files', file);
       }
 
       const res = await fetch('/api/assurance/upload-evidence', {
@@ -103,7 +107,7 @@ export function EvidenceUploadList({
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.png,.jpg,.jpeg"
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.png,.jpg,.jpeg,.zip"
         className="hidden"
         onChange={handleFileSelected}
       />

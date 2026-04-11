@@ -7,6 +7,7 @@ import {
   Plus, Clock, ChevronDown, MessageCircle, Send
 } from 'lucide-react';
 import { useBackgroundTasks } from '@/components/BackgroundTaskProvider';
+import { expandZipFiles } from '@/lib/client-unzip';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -509,7 +510,8 @@ export function DocSummaryClient({
       return;
     }
 
-    let fileArr = Array.from(fileList);
+    // Expand any .zip files — each archive member is uploaded as its own file.
+    let fileArr = await expandZipFiles(Array.from(fileList));
     if (fileArr.length === 0) return;
 
     // Enforce 50 MB per-file size limit
@@ -1196,7 +1198,7 @@ export function DocSummaryClient({
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip"
                     className="hidden"
                     onChange={e => {
                       if (e.target.files && e.target.files.length > 0) {

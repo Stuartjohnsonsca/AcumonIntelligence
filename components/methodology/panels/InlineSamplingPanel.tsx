@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { CheckCircle2, Loader2, Download, ChevronDown, ChevronRight, AlertTriangle, Settings2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import * as XLSX from 'xlsx';
+import { expandZipFile } from '@/lib/client-unzip';
 
 interface Props {
   engagementId: string;    // AuditEngagement ID
@@ -82,7 +83,7 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
 
   // File upload handler — parse CSV/XLSX client-side
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const file = await expandZipFile(e.target.files?.[0]);
     if (!file) return;
     try {
       const buffer = await file.arrayBuffer();
@@ -435,7 +436,7 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
         )}
         <label className="inline-flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-700 cursor-pointer">
           <Upload className="h-3 w-3" /> {populationCount > 0 ? 'Replace Data' : 'Upload Data'}
-          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} className="hidden" />
+          <input type="file" accept=".csv,.xlsx,.xls,.zip" onChange={handleFileUpload} className="hidden" />
         </label>
         {error && <span className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {error}</span>}
       </div>
@@ -508,13 +509,13 @@ export function InlineSamplingPanel({ engagementId, clientId, periodId, fsLine, 
           <p className="text-xs text-amber-600 mb-3">Upload the client's data file (CSV or XLSX) to populate the sampling calculator.</p>
           <label className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 cursor-pointer transition-colors">
             <Upload className="h-4 w-4" /> Upload CSV / XLSX
-            <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} className="hidden" />
+            <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls,.zip" onChange={handleFileUpload} className="hidden" />
           </label>
         </div>
       )}
 
       {/* Hidden file input for re-upload when data exists */}
-      <input ref={populationCount > 0 ? undefined : fileInputRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileUpload} className="hidden" />
+      <input ref={populationCount > 0 ? undefined : fileInputRef} type="file" accept=".csv,.xlsx,.xls,.zip" onChange={handleFileUpload} className="hidden" />
     </div>
   );
 }

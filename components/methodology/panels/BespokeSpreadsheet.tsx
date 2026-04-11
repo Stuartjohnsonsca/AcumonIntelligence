@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { Plus, Trash2, Download, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { expandZipFile } from '@/lib/client-unzip';
 
 interface Props {
   title?: string;
@@ -79,7 +80,7 @@ export function BespokeSpreadsheet({ title, onClose, onSave }: Props) {
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const file = await expandZipFile(e.target.files?.[0]);
     if (!file) return;
     const text = await file.text();
     const lines = text.split('\n').filter(l => l.trim());
@@ -109,7 +110,7 @@ export function BespokeSpreadsheet({ title, onClose, onSave }: Props) {
           <Button onClick={addColumn} size="sm" variant="outline" className="h-6 text-[10px]"><Plus className="h-2.5 w-2.5 mr-0.5" />Col</Button>
           <Button onClick={downloadCSV} size="sm" variant="outline" className="h-6 text-[10px]"><Download className="h-2.5 w-2.5 mr-0.5" />CSV</Button>
           <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" className="h-6 text-[10px]"><Upload className="h-2.5 w-2.5 mr-0.5" />Upload</Button>
-          <input ref={fileInputRef} type="file" accept=".csv" onChange={handleUpload} className="hidden" />
+          <input ref={fileInputRef} type="file" accept=".csv,.zip" onChange={handleUpload} className="hidden" />
           {onSave && <Button onClick={() => onSave({ rows, columns })} size="sm" className="h-6 text-[10px] bg-blue-600">Save</Button>}
           {onClose && <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded ml-1"><X className="h-3.5 w-3.5 text-slate-400" /></button>}
         </div>

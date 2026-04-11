@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
+import { expandZipFile } from '@/lib/client-unzip';
 
 interface Props {
   engagementId: string;
@@ -522,8 +523,8 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
       </div>
 
       {/* Hidden file input */}
-      <input ref={fileInputRef} type="file" className="hidden" onChange={e => {
-        const file = e.target.files?.[0];
+      <input ref={fileInputRef} type="file" accept="*,.zip" className="hidden" onChange={async e => {
+        const file = await expandZipFile(e.target.files?.[0]);
         if (file && uploadingDocId) handleFileUpload(uploadingDocId, file);
         e.target.value = '';
       }} />

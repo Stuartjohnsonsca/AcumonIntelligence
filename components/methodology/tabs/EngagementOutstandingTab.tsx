@@ -6,6 +6,7 @@ import {
   ArrowUpRight, MessageCircle, ChevronUp, UserPlus, Send,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { expandZipFiles } from '@/lib/client-unzip';
 
 interface ChatMessage {
   from: 'firm' | 'client';
@@ -379,8 +380,8 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
                     <div className="flex items-center gap-2 mt-1">
                       <label className="text-[10px] text-blue-600 hover:text-blue-800 cursor-pointer font-medium">
                         + Attach file
-                        <input type="file" multiple className="hidden" onChange={e => {
-                          const files = Array.from(e.target.files || []);
+                        <input type="file" multiple accept="*,.zip" className="hidden" onChange={async e => {
+                          const files = await expandZipFiles(Array.from(e.target.files || []));
                           setChatFiles(prev => [...prev, ...files]);
                           e.target.value = '';
                         }} />

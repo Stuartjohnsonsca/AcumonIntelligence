@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { expandZipFile, expandZipFiles } from '@/lib/client-unzip';
 import {
   Upload, FileText, Loader2, Download, ChevronDown, ChevronRight,
   CheckCircle2, XCircle, AlertCircle, Search, UserPlus, Plus,
@@ -640,8 +641,8 @@ export function DataExtractionClient({
     });
   }
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = await expandZipFiles(Array.from(e.target.files || []));
     setUploadedFiles(prev => [...prev, ...files]);
     setError('');
   }, []);
@@ -1071,7 +1072,7 @@ export function DataExtractionClient({
   // ─── Left panel handlers ────────────────────────────────────────────
 
   async function handleUploadSpreadsheet(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const file = await expandZipFile(e.target.files?.[0]);
     if (!file) return;
     setLeftPanelFileName(file.name);
     setLeftPanelFromAccounting(false);
@@ -2023,7 +2024,7 @@ export function DataExtractionClient({
                 <p className="text-sm text-slate-500 mt-1">Load comparison data from accounting system or upload a file</p>
               </div>
               <div className="p-6 space-y-3 flex-1 overflow-y-auto">
-                <input ref={leftSpreadsheetRef} type="file" accept=".xlsx,.csv" className="hidden" onChange={handleUploadSpreadsheet} />
+                <input ref={leftSpreadsheetRef} type="file" accept=".xlsx,.csv,.zip" className="hidden" onChange={handleUploadSpreadsheet} />
                 <Button className="w-full justify-start" variant="outline" onClick={() => leftSpreadsheetRef.current?.click()}>
                   <Upload className="h-4 w-4 mr-2" />Upload Spreadsheet (.xlsx / .csv)
                 </Button>

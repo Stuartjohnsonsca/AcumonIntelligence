@@ -23,6 +23,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Plus, Trash2, Diamond, Circle, Square, X, FileText as FileIcon, User, ArrowDownToLine, ArrowUpFromLine, MapPin, Paperclip, Camera, Upload, Eye } from 'lucide-react';
 import { ScreenCaptureModal } from './ScreenCaptureModal';
+import { expandZipFile } from '@/lib/client-unzip';
 
 // ─── Types ───
 interface StepSignOff { name: string; at: string; status: 'blank' | 'red' | 'green'; }
@@ -137,7 +138,7 @@ function StepAttachmentButtons({ data, nodeId }: { data: any; nodeId: string }) 
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const file = await expandZipFile(e.target.files?.[0]);
     if (!file || !engagementId) return;
     const formData = new FormData();
     formData.append('file', file);
@@ -162,7 +163,7 @@ function StepAttachmentButtons({ data, nodeId }: { data: any; nodeId: string }) 
           <button onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} title="Upload file" className="w-4 h-4 rounded bg-slate-50 text-slate-500 hover:bg-slate-100 flex items-center justify-center">
             <Upload className="h-2.5 w-2.5" />
           </button>
-          <input ref={fileInputRef} type="file" className="hidden" accept="image/*,.pdf,.doc,.docx" onChange={handleFileUpload} />
+          <input ref={fileInputRef} type="file" className="hidden" accept="image/*,.pdf,.doc,.docx,.zip" onChange={handleFileUpload} />
         </>
       )}
       {atts.length > 0 && (

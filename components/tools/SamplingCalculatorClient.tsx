@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
+import { expandZipFile } from '@/lib/client-unzip';
 import {
   Upload, FileSpreadsheet, Loader2, ChevronDown, AlertCircle,
   CheckCircle2, Search, Lock, ArrowLeft, Plus, BarChart3,
@@ -314,7 +315,7 @@ export function SamplingCalculatorClient({
   // ─── File upload handler ───────────────────────────────────────────────────
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const file = await expandZipFile(e.target.files?.[0]);
     if (!file) return;
     setUploading(true);
     setError('');
@@ -350,7 +351,7 @@ export function SamplingCalculatorClient({
   // ─── Bank statement PDF upload ──────────────────────────────────────────
 
   async function handleBankStatementUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const file = await expandZipFile(e.target.files?.[0]);
     if (!file) return;
     setBankStatementParsing(true);
     setError('');
@@ -1300,7 +1301,7 @@ export function SamplingCalculatorClient({
                     Choose File
                     <input
                       type="file"
-                      accept=".xlsx,.csv"
+                      accept=".xlsx,.csv,.zip"
                       onChange={handleFileUpload}
                       className="hidden"
                       disabled={uploading}
@@ -1413,7 +1414,7 @@ export function SamplingCalculatorClient({
                         Choose PDF
                         <input
                           type="file"
-                          accept=".pdf"
+                          accept=".pdf,.zip"
                           onChange={handleBankStatementUpload}
                           className="hidden"
                         />
