@@ -271,6 +271,27 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   // Re-fetch tab sign-offs when switching tabs (to pick up changes made inside SignOffHeader)
   useEffect(() => { loadTabSignOffs(); }, [activeTab, loadTabSignOffs]);
 
+  /**
+   * Apply a fresh SignOffs payload (as returned by the tab's POST endpoint)
+   * to the tab-label dot state immediately, without waiting for the next
+   * loadTabSignOffs() round-trip. Called by SignOffHeader via its
+   * `onSignOffChange` callback whenever the user clicks a main dot.
+   *
+   * We can't re-use the stale detection from loadTabSignOffs here because
+   * the server response only contains the sign-off payload, not fieldMeta
+   * — but a sign-off that was just made is by definition fresh, so marking
+   * reviewer/partner as 'signed' (or 'none' after unsign) is correct.
+   */
+  const handleTabSignOffChange = useCallback((tabKey: string, signOffs: { reviewer?: { timestamp?: string } | null; partner?: { timestamp?: string } | null }) => {
+    setTabSignOffs(prev => ({
+      ...prev,
+      [tabKey]: {
+        reviewer: signOffs.reviewer?.timestamp ? 'signed' : 'none',
+        partner: signOffs.partner?.timestamp ? 'signed' : 'none',
+      },
+    }));
+  }, []);
+
   // Fetch audit type → schedule mapping (order + stage-keyed shape + triggers)
   useEffect(() => {
     let cancelled = false;
@@ -725,6 +746,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               title={signOffTitle}
               teamMembers={teamMembers}
               headerActions={undefined}
+              onSignOffChange={(signOffs) => handleTabSignOffChange(activeTab, signOffs)}
             >
               <TabErrorBoundary tabName={signOffTitle} engagementId={engagement.id}>{renderTabContent()}</TabErrorBoundary>
             </SignOffHeader>

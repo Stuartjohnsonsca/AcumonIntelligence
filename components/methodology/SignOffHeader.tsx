@@ -62,9 +62,18 @@ interface Props {
   children: React.ReactNode;
   savingStatus?: { saving: boolean; lastSaved: Date | null; error?: string | null };
   headerActions?: React.ReactNode; // Custom buttons to the left of sign-off dots
+  /**
+   * Fires whenever a sign-off toggle completes successfully. Parents that
+   * render their own derivative sign-off indicators (e.g. the small
+   * Reviewer/RI dots on the tab-bar labels in EngagementTabs) use this to
+   * update their summary state immediately instead of waiting for the next
+   * tab switch. The callback receives the full updated SignOffs payload
+   * returned by the server.
+   */
+  onSignOffChange?: (signOffs: SignOffs) => void;
 }
 
-export function SignOffHeader({ engagementId, endpoint, title, teamMembers, children, savingStatus, headerActions }: Props) {
+export function SignOffHeader({ engagementId, endpoint, title, teamMembers, children, savingStatus, headerActions, onSignOffChange }: Props) {
   const { data: session } = useSession();
   const [signOffs, setSignOffs] = useState<SignOffs>({});
   const [fieldMeta, setFieldMeta] = useState<Record<string, FieldMeta>>({});
@@ -128,7 +137,12 @@ export function SignOffHeader({ engagementId, endpoint, title, teamMembers, chil
       });
       if (res.ok) {
         const json = await res.json();
-        if (json.signOffs) setSignOffs(json.signOffs);
+        if (json.signOffs) {
+          setSignOffs(json.signOffs);
+          // Notify the parent (EngagementTabs) so the tab-label dots can
+          // update immediately, rather than waiting for the next tab switch.
+          onSignOffChange?.(json.signOffs);
+        }
       }
     } catch (err) {
       console.error('Sign-off failed:', err);

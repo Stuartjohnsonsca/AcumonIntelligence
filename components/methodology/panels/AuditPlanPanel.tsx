@@ -11,6 +11,7 @@ import { PayrollTestPanel } from './PayrollTestPanel';
 import { assertionShortLabel } from '@/types/methodology';
 import { JournalRiskPanel } from './JournalRiskPanel';
 import { SRMMPanel } from './SRMMPanel';
+import { PlanCustomiserModal } from './PlanCustomiserModal';
 
 interface TBRow {
   id: string;
@@ -303,6 +304,28 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [allocations, setAllocations] = useState<AllocationEntry[]>([]);
+
+  // Plan Customiser — per-engagement N/A overrides + custom tests.
+  // Keyed by `${testId}__${fsLineId}` for overrides; custom tests carry
+  // their own unique ids.
+  const [planCustomiser, setPlanCustomiser] = useState<{
+    overrides: Record<string, { status: 'na'; reasonCategory: string; reason: string; setBy: { id: string; name: string }; setAt: string }>;
+    customTests: Array<{
+      id: string;
+      name: string;
+      description: string;
+      fsLineId: string;
+      fsLineName?: string;
+      fsNote?: string;
+      testTypeCode: string;
+      assertions: string[];
+      framework: string;
+      createdBy: { id: string; name: string };
+      createdAt: string;
+    }>;
+  }>({ overrides: {}, customTests: [] });
+  const [planCustomiserOpen, setPlanCustomiserOpen] = useState(false);
+  const [planCustomiserContext, setPlanCustomiserContext] = useState<{ fsLineId: string; fsLineName: string } | null>(null);
   const [fsLinesList, setFsLinesList] = useState<FsLineEntry[]>([]);
   const [testTypes, setTestTypes] = useState<TestType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -380,7 +403,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   useEffect(() => {
     async function load() {
       try {
-        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes, rcRes, execRes, matRes] = await Promise.all([
+        const [tbRes, rmmRes, allocRes, ttRes, pfRes, concRes, rcRes, execRes, matRes, pcRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/rmm`),
           fetch(`/api/engagements/${engagementId}/test-allocations`),
@@ -392,6 +415,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           // fields + status here, so this is 10-100x faster on mature engagements.
           fetch(`/api/engagements/${engagementId}/test-execution?lite=true`),
           fetch(`/api/engagements/${engagementId}/materiality`),
+          fetch(`/api/engagements/${engagementId}/plan-customiser`),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (rmmRes.ok) {
@@ -471,6 +495,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           const pm = matData.materiality?.performanceMateriality || matData.performanceMateriality || 0;
           setPerformanceMateriality(Number(pm) || 0);
         }
+        if (pcRes.ok) {
+          const pcData = await pcRes.json();
+          setPlanCustomiser(pcData.data || { overrides: {}, customTests: [] });
+        }
       } catch (err) { console.error('Failed to load:', err); }
       setLoading(false);
     }
@@ -543,18 +571,48 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       }
     }
 
-    // Get all tests allocated to the matched FS Lines
-    const matchedTestsMap = new Map<string, AllocationEntry['test']>();
+    // Get all tests allocated to the matched FS Lines, skipping any that the
+    // auditor has marked N/A for this engagement via the Plan Customiser.
+    const matchedTestsMap = new Map<string, { test: AllocationEntry['test']; fsLineId: string }>();
     for (const a of allocations) {
       if (!a.test) continue; // Guard against deleted tests
-      if (matchingFsLineIds.has(a.fsLineId) && !matchedTestsMap.has(a.test.id)) {
-        matchedTestsMap.set(a.test.id, a.test);
+      if (!matchingFsLineIds.has(a.fsLineId)) continue;
+      const overrideKey = `${a.test.id}__${a.fsLineId}`;
+      if (planCustomiser.overrides[overrideKey]?.status === 'na') continue;
+      if (!matchedTestsMap.has(a.test.id)) {
+        matchedTestsMap.set(a.test.id, { test: a.test, fsLineId: a.fsLineId });
       }
     }
 
-    const result: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any; isIngest?: boolean; outputFormat?: string | null }[] = [];
+    // Include engagement-specific custom tests from the Plan Customiser that
+    // target any of the matched FS Lines. Custom tests bypass the firm-wide
+    // allocation path entirely.
+    const customForRow: Array<{ test: AllocationEntry['test'] & { category?: string }; fsLineId: string }> = [];
+    for (const ct of planCustomiser.customTests) {
+      if (!matchingFsLineIds.has(ct.fsLineId)) continue;
+      customForRow.push({
+        test: {
+          id: ct.id,
+          name: ct.name,
+          description: ct.description || null,
+          testTypeCode: ct.testTypeCode,
+          assertions: ct.assertions || [],
+          framework: ct.framework,
+          significantRisk: false,
+          flow: null,
+          category: 'Normal',
+        } as any,
+        fsLineId: ct.fsLineId,
+      });
+    }
 
-    for (const test of matchedTestsMap.values()) {
+    const result: { description: string; testTypeCode: string; assertion?: string; assertions?: string[]; framework?: string; color: string; typeName: string; flow?: any; executionDef?: any; isIngest?: boolean; outputFormat?: string | null; isCustom?: boolean }[] = [];
+
+    const allForRow = [
+      ...Array.from(matchedTestsMap.values()).map(v => ({ ...v, isCustom: false })),
+      ...customForRow.map(v => ({ ...v, isCustom: true })),
+    ];
+    for (const { test, isCustom } of allForRow) {
       if (!test || !test.name) continue; // Skip tests without names
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
@@ -584,6 +642,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         executionDef: tt?.executionDef,
         isIngest: (test as any).isIngest || false,
         outputFormat: (test as any).outputFormat || undefined,
+        isCustom,
       });
     }
     return result;
@@ -842,6 +901,70 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               {level}
             </button>
           ))}
+        </div>
+      )}
+
+      {/*
+        Plan Customiser action bar — prominent row below the FS Level sub-tabs
+        (or statement tabs when no level is active). Opens a modal where the
+        auditor can mark tests N/A for this engagement (with a reason) and
+        add engagement-specific custom tests.
+
+        Renders whenever the user is on any statement/level/note scope (i.e.
+        NOT on one of the "Other" tabs like Going Concern / SRMM). The scope
+        label falls back through Level → Statement so the bar is visible from
+        the moment the audit plan opens.
+
+        FS Line resolution uses a fallback chain:
+        exact → case-insensitive → alias → fsLevelMap → synthetic pseudo-id.
+      */}
+      {!activeOtherTab && (activeLevel || activeStatement) && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded">
+          <div className="text-xs text-slate-700">
+            <span className="text-[10px] uppercase tracking-wide text-indigo-700 font-semibold">Audit Plan for:</span>{' '}
+            <span className="font-semibold">{activeLevel || activeStatement}</span>
+            {activeNote && <span className="text-slate-500"> → {activeNote}</span>}
+            {!activeLevel && (
+              <span className="ml-2 text-[10px] text-slate-500 italic">(select an FS Level for more precise customisation)</span>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              const scopeName = activeLevel || activeStatement;
+              const levelLower = scopeName.toLowerCase().trim();
+              // 1. Exact name match
+              let fl = fsLinesList.find(f => f.name === scopeName);
+              // 2. Case-insensitive match
+              if (!fl) fl = fsLinesList.find(f => f.name.toLowerCase().trim() === levelLower);
+              // 3. Alias match (either direction)
+              if (!fl) {
+                fl = fsLinesList.find(f => {
+                  const flName = f.name.toLowerCase().trim();
+                  const aliases = FS_LINE_ALIASES[levelLower] || [];
+                  const reverseAliases = FS_LINE_ALIASES[flName] || [];
+                  return aliases.includes(flName) || reverseAliases.includes(levelLower);
+                });
+              }
+              // 4. Keyword overlap (uses the same fsLevelMap we already computed)
+              if (!fl && fsLevelMap[scopeName]) {
+                const mapped = fsLevelMap[scopeName].toLowerCase().trim();
+                fl = fsLinesList.find(f => f.name.toLowerCase().trim() === mapped);
+              }
+              // 5. Synthetic fallback — use the raw scope name as both id
+              //    and name. The modal filters allocations by both id and
+              //    by case-insensitive name match so this still works.
+              setPlanCustomiserContext({
+                fsLineId: fl?.id || `__synthetic__${scopeName}`,
+                fsLineName: fl?.name || scopeName,
+              });
+              setPlanCustomiserOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700 shadow-sm whitespace-nowrap"
+            title="Open Plan Customiser for this scope — mark tests N/A or add engagement-specific custom tests"
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            Plan Customiser
+          </button>
         </div>
       )}
 
@@ -1478,6 +1601,39 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           onClose={() => setFlowViewerExec(null)}
         />
       )}
+
+      {/* Plan Customiser modal — engagement-level test trimming + custom tests */}
+      {planCustomiserOpen && planCustomiserContext && (() => {
+        // Resolve which allocations to show: prefer exact id match; if the
+        // fsLineId is synthetic (no firm-level match), fall back to matching
+        // on the fsLine name instead so the user still sees tests.
+        const ctx = planCustomiserContext;
+        const isSynthetic = ctx.fsLineId.startsWith('__synthetic__');
+        const nameLower = ctx.fsLineName.toLowerCase().trim();
+        const matching = allocations.filter(a => {
+          if (!a.test) return false;
+          if (!isSynthetic && a.fsLineId === ctx.fsLineId) return true;
+          // Synthetic or id-miss: match by name
+          return a.fsLine?.name?.toLowerCase().trim() === nameLower;
+        });
+        return (
+          <PlanCustomiserModal
+            engagementId={engagementId}
+            fsLineId={ctx.fsLineId}
+            fsLineName={ctx.fsLineName}
+            allocatedTests={matching.map(a => ({
+              id: a.test.id,
+              name: a.test.name,
+              description: a.test.description,
+              testTypeCode: a.test.testTypeCode,
+              assertions: a.test.assertions as string[] | null,
+              framework: a.test.framework,
+            }))}
+            onClose={() => { setPlanCustomiserOpen(false); setPlanCustomiserContext(null); }}
+            onChange={(data) => setPlanCustomiser(data)}
+          />
+        );
+      })()}
     </div>
   );
 }
