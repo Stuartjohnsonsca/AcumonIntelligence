@@ -27,6 +27,12 @@ import { ReviewPointsPanel } from './panels/ReviewPointsPanel';
 import { ManagementPointPanel } from './panels/ManagementPointPanel';
 import { RIMattersPanel } from './panels/RIMattersPanel';
 import { CompletionPanel } from './panels/CompletionPanel';
+import {
+  buildVisibilityChecker,
+  collectQAScheduleKeys,
+  type Trigger,
+  type TriggerContext,
+} from '@/lib/schedule-triggers';
 
 interface Props {
   engagement: EngagementData;
@@ -179,9 +185,11 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   }, [engagement.id]);
   const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
   const [scheduleOrder, setScheduleOrder] = useState<string[] | null>(null); // ordered schedule keys from config
-  // Per-schedule visibility conditions (from the new stage-keyed mapping shape, Part E)
-  const [scheduleConditions, setScheduleConditions] = useState<Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean; requiresFirstYear?: boolean; linkGroup?: number }>>({});
+  // Triggers for visibility evaluation (new trigger-based model)
+  const [scheduleTriggers, setScheduleTriggers] = useState<Trigger[]>([]);
   const [stageKeyedMapping, setStageKeyedMapping] = useState<{ planning: string[]; fieldwork: string[]; completion: string[] } | null>(null);
+  // Answers fetched for Q&A trigger sources, keyed by scheduleKey → questionId → answer
+  const [qaAnswers, setQaAnswers] = useState<Record<string, Record<string, string>>>({});
   const [outstandingTeamCount, setOutstandingTeamCount] = useState(0);
   const [outstandingClientCount, setOutstandingClientCount] = useState(0);
   const handleOutstandingCounts = useCallback((team: number, client: number) => {
@@ -260,67 +268,77 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   // Re-fetch tab sign-offs when switching tabs (to pick up changes made inside SignOffHeader)
   useEffect(() => { loadTabSignOffs(); }, [activeTab, loadTabSignOffs]);
 
-  // Fetch audit type → schedule mapping (with order + visibility conditions + stage-keyed shape)
+  // Fetch audit type → schedule mapping (order + stage-keyed shape + triggers)
   useEffect(() => {
-    fetch('/api/methodology-admin/audit-type-schedules')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/methodology-admin/audit-type-schedules');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+
         if (data?.mappings?.[auditType]) {
           const orderedKeys = data.mappings[auditType] as string[];
           setEnabledSchedules(new Set(orderedKeys));
           setScheduleOrder(orderedKeys);
         }
-        if (data?.stageKeyedMappings?.[auditType]) {
-          const sk = data.stageKeyedMappings[auditType];
-          setStageKeyedMapping({ planning: sk.planning || [], fieldwork: sk.fieldwork || [], completion: sk.completion || [] });
-          setScheduleConditions(sk.conditions || {});
-        }
-        // If no mapping configured, all tabs are enabled (null = show all)
-      })
-      .catch(() => {}); // Fail silently, show all tabs
-  }, [auditType]);
 
-  // ── Visibility-condition evaluation (Part G) ──
-  // Build the context once per render from the engagement payload + team.
+        const sk = data?.stageKeyedMappings?.[auditType];
+        if (sk) {
+          setStageKeyedMapping({ planning: sk.planning || [], fieldwork: sk.fieldwork || [], completion: sk.completion || [] });
+          const triggers: Trigger[] = Array.isArray(sk.triggers) ? sk.triggers : [];
+          setScheduleTriggers(triggers);
+
+          // Fetch answers for any schedules referenced by Q&A triggers (bounded — one fetch per unique source)
+          const qaSources = collectQAScheduleKeys(triggers);
+          if (qaSources.length > 0) {
+            const answers: Record<string, Record<string, string>> = {};
+            await Promise.all(qaSources.map(async (scheduleKey) => {
+              try {
+                const r = await fetch(`/api/engagements/${engagement.id}/permanent-file?section=${scheduleKey}`);
+                if (!r.ok) return;
+                const j = await r.json();
+                const saved = j.answers?.[scheduleKey] || j.data?.[scheduleKey] || {};
+                const a = saved.answers || saved;
+                if (a && typeof a === 'object') {
+                  // Flatten to questionId → answer (strip any _col suffix from StructuredScheduleTab)
+                  const flat: Record<string, string> = {};
+                  for (const [k, v] of Object.entries(a)) {
+                    // Strip _colN suffix so the admin can reference the logical questionId
+                    const stripped = k.replace(/_col\d+$/, '');
+                    if (v !== null && v !== undefined && v !== '') {
+                      flat[stripped] = String(v);
+                      flat[k] = String(v); // also keep exact key in case admin used it
+                    }
+                  }
+                  answers[scheduleKey] = flat;
+                }
+              } catch { /* ignore */ }
+            }));
+            if (!cancelled) setQaAnswers(answers);
+          }
+        }
+      } catch {
+        // Fail silently, show all tabs
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [auditType, engagement.id]);
+
+  // ── Trigger-based visibility evaluation ──
+  // Build the engagement context once per render, then compile a visibility checker
+  // using the shared schedule-triggers helper. See lib/schedule-triggers.ts.
   const clientIsListed = !!(engagement as any).clientIsListed;
   const hasPriorPeriodEngagement = !!(engagement as any).hasPriorPeriodEngagement;
   const teamHasEQR = engagement.teamMembers.some(m => m.role === 'EQR');
-  // Raw per-schedule condition check (ignores link groups)
-  function rawConditionsPass(scheduleKey: string): boolean {
-    const c = scheduleConditions[scheduleKey];
-    if (!c) return true;
-    if (c.requiresListed && !clientIsListed) return false;
-    if (c.requiresEQR && !teamHasEQR) return false;
-    if (c.requiresPriorPeriod && !hasPriorPeriodEngagement) return false;
-    // First-year audit = no prior period. Hide any schedule tagged "FY" on a returning client.
-    if (c.requiresFirstYear && hasPriorPeriodEngagement) return false;
-    return true;
-  }
-
-  // Compute visible-by-linkgroup set. For every link group, if ANY member passes its own
-  // raw conditions, ALL members of that group are considered visible.
-  const linkGroupVisible = (() => {
-    const groupPasses = new Map<number, boolean>();
-    for (const [key, cond] of Object.entries(scheduleConditions)) {
-      if (cond.linkGroup === undefined) continue;
-      if (rawConditionsPass(key)) {
-        groupPasses.set(cond.linkGroup, true);
-      } else if (!groupPasses.has(cond.linkGroup)) {
-        groupPasses.set(cond.linkGroup, false);
-      }
-    }
-    return groupPasses;
-  })();
-
-  // Final visibility: if a schedule is in a link group, the group's verdict wins.
-  // Otherwise fall through to its own raw conditions.
-  function scheduleConditionsPass(scheduleKey: string): boolean {
-    const c = scheduleConditions[scheduleKey];
-    if (c?.linkGroup !== undefined) {
-      return linkGroupVisible.get(c.linkGroup) === true;
-    }
-    return rawConditionsPass(scheduleKey);
-  }
+  const triggerCtx: TriggerContext = {
+    clientIsListed,
+    hasPriorPeriodEngagement,
+    teamHasEQR,
+    answers: qaAnswers,
+  };
+  const scheduleConditionsPass = buildVisibilityChecker(scheduleTriggers, triggerCtx);
 
   // Filter tabs based on engagement status, audit type schedule config, and continuance/new-client
   // Then sort by configured order
@@ -541,7 +559,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               userName={teamMembers.find(m => m.userId === currentUserId)?.userName}
               teamMembers={teamMembers}
               completionScheduleOrder={stageKeyedMapping?.completion}
-              scheduleConditions={scheduleConditions}
+              scheduleTriggers={scheduleTriggers}
+              qaAnswers={qaAnswers}
               clientIsListed={clientIsListed}
               hasPriorPeriodEngagement={hasPriorPeriodEngagement}
               onNavigateMainTab={(key, params) => {

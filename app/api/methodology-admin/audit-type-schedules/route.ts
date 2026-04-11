@@ -1,27 +1,12 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-
-type ScheduleVisibility = {
-  requiresListed?: boolean;
-  requiresEQR?: boolean;
-  requiresPriorPeriod?: boolean;
-  /** Only show if this IS a first-year audit (no prior-period engagement). Mutually exclusive with requiresPriorPeriod. */
-  requiresFirstYear?: boolean;
-  /**
-   * Optional linkage group number. Schedules sharing the same number become visible together:
-   * if ANY member of the group would be independently visible, ALL members are shown.
-   * If no member would be visible, none are shown.
-   */
-  linkGroup?: number;
-};
-
-type StageKeyedMapping = {
-  planning: string[];
-  fieldwork: string[];
-  completion: string[];
-  conditions: Record<string, ScheduleVisibility>;
-};
+import {
+  migrateOldToTriggers,
+  isStageKeyed as isStageKeyedShared,
+  type StageKeyedMapping,
+  type OldCondition,
+} from '@/lib/schedule-triggers';
 
 const DEFAULT_MASTER_SCHEDULES = [
   { key: 'permanent_file_questions', label: 'Permanent File', defaultStage: 'planning' },
@@ -55,7 +40,7 @@ const DEFAULT_MASTER_SCHEDULES = [
 
 // Back-compat: upgrade a flat ordered list to the new stage-keyed shape using each key's master defaultStage.
 function upgradeFlatToStageKeyed(flat: string[], master: Array<{ key: string; defaultStage: string }>): StageKeyedMapping {
-  const out: StageKeyedMapping = { planning: [], fieldwork: [], completion: [], conditions: {} };
+  const out: StageKeyedMapping = { planning: [], fieldwork: [], completion: [], triggers: [] };
   for (const k of flat) {
     const m = master.find(s => s.key === k);
     const stage = (m?.defaultStage as 'planning' | 'fieldwork' | 'completion') || 'planning';
@@ -64,10 +49,7 @@ function upgradeFlatToStageKeyed(flat: string[], master: Array<{ key: string; de
   return out;
 }
 
-function isStageKeyed(obj: any): obj is StageKeyedMapping {
-  return obj && typeof obj === 'object' && !Array.isArray(obj) &&
-         Array.isArray(obj.planning) && Array.isArray(obj.fieldwork) && Array.isArray(obj.completion);
-}
+const isStageKeyed = isStageKeyedShared;
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -100,14 +82,23 @@ export async function GET(req: Request) {
     if (t.auditType === '__framework_options') continue;
     const raw = t.items as any;
     if (isStageKeyed(raw)) {
-      stageKeyedMappings[t.auditType] = {
+      // Load into StageKeyedMapping shape and migrate any legacy conditions/linkGroup
+      const loaded: StageKeyedMapping = {
         planning: raw.planning || [],
         fieldwork: raw.fieldwork || [],
         completion: raw.completion || [],
+        triggers: Array.isArray(raw.triggers) ? raw.triggers : [],
+        conditions: (raw.conditions as Record<string, OldCondition> | undefined) || undefined,
+      };
+      // If triggers already populated, migration is a no-op. Otherwise derive from legacy fields.
+      const migrated = migrateOldToTriggers(loaded);
+      // Preserve original conditions alongside triggers so the legacy admin UI still reads them.
+      // Runtime consumers (EngagementTabs, CompletionPanel) use the triggers field.
+      stageKeyedMappings[t.auditType] = {
+        ...migrated,
         conditions: raw.conditions || {},
       };
-      // Flat mapping is the concatenation in stage order — consumers that ignore stages just see everything
-      mappings[t.auditType] = [...raw.planning, ...raw.fieldwork, ...raw.completion];
+      mappings[t.auditType] = [...loaded.planning, ...loaded.fieldwork, ...loaded.completion];
     } else if (Array.isArray(raw)) {
       // Old flat shape — upgrade on the fly (persist happens on next save)
       stageKeyedMappings[t.auditType] = upgradeFlatToStageKeyed(raw, masterSchedules);

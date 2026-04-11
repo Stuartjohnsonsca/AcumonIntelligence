@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, CheckCircle2, Loader2, Sparkles, ShieldAlert, ShieldCheck, ExternalLink } from 'lucide-react';
+import { buildVisibilityChecker, type Trigger, type TriggerContext } from '@/lib/schedule-triggers';
 import { AuditTestSummaryPanel } from './AuditTestSummaryPanel';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
 import { FSReviewPanel } from './FSReviewPanel';
@@ -48,8 +49,10 @@ interface Props {
   teamMembers?: TeamMember[];
   /** Ordered list of schedule keys for the Completion stage (from Part E config) */
   completionScheduleOrder?: string[];
-  /** Per-schedule visibility conditions (from Part E config) */
-  scheduleConditions?: Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean; requiresFirstYear?: boolean; linkGroup?: number }>;
+  /** Triggers for the active audit type (new trigger-based visibility model) */
+  scheduleTriggers?: Trigger[];
+  /** Answers fetched from Q&A trigger source schedules (keyed by scheduleKey → questionId → answer) */
+  qaAnswers?: Record<string, Record<string, string>>;
   /** From engagement payload for visibility evaluation */
   clientIsListed?: boolean;
   hasPriorPeriodEngagement?: boolean;
@@ -74,46 +77,21 @@ type CompletionTabKey = typeof COMPLETION_TABS[number]['key'];
 
 export function CompletionPanel({
   engagementId, clientId, userRole, userId, userName, teamMembers,
-  completionScheduleOrder, scheduleConditions, clientIsListed, hasPriorPeriodEngagement,
+  completionScheduleOrder, scheduleTriggers, qaAnswers, clientIsListed, hasPriorPeriodEngagement,
   onNavigateMainTab, onClose,
 }: Props) {
   const [activeTab, setActiveTab] = useState<CompletionTabKey>('summary-memo');
 
-  // Visibility helper for sub-tabs (Part G applied to completion sub-tabs too)
+  // Visibility helper for sub-tabs — uses the trigger-based evaluation from
+  // lib/schedule-triggers so Completion sub-tabs respect the same rules as main tabs.
   const teamHasEQR = !!teamMembers?.some(m => m.role === 'EQR');
-  function rawConditionsPass(scheduleKey: string): boolean {
-    const c = scheduleConditions?.[scheduleKey];
-    if (!c) return true;
-    if (c.requiresListed && !clientIsListed) return false;
-    if (c.requiresEQR && !teamHasEQR) return false;
-    if (c.requiresPriorPeriod && !hasPriorPeriodEngagement) return false;
-    if (c.requiresFirstYear && hasPriorPeriodEngagement) return false;
-    return true;
-  }
-
-  // Pre-compute link-group verdicts: if ANY member of a group passes its raw conditions,
-  // the whole group is visible.
-  const linkGroupVisible = (() => {
-    const groupPasses = new Map<number, boolean>();
-    if (!scheduleConditions) return groupPasses;
-    for (const [key, cond] of Object.entries(scheduleConditions)) {
-      if (cond.linkGroup === undefined) continue;
-      if (rawConditionsPass(key)) {
-        groupPasses.set(cond.linkGroup, true);
-      } else if (!groupPasses.has(cond.linkGroup)) {
-        groupPasses.set(cond.linkGroup, false);
-      }
-    }
-    return groupPasses;
-  })();
-
-  function passesConditions(scheduleKey: string): boolean {
-    const c = scheduleConditions?.[scheduleKey];
-    if (c?.linkGroup !== undefined) {
-      return linkGroupVisible.get(c.linkGroup) === true;
-    }
-    return rawConditionsPass(scheduleKey);
-  }
+  const triggerCtx: TriggerContext = {
+    clientIsListed: !!clientIsListed,
+    hasPriorPeriodEngagement: !!hasPriorPeriodEngagement,
+    teamHasEQR,
+    answers: qaAnswers || {},
+  };
+  const passesConditions = buildVisibilityChecker(scheduleTriggers || [], triggerCtx);
 
   // Build the visible+ordered completion tab list from the schedule config (Part F).
   // Falls back to the hardcoded order if no config is supplied.
