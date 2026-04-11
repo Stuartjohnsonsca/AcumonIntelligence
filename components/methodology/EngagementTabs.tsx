@@ -468,7 +468,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'portal':
         return <ClientPortalTab engagementId={engagement.id} clientName={clientName} />;
       case 'communication':
-        return <CommunicationTab engagementId={engagement.id} clientId={engagement.clientId} />;
+        return <CommunicationTab
+          engagementId={engagement.id}
+          clientId={engagement.clientId}
+          teamMembers={teamMembers}
+          currentUserId={currentUserId}
+        />;
       default:
         return null;
     }

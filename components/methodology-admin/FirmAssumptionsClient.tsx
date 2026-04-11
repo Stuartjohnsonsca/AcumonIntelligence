@@ -1539,16 +1539,22 @@ function RevenueRecognitionSection({ firmId, onSave }: { firmId: string; onSave:
   );
 }
 
-// ─── Communication Headings (Board Minutes + TCWG) ──────────────────
+// ─── Communication Headings (Board Minutes + TCWG + Shareholders + Overall) ──
 const DEFAULT_BOARD_HEADINGS = ['Litigation', 'Committed Capital Expenditure', 'Performance Concerns', 'Significant Disposals', 'Fraud'];
 const DEFAULT_TCWG_HEADINGS_CFG = ['Valuations', 'Accounting Policies', 'Cashflow', 'Significant Transactions', 'Fraud', 'Audit Matters', 'Control Breaches', 'Regulator Issues'];
+const DEFAULT_SHAREHOLDERS_HEADINGS_CFG = ['Dividends Declared', 'Share Issues and Buybacks', 'Director Appointments', 'Approval of Financial Statements', 'Related Party Matters', 'Auditor Appointment', 'Significant Resolutions'];
+const DEFAULT_OVERALL_SUMMARY_HEADINGS = ['Impacts Financial Statements', 'Impacts Going Concern', 'Impacts Profitability', 'Indicated Significant Decision'];
 
 function CommunicationHeadingsSection({ firmId, onSave }: { firmId: string; onSave: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [boardHeadings, setBoardHeadings] = useState<string[]>(DEFAULT_BOARD_HEADINGS);
   const [tcwgHeadings, setTcwgHeadings] = useState<string[]>(DEFAULT_TCWG_HEADINGS_CFG);
+  const [shareholdersHeadings, setShareholdersHeadings] = useState<string[]>(DEFAULT_SHAREHOLDERS_HEADINGS_CFG);
+  const [overallHeadings, setOverallHeadings] = useState<string[]>(DEFAULT_OVERALL_SUMMARY_HEADINGS);
   const [newBoardHeading, setNewBoardHeading] = useState('');
   const [newTcwgHeading, setNewTcwgHeading] = useState('');
+  const [newShareholdersHeading, setNewShareholdersHeading] = useState('');
+  const [newOverallHeading, setNewOverallHeading] = useState('');
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -1560,6 +1566,8 @@ function CommunicationHeadingsSection({ firmId, onSave }: { firmId: string; onSa
         const d = await res.json();
         if (Array.isArray(d.boardMinutesHeadings) && d.boardMinutesHeadings.length > 0) setBoardHeadings(d.boardMinutesHeadings);
         if (Array.isArray(d.tcwgHeadings) && d.tcwgHeadings.length > 0) setTcwgHeadings(d.tcwgHeadings);
+        if (Array.isArray(d.shareholdersHeadings) && d.shareholdersHeadings.length > 0) setShareholdersHeadings(d.shareholdersHeadings);
+        if (Array.isArray(d.overallSummaryHeadings) && d.overallSummaryHeadings.length > 0) setOverallHeadings(d.overallSummaryHeadings);
       }
     } catch {}
     setLoaded(true);
@@ -1571,7 +1579,12 @@ function CommunicationHeadingsSection({ firmId, onSave }: { firmId: string; onSa
       await fetch('/api/methodology-admin/communication-headings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ boardMinutesHeadings: boardHeadings, tcwgHeadings }),
+        body: JSON.stringify({
+          boardMinutesHeadings: boardHeadings,
+          tcwgHeadings,
+          shareholdersHeadings,
+          overallSummaryHeadings: overallHeadings,
+        }),
       });
       onSave();
     } finally { setSaving(false); }
@@ -1583,7 +1596,7 @@ function CommunicationHeadingsSection({ firmId, onSave }: { firmId: string; onSa
         onClick={() => { setExpanded(!expanded); if (!expanded) load(); }}
         className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
       >
-        <h2 className="text-sm font-semibold text-slate-800">Communication Headings (Board Minutes &amp; TCWG)</h2>
+        <h2 className="text-sm font-semibold text-slate-800">Communication Headings (Board Minutes, TCWG, Shareholders &amp; Overall Summary)</h2>
         {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
       </button>
       {expanded && (
@@ -1636,6 +1649,62 @@ function CommunicationHeadingsSection({ firmId, onSave }: { firmId: string; onSa
                 placeholder="New heading..." className="border rounded px-2 py-1 text-sm flex-1"
                 onKeyDown={e => { if (e.key === 'Enter' && newTcwgHeading.trim()) { setTcwgHeadings([...tcwgHeadings, newTcwgHeading.trim()]); setNewTcwgHeading(''); } }} />
               <button onClick={() => { if (newTcwgHeading.trim()) { setTcwgHeadings([...tcwgHeadings, newTcwgHeading.trim()]); setNewTcwgHeading(''); } }}
+                className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ Add</button>
+            </div>
+          </div>
+
+          {/* Shareholders Headings */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Shareholder Meetings Headings</h3>
+            <p className="text-[10px] text-slate-400 mb-2">AI will extract content from uploaded shareholder meeting minutes under these headings</p>
+            <div className="border rounded-lg divide-y">
+              {shareholdersHeadings.map((h, i) => (
+                <div key={i} className="grid grid-cols-[1fr,40px] gap-2 px-3 py-1.5 items-center">
+                  <input type="text" value={h} onChange={e => {
+                    const next = [...shareholdersHeadings];
+                    next[i] = e.target.value;
+                    setShareholdersHeadings(next);
+                  }} className="border rounded px-2 py-1 text-sm" />
+                  <button onClick={() => setShareholdersHeadings(shareholdersHeadings.filter((_, j) => j !== i))}
+                    className="text-red-400 hover:text-red-600 text-center"><X className="h-3.5 w-3.5 mx-auto" /></button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <input type="text" value={newShareholdersHeading} onChange={e => setNewShareholdersHeading(e.target.value)}
+                placeholder="New heading..." className="border rounded px-2 py-1 text-sm flex-1"
+                onKeyDown={e => { if (e.key === 'Enter' && newShareholdersHeading.trim()) { setShareholdersHeadings([...shareholdersHeadings, newShareholdersHeading.trim()]); setNewShareholdersHeading(''); } }} />
+              <button onClick={() => { if (newShareholdersHeading.trim()) { setShareholdersHeadings([...shareholdersHeadings, newShareholdersHeading.trim()]); setNewShareholdersHeading(''); } }}
+                className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ Add</button>
+            </div>
+          </div>
+
+          {/* Overall Communication Summary Headings */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Summary of Communication Headings</h3>
+            <p className="text-[10px] text-slate-400 mb-2">
+              Headings used by the Communications <em>Overall</em> sub-tab. For each one, the AI produces a
+              consolidated position drawn from every board/TCWG/shareholder/client/internal/expert meeting on
+              the engagement. Seeded with four defaults — edit, re-order, or replace as your firm needs.
+            </p>
+            <div className="border rounded-lg divide-y">
+              {overallHeadings.map((h, i) => (
+                <div key={i} className="grid grid-cols-[1fr,40px] gap-2 px-3 py-1.5 items-center">
+                  <input type="text" value={h} onChange={e => {
+                    const next = [...overallHeadings];
+                    next[i] = e.target.value;
+                    setOverallHeadings(next);
+                  }} className="border rounded px-2 py-1 text-sm" />
+                  <button onClick={() => setOverallHeadings(overallHeadings.filter((_, j) => j !== i))}
+                    className="text-red-400 hover:text-red-600 text-center"><X className="h-3.5 w-3.5 mx-auto" /></button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <input type="text" value={newOverallHeading} onChange={e => setNewOverallHeading(e.target.value)}
+                placeholder="New heading..." className="border rounded px-2 py-1 text-sm flex-1"
+                onKeyDown={e => { if (e.key === 'Enter' && newOverallHeading.trim()) { setOverallHeadings([...overallHeadings, newOverallHeading.trim()]); setNewOverallHeading(''); } }} />
+              <button onClick={() => { if (newOverallHeading.trim()) { setOverallHeadings([...overallHeadings, newOverallHeading.trim()]); setNewOverallHeading(''); } }}
                 className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ Add</button>
             </div>
           </div>

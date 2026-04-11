@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { Loader2, Upload, ChevronDown, ChevronUp, AlertTriangle, FileText, RefreshCw, Trash2, Eye } from 'lucide-react';
 import { expandZipFiles } from '@/lib/client-unzip';
+import { SignOffDots } from '../SignOffDots';
+import type { TeamMemberLite } from '@/lib/sign-off-helpers';
 
 interface HeadingExtraction {
   content: string;
@@ -41,6 +43,14 @@ interface CarryForwardItem {
 
 interface Props {
   engagementId: string;
+  teamMembers?: TeamMemberLite[];
+  currentUserId?: string;
+  /** Sub-tab key for this panel — used as the target for the per-sub-tab overall sign-off */
+  subTabKey?: string;
+  /** The per-sub-tab sign-off bucket from the Communication roll-up store */
+  subTabSignOffs?: Record<string, { userId?: string; userName?: string; timestamp?: string } | undefined>;
+  /** Called when the user toggles the per-sub-tab overall sign-off */
+  onSubTabSignOff?: (role: string) => void;
 }
 
 const SIGN_OFF_ROLES = [
@@ -51,7 +61,7 @@ const SIGN_OFF_ROLES = [
 
 function fmtDate(d: string) { try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } }
 
-export function BoardMinutesPanel({ engagementId }: Props) {
+export function BoardMinutesPanel({ engagementId, teamMembers, currentUserId, subTabKey, subTabSignOffs, onSubTabSignOff }: Props) {
   const { data: session } = useSession();
   const [records, setRecords] = useState<BoardMinutesRecord[]>([]);
   const [headings, setHeadings] = useState<string[]>([]);
@@ -214,17 +224,31 @@ export function BoardMinutesPanel({ engagementId }: Props) {
         <h3 className="text-sm font-semibold text-slate-700">
           Board Minutes <span className="text-xs font-normal text-slate-400 ml-1">{records.length}</span>
         </h3>
-        <div className="flex gap-2">
-          {records.length >= 2 && (
-            <button onClick={handleGeneratePeriodSummary} disabled={generatingSummary}
-              className="text-[10px] px-3 py-1.5 bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 disabled:opacity-50">
-              {generatingSummary ? 'Generating...' : 'Period Summary'}
-            </button>
+        <div className="flex items-center gap-4">
+          {/* Per-sub-tab overall sign-off dots (only rendered when wired from CommunicationTab) */}
+          {subTabKey && onSubTabSignOff && (
+            <SignOffDots
+              label="Board Minutes sign-off"
+              signOffs={subTabSignOffs || {}}
+              teamMembers={teamMembers}
+              currentUserId={currentUserId}
+              onToggle={onSubTabSignOff}
+              size="sm"
+              hideRoleLabels
+            />
           )}
-          <button onClick={() => setShowUpload(!showUpload)}
-            className="text-[10px] px-3 py-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100">
-            <Upload className="h-3 w-3 inline mr-1" />Upload Minutes
-          </button>
+          <div className="flex gap-2">
+            {records.length >= 2 && (
+              <button onClick={handleGeneratePeriodSummary} disabled={generatingSummary}
+                className="text-[10px] px-3 py-1.5 bg-purple-50 text-purple-600 border border-purple-200 rounded hover:bg-purple-100 disabled:opacity-50">
+                {generatingSummary ? 'Generating...' : 'Period Summary'}
+              </button>
+            )}
+            <button onClick={() => setShowUpload(!showUpload)}
+              className="text-[10px] px-3 py-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100">
+              <Upload className="h-3 w-3 inline mr-1" />Upload Minutes
+            </button>
+          </div>
         </div>
       </div>
 
@@ -417,31 +441,14 @@ export function BoardMinutesPanel({ engagementId }: Props) {
                     <p className="text-[10px] text-slate-400 italic">No extraction available. Click "Re-extract" to process.</p>
                   )}
 
-                  {/* Sign-off bar */}
-                  <div className="pt-3 border-t border-slate-200">
-                    <div className="flex items-center gap-6">
-                      {SIGN_OFF_ROLES.map(({ key, label }) => {
-                        const so = record.signOffs[key] as { userId: string; userName: string; timestamp: string } | undefined;
-                        const hasSigned = !!so?.timestamp;
-                        return (
-                          <div key={key} className="flex flex-col items-center gap-1">
-                            <span className="text-[10px] text-slate-500 font-medium">{label}</span>
-                            <button onClick={() => handleSignOff(record.id, key)}
-                              className={`w-5 h-5 rounded-full border-2 transition-all ${
-                                hasSigned ? 'bg-green-500 border-green-500' : 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
-                              }`}
-                              title={hasSigned ? `${so!.userName} — ${new Date(so!.timestamp).toLocaleString()}` : `Sign off as ${label}`}
-                            />
-                            {hasSigned && (
-                              <div className="text-center">
-                                <p className="text-[9px] text-slate-600">{so!.userName}</p>
-                                <p className="text-[8px] text-slate-400">{new Date(so!.timestamp).toLocaleDateString('en-GB')}</p>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                  {/* Sign-off bar — role-gated via SignOffDots */}
+                  <div className="pt-3 border-t border-slate-200 flex justify-start">
+                    <SignOffDots
+                      signOffs={record.signOffs}
+                      teamMembers={teamMembers}
+                      currentUserId={currentUserId}
+                      onToggle={role => handleSignOff(record.id, role)}
+                    />
                   </div>
                 </div>
               )}

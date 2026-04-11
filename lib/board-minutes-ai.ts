@@ -215,6 +215,138 @@ Rules:
   }
 }
 
+// ─── Communication Overall Summary ──────────────────────────────────
+// Produces a consolidated Communication tab summary across Board Minutes,
+// TCWG, Shareholder meetings, client/internal/expert meetings — anything
+// the engagement team has captured under Communications. Organised under
+// firm-configured headings (default seed:
+//   Impacts Financial Statements
+//   Impacts Going Concern
+//   Impacts Profitability
+//   Indicated Significant Decision
+// ).
+
+export interface CommunicationOverallInput {
+  meetingType: string;
+  meetingDate: string;
+  title: string;
+  headingsText: string;      // collapsed "heading: content" lines from structured extraction
+  otherMatters: string;
+  rawFallback: string;       // used for meetings without a structured heading blob
+}
+
+export interface CommunicationOverallSummary {
+  headings: Record<string, { content: string; flagged: boolean; evidence: string[] }>;
+  overallNarrative: string;
+}
+
+export async function generateCommunicationOverall(
+  meetings: CommunicationOverallInput[],
+  headings: string[],
+): Promise<CommunicationOverallSummary> {
+  const apiKey = process.env.TOGETHER_API_KEY;
+  if (!apiKey) throw new Error('TOGETHER_API_KEY not configured');
+
+  const headingsList = headings.map((h, i) => `${i + 1}. ${h}`).join('\n');
+
+  const meetingLabel = (mt: string) => {
+    if (mt === 'board_minutes') return 'Board Minutes';
+    if (mt === 'tcwg') return 'Audit Committee / TCWG';
+    if (mt === 'shareholders') return 'Shareholder Meeting';
+    if (mt === 'client') return 'Client Meeting';
+    if (mt === 'internal') return 'Internal Team Meeting';
+    if (mt === 'expert') return 'Expert Meeting';
+    return mt || 'Meeting';
+  };
+
+  const meetingBlocks = meetings.map((m, i) => {
+    const parts: string[] = [];
+    parts.push(`--- Meeting ${i + 1} [${meetingLabel(m.meetingType)}] — ${m.meetingDate} — ${m.title}`);
+    if (m.headingsText) parts.push(m.headingsText);
+    if (m.otherMatters) parts.push(`  Other matters: ${m.otherMatters}`);
+    if (m.rawFallback) parts.push(`  (raw transcript / notes excerpt)\n  ${m.rawFallback}`);
+    return parts.join('\n');
+  }).join('\n\n');
+
+  const systemPrompt = `You are an expert UK audit assistant consolidating every communication on an audit engagement — Board Minutes, Audit Committee / TCWG, Shareholder meetings, client meetings, internal team meetings, and expert consultations — into a single position paper for the audit file.
+
+The firm's Communications Overall headings (these are what the audit team want you to report against):
+${headingsList}
+
+Return ONLY valid JSON with this exact structure:
+{
+  "headings": {
+    "Heading Name": {
+      "content": "detailed consolidated position across ALL meetings for this heading — what the audit team needs to know",
+      "flagged": false,
+      "evidence": ["YYYY-MM-DD — short label of which meeting/what said", "..."]
+    },
+    ...
+  },
+  "overallNarrative": "3-6 sentence plain-English overall picture tying the headings together, pointing at the most significant matters and their audit implications"
+}
+
+Content requirements (IMPORTANT)
+- Each heading's "content" must synthesise what was said across MULTIPLE meetings, not just quote one. Include names, dates, monetary amounts, percentages, decisions and their effect. 4-8 sentences or a bullet list when the evidence supports it; short honest paragraph when only briefly mentioned.
+- "evidence" is an array of short references showing WHICH meetings contributed to the conclusion. Use the date plus a 3-8 word label of the meeting / what was said. 2-6 items is ideal.
+- Set "flagged": true if the heading surfaces: material misstatement risk, going concern concerns, fraud indicators, significant litigation, regulatory investigation, covenant breaches, loss of key customer / supplier / personnel, control failures, related-party transactions, unusual or non-routine transactions, or post-balance-sheet events affecting the financial statements. When flagged, the content MUST explain the audit implication.
+- If a heading has genuinely no relevant evidence in ANY meeting, set content to "" and evidence to [].
+- Do not invent facts or dates. If something is only touched on briefly, say so — don't embellish.
+- Write in professional UK audit language (ISA (UK), FRC, "those charged with governance", "material", "significant risk", "estimate", "judgement", etc.).
+
+Return format
+- Return ONLY the JSON object, no markdown fencing, no commentary before or after.`;
+
+  const userMessage = `All Communications on this engagement (chronological):\n\n${meetingBlocks.slice(0, 55000)}`;
+
+  const res = await fetch('https://api.together.xyz/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      max_tokens: 6000,
+      temperature: 0.2,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`AI communication overall failed: ${res.status} ${err.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  let content = data.choices?.[0]?.message?.content?.trim() || '{}';
+  content = content.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
+
+  try {
+    const parsed = JSON.parse(content);
+    const result: CommunicationOverallSummary = {
+      headings: {},
+      overallNarrative: typeof parsed.overallNarrative === 'string' ? parsed.overallNarrative : '',
+    };
+    for (const h of headings) {
+      const entry = parsed.headings?.[h];
+      const evidence = Array.isArray(entry?.evidence)
+        ? entry.evidence.filter((e: unknown) => typeof e === 'string')
+        : [];
+      result.headings[h] = {
+        content: typeof entry?.content === 'string' ? entry.content : '',
+        flagged: entry?.flagged === true,
+        evidence,
+      };
+    }
+    return result;
+  } catch {
+    const fallback: CommunicationOverallSummary = { headings: {}, overallNarrative: content.slice(0, 500) };
+    for (const h of headings) fallback.headings[h] = { content: '', flagged: false, evidence: [] };
+    return fallback;
+  }
+}
+
 /**
  * Identify matters carried forward from earlier periods.
  */
