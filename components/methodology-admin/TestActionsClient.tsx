@@ -13,10 +13,52 @@ interface TestAction {
   isSystem?: boolean; // System-generated actions cannot be edited or deleted
 }
 
+// Pipeline Action Catalog types — mirrors the SYSTEM_ACTIONS shape from
+// lib/action-seed.ts. Rendered read-only as a defensible catalogue of
+// every code-shipped action-pipeline action available to Methodology Admin
+// when building tests in the Action Pipeline Editor.
+interface PipelineActionInputField {
+  code: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  source?: string;
+  autoMapFrom?: string;
+  defaultValue?: any;
+  description?: string;
+  group?: string;
+  options?: { value: string; label: string }[];
+}
+interface PipelineActionOutputField {
+  code: string;
+  label: string;
+  type: string;
+  description?: string;
+}
+export interface PipelineActionCatalogEntry {
+  code: string;
+  name: string;
+  description: string;
+  category: string;
+  handlerName: string | null;
+  icon: string | null;
+  color: string | null;
+  inputSchema: PipelineActionInputField[];
+  outputSchema: PipelineActionOutputField[];
+}
+
 interface Props {
   initialActions: TestAction[];
   isSuperAdmin?: boolean;
   systemActionDetails?: Record<string, any>;
+  pipelineActionsCatalog?: PipelineActionCatalogEntry[];
+  /**
+   * Feature flag. When false, the legacy System Test Actions + User Test
+   * Actions sections (Option A — flow-chart driven) are hidden from the
+   * UI. The new Pipeline Actions Catalog (Option C) remains visible.
+   * Driven by the ENABLE_LEGACY_TEST_ACTIONS env var on the server side.
+   */
+  showLegacyTestActions?: boolean;
 }
 
 const ACTION_TYPES = [
@@ -42,7 +84,7 @@ const PRESET_ACTIONS: Omit<TestAction, 'id'>[] = [
 let counter = 0;
 function uid() { return `ta_${Date.now()}_${++counter}`; }
 
-export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDetails = {} }: Props) {
+export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDetails = {}, pipelineActionsCatalog = [], showLegacyTestActions = false }: Props) {
   const [actions, setActions] = useState<TestAction[]>(
     initialActions.length > 0 ? initialActions : PRESET_ACTIONS.map(a => ({ ...a, id: uid() }))
   );
@@ -51,6 +93,9 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedSystemId, setExpandedSystemId] = useState<string | null>(null);
   const [systemDetails, setSystemDetails] = useState<Record<string, any>>({});
+  // Expanded pipeline-action catalog entry (separate from legacy system
+  // test action expansion so both lists can stay open independently).
+  const [expandedPipelineCode, setExpandedPipelineCode] = useState<string | null>(null);
 
   function addAction() {
     setActions([...actions, { id: uid(), name: '', description: '', actionType: 'human', isReusable: true }]);
@@ -107,26 +152,188 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Test Actions</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Define reusable test action steps. These can be assigned as steps within tests in the Test Bank.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={addAction} size="sm" variant="outline">
-            <Plus className="h-4 w-4 mr-1" /> Add Action
-          </Button>
-          <Button onClick={handleSave} size="sm" disabled={saving}>
-            {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
-            {saved ? 'Saved' : 'Save'}
-          </Button>
-        </div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-900">Test Actions</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Catalogue of every reusable action the system can execute inside an audit test. Use the Action Pipeline Editor in Test Bank to chain these into a specific test.
+        </p>
       </div>
 
-      {/* System Test Actions */}
-      {actions.some(a => (a as any).isSystem) && (
+      {/*
+        Pipeline Actions Catalog (Option C) — authoritative list of every
+        code-shipped action-pipeline action, generated from SYSTEM_ACTIONS
+        in lib/action-seed.ts. Read-only. Expandable detail for each entry
+        shows handler name, every input field with its source binding and
+        default, and every output field. This is the defensible record
+        of "what the system can do" for regulator review.
+      */}
+      {pipelineActionsCatalog.length > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-lg font-bold text-emerald-900">Pipeline Actions Catalog</h2>
+            <span className="text-[9px] px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-medium">{pipelineActionsCatalog.length} actions</span>
+          </div>
+          <p className="text-xs text-slate-500 mb-3">
+            Every action the Action Pipeline system can run. Each entry lists its configurable inputs, auto-mapped context inputs, and outputs so you can see exactly what happens and how to wire it into a test. Click an entry to expand.
+          </p>
+          <div className="space-y-1.5">
+            {pipelineActionsCatalog.map(entry => {
+              const isOpen = expandedPipelineCode === entry.code;
+              const userInputs = entry.inputSchema.filter(f => f.source !== 'auto');
+              const autoInputs = entry.inputSchema.filter(f => f.source === 'auto');
+              const categoryColour =
+                entry.category === 'evidence' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                entry.category === 'sampling' ? 'bg-amber-100 text-amber-700 border-amber-200' :
+                entry.category === 'analysis' ? 'bg-purple-100 text-purple-700 border-purple-200' :
+                entry.category === 'verification' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' :
+                entry.category === 'reporting' ? 'bg-slate-100 text-slate-700 border-slate-200' :
+                'bg-slate-100 text-slate-700 border-slate-200';
+              return (
+                <div key={entry.code} className="border border-emerald-200 rounded bg-white">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedPipelineCode(isOpen ? null : entry.code)}
+                    className="w-full text-left px-3 py-2 flex items-start gap-3 hover:bg-emerald-50/40"
+                  >
+                    <span className="text-[10px] text-emerald-600 mt-0.5 font-mono select-none">
+                      {isOpen ? '▼' : '▶'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold text-slate-800">{entry.name}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded border uppercase tracking-wide font-semibold ${categoryColour}`}>{entry.category}</span>
+                        <code className="text-[10px] text-slate-400 font-mono">{entry.code}</code>
+                        {!entry.handlerName && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200 font-semibold uppercase">No handler</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{entry.description}</p>
+                    </div>
+                  </button>
+
+                  {isOpen && (
+                    <div className="border-t border-emerald-100 px-3 py-3 bg-emerald-50/30 space-y-3">
+                      {/* Handler */}
+                      <div>
+                        <div className="text-[9px] font-bold text-emerald-700 uppercase mb-1">Handler</div>
+                        <code className="text-xs bg-white border border-emerald-100 rounded px-2 py-1 text-slate-700 font-mono">{entry.handlerName || '— not wired —'}</code>
+                      </div>
+
+                      {/* Full description */}
+                      <div>
+                        <div className="text-[9px] font-bold text-emerald-700 uppercase mb-1">What it does</div>
+                        <p className="text-xs text-slate-700 bg-white border border-emerald-100 rounded px-3 py-2 leading-relaxed whitespace-pre-wrap">{entry.description}</p>
+                      </div>
+
+                      {/* User inputs */}
+                      {userInputs.length > 0 && (
+                        <div>
+                          <div className="text-[9px] font-bold text-emerald-700 uppercase mb-1">User-configurable inputs ({userInputs.length})</div>
+                          <div className="space-y-1">
+                            {userInputs.map(f => (
+                              <div key={f.code} className="bg-white border border-emerald-100 rounded px-2 py-1.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs font-semibold text-slate-800">{f.label}</span>
+                                  <code className="text-[10px] text-slate-400 font-mono">{f.code}</code>
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 font-semibold uppercase">{f.type}</span>
+                                  {f.required && <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-semibold uppercase">Required</span>}
+                                  {f.group && <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">{f.group}</span>}
+                                </div>
+                                {f.description && <p className="text-[10px] text-slate-500 mt-0.5">{f.description}</p>}
+                                {f.defaultValue !== undefined && (
+                                  <p className="text-[10px] text-slate-400 mt-0.5">
+                                    Default: <code className="font-mono text-slate-600">{typeof f.defaultValue === 'string' ? f.defaultValue : JSON.stringify(f.defaultValue)}</code>
+                                  </p>
+                                )}
+                                {f.options && f.options.length > 0 && (
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {f.options.map(o => (
+                                      <span key={o.value} className="text-[9px] px-1 py-0.5 bg-slate-50 border border-slate-200 rounded text-slate-600">
+                                        {o.label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Auto-mapped inputs */}
+                      {autoInputs.length > 0 && (
+                        <div>
+                          <div className="text-[9px] font-bold text-emerald-700 uppercase mb-1">Auto-mapped context ({autoInputs.length})</div>
+                          <div className="space-y-1">
+                            {autoInputs.map(f => (
+                              <div key={f.code} className="bg-white border border-emerald-100 rounded px-2 py-1 flex items-center gap-2 flex-wrap">
+                                <span className="text-xs text-slate-700">{f.label}</span>
+                                <code className="text-[10px] text-slate-400 font-mono">{f.code}</code>
+                                {f.autoMapFrom && (
+                                  <code className="text-[10px] bg-indigo-50 border border-indigo-100 rounded px-1 py-0.5 text-indigo-700 font-mono">← {f.autoMapFrom}</code>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Outputs */}
+                      {entry.outputSchema.length > 0 && (
+                        <div>
+                          <div className="text-[9px] font-bold text-emerald-700 uppercase mb-1">Outputs ({entry.outputSchema.length})</div>
+                          <div className="space-y-1">
+                            {entry.outputSchema.map(f => (
+                              <div key={f.code} className="bg-white border border-emerald-100 rounded px-2 py-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs font-semibold text-slate-800">{f.label}</span>
+                                  <code className="text-[10px] text-slate-400 font-mono">{f.code}</code>
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 font-semibold uppercase">{f.type}</span>
+                                </div>
+                                {f.description && <p className="text-[10px] text-slate-500 mt-0.5">{f.description}</p>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/*
+        Legacy sections (Option A) — flow-chart-era System Test Actions and
+        User Test Actions. Hidden unless ENABLE_LEGACY_TEST_ACTIONS is set
+        on the server. Kept in place so existing flow-chart tests still
+        load their action library, but no longer surfaced to regular
+        Methodology Admin by default.
+      */}
+      {showLegacyTestActions && (
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-lg font-bold text-slate-700">Legacy Test Actions</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Flow-chart-era action library (Option A). Still used by existing flow-chart tests. Hide by unsetting ENABLE_LEGACY_TEST_ACTIONS.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={addAction} size="sm" variant="outline">
+              <Plus className="h-4 w-4 mr-1" /> Add Action
+            </Button>
+            <Button onClick={handleSave} size="sm" disabled={saving}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+              {saved ? 'Saved' : 'Save'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* System Test Actions (legacy) */}
+      {showLegacyTestActions && actions.some(a => (a as any).isSystem) && (
         <div className="mb-8">
           <div className="flex items-center gap-2 mb-3">
             <h2 className="text-lg font-bold text-indigo-900">System Test Actions</h2>
@@ -142,11 +349,14 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
         </div>
       )}
 
-      {/* User Test Actions */}
+      {/* User Test Actions (legacy) */}
+      {showLegacyTestActions && (
       <div className="mb-3">
         <h2 className="text-lg font-bold text-slate-900">User Test Actions</h2>
         <p className="text-xs text-slate-500 mt-1">Custom actions you can edit, reorder, and assign to tests.</p>
       </div>
+      )}
+      {showLegacyTestActions && (
       <div className="space-y-2">
         {actions.filter(a => !(a as any).isSystem).map((action, i) => {
           const isSystem = false;
@@ -380,8 +590,9 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
           );
         })}
       </div>
+      )}
 
-      {actions.filter(a => !(a as any).isSystem).length === 0 && (
+      {showLegacyTestActions && actions.filter(a => !(a as any).isSystem).length === 0 && (
         <div className="text-center py-12 border rounded-lg">
           <p className="text-sm text-slate-400">No user test actions defined yet.</p>
           <button onClick={addAction} className="mt-2 text-xs text-blue-600 hover:text-blue-800">+ Add your first action</button>
