@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { useFirmVariables } from '@/hooks/useFirmVariables';
 import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 
 interface Props {
@@ -83,6 +84,9 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
   const [sectionMeta, setSectionMeta] = useState<Record<string, TemplateSectionMeta>>(initialSectionMeta || {});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  // Firm-wide variables available as formula chips. Loaded once and cached.
+  const { list: firmVariables } = useFirmVariables();
 
   // Sync questions when template type or audit type changes
   useEffect(() => {
@@ -436,19 +440,28 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                           {other.id}
                                         </button>
                                       ))}
-                                    {/* Firm-wide variables */}
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const current = q.formulaExpression || '';
-                                        const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
-                                        updateQuestion(q.id, { formulaExpression: current + sep + 'firm_fees' });
-                                      }}
-                                      title="Firm-wide fees (set in Methodology Admin → Firm-Wide Assumptions)"
-                                      className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100"
-                                    >
-                                      firm_fees
-                                    </button>
+                                    {/* Firm-wide variables — loaded dynamically from
+                                         Methodology Admin → Firm-Wide Assumptions → Firm Variables */}
+                                    {firmVariables.map(fv => (
+                                      <button
+                                        key={fv.name}
+                                        type="button"
+                                        onClick={() => {
+                                          const current = q.formulaExpression || '';
+                                          const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
+                                          updateQuestion(q.id, { formulaExpression: current + sep + fv.name });
+                                        }}
+                                        title={`${fv.label} (${fv.value.toLocaleString('en-GB')}) — edit in Firm-Wide Assumptions`}
+                                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100"
+                                      >
+                                        {fv.name}
+                                      </button>
+                                    ))}
+                                    {firmVariables.length === 0 && (
+                                      <span className="text-[9px] text-slate-400 italic px-1">
+                                        No firm variables — add some in Methodology Admin → Firm-Wide Assumptions → Firm Variables
+                                      </span>
+                                    )}
                                   </div>
                                   {/* Operator chips */}
                                   <div className="flex flex-wrap gap-1">

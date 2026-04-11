@@ -39,6 +39,9 @@ export default async function FirmAssumptionsPage() {
   const arConfidenceFactor: number = (tablesMap.arConfidenceFactor?.confidenceFactor as number) ?? 1.0;
   const largeUnusualScoring = tablesMap.large_unusual_scoring || null;
   const firmFees: number = (tablesMap.firm_fees?.amount as number) ?? 0;
+  const firmVariables: Array<{ name: string; label: string; value: number }> = Array.isArray(tablesMap.firm_variables?.variables)
+    ? (tablesMap.firm_variables.variables as Array<{ name: string; label: string; value: number }>)
+    : [];
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-6xl">
@@ -61,6 +64,7 @@ export default async function FirmAssumptionsPage() {
         initialArConfidenceFactor={arConfidenceFactor}
         initialLargeUnusualScoring={largeUnusualScoring}
         initialFirmFees={firmFees}
+        initialFirmVariables={firmVariables}
       />
     </div>
   );

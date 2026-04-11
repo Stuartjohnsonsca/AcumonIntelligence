@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { FormField } from './FormField';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { useSignOff } from './SignOffHeader';
 import { evaluateFormula } from '@/lib/formula-engine';
 import type { TemplateQuestion } from '@/types/methodology';
@@ -85,11 +86,17 @@ export function DynamicAppendixForm({
     return Array.from(map.values());
   }, [questions]);
 
-  // Compute formula values. External (firm-wide) variables are merged into a
-  // read-only view passed to the formula engine so bare identifiers like
-  // `firm_fees` resolve — but are never saved to the engagement.
+  // Firm-wide hard-coded numeric variables (fetched once, cached at module level).
+  // These are merged into the formula evaluation context as read-only values —
+  // never saved back to the engagement. They're defined in
+  // Methodology Admin → Firm-Wide Assumptions → Firm Variables.
+  const { map: firmVariablesMap } = useFirmVariables();
+
+  // Compute formula values. External variables (firm-wide + any explicit prop)
+  // are merged into a read-only view passed to the formula engine so bare
+  // identifiers resolve — but they're never saved to the engagement.
   const computedValues = useMemo(() => {
-    const merged: FormValues = { ...(externalValues || {}), ...values };
+    const merged: FormValues = { ...firmVariablesMap, ...(externalValues || {}), ...values };
     const computed: FormValues = {};
     for (const q of questions) {
       if (q.inputType === 'formula' && q.formulaExpression) {
@@ -97,7 +104,7 @@ export function DynamicAppendixForm({
       }
     }
     return computed;
-  }, [questions, values, externalValues, crossRefData]);
+  }, [questions, values, externalValues, firmVariablesMap, crossRefData]);
 
   function handleChange(questionId: string, value: string | number | boolean | null) {
     setValues(prev => ({ ...prev, [questionId]: value }));

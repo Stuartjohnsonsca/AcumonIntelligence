@@ -29,7 +29,10 @@ interface Props {
   initialTestCategories?: string[];
   initialArConfidenceFactor?: number;
   initialLargeUnusualScoring?: any;
+  /** Legacy back-compat: seeded into firmVariables as a firm_fees row on first load */
   initialFirmFees?: number;
+  /** Firm-wide hard-coded numeric variables referenced from schedule formulas */
+  initialFirmVariables?: Array<{ name: string; label: string; value: number }>;
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -115,6 +118,7 @@ export function FirmAssumptionsClient({
   initialArConfidenceFactor,
   initialLargeUnusualScoring,
   initialFirmFees,
+  initialFirmVariables,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -139,7 +143,20 @@ export function FirmAssumptionsClient({
   const [arConfidenceFactor, setArConfidenceFactor] = useState<number>(
     initialArConfidenceFactor ?? 1.0
   );
-  const [firmFees, setFirmFees] = useState<number>(initialFirmFees ?? 0);
+
+  // Firm variables — hard-coded numeric values referenced from schedule formulas.
+  // Seeded from the new initialFirmVariables prop. If the legacy firm_fees row
+  // exists and no firm_variables row yet, synthesise a firm_fees entry so the
+  // existing Ethics schedule formulas keep working.
+  const [firmVariables, setFirmVariables] = useState<Array<{ name: string; label: string; value: number }>>(() => {
+    if (Array.isArray(initialFirmVariables) && initialFirmVariables.length > 0) {
+      return initialFirmVariables;
+    }
+    if (typeof initialFirmFees === 'number' && initialFirmFees > 0) {
+      return [{ name: 'firm_fees', label: 'Firm Annual Fee Income', value: initialFirmFees }];
+    }
+    return [];
+  });
   const [luPatterns, setLuPatterns] = useState<{ pattern: string; category: string; weight: number }[]>(
     initialLargeUnusualScoring?.descriptionPatterns || []
   );
@@ -203,6 +220,10 @@ export function FirmAssumptionsClient({
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Invalidate the firm-variables memo cache so schedule formulas reflect
+      // any new / changed variables on the next DynamicAppendixForm render.
+      const { invalidateFirmVariables } = await import('@/hooks/useFirmVariables');
+      invalidateFirmVariables();
       await Promise.all([
         fetch('/api/methodology-admin/risk-tables', {
           method: 'PUT',
@@ -218,7 +239,7 @@ export function FirmAssumptionsClient({
               specialistRoles: { roles: specialistRoles },
               testCategories: { categories: testCategories },
               arConfidenceFactor: { confidenceFactor: arConfidenceFactor },
-              firm_fees: { amount: firmFees },
+              firm_variables: { variables: firmVariables },
               large_unusual_scoring: { descriptionPatterns: luPatterns, thresholds: luThresholds, sizeScoring: initialLargeUnusualScoring?.sizeScoring, timingScoring: initialLargeUnusualScoring?.timingScoring, otherScoring: initialLargeUnusualScoring?.otherScoring },
             },
           }),
@@ -678,40 +699,130 @@ export function FirmAssumptionsClient({
         )}
       </div>
 
-      {/* Firm Fees (used by the Ethics schedule formula `total_fees / firm_fees * 100`) */}
+      {/* Firm Variables — hard-coded numeric values referenced from schedule formulas */}
       <div className="border rounded-lg">
         <button
-          onClick={() => toggleSection('firmFees')}
+          onClick={() => toggleSection('firmVariables')}
           className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
         >
-          <h2 className="text-lg font-semibold text-slate-900">Firm Fees</h2>
-          {expandedSections.firmFees ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+          <h2 className="text-lg font-semibold text-slate-900">Firm Variables</h2>
+          {expandedSections.firmVariables ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
         </button>
-        {expandedSections.firmFees && (
-          <div className="p-4">
-            <p className="text-sm text-slate-500 mb-3">
-              Your firm&apos;s total annual fee income. Exposed as the variable <code className="bg-slate-100 px-1 rounded text-xs">firm_fees</code> to
-              formulas in the Ethics schedule — e.g. &quot;% of Total Fees to Firm Fees&quot; is computed as
-              <code className="bg-slate-100 px-1 rounded text-xs ml-1">total_fees / firm_fees * 100</code>.
-              Updating this value changes the calculation on every engagement on the next load.
+        {expandedSections.firmVariables && (
+          <div className="p-4 space-y-3">
+            <p className="text-sm text-slate-500">
+              Hard-coded numeric values that can be referenced from any schedule formula.
+              Give each one a short <strong>name</strong> (snake_case, no spaces — this is the identifier
+              you type in formulas), a human-friendly <strong>label</strong>, and a <strong>value</strong>.
+              Example: a variable named <code className="bg-slate-100 px-1 rounded text-xs">firm_fees</code>{' '}
+              can then be used in the Ethics schedule formula{' '}
+              <code className="bg-slate-100 px-1 rounded text-xs">total_fees / firm_fees * 100</code>.
+              Changes flow through to every engagement on next load — they&apos;re not baked into old engagements.
             </p>
-            <div className="flex items-center space-x-4">
-              <label className="text-sm font-medium text-slate-700">Firm Fees (£)</label>
-              <input
-                type="number"
-                min={0}
-                step={1000}
-                value={firmFees}
-                onChange={(e) => { setFirmFees(Number(e.target.value) || 0); setSaved(false); }}
-                className="w-48 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g. 2500000"
-              />
-              {firmFees > 0 && (
-                <span className="text-xs text-slate-500">
-                  £{firmFees.toLocaleString('en-GB')}
-                </span>
-              )}
+
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-xs text-slate-500 uppercase">
+                    <th className="px-3 py-2 font-semibold w-48">Name (identifier)</th>
+                    <th className="px-3 py-2 font-semibold">Label</th>
+                    <th className="px-3 py-2 font-semibold w-40">Value</th>
+                    <th className="px-3 py-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {firmVariables.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-4 text-center text-xs text-slate-400 italic">
+                        No firm variables yet. Click &quot;Add Variable&quot; to create one.
+                      </td>
+                    </tr>
+                  )}
+                  {firmVariables.map((v, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50">
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={v.name}
+                          onChange={(e) => {
+                            const clean = e.target.value.replace(/[^a-zA-Z0-9_]/g, '');
+                            setFirmVariables(prev => prev.map((x, i) => i === idx ? { ...x, name: clean } : x));
+                            setSaved(false);
+                          }}
+                          placeholder="firm_fees"
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={v.label}
+                          onChange={(e) => {
+                            setFirmVariables(prev => prev.map((x, i) => i === idx ? { ...x, label: e.target.value } : x));
+                            setSaved(false);
+                          }}
+                          placeholder="Firm Annual Fee Income"
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          step="any"
+                          value={v.value}
+                          onChange={(e) => {
+                            setFirmVariables(prev => prev.map((x, i) => i === idx ? { ...x, value: Number(e.target.value) || 0 } : x));
+                            setSaved(false);
+                          }}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          onClick={() => {
+                            setFirmVariables(prev => prev.filter((_, i) => i !== idx));
+                            setSaved(false);
+                          }}
+                          className="text-slate-400 hover:text-red-500"
+                          aria-label="Delete variable"
+                          title="Delete variable"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+
+            <button
+              onClick={() => {
+                setFirmVariables(prev => [...prev, { name: '', label: '', value: 0 }]);
+                setSaved(false);
+              }}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              + Add Variable
+            </button>
+
+            {/* Duplicate name warning */}
+            {(() => {
+              const seen = new Set<string>();
+              const dupes = new Set<string>();
+              for (const v of firmVariables) {
+                if (v.name && seen.has(v.name)) dupes.add(v.name);
+                if (v.name) seen.add(v.name);
+              }
+              if (dupes.size > 0) {
+                return (
+                  <p className="text-xs text-red-600">
+                    Duplicate variable names: {Array.from(dupes).join(', ')}. Names must be unique.
+                  </p>
+                );
+              }
+              return null;
+            })()}
           </div>
         )}
       </div>
