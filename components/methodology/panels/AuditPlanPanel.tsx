@@ -997,31 +997,40 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
 
       {/*
-        Category / classification legend. The per-row classification badge
-        in the audit plan table uses four colours driven by Risk Assessment
-        (RMM) and Performance Materiality. The user should be able to see
-        at a glance what each colour means without hovering. Documented
-        here once so it's visible across every FS Level tab.
+        Category / classification legend. Each classification renders as a
+        full background-colour pill badge matching the per-row badge in
+        the audit plan table below, so the visual link between legend and
+        table is immediate. Previously rendered as tiny colour swatches
+        next to coloured text, which the user found unclear.
       */}
       {!activeOtherTab && (
-        <div className="flex items-center flex-wrap gap-3 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] text-slate-600">
-          <span className="font-semibold uppercase tracking-wide text-slate-500">Classification legend:</span>
-          <span className="inline-flex items-center gap-1.5" title="High or Very High overall RMM. Test pack: Significant Risk, Area of Focus, Normal, Mandatory. Analytical Review excluded.">
-            <span className="inline-block w-2.5 h-2.5 rounded bg-red-200 border border-red-300"></span>
-            <span><strong className="text-red-700">Red</strong> — Significant Risk</span>
+        <div className="flex items-center flex-wrap gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded text-[11px]">
+          <span className="font-semibold uppercase tracking-wide text-slate-500 text-[10px] mr-1">Classification:</span>
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded font-semibold bg-red-600 text-white border border-red-700 shadow-sm"
+            title="High or Very High overall RMM. Test pack: Significant Risk, Area of Focus, Normal, Mandatory. Analytical Review excluded."
+          >
+            Significant Risk
           </span>
-          <span className="inline-flex items-center gap-1.5" title="Medium overall RMM. Test pack: Area of Focus, Normal, Mandatory. Significant Risk and Analytical Review excluded.">
-            <span className="inline-block w-2.5 h-2.5 rounded bg-orange-200 border border-orange-300"></span>
-            <span><strong className="text-orange-700">Orange</strong> — Area of Focus</span>
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded font-semibold bg-orange-500 text-white border border-orange-600 shadow-sm"
+            title="Medium overall RMM. Test pack: Area of Focus, Normal, Mandatory. Significant Risk and Analytical Review excluded."
+          >
+            Area of Focus
           </span>
-          <span className="inline-flex items-center gap-1.5" title="Balance above Performance Materiality with no RMM assigned. Test pack: Normal, Mandatory.">
-            <span className="inline-block w-2.5 h-2.5 rounded bg-green-200 border border-green-300"></span>
-            <span><strong className="text-green-700">Green</strong> — Normal</span>
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded font-semibold bg-green-600 text-white border border-green-700 shadow-sm"
+            title="Balance above Performance Materiality with no RMM assigned. Test pack: Normal, Mandatory."
+          >
+            Normal
           </span>
-          <span className="inline-flex items-center gap-1.5" title="Balance at or below Performance Materiality with no RMM. Test pack: Analytical Review, Mandatory only — no substantive testing.">
-            <span className="inline-block w-2.5 h-2.5 rounded bg-blue-200 border border-blue-300"></span>
-            <span><strong className="text-blue-700">Blue</strong> — Analytical Review (AR)</span>
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded font-semibold bg-blue-600 text-white border border-blue-700 shadow-sm"
+            title="Balance at or below Performance Materiality with no RMM. Test pack: Analytical Review, Mandatory only — no substantive testing."
+          >
+            Analytical Review
           </span>
+          <span className="text-[10px] text-slate-500 ml-2">Hover each pill for the full rule.</span>
         </div>
       )}
 
@@ -1253,20 +1262,20 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       <td className="px-0.5 py-px">
                         {rmmMatch?.overallRisk && (
                           <span
-                            className={`text-[7px] px-0.5 py-0 rounded font-medium ${
-                              isSig ? 'bg-red-100 text-red-700' :
-                              isAoF ? 'bg-orange-100 text-orange-700' :
-                              isAR ? 'bg-blue-100 text-blue-700' :
-                              'bg-green-100 text-green-700'
+                            className={`text-[9px] px-1.5 py-0.5 rounded font-semibold border shadow-sm ${
+                              isSig ? 'bg-red-600 text-white border-red-700' :
+                              isAoF ? 'bg-orange-500 text-white border-orange-600' :
+                              isAR ? 'bg-blue-600 text-white border-blue-700' :
+                              'bg-green-600 text-white border-green-700'
                             }`}
                             title={
                               isSig
-                                ? 'Significant Risk (red) — High or Very High RMM. Tests drawn from: Significant Risk, Area of Focus, Normal, Mandatory. Analytical Review excluded.'
+                                ? 'Significant Risk — High or Very High RMM. Tests drawn from: Significant Risk, Area of Focus, Normal, Mandatory. Analytical Review excluded.'
                                 : isAoF
-                                  ? 'Area of Focus (orange) — Medium RMM. Tests drawn from: Area of Focus, Normal, Mandatory. Significant Risk and Analytical Review excluded.'
+                                  ? 'Area of Focus — Medium RMM. Tests drawn from: Area of Focus, Normal, Mandatory. Significant Risk and Analytical Review excluded.'
                                   : isAR
-                                    ? 'Analytical Review (blue) — Balance at or below Performance Materiality with no RMM. Tests drawn from: Analytical Review, Mandatory only — no substantive testing.'
-                                    : 'Normal (green) — Balance above Performance Materiality but no RMM. Tests drawn from: Normal, Mandatory only.'
+                                    ? 'Analytical Review — Balance at or below Performance Materiality with no RMM. Tests drawn from: Analytical Review, Mandatory only — no substantive testing.'
+                                    : 'Normal — Balance above Performance Materiality but no RMM. Tests drawn from: Normal, Mandatory only.'
                             }
                           >
                             {isAR ? 'AR' : rowClassification}

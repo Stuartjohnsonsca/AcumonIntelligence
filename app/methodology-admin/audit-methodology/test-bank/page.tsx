@@ -76,7 +76,6 @@ export default async function TestBankPage() {
         initialFrameworkOptions={frameworkOptions}
         initialTestActions={testActions}
         canEditFlow={canEditFlow}
-        showLegacyFlowChart={process.env.ENABLE_LEGACY_TEST_ACTIONS === 'true'}
       />
     </div>
   );

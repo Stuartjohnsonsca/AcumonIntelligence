@@ -81,12 +81,6 @@ interface Props {
   initialFrameworkOptions?: string[];
   initialTestActions?: TestActionItem[];
   canEditFlow?: boolean;
-  /**
-   * Feature flag. When false, the Flow column and Flow Chart editor entry
-   * point are hidden. The Pipeline column (Option C) remains visible.
-   * Driven by ENABLE_LEGACY_TEST_ACTIONS on the server.
-   */
-  showLegacyFlowChart?: boolean;
 }
 
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
@@ -101,7 +95,7 @@ const FS_CATEGORY_LABELS: Record<string, string> = {
 
 type TopTab = 'test-allocations' | 'test-bank' | 'test-actions' | 'grid-view';
 
-export function TestBankClient({ firmId, initialTestTypes, initialTests, initialFsLines, initialIndustries, initialAllocations, initialFrameworkOptions, initialTestActions, canEditFlow, showLegacyFlowChart = false }: Props) {
+export function TestBankClient({ firmId, initialTestTypes, initialTests, initialFsLines, initialIndustries, initialAllocations, initialFrameworkOptions, initialTestActions, canEditFlow }: Props) {
   const frameworkOptions = initialFrameworkOptions && initialFrameworkOptions.length > 0 ? initialFrameworkOptions : DEFAULT_FRAMEWORKS;
   const [topTab, setTopTab] = useState<TopTab>('test-allocations');
   const [testBankSearch, setTestBankSearch] = useState('');
@@ -527,11 +521,12 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
               <thead><tr className="bg-slate-100 border-b">
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold">Test Name</th>
                 <th className="text-center px-3 py-2 text-slate-600 font-semibold w-16">Status</th>
+                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-16">Mode</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-28">Action Type</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-32">Assertions</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-20">Framework</th>
-                {showLegacyFlowChart && <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12">Flow</th>}
-                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12">Pipeline</th>
+                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12" title="Flow chart (legacy). Click to open existing flow, but new tests should use Pipeline.">Flow</th>
+                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12" title="Action Pipeline (current). Click to open the pipeline editor.">Pipeline</th>
                 <th className="text-center px-3 py-2 text-slate-600 font-semibold w-10">Sig.</th>
                 <th className="w-20 px-3 py-2"></th>
               </tr></thead>
@@ -554,11 +549,36 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                           <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-green-100 text-green-700 border border-green-300" title="Published — visible to auditors in the audit plan and Plan Customiser.">Live</span>
                         )}
                       </td>
+                      {/* Mode column — shows which execution mode the test uses. Flow
+                          is the legacy mode (read-only fallback), Pipeline is the
+                          current mode for all new tests. */}
+                      <td className="px-3 py-2 text-center">
+                        {test.executionMode === 'action_pipeline' ? (
+                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-300" title="Action Pipeline (current). New tests should use this mode.">Pipeline</span>
+                        ) : hasFlow ? (
+                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-300" title="Flow Chart (legacy) — kept as fallback. No new tests should be built as Flow.">Flow</span>
+                        ) : (
+                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-200" title="No execution mode configured yet. Open the Pipeline editor to build this test.">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2">{tt && <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.name}</span>}</td>
                       <td className="px-3 py-2">{((test.assertions as string[]) || []).map((a, ai) => <span key={ai} className="text-[10px] px-1 py-0.5 bg-purple-100 text-purple-700 rounded mr-0.5">{assertionShortLabel(a)}</span>)}</td>
                       <td className="px-3 py-2 text-[10px] text-slate-500">{test.framework || 'All'}</td>
-                      {showLegacyFlowChart && <td className="px-3 py-2 text-center"><button onClick={() => { setFlowTestId(test.id); setFlowEditorOpen(true); }} className={`p-0.5 rounded hover:bg-blue-50 ${hasFlow ? 'text-green-600' : 'text-slate-300'}`}><GitBranch className="h-3.5 w-3.5" /></button></td>}
-                      <td className="px-3 py-2 text-center"><button onClick={() => { setPipelineTestId(test.id); setPipelineEditorOpen(true); }} className={`p-0.5 rounded hover:bg-blue-50 ${test.executionMode === 'action_pipeline' ? 'text-blue-600' : 'text-slate-300'}`}><ListOrdered className="h-3.5 w-3.5" /></button></td>
+                      {/* Flow icon — always visible so legacy flow tests stay reachable
+                          as a fallback. Click opens the existing flow in the editor.
+                          No new flow tests are created via the Add Test button (new tests
+                          default to action_pipeline mode). */}
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          onClick={() => { setFlowTestId(test.id); setFlowEditorOpen(true); }}
+                          className={`p-0.5 rounded hover:bg-slate-100 ${hasFlow ? 'text-slate-600' : 'text-slate-300'}`}
+                          title={hasFlow ? 'View/edit legacy Flow (no new development — fallback only)' : 'No flow configured'}
+                          disabled={!hasFlow}
+                        >
+                          <GitBranch className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 text-center"><button onClick={() => { setPipelineTestId(test.id); setPipelineEditorOpen(true); }} className={`p-0.5 rounded hover:bg-blue-50 ${test.executionMode === 'action_pipeline' ? 'text-blue-600' : 'text-slate-300'}`} title="Open Action Pipeline Editor"><ListOrdered className="h-3.5 w-3.5" /></button></td>
                       <td className="px-3 py-2 text-center"><span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
                         test.category === 'Significant Risk' ? 'bg-red-100 text-red-700' :
                         test.category === 'Area of Focus' ? 'bg-orange-100 text-orange-700' :
@@ -569,7 +589,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                     </tr>
                   );
                 })}
-                {tests.length === 0 && <tr><td colSpan={showLegacyFlowChart ? 9 : 8} className="text-center py-8 text-slate-400 text-sm">No tests yet. Add tests or upload a CSV.</td></tr>}
+                {tests.length === 0 && <tr><td colSpan={10} className="text-center py-8 text-slate-400 text-sm">No tests yet. Add tests or upload a CSV.</td></tr>}
               </tbody>
             </table>
           </div>

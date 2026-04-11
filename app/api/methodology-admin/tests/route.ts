@@ -71,6 +71,12 @@ export async function POST(req: NextRequest) {
       // audit plan until the Methodology Admin has finished building them
       // and explicitly toggles the Draft flag off.
       isDraft: isDraft !== undefined ? !!isDraft : true,
+      // All new tests default to the Action Pipeline execution mode. The
+      // legacy Flow Chart mode is still executable for existing tests (as
+      // a fallback) but no new flow tests should be created. Callers can
+      // still pass a non-null `flow` if they explicitly need a legacy
+      // flow test, but the default path always yields a pipeline test.
+      executionMode: 'action_pipeline',
       flow: flow || null,
     },
   });
