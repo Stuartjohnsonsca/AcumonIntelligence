@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3, MessageSquareMore, ListChecks, FileText } from 'lucide-react';
+import { Wrench, Factory, FlaskConical, Calendar, ClipboardList, BarChart3, MessageSquareMore, ListChecks, FileText, Users } from 'lucide-react';
 
 const tiles = [
   {
@@ -75,6 +75,14 @@ const tiles = [
     icon: FileText,
     color: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100',
     iconColor: 'text-indigo-600',
+  },
+  {
+    title: 'Team Familiarity',
+    description: 'Track team members\u2019 tenure on each client and enforce RI familiarity limits',
+    href: '/methodology-admin/audit-methodology/team-familiarity',
+    icon: Users,
+    color: 'bg-pink-50 border-pink-200 hover:bg-pink-100',
+    iconColor: 'text-pink-600',
   },
 ];
 
