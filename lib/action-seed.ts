@@ -277,20 +277,22 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     color: '#059669',
     isSystem: true,
     inputSchema: [
-      { code: 'message_to_client', label: 'Message to Client', type: 'textarea', required: true, source: 'user', defaultValue: 'Please provide a list of UK properties owned by the entity. For each property include the full postal address and postcode. You can type the list into the chat or upload a document (PDF, Word, Excel, or CSV).', group: 'Request' },
+      { code: 'message_to_client', label: 'Message to Client', type: 'textarea', required: true, source: 'user', defaultValue: 'Please provide a list of UK properties owned by the entity. For each property include the full postal address and postcode. You can type the list into the chat or upload a document (PDF, Word, Excel, CSV, or an image).', group: 'Request' },
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
       { code: 'client_name', label: 'Client Name', type: 'text', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.clientName', group: 'Context' },
-      { code: 'sampling_strategy', label: 'Sampling Strategy', type: 'select', required: false, source: 'user', defaultValue: 'judgemental', group: 'Sampling', options: [
-        { value: 'all', label: 'Test all properties' },
-        { value: 'random', label: 'Random sample' },
-        { value: 'mus', label: 'Monetary Unit Sampling (by value)' },
-        { value: 'judgemental', label: 'Judgemental — auditor picks' },
+      // Data groups — which categories of Land Registry data to fetch. The
+      // runtime UI lets the auditor tick these per run and only fetches the
+      // delta on re-runs, keeping costs down. This config value just sets
+      // the initial state of the checkboxes in the runtime UI.
+      { code: 'default_data_groups', label: 'Default Data Groups', type: 'multiselect', required: false, source: 'user', group: 'Data', defaultValue: ['ownership'], description: 'Which HMLR data groups to pre-tick on the runtime selector. Auditors can change the selection per run.', options: [
+        { value: 'ownership', label: 'Ownership data (title, proprietor, register extract, plan, application enquiry)' },
+        { value: 'purchase', label: 'Purchase data (price paid history, conveyance, deed of transfer)' },
+        { value: 'restrictions', label: 'Restrictions data (charges, notices, cautions, restrictions)' },
       ]},
-      { code: 'restriction_api', label: 'Restrictions Lookup', type: 'select', required: false, source: 'user', defaultValue: 'register_summary', group: 'Advanced', description: 'HMLR restrictions are recorded within the Register Extract by default. Only use the dedicated search if you have a contractual reason to pay the extra fee.', options: [
+      { code: 'restriction_api', label: 'Restrictions Lookup Method', type: 'select', required: false, source: 'user', defaultValue: 'register_summary', group: 'Advanced', description: 'Only relevant when the Restrictions data group is selected. HMLR restrictions are recorded within the Register Extract by default. Only use the dedicated search if you have a contractual reason to pay the extra fee.', options: [
         { value: 'register_summary', label: 'Parse from Register Extract (no extra cost)' },
         { value: 'dedicated_search', label: 'Call dedicated Restrictions Search API (extra fee)' },
       ]},
-      { code: 'include_application_enquiry', label: 'Include Application Enquiry', type: 'boolean', required: false, source: 'user', defaultValue: true, group: 'Advanced', description: 'Call Application Enquiry to flag any uncompleted transactions against the title at period end.' },
     ],
     outputSchema: [
       { code: 'properties', label: 'Tested Properties', type: 'data_table', description: 'Per-property rows: address, title number, registered proprietor, AI summary, document count, flags.' },

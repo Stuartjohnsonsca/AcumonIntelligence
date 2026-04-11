@@ -12,6 +12,8 @@ import { resolveActionInputs } from './action-registry';
 import {
   extractAddressesFromPortalResponse,
   runBatch,
+  DATA_GROUPS,
+  type DataGroup,
   type ExtractedAddress,
   type PropertyVerificationResult,
 } from './property-verification';
@@ -306,6 +308,22 @@ async function handleVerifyEvidence(ctx: ActionHandlerContext): Promise<ActionHa
 }
 
 /**
+ * Resolve the active data group set for a verify_property_assets run.
+ * Prefers the runtime selection (from the resume payload) and falls back
+ * to the action's configured defaults, then to ['ownership'] if nothing
+ * was configured. Sanitises any unrecognised group names.
+ */
+function resolveDataGroups(runtime: any, defaults: any): DataGroup[] {
+  const source = Array.isArray(runtime) && runtime.length > 0
+    ? runtime
+    : Array.isArray(defaults)
+      ? defaults
+      : [];
+  const clean = source.filter((g: any): g is DataGroup => DATA_GROUPS.includes(g));
+  return clean.length > 0 ? clean : ['ownership'];
+}
+
+/**
  * Verify UK Property Assets — multi-phase action that drives the full
  * HMLR pipeline.
  *
@@ -415,6 +433,10 @@ async function handleVerifyPropertyAssets(ctx: ActionHandlerContext): Promise<Ac
     }
 
     // ── Phase C: sample chosen — run HMLR pipeline per property ──────────
+    // Data groups come from the resume payload (the UI's checkbox state)
+    // or fall back to the action's configured defaults. The runtime UI
+    // is authoritative — the config value is just the initial checkbox
+    // state.
     if (phase === 'sample_selected') {
       const addresses: ExtractedAddress[] = Array.isArray(stepState.addresses) ? stepState.addresses : [];
       const selectedIndices: number[] = Array.isArray(stepState.selectedIndices) ? stepState.selectedIndices : [];
@@ -428,9 +450,10 @@ async function handleVerifyPropertyAssets(ctx: ActionHandlerContext): Promise<Ac
         return { action: 'error', outputs: {}, errorMessage: 'No properties were selected for testing.' };
       }
 
+      const dataGroups = resolveDataGroups(stepState.dataGroups, inputs.default_data_groups);
       const options = {
+        dataGroups,
         restrictionStrategy: (inputs.restriction_api || 'register_summary') as 'register_summary' | 'dedicated_search',
-        includeApplicationEnquiry: inputs.include_application_enquiry !== false,
       };
 
       const results = await runBatch(
@@ -454,6 +477,65 @@ async function handleVerifyPropertyAssets(ctx: ActionHandlerContext): Promise<Ac
           addresses,
           selectedIndices,
           valuesByIndex,
+          dataGroups,
+          properties: results,
+          documents: allDocuments,
+          total_cost_gbp: Math.round(totalCost * 100) / 100,
+          exception_count: exceptionCount,
+          repeatOnResume: true,
+        },
+        pauseReason: 'review',
+        pauseRefId: `property_review_${stepIndex}`,
+      };
+    }
+
+    // ── Phase C2: auditor ticked additional data groups on the review UI
+    //    and asked to fetch the delta. Re-runs only the APIs for the
+    //    newly-enabled groups; already-fetched APIs are reused verbatim.
+    if (phase === 'fetch_additional') {
+      const addresses: ExtractedAddress[] = Array.isArray(stepState.addresses) ? stepState.addresses : [];
+      const selectedIndices: number[] = Array.isArray(stepState.selectedIndices) ? stepState.selectedIndices : [];
+      const valuesByIndex: Record<number, number> = stepState.valuesByIndex || {};
+      const previousResults: PropertyVerificationResult[] = Array.isArray(stepState.properties) ? stepState.properties : [];
+      const nextGroups = resolveDataGroups(stepState.dataGroups, inputs.default_data_groups);
+
+      const selected = selectedIndices
+        .map(i => addresses[i])
+        .filter(Boolean)
+        .map((addr, j) => ({ ...addr, value: valuesByIndex[selectedIndices[j]] }));
+
+      // Index previous results by property id so runBatch can feed each
+      // property its own cached call list.
+      const previousById: Record<string, PropertyVerificationResult> = {};
+      for (const r of previousResults) previousById[r.id] = r;
+
+      const options = {
+        dataGroups: nextGroups,
+        restrictionStrategy: (inputs.restriction_api || 'register_summary') as 'register_summary' | 'dedicated_search',
+      };
+
+      const results = await runBatch(
+        selected,
+        options,
+        hmlrCtx,
+        inputs.client_name || 'the audit client',
+        inputs.period_end,
+        previousById,
+      );
+      results.forEach((r, i) => { r.valueGbp = selected[i]?.value; });
+
+      const totalCost = results.reduce((s, r) => s + r.totalCostGbp, 0);
+      const exceptionCount = results.filter(r => r.flags.length > 0).length;
+      const allDocuments = results.flatMap(r => r.documents);
+
+      return {
+        action: 'pause',
+        outputs: {
+          phase: 'awaiting_review',
+          addresses,
+          selectedIndices,
+          valuesByIndex,
+          dataGroups: nextGroups,
           properties: results,
           documents: allDocuments,
           total_cost_gbp: Math.round(totalCost * 100) / 100,

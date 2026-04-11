@@ -84,6 +84,22 @@ interface Props {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
+type DataGroup = 'ownership' | 'purchase' | 'restrictions';
+const DATA_GROUP_LABELS: Record<DataGroup, { label: string; description: string }> = {
+  ownership: {
+    label: 'Ownership',
+    description: 'Title, registered proprietor, official copy, register extract (register + plan), outstanding applications',
+  },
+  purchase: {
+    label: 'Purchase',
+    description: 'Transaction history — conveyance and deed of transfer documents',
+  },
+  restrictions: {
+    label: 'Restrictions',
+    description: 'Charges, notices, cautions, and restrictions noted on the register',
+  },
+};
+
 export function PropertyVerificationSection({
   executionId,
   engagementId,
@@ -103,6 +119,15 @@ export function PropertyVerificationSection({
   const exceptionCount: number = Number(pipelineStepState?.exception_count ?? 0);
   const portalRequestId: string | undefined = pipelineStepState?.portal_request_id;
   const parseError: string | undefined = pipelineStepState?.parse_error;
+
+  // Data groups — authoritative runtime source. When the pipeline has
+  // already been run with some groups, those come through from server
+  // state; ticking additional groups and clicking "Fetch additional data"
+  // resumes with phase='fetch_additional' which only calls the delta.
+  const initialGroups: DataGroup[] = Array.isArray(pipelineStepState?.dataGroups) && pipelineStepState!.dataGroups.length > 0
+    ? pipelineStepState!.dataGroups.filter((g: any) => g === 'ownership' || g === 'purchase' || g === 'restrictions')
+    : ['ownership'];
+  const [dataGroups, setDataGroups] = useState<Set<DataGroup>>(() => new Set(initialGroups));
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [valuesByIndex, setValuesByIndex] = useState<Record<number, number>>(() => {
@@ -236,8 +261,15 @@ export function PropertyVerificationSection({
       {phase === 'awaiting_sample' && (
         <div className="p-4 space-y-3">
           <p className="text-sm text-slate-700">
-            {addresses.length} address{addresses.length === 1 ? '' : 'es'} parsed from the client response. Enter a carrying value for each property (from the fixed asset register) and tick the ones to test. Values drive MUS-style sampling if you chose that strategy.
+            {addresses.length} address{addresses.length === 1 ? '' : 'es'} parsed from the client response. Enter a carrying value for each property (from the fixed asset register) and tick the ones to test. Then choose which HMLR data groups to pull for the first run — you can add more groups later without re-fetching what's already in hand.
           </p>
+
+          {/* Data group selector — drives which HMLR APIs the run calls.
+              Ticking fewer groups keeps costs down; you can re-open the
+              same sample later and tick more groups to fetch only the
+              additional data you need. */}
+          <DataGroupSelector dataGroups={dataGroups} onChange={setDataGroups} />
+
           <div className="border border-slate-200 rounded bg-white">
             <div className="grid grid-cols-[32px_1fr_140px] gap-x-3 px-3 py-2 text-xs font-medium text-slate-600 border-b border-slate-200 bg-slate-50">
               <div></div>
@@ -279,12 +311,13 @@ export function PropertyVerificationSection({
             <span>{selectedIndices.size} selected · Total value £{Object.entries(valuesByIndex).filter(([k]) => selectedIndices.has(Number(k))).reduce((s, [, v]) => s + Number(v || 0), 0).toFixed(2)}</span>
             <Button
               size="sm"
-              disabled={selectedIndices.size === 0 || submitting}
+              disabled={selectedIndices.size === 0 || dataGroups.size === 0 || submitting}
               onClick={() =>
                 postResume({
                   phase: 'sample_selected',
                   selectedIndices: Array.from(selectedIndices).sort((a, b) => a - b),
                   valuesByIndex,
+                  dataGroups: Array.from(dataGroups),
                 })
               }
             >
@@ -303,6 +336,53 @@ export function PropertyVerificationSection({
             <span>Exceptions: <span className={exceptionCount > 0 ? 'text-amber-700 font-medium' : 'text-slate-500'}>{exceptionCount}</span></span>
             <span>HMLR spend: <span className="font-medium">£{totalCostGbp.toFixed(2)}</span></span>
           </div>
+
+          {/*
+            Data group re-fetch — ticking additional groups here triggers
+            a phase='fetch_additional' resume. The server runs only the
+            APIs for the newly-enabled groups and merges the results into
+            the cached property state, so the incremental cost is exactly
+            the delta of new API calls.
+          */}
+          <DataGroupSelector
+            dataGroups={dataGroups}
+            onChange={setDataGroups}
+            footer={(() => {
+              const currentGroups = new Set(initialGroups);
+              const newGroups = Array.from(dataGroups).filter(g => !currentGroups.has(g));
+              const removedAny = Array.from(currentGroups).some(g => !dataGroups.has(g));
+              if (newGroups.length === 0 && !removedAny) {
+                return (
+                  <span className="text-[10px] text-slate-400 italic">
+                    Tick additional groups to fetch more data for these properties. Already-fetched data is reused — you only pay for the delta.
+                  </span>
+                );
+              }
+              if (newGroups.length === 0 && removedAny) {
+                return (
+                  <span className="text-[10px] text-amber-700">
+                    Note: un-ticking a group hides it from future fetches but existing data stays in the results below.
+                  </span>
+                );
+              }
+              return (
+                <Button
+                  size="sm"
+                  disabled={submitting}
+                  onClick={() =>
+                    postResume({
+                      phase: 'fetch_additional',
+                      dataGroups: Array.from(dataGroups),
+                    })
+                  }
+                >
+                  {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                  Fetch additional data ({newGroups.map(g => DATA_GROUP_LABELS[g].label).join(', ')})
+                </Button>
+              );
+            })()}
+          />
+
 
           {/* Per-property cards */}
           <div className="space-y-2">
@@ -454,6 +534,59 @@ export function PropertyVerificationSection({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Three-checkbox selector for the Ownership / Purchase / Restrictions data
+ * groups. Used in both the sample phase (initial pick) and the review phase
+ * (incremental add-on). `footer` renders below the checkboxes — typically
+ * a hint line in the sample phase and a "Fetch additional data" button in
+ * the review phase.
+ */
+function DataGroupSelector({
+  dataGroups,
+  onChange,
+  footer,
+}: {
+  dataGroups: Set<DataGroup>;
+  onChange: (next: Set<DataGroup>) => void;
+  footer?: React.ReactNode;
+}) {
+  function toggle(g: DataGroup) {
+    const next = new Set(dataGroups);
+    if (next.has(g)) next.delete(g);
+    else next.add(g);
+    onChange(next);
+  }
+  const groups: DataGroup[] = ['ownership', 'purchase', 'restrictions'];
+  return (
+    <div className="border border-slate-200 rounded bg-slate-50 p-3">
+      <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-2">HMLR data to fetch</div>
+      <div className="space-y-1.5">
+        {groups.map(g => {
+          const on = dataGroups.has(g);
+          const meta = DATA_GROUP_LABELS[g];
+          return (
+            <label key={g} className="flex items-start gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={() => toggle(g)}
+                className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <div className="flex-1">
+                <div className="text-xs font-medium text-slate-800">{meta.label}</div>
+                <div className="text-[10px] text-slate-500 leading-tight">{meta.description}</div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+      {footer && <div className="mt-2 pt-2 border-t border-slate-200">{footer}</div>}
     </div>
   );
 }

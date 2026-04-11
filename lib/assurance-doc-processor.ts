@@ -159,7 +159,7 @@ export async function extractDocumentText(
     return { text: buffer.toString('utf-8'), method: 'raw-text' };
   }
 
-  // Excel/Word — try to read as text (basic)
+  // Excel — read all sheets as CSV-ish text
   if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -173,6 +173,24 @@ export async function extractDocumentText(
         .join('\n\n');
       return { text, method: 'raw-text' };
     } catch {
+      return { text: `[Unable to extract text from ${fileName}]`, method: 'raw-text' };
+    }
+  }
+
+  // Word (.docx) — extract text via mammoth. Legacy .doc (application/msword)
+  // is not supported by mammoth's raw text extractor, so we fall through to
+  // the utf-8 fallback for those.
+  if (
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    fileName.toLowerCase().endsWith('.docx')
+  ) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mammoth = require('mammoth');
+      const result = await mammoth.extractRawText({ buffer });
+      return { text: result.value || '', method: 'raw-text' };
+    } catch (err) {
+      console.error('[AssuranceDoc] mammoth .docx extraction failed:', err);
       return { text: `[Unable to extract text from ${fileName}]`, method: 'raw-text' };
     }
   }
