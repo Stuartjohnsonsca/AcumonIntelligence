@@ -67,6 +67,15 @@ const STAGES: Array<{ key: Stage; label: string; colour: string; bg: string }> =
 
 const DEFAULT_FRAMEWORKS = ['IFRS', 'FRS102'];
 
+/** Cached question shape used by the Q&A trigger editor to decide which kind of
+ *  expected-answer input to render (dropdown vs text). */
+interface CachedQuestion {
+  id: string;
+  questionText: string;
+  inputType?: string;
+  dropdownOptions?: string[];
+}
+
 const CONDITION_KINDS: Array<{ value: TriggerCondition['kind']; label: string; hint: string }> = [
   { value: 'always',         label: 'Always',            hint: 'Members of this trigger are always shown' },
   { value: 'listed',         label: 'Listed client',     hint: 'Members shown when Client.isListed is true' },
@@ -130,11 +139,28 @@ function normaliseToStageKeyed(
 
 // ═════ Sortable schedule card ═════
 
+/** Static-condition kinds exposed on each schedule card as quick-toggle buttons. */
+type QuickKind = 'listed' | 'eqr' | 'priorPeriod' | 'firstYear';
+const QUICK_BUTTONS: Array<{ kind: QuickKind; label: string; onClass: string }> = [
+  { kind: 'listed',      label: 'LST', onClass: 'bg-amber-100 text-amber-700 border-amber-300' },
+  { kind: 'eqr',         label: 'EQR', onClass: 'bg-purple-100 text-purple-700 border-purple-300' },
+  { kind: 'priorPeriod', label: 'PP',  onClass: 'bg-cyan-100 text-cyan-700 border-cyan-300' },
+  { kind: 'firstYear',   label: 'FY',  onClass: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
+];
+const QUICK_TOOLTIPS: Record<QuickKind, string> = {
+  listed:      'Only show on Listed clients (creates a single-member trigger)',
+  eqr:         'Only show when an EQR is on the team',
+  priorPeriod: 'Only show on returning clients (has a prior-period engagement)',
+  firstYear:   'Only show on first-year audits (no prior-period engagement)',
+};
+
 function ScheduleCard({
   id,
   label,
   triggersContainingMe,
   allTriggers,
+  quickStates,
+  onToggleQuick,
   onAddToTrigger,
   onRemoveFromTrigger,
   onRemove,
@@ -145,6 +171,12 @@ function ScheduleCard({
   triggersContainingMe: Trigger[];
   /** All triggers — used to populate the "+ trigger" dropdown */
   allTriggers: Trigger[];
+  /** Which of the 4 quick-toggles are currently active for this schedule (true = schedule is
+   *  a member of a matching trigger, not necessarily single-member). */
+  quickStates: Record<QuickKind, boolean>;
+  /** Toggle a quick-kind on/off for this schedule. The main component handles creating or
+   *  removing the backing trigger. */
+  onToggleQuick: (kind: QuickKind) => void;
   onAddToTrigger: (triggerId: string) => void;
   onRemoveFromTrigger: (triggerId: string) => void;
   onRemove: () => void;
@@ -158,7 +190,12 @@ function ScheduleCard({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const candidateTriggers = allTriggers.filter(t => !triggersContainingMe.some(m => m.id === t.id));
+  // For the "+ trigger" dropdown, only offer non-quick triggers (always / questionAnswer /
+  // named multi-member triggers). The quick static conditions are already exposed as buttons.
+  const quickKinds: QuickKind[] = ['listed', 'eqr', 'priorPeriod', 'firstYear'];
+  const nonQuickTriggers = allTriggers.filter(t => !quickKinds.includes(t.condition.kind as QuickKind));
+  const nonQuickContainingMe = triggersContainingMe.filter(t => !quickKinds.includes(t.condition.kind as QuickKind));
+  const candidateTriggers = nonQuickTriggers.filter(t => !nonQuickContainingMe.some(m => m.id === t.id));
 
   return (
     <div
@@ -176,9 +213,27 @@ function ScheduleCard({
           <GripVertical className="h-3 w-3" />
         </button>
         <span className="flex-1 font-medium text-slate-700 truncate" title={label}>{label}</span>
+        {/* Quick-toggle buttons: clicking creates or removes a single-member trigger */}
+        <div className="flex items-center gap-0.5">
+          {QUICK_BUTTONS.map(b => {
+            const on = quickStates[b.kind];
+            return (
+              <button
+                key={b.kind}
+                onClick={() => onToggleQuick(b.kind)}
+                title={QUICK_TOOLTIPS[b.kind]}
+                className={`text-[8px] font-semibold uppercase px-1 py-0.5 rounded border ${
+                  on ? b.onClass : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {b.label}
+              </button>
+            );
+          })}
+        </div>
         <button
           onClick={onRemove}
-          className="text-slate-400 hover:text-red-500"
+          className="text-slate-400 hover:text-red-500 ml-0.5"
           aria-label="Remove from this audit type"
           title="Remove from this audit type (stays in master list)"
         >
@@ -186,10 +241,11 @@ function ScheduleCard({
         </button>
       </div>
 
-      {/* Trigger badges */}
-      {(triggersContainingMe.length > 0 || candidateTriggers.length > 0) && (
+      {/* Non-quick trigger badges (custom / Q&A / multi-member). Quick ones are already shown
+          above as buttons. */}
+      {(nonQuickContainingMe.length > 0 || candidateTriggers.length > 0) && (
         <div className="flex items-center gap-1 mt-1 flex-wrap">
-          {triggersContainingMe.map(t => (
+          {nonQuickContainingMe.map(t => (
             <span
               key={t.id}
               className="inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase px-1 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-300"
@@ -210,7 +266,7 @@ function ScheduleCard({
               <button
                 onClick={() => setShowAddMenu(v => !v)}
                 className="text-[9px] font-semibold uppercase px-1 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-300 hover:bg-slate-200"
-                title="Add this schedule to a trigger"
+                title="Add this schedule to a custom trigger"
               >
                 + trigger
               </button>
@@ -242,6 +298,7 @@ function StageColumn({
   keys,
   masterSchedules,
   triggers,
+  onToggleQuick,
   onAddKeyToTrigger,
   onRemoveKeyFromTrigger,
   onRemoveKey,
@@ -250,6 +307,7 @@ function StageColumn({
   keys: string[];
   masterSchedules: MasterSchedule[];
   triggers: Trigger[];
+  onToggleQuick: (scheduleKey: string, kind: QuickKind) => void;
   onAddKeyToTrigger: (key: string, triggerId: string) => void;
   onRemoveKeyFromTrigger: (key: string, triggerId: string) => void;
   onRemoveKey: (key: string) => void;
@@ -266,6 +324,14 @@ function StageColumn({
         {keys.map(k => {
           const label = masterSchedules.find(s => s.key === k)?.label || k;
           const containing = triggers.filter(t => t.members.includes(k));
+          // A quick-toggle is "on" if this schedule is a member of ANY trigger whose
+          // condition.kind matches — whether that trigger is single-member or multi-member.
+          const quickStates: Record<QuickKind, boolean> = {
+            listed:      containing.some(t => t.condition.kind === 'listed'),
+            eqr:         containing.some(t => t.condition.kind === 'eqr'),
+            priorPeriod: containing.some(t => t.condition.kind === 'priorPeriod'),
+            firstYear:   containing.some(t => t.condition.kind === 'firstYear'),
+          };
           return (
             <ScheduleCard
               key={k}
@@ -273,6 +339,8 @@ function StageColumn({
               label={label}
               triggersContainingMe={containing}
               allTriggers={triggers}
+              quickStates={quickStates}
+              onToggleQuick={(kind) => onToggleQuick(k, kind)}
               onAddToTrigger={(tid) => onAddKeyToTrigger(k, tid)}
               onRemoveFromTrigger={(tid) => onRemoveKeyFromTrigger(k, tid)}
               onRemove={() => onRemoveKey(k)}
@@ -304,7 +372,7 @@ function TriggersPanel({
   onUpdateTrigger: (id: string, patch: Partial<Trigger>) => void;
   onDeleteTrigger: (id: string) => void;
   /** Cached questions per schedule key: { [scheduleKey]: [{id, questionText}] } */
-  questionsCache: Record<string, Array<{ id: string; questionText: string }>>;
+  questionsCache: Record<string, CachedQuestion[]>;
   onLoadQuestions: (scheduleKey: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -434,15 +502,53 @@ function TriggersPanel({
                     </div>
                     <div>
                       <label className="text-[9px] text-slate-500 uppercase tracking-wide font-semibold">Expected answer</label>
-                      <input
-                        type="text"
-                        value={cond.expectedAnswer}
-                        onChange={(e) => onUpdateTrigger(t.id, {
-                          condition: { ...cond, expectedAnswer: e.target.value },
-                        })}
-                        placeholder="e.g. Yes"
-                        className="w-full mt-0.5 text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:border-indigo-400"
-                      />
+                      {(() => {
+                        const question = questionsCache[cond.scheduleKey]?.find(q => q.id === cond.questionId);
+                        const isDropdown = question?.inputType === 'dropdown' && Array.isArray(question.dropdownOptions) && question.dropdownOptions.length > 0;
+                        if (isDropdown) {
+                          return (
+                            <select
+                              value={cond.expectedAnswer}
+                              onChange={(e) => onUpdateTrigger(t.id, {
+                                condition: { ...cond, expectedAnswer: e.target.value, useAIFuzzyMatch: false },
+                              })}
+                              className="w-full mt-0.5 text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:border-indigo-400"
+                            >
+                              <option value="">— Pick answer —</option>
+                              {question!.dropdownOptions!.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          );
+                        }
+                        // Free-text (or unknown) question → text input + optional AI fuzzy toggle
+                        return (
+                          <>
+                            <input
+                              type="text"
+                              value={cond.expectedAnswer}
+                              onChange={(e) => onUpdateTrigger(t.id, {
+                                condition: { ...cond, expectedAnswer: e.target.value },
+                              })}
+                              placeholder="e.g. Yes"
+                              className="w-full mt-0.5 text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:border-indigo-400"
+                            />
+                            {cond.questionId && (
+                              <label className="flex items-center gap-1 text-[9px] text-slate-500 mt-1 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={!!cond.useAIFuzzyMatch}
+                                  onChange={(e) => onUpdateTrigger(t.id, {
+                                    condition: { ...cond, useAIFuzzyMatch: e.target.checked },
+                                  })}
+                                  className="h-2.5 w-2.5"
+                                />
+                                AI fuzzy match (semantic equivalence)
+                              </label>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -530,7 +636,7 @@ export function AuditTypeSchedulesClient({
   const [newScheduleStage, setNewScheduleStage] = useState<Stage>('planning');
 
   // Question cache for Q&A trigger editor: { [scheduleKey]: [{id, questionText}] }
-  const [questionsCache, setQuestionsCache] = useState<Record<string, Array<{ id: string; questionText: string }>>>({});
+  const [questionsCache, setQuestionsCache] = useState<Record<string, CachedQuestion[]>>({});
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -714,6 +820,65 @@ export function AuditTypeSchedulesClient({
     setSaved(false);
   }
 
+  /**
+   * Quick-toggle for one of the 4 static-condition buttons (LST/EQR/PP/FY) on a schedule card.
+   * Adds or removes the schedule from a backing trigger. If adding and no matching trigger
+   * exists for that condition kind, create a single-member one. If removing leaves a
+   * single-member trigger empty, delete it. Multi-member triggers are never deleted — we
+   * just remove this schedule from their members list.
+   */
+  function toggleQuickCondition(scheduleKey: string, kind: QuickKind) {
+    setStageMappings(prev => {
+      const next = { ...prev };
+      const am = { ...next[activeAuditType] };
+      let triggers = [...am.triggers];
+
+      // Find triggers with the matching kind that contain this schedule
+      const containing = triggers.filter(t => t.condition.kind === kind && t.members.includes(scheduleKey));
+
+      if (containing.length > 0) {
+        // Currently ON → remove this schedule from every matching trigger
+        triggers = triggers
+          .map(t => {
+            if (t.condition.kind !== kind || !t.members.includes(scheduleKey)) return t;
+            return { ...t, members: t.members.filter(m => m !== scheduleKey) };
+          })
+          // Drop any trigger that's now empty
+          .filter(t => t.members.length > 0);
+      } else {
+        // Currently OFF → find an existing trigger of this kind we can add the schedule to,
+        // preferring a single-member one (keeps the "one trigger per schedule per kind" feel).
+        // If none exist, create a new single-member trigger for this schedule.
+        const existing = triggers.find(t => t.condition.kind === kind);
+        if (existing) {
+          triggers = triggers.map(t => t.id === existing.id
+            ? { ...t, members: [...t.members, scheduleKey] }
+            : t);
+        } else {
+          // Mutual exclusivity hint: flipping FY on a schedule that has PP on (or vice
+          // versa) would be contradictory, but we don't enforce it here — admin can set both
+          // via the Triggers panel if they really want to.
+          const label = masterSchedules.find(s => s.key === scheduleKey)?.label || scheduleKey;
+          const kindLabel = CONDITION_KINDS.find(c => c.value === kind)?.label || kind;
+          triggers = [
+            ...triggers,
+            {
+              id: newTriggerId(),
+              name: `${label} — ${kindLabel}`,
+              condition: { kind } as TriggerCondition,
+              members: [scheduleKey],
+            },
+          ];
+        }
+      }
+
+      am.triggers = triggers;
+      next[activeAuditType] = am;
+      return next;
+    });
+    setSaved(false);
+  }
+
   // ── Questions loader (for Q&A trigger editor) ──
 
   async function loadQuestions(scheduleKey: string) {
@@ -731,10 +896,15 @@ export function AuditTypeSchedulesClient({
         if (!items) continue;
         const questions = items.questions || (Array.isArray(items) ? items : null);
         if (Array.isArray(questions) && questions.length > 0) {
-          setQuestionsCache(prev => ({
-            ...prev,
-            [scheduleKey]: questions.map((q: any) => ({ id: String(q.id || ''), questionText: String(q.questionText || q.text || '') })).filter((q: { id: string }) => q.id),
-          }));
+          const mapped: CachedQuestion[] = questions
+            .map((q: any) => ({
+              id: String(q.id || ''),
+              questionText: String(q.questionText || q.text || ''),
+              inputType: typeof q.inputType === 'string' ? q.inputType : undefined,
+              dropdownOptions: Array.isArray(q.dropdownOptions) ? q.dropdownOptions.map((o: unknown) => String(o)) : undefined,
+            }))
+            .filter((q: CachedQuestion) => q.id);
+          setQuestionsCache(prev => ({ ...prev, [scheduleKey]: mapped }));
           return;
         }
       }
@@ -1090,6 +1260,7 @@ export function AuditTypeSchedulesClient({
               keys={activeMapping[stage.key]}
               masterSchedules={masterSchedules}
               triggers={activeMapping.triggers}
+              onToggleQuick={toggleQuickCondition}
               onAddKeyToTrigger={addKeyToTrigger}
               onRemoveKeyFromTrigger={removeKeyFromTrigger}
               onRemoveKey={removeKey}
@@ -1110,48 +1281,64 @@ export function AuditTypeSchedulesClient({
         <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40">
           <div className="flex items-center gap-2 mb-2">
             <Eye className="h-3 w-3 text-slate-400" />
-            <h3 className="text-xs font-semibold text-slate-600">Available Schedules (not yet assigned to {AUDIT_TYPES.find(a => a.key === activeAuditType)?.label})</h3>
+            <h3 className="text-xs font-semibold text-slate-600">
+              Available Schedules (not yet assigned to {AUDIT_TYPES.find(a => a.key === activeAuditType)?.label})
+            </h3>
             <span className="text-[10px] text-slate-400">{availableSchedules.length}</span>
           </div>
           <p className="text-[10px] text-slate-400 mb-2">
-            Click any schedule to add it back to this audit type. Orphans (not in master list) are restored
-            automatically when clicked.
+            Each row has three green "+" buttons — one for each stage. Click the one you want to add that
+            schedule to. Orphans (amber) are not in the master list but still referenced elsewhere; clicking
+            any stage button restores them automatically.
           </p>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="space-y-1">
             {availableSchedules.map(s => {
               const usedInLabels = s.usedIn
                 .map(at => AUDIT_TYPES.find(a => a.key === at)?.label.replace(/ Audit$/, '') || at)
                 .join(', ');
               return (
-                <button
+                <div
                   key={s.key}
-                  onClick={() => {
-                    if (s.isOrphan) restoreOrphanToMaster(s.key, s.label, s.defaultStage);
-                    addKeyToStage(s.key, s.defaultStage);
-                  }}
-                  className={`inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-white border rounded hover:bg-blue-50 hover:border-blue-300 ${
-                    s.isOrphan ? 'border-amber-300 bg-amber-50/40' : 'border-slate-300'
+                  className={`flex items-center gap-2 px-2 py-1 rounded border ${
+                    s.isOrphan ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-white'
                   }`}
-                  title={
-                    s.isOrphan
-                      ? `Orphan \u2014 not in master list but still used in: ${usedInLabels || '(nowhere)'}. Click to restore.`
-                      : s.usedIn.length > 0
-                        ? `Also used in: ${usedInLabels}`
-                        : 'Click to add to this audit type'
-                  }
                 >
-                  <Plus className="h-2.5 w-2.5" />
-                  {s.label}
-                  <span className="text-[8px] text-slate-400 uppercase">{s.defaultStage.slice(0, 4)}</span>
+                  <span className="flex-1 text-[11px] font-medium text-slate-700 truncate" title={s.label}>
+                    {s.label}
+                  </span>
                   {s.isOrphan && (
-                    <span className="text-[7px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 border border-amber-300 rounded px-1">orphan</span>
+                    <span className="text-[8px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 border border-amber-300 rounded px-1">
+                      orphan
+                    </span>
                   )}
                   {!s.isOrphan && s.usedIn.length > 0 && (
-                    <span className="text-[7px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded px-1" title={`Used in: ${usedInLabels}`}>
+                    <span
+                      className="text-[8px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded px-1"
+                      title={`Used in: ${usedInLabels}`}
+                    >
                       in {s.usedIn.length}
                     </span>
                   )}
-                </button>
+                  <span className="text-[8px] text-slate-400 uppercase">
+                    default {s.defaultStage.slice(0, 4)}
+                  </span>
+                  <div className="flex items-center gap-0.5">
+                    {STAGES.map(stage => (
+                      <button
+                        key={stage.key}
+                        onClick={() => {
+                          if (s.isOrphan) restoreOrphanToMaster(s.key, s.label, s.defaultStage);
+                          addKeyToStage(s.key, stage.key);
+                        }}
+                        title={`Add "${s.label}" to ${stage.label}`}
+                        className={`inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-1 rounded border ${stage.colour} ${stage.bg} hover:brightness-95`}
+                      >
+                        <Plus className="h-2.5 w-2.5" />
+                        {stage.label.slice(0, 4)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               );
             })}
           </div>

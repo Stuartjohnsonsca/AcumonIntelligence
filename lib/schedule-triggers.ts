@@ -29,6 +29,12 @@ export type TriggerCondition =
       questionId: string;
       /** expected answer (case-insensitive match) */
       expectedAnswer: string;
+      /**
+       * For free-text questions only. When true, a runtime AI fuzzy-match call
+       * treats semantically-equivalent answers as a match (e.g. "yes" ~= "affirmative").
+       * Dropdown questions ignore this flag — their comparison is always exact.
+       */
+      useAIFuzzyMatch?: boolean;
     };
 
 export interface Trigger {
@@ -159,6 +165,18 @@ export interface TriggerContext {
    * before evaluating Q&A triggers.
    */
   answers: Record<string, Record<string, string>>;
+  /**
+   * Optional pre-computed AI fuzzy-match results. Keyed by
+   * `${questionId}|${expectedAnswer}|${actualAnswer}`. Callers populate this
+   * via a batched API call before evaluation; if a key isn't present the
+   * runtime treats the fuzzy match as "not yet computed" → not firing.
+   */
+  aiFuzzyCache?: Record<string, boolean>;
+}
+
+/** Build the cache key used by TriggerContext.aiFuzzyCache for a given Q&A pair. */
+export function aiFuzzyCacheKey(questionId: string, expected: string, actual: string): string {
+  return `${questionId}|${expected.trim().toLowerCase()}|${String(actual).trim().toLowerCase()}`;
 }
 
 export function isTriggerFiring(trigger: Trigger, ctx: TriggerContext): boolean {
@@ -177,7 +195,15 @@ export function isTriggerFiring(trigger: Trigger, ctx: TriggerContext): boolean 
     case 'questionAnswer': {
       const actual = ctx.answers[c.scheduleKey]?.[c.questionId];
       if (actual === undefined || actual === null || actual === '') return false;
-      return String(actual).trim().toLowerCase() === c.expectedAnswer.trim().toLowerCase();
+      const normalisedActual = String(actual).trim().toLowerCase();
+      const normalisedExpected = c.expectedAnswer.trim().toLowerCase();
+      if (normalisedActual === normalisedExpected) return true;
+      // Fall through to AI fuzzy match if enabled and cached
+      if (c.useAIFuzzyMatch && ctx.aiFuzzyCache) {
+        const key = aiFuzzyCacheKey(c.questionId, c.expectedAnswer, String(actual));
+        return ctx.aiFuzzyCache[key] === true;
+      }
+      return false;
     }
   }
 }

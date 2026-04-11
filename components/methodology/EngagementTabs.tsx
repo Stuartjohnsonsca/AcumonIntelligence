@@ -30,6 +30,7 @@ import { CompletionPanel } from './panels/CompletionPanel';
 import {
   buildVisibilityChecker,
   collectQAScheduleKeys,
+  aiFuzzyCacheKey,
   type Trigger,
   type TriggerContext,
 } from '@/lib/schedule-triggers';
@@ -190,6 +191,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [stageKeyedMapping, setStageKeyedMapping] = useState<{ planning: string[]; fieldwork: string[]; completion: string[] } | null>(null);
   // Answers fetched for Q&A trigger sources, keyed by scheduleKey → questionId → answer
   const [qaAnswers, setQaAnswers] = useState<Record<string, Record<string, string>>>({});
+  // Pre-computed AI fuzzy-match results for Q&A triggers with useAIFuzzyMatch enabled
+  const [aiFuzzyCache, setAiFuzzyCache] = useState<Record<string, boolean>>({});
   const [outstandingTeamCount, setOutstandingTeamCount] = useState(0);
   const [outstandingClientCount, setOutstandingClientCount] = useState(0);
   const handleOutstandingCounts = useCallback((team: number, client: number) => {
@@ -292,8 +295,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
           // Fetch answers for any schedules referenced by Q&A triggers (bounded — one fetch per unique source)
           const qaSources = collectQAScheduleKeys(triggers);
+          let answers: Record<string, Record<string, string>> = {};
           if (qaSources.length > 0) {
-            const answers: Record<string, Record<string, string>> = {};
             await Promise.all(qaSources.map(async (scheduleKey) => {
               try {
                 const r = await fetch(`/api/engagements/${engagement.id}/permanent-file?section=${scheduleKey}`);
@@ -318,6 +321,41 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             }));
             if (!cancelled) setQaAnswers(answers);
           }
+
+          // Pre-compute AI fuzzy-match results for any Q&A triggers with useAIFuzzyMatch enabled
+          // that don't already match exactly. Batched into a single API call.
+          const pairs: Array<{ key: string; expected: string; actual: string }> = [];
+          for (const t of triggers) {
+            if (t.condition.kind !== 'questionAnswer') continue;
+            if (!t.condition.useAIFuzzyMatch) continue;
+            const actual = answers[t.condition.scheduleKey]?.[t.condition.questionId];
+            if (!actual) continue;
+            // Skip if exact match — no AI needed
+            if (String(actual).trim().toLowerCase() === t.condition.expectedAnswer.trim().toLowerCase()) continue;
+            pairs.push({
+              key: aiFuzzyCacheKey(t.condition.questionId, t.condition.expectedAnswer, String(actual)),
+              expected: t.condition.expectedAnswer,
+              actual: String(actual),
+            });
+          }
+          if (pairs.length > 0) {
+            try {
+              const r = await fetch('/api/ai/trigger-fuzzy-match', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pairs: pairs.map(p => ({ expected: p.expected, actual: p.actual })) }),
+              });
+              if (r.ok) {
+                const j = await r.json();
+                const results: boolean[] = Array.isArray(j.results) ? j.results : [];
+                const cache: Record<string, boolean> = {};
+                for (let i = 0; i < pairs.length; i++) {
+                  cache[pairs[i].key] = results[i] === true;
+                }
+                if (!cancelled) setAiFuzzyCache(prev => ({ ...prev, ...cache }));
+              }
+            } catch { /* ignore AI fuzzy failures — trigger simply won't fire */ }
+          }
         }
       } catch {
         // Fail silently, show all tabs
@@ -337,6 +375,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     hasPriorPeriodEngagement,
     teamHasEQR,
     answers: qaAnswers,
+    aiFuzzyCache,
   };
   const scheduleConditionsPass = buildVisibilityChecker(scheduleTriggers, triggerCtx);
 
@@ -561,6 +600,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               completionScheduleOrder={stageKeyedMapping?.completion}
               scheduleTriggers={scheduleTriggers}
               qaAnswers={qaAnswers}
+              aiFuzzyCache={aiFuzzyCache}
               clientIsListed={clientIsListed}
               hasPriorPeriodEngagement={hasPriorPeriodEngagement}
               onNavigateMainTab={(key, params) => {

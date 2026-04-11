@@ -53,6 +53,8 @@ interface Props {
   scheduleTriggers?: Trigger[];
   /** Answers fetched from Q&A trigger source schedules (keyed by scheduleKey → questionId → answer) */
   qaAnswers?: Record<string, Record<string, string>>;
+  /** Pre-computed AI fuzzy-match results for Q&A triggers with useAIFuzzyMatch */
+  aiFuzzyCache?: Record<string, boolean>;
   /** From engagement payload for visibility evaluation */
   clientIsListed?: boolean;
   hasPriorPeriodEngagement?: boolean;
@@ -77,7 +79,8 @@ type CompletionTabKey = typeof COMPLETION_TABS[number]['key'];
 
 export function CompletionPanel({
   engagementId, clientId, userRole, userId, userName, teamMembers,
-  completionScheduleOrder, scheduleTriggers, qaAnswers, clientIsListed, hasPriorPeriodEngagement,
+  completionScheduleOrder, scheduleTriggers, qaAnswers, aiFuzzyCache,
+  clientIsListed, hasPriorPeriodEngagement,
   onNavigateMainTab, onClose,
 }: Props) {
   const [activeTab, setActiveTab] = useState<CompletionTabKey>('summary-memo');
@@ -90,6 +93,7 @@ export function CompletionPanel({
     hasPriorPeriodEngagement: !!hasPriorPeriodEngagement,
     teamHasEQR,
     answers: qaAnswers || {},
+    aiFuzzyCache,
   };
   const passesConditions = buildVisibilityChecker(scheduleTriggers || [], triggerCtx);
 
