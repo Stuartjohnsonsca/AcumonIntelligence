@@ -317,7 +317,49 @@ export function AuditTypeSchedulesClient({
     ...activeMapping.fieldwork,
     ...activeMapping.completion,
   ]);
-  const availableSchedules = masterSchedules.filter(s => !assignedSet.has(s.key));
+
+  // Collect usage info across ALL audit types so we can render "used in" badges
+  // AND surface orphan schedules (those present in another audit type but no longer in master)
+  const usageByKey = new Map<string, Set<string>>();
+  for (const at of AUDIT_TYPES) {
+    const mapping = stageMappings[at.key];
+    if (!mapping) continue;
+    const allKeys = [...mapping.planning, ...mapping.fieldwork, ...mapping.completion];
+    for (const k of allKeys) {
+      if (!usageByKey.has(k)) usageByKey.set(k, new Set());
+      usageByKey.get(k)!.add(at.key);
+    }
+  }
+
+  // Recover label from the key if the master entry is gone (title-cased from snake_case)
+  function deriveLabel(key: string): string {
+    return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  type AvailableRow = { key: string; label: string; defaultStage: Stage; isOrphan: boolean; usedIn: string[] };
+  const masterKeySet = new Set(masterSchedules.map(s => s.key));
+
+  // Union of master keys + keys referenced by any other audit type
+  const candidateKeys = new Set<string>([...masterKeySet, ...usageByKey.keys()]);
+
+  const availableSchedules: AvailableRow[] = Array.from(candidateKeys)
+    .filter(k => !assignedSet.has(k))
+    .map(k => {
+      const master = masterSchedules.find(s => s.key === k);
+      const usedIn = Array.from(usageByKey.get(k) || []).filter(at => at !== activeAuditType);
+      return {
+        key: k,
+        label: master?.label || deriveLabel(k),
+        defaultStage: (master?.defaultStage || master?.stage || 'planning') as Stage,
+        isOrphan: !master,
+        usedIn,
+      };
+    })
+    // Stable sort: master entries first, orphans last, alpha within each group
+    .sort((a, b) => {
+      if (a.isOrphan !== b.isOrphan) return a.isOrphan ? 1 : -1;
+      return a.label.localeCompare(b.label);
+    });
 
   // ── Find which stage a key belongs to inside active mapping ──
   function findStage(key: string): Stage | null {
@@ -452,6 +494,14 @@ export function AuditTypeSchedulesClient({
       return next;
     });
     setSaved(false);
+  }
+
+  // Restore a schedule that's orphaned (present in another audit type but missing from master)
+  function restoreOrphanToMaster(key: string, label: string, stage: Stage) {
+    setMasterSchedules(prev => {
+      if (prev.some(s => s.key === key)) return prev;
+      return [...prev, { key, label, defaultStage: stage }];
+    });
   }
 
   function addKeyToStage(key: string, stage: Stage) {
@@ -774,21 +824,47 @@ export function AuditTypeSchedulesClient({
         <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40">
           <div className="flex items-center gap-2 mb-2">
             <Eye className="h-3 w-3 text-slate-400" />
-            <h3 className="text-xs font-semibold text-slate-600">Available Schedules (not yet assigned)</h3>
+            <h3 className="text-xs font-semibold text-slate-600">Available Schedules (not yet assigned to {AUDIT_TYPES.find(a => a.key === activeAuditType)?.label})</h3>
             <span className="text-[10px] text-slate-400">{availableSchedules.length}</span>
           </div>
+          <p className="text-[10px] text-slate-400 mb-2">
+            Click any schedule to add it back to this audit type. Orphans (not in master list) are restored
+            automatically when clicked.
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {availableSchedules.map(s => {
-              const stage = (s.defaultStage || s.stage || 'planning') as Stage;
+              const usedInLabels = s.usedIn
+                .map(at => AUDIT_TYPES.find(a => a.key === at)?.label.replace(/ Audit$/, '') || at)
+                .join(', ');
               return (
                 <button
                   key={s.key}
-                  onClick={() => addKeyToStage(s.key, stage)}
-                  className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-white border border-slate-300 rounded hover:bg-blue-50 hover:border-blue-300"
+                  onClick={() => {
+                    if (s.isOrphan) restoreOrphanToMaster(s.key, s.label, s.defaultStage);
+                    addKeyToStage(s.key, s.defaultStage);
+                  }}
+                  className={`inline-flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-white border rounded hover:bg-blue-50 hover:border-blue-300 ${
+                    s.isOrphan ? 'border-amber-300 bg-amber-50/40' : 'border-slate-300'
+                  }`}
+                  title={
+                    s.isOrphan
+                      ? `Orphan \u2014 not in master list but still used in: ${usedInLabels || '(nowhere)'}. Click to restore.`
+                      : s.usedIn.length > 0
+                        ? `Also used in: ${usedInLabels}`
+                        : 'Click to add to this audit type'
+                  }
                 >
                   <Plus className="h-2.5 w-2.5" />
                   {s.label}
-                  <span className="text-[8px] text-slate-400 uppercase">{stage.slice(0, 4)}</span>
+                  <span className="text-[8px] text-slate-400 uppercase">{s.defaultStage.slice(0, 4)}</span>
+                  {s.isOrphan && (
+                    <span className="text-[7px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 border border-amber-300 rounded px-1">orphan</span>
+                  )}
+                  {!s.isOrphan && s.usedIn.length > 0 && (
+                    <span className="text-[7px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded px-1" title={`Used in: ${usedInLabels}`}>
+                      in {s.usedIn.length}
+                    </span>
+                  )}
                 </button>
               );
             })}
