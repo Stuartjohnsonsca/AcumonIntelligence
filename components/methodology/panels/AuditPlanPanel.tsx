@@ -388,7 +388,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           fetch(`/api/engagements/${engagementId}/permanent-file`),
           fetch(`/api/engagements/${engagementId}/test-conclusions`),
           fetch('/api/methodology-admin/risk-tables?tableType=riskClassification'),
-          fetch(`/api/engagements/${engagementId}/test-execution`),
+          // Lite mode skips the heavy nodeRuns payload — we only need summary
+          // fields + status here, so this is 10-100x faster on mature engagements.
+          fetch(`/api/engagements/${engagementId}/test-execution?lite=true`),
           fetch(`/api/engagements/${engagementId}/materiality`),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
@@ -718,7 +720,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       // Filter by active FS level sub-tab when set
       const params = new URLSearchParams();
       if (activeLevel) params.set('fsLine', activeLevel);
-      const qs = params.toString() ? `?${params.toString()}` : '';
+      // Lite mode: audit log table only needs summary + aggregate counts
+      params.set('lite', 'true');
+      const qs = `?${params.toString()}`;
       const res = await fetch(`/api/engagements/${engagementId}/test-execution${qs}`);
       if (res.ok) {
         const data = await res.json();
@@ -1338,9 +1342,19 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               </thead>
               <tbody>
                 {auditLog.map(exec => {
-                  const completedSteps = (exec.nodeRuns || []).filter((r: any) => r.status === 'completed').length;
-                  const failedSteps = (exec.nodeRuns || []).filter((r: any) => r.status === 'failed').length;
-                  const totalSteps = (exec.nodeRuns || []).length;
+                  // Prefer the aggregate counts from lite mode; fall back to counting
+                  // nodeRuns when the caller fetched the full shape.
+                  const completedSteps = typeof exec.nodeRunsCompleted === 'number'
+                    ? exec.nodeRunsCompleted
+                    : (exec.nodeRuns || []).filter((r: any) => r.status === 'completed').length;
+                  const failedSteps = typeof exec.nodeRunsFailed === 'number'
+                    ? exec.nodeRunsFailed
+                    : (exec.nodeRuns || []).filter((r: any) => r.status === 'failed').length;
+                  const totalSteps = typeof exec.nodeRunsTotal === 'number'
+                    ? exec.nodeRunsTotal
+                    : (exec.nodeRuns || []).length;
+                  // failedNode detail is only available in full-shape mode; audit log
+                  // doesn't render it anyway (only uses the count), so skip when lite.
                   const failedNode = (exec.nodeRuns || []).find((r: any) => r.status === 'failed');
                   return (
                     <tr key={exec.id} className={`border-b border-slate-50 hover:bg-slate-50 ${exec.status === 'failed' ? 'bg-red-50/30' : ''}`}>

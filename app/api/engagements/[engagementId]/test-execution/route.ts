@@ -137,10 +137,75 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
   const url = new URL(req.url);
   const fsLine = url.searchParams.get('fsLine');
   const status = url.searchParams.get('status');
+  // Lite mode: skip the potentially-huge nodeRuns payload and return only
+  // aggregate counts. Used by consumers that just need summary info (e.g. the
+  // Audit Plan panel's initial load and the audit log table). A full fetch is
+  // still available for callers that need individual node runs (flow details
+  // modal, etc.) — they simply omit ?lite=true.
+  const lite = url.searchParams.get('lite') === 'true';
 
   const where: any = { engagementId };
   if (fsLine) where.fsLine = fsLine;
   if (status) where.status = status;
+
+  if (lite) {
+    // Return summary fields + per-execution aggregate node-run counts so the
+    // Audit Log table can still render "completed / failed / total" without
+    // pulling every node_run row.
+    const execs = await prisma.testExecution.findMany({
+      where,
+      select: {
+        id: true,
+        engagementId: true,
+        testDescription: true,
+        fsLine: true,
+        fsLineId: true,
+        testTypeCode: true,
+        status: true,
+        startedAt: true,
+        completedAt: true,
+        pauseReason: true,
+        pauseRefId: true,
+        currentNodeId: true,
+        errorMessage: true,
+        executionMode: true,
+      },
+      orderBy: { startedAt: 'desc' },
+    });
+
+    // One grouped-count query instead of N per-execution joins
+    const counts = execs.length > 0
+      ? await prisma.testExecutionNodeRun.groupBy({
+          by: ['executionId', 'status'],
+          where: { executionId: { in: execs.map(e => e.id) } },
+          _count: { _all: true },
+        })
+      : [];
+
+    const countsByExec = new Map<string, { total: number; completed: number; failed: number }>();
+    for (const row of counts) {
+      const entry = countsByExec.get(row.executionId) || { total: 0, completed: 0, failed: 0 };
+      entry.total += row._count._all;
+      if (row.status === 'completed') entry.completed += row._count._all;
+      if (row.status === 'failed') entry.failed += row._count._all;
+      countsByExec.set(row.executionId, entry);
+    }
+
+    const executions = execs.map(e => {
+      const c = countsByExec.get(e.id) || { total: 0, completed: 0, failed: 0 };
+      return {
+        ...e,
+        nodeRunsTotal: c.total,
+        nodeRunsCompleted: c.completed,
+        nodeRunsFailed: c.failed,
+        // Preserve the legacy shape so UI code reading `nodeRuns` doesn't crash.
+        // It's an empty array in lite mode — callers use the aggregate counts above.
+        nodeRuns: [],
+      };
+    });
+
+    return NextResponse.json({ executions });
+  }
 
   const executions = await prisma.testExecution.findMany({
     where,
