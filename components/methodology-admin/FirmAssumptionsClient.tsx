@@ -29,6 +29,7 @@ interface Props {
   initialTestCategories?: string[];
   initialArConfidenceFactor?: number;
   initialLargeUnusualScoring?: any;
+  initialFirmFees?: number;
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -113,6 +114,7 @@ export function FirmAssumptionsClient({
   initialTestCategories,
   initialArConfidenceFactor,
   initialLargeUnusualScoring,
+  initialFirmFees,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -137,6 +139,7 @@ export function FirmAssumptionsClient({
   const [arConfidenceFactor, setArConfidenceFactor] = useState<number>(
     initialArConfidenceFactor ?? 1.0
   );
+  const [firmFees, setFirmFees] = useState<number>(initialFirmFees ?? 0);
   const [luPatterns, setLuPatterns] = useState<{ pattern: string; category: string; weight: number }[]>(
     initialLargeUnusualScoring?.descriptionPatterns || []
   );
@@ -215,6 +218,7 @@ export function FirmAssumptionsClient({
               specialistRoles: { roles: specialistRoles },
               testCategories: { categories: testCategories },
               arConfidenceFactor: { confidenceFactor: arConfidenceFactor },
+              firm_fees: { amount: firmFees },
               large_unusual_scoring: { descriptionPatterns: luPatterns, thresholds: luThresholds, sizeScoring: initialLargeUnusualScoring?.sizeScoring, timingScoring: initialLargeUnusualScoring?.timingScoring, otherScoring: initialLargeUnusualScoring?.otherScoring },
             },
           }),
@@ -669,6 +673,44 @@ export function FirmAssumptionsClient({
                 onChange={(e) => { setArConfidenceFactor(Number(e.target.value)); setSaved(false); }}
                 className="w-24 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Firm Fees (used by the Ethics schedule formula `total_fees / firm_fees * 100`) */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('firmFees')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Firm Fees</h2>
+          {expandedSections.firmFees ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.firmFees && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">
+              Your firm&apos;s total annual fee income. Exposed as the variable <code className="bg-slate-100 px-1 rounded text-xs">firm_fees</code> to
+              formulas in the Ethics schedule — e.g. &quot;% of Total Fees to Firm Fees&quot; is computed as
+              <code className="bg-slate-100 px-1 rounded text-xs ml-1">total_fees / firm_fees * 100</code>.
+              Updating this value changes the calculation on every engagement on the next load.
+            </p>
+            <div className="flex items-center space-x-4">
+              <label className="text-sm font-medium text-slate-700">Firm Fees (£)</label>
+              <input
+                type="number"
+                min={0}
+                step={1000}
+                value={firmFees}
+                onChange={(e) => { setFirmFees(Number(e.target.value) || 0); setSaved(false); }}
+                className="w-48 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g. 2500000"
+              />
+              {firmFees > 0 && (
+                <span className="text-xs text-slate-500">
+                  £{firmFees.toLocaleString('en-GB')}
+                </span>
+              )}
             </div>
           </div>
         )}

@@ -397,17 +397,84 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                               />
                             )}
 
-                            {/* Formula expression */}
+                            {/* Formula expression — with "insert" helper chips for field IDs and common operators */}
                             {q.inputType === 'formula' && (
-                              <div className="col-span-2">
-                                <label className="block text-xs text-slate-500 mb-1 font-medium">Formula Expression</label>
+                              <div className="col-span-2 space-y-1.5">
+                                <label className="block text-xs text-slate-500 font-medium">Formula Expression</label>
                                 <input
                                   type="text"
                                   value={q.formulaExpression || ''}
                                   onChange={e => updateQuestion(q.id, { formulaExpression: e.target.value })}
                                   className="w-full border border-slate-200 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                  placeholder='IF({field_id}="Y", "Result A", "Result B")'
+                                  placeholder='e.g. audit_fee + non_audit_fee'
                                 />
+                                <div className="space-y-1">
+                                  <p className="text-[10px] text-slate-500">
+                                    Click a chip to append it to the expression. Use bare identifiers (no
+                                    braces) for simple references. Arithmetic: <code className="bg-slate-100 px-1 rounded">+ - * /</code>.
+                                    Functions: <code className="bg-slate-100 px-1 rounded">IF(cond, a, b)</code>,{' '}
+                                    <code className="bg-slate-100 px-1 rounded">ROUND(x, 2)</code>,{' '}
+                                    <code className="bg-slate-100 px-1 rounded">SUM(a, b, c)</code>.
+                                  </p>
+                                  {/* Available fields in this template */}
+                                  <div className="flex flex-wrap gap-1">
+                                    {questions
+                                      .filter(other => other.id !== q.id && other.id)
+                                      .slice(0, 40)
+                                      .map(other => (
+                                        <button
+                                          key={other.id}
+                                          type="button"
+                                          onClick={() => {
+                                            const current = q.formulaExpression || '';
+                                            const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
+                                            updateQuestion(q.id, { formulaExpression: current + sep + other.id });
+                                          }}
+                                          title={other.questionText || other.id}
+                                          className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                                        >
+                                          {other.id}
+                                        </button>
+                                      ))}
+                                    {/* Firm-wide variables */}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const current = q.formulaExpression || '';
+                                        const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
+                                        updateQuestion(q.id, { formulaExpression: current + sep + 'firm_fees' });
+                                      }}
+                                      title="Firm-wide fees (set in Methodology Admin → Firm-Wide Assumptions)"
+                                      className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100"
+                                    >
+                                      firm_fees
+                                    </button>
+                                  </div>
+                                  {/* Operator chips */}
+                                  <div className="flex flex-wrap gap-1">
+                                    {['+', '-', '*', '/', '(', ')', 'IF(', 'ROUND(', 'SUM('].map(op => (
+                                      <button
+                                        key={op}
+                                        type="button"
+                                        onClick={() => {
+                                          const current = q.formulaExpression || '';
+                                          const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
+                                          updateQuestion(q.id, { formulaExpression: current + sep + op });
+                                        }}
+                                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"
+                                      >
+                                        {op}
+                                      </button>
+                                    ))}
+                                    <button
+                                      type="button"
+                                      onClick={() => updateQuestion(q.id, { formulaExpression: '' })}
+                                      className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
+                                    >
+                                      clear
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
                             )}
 

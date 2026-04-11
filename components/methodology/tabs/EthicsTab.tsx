@@ -12,15 +12,29 @@ interface Props {
 export function EthicsTab({ engagementId }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
   const [questions, setQuestions] = useState<TemplateQuestion[]>([]);
+  const [firmFees, setFirmFees] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const actionTriggers = useActionTriggers();
 
   const loadData = useCallback(async () => {
     try {
-      const [dataRes, templateRes] = await Promise.all([
+      const [dataRes, templateRes, riskTablesRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/ethics`),
         fetch(`/api/methodology-admin/templates?templateType=ethics_questions&auditType=ALL`),
+        // Pull firm-wide assumptions so we can expose firm_fees to formulas
+        fetch('/api/methodology-admin/risk-tables'),
       ]);
+
+      if (riskTablesRes.ok) {
+        try {
+          const tablesJson = await riskTablesRes.json();
+          // Accept either { tables: {...} } (batch shape) or a raw map.
+          const map: Record<string, any> = tablesJson.tables || tablesJson || {};
+          const val = map.firm_fees?.amount;
+          if (typeof val === 'number') setFirmFees(val);
+          else if (typeof val === 'string' && !Number.isNaN(Number(val))) setFirmFees(Number(val));
+        } catch { /* ignore parse errors */ }
+      }
 
       if (dataRes.ok) {
         const json = await dataRes.json();
@@ -66,6 +80,10 @@ export function EthicsTab({ engagementId }: Props) {
       endpoint="ethics"
       questions={questions}
       initialData={data as Record<string, string | number | boolean | null>}
+      // firm_fees is defined in Methodology Admin → Firm-Wide Assumptions and is passed as
+      // a read-only formula variable. It's not saved to the engagement so future changes to
+      // the firm-wide value flow through to every engagement automatically.
+      externalValues={{ firm_fees: firmFees }}
       showActionTriggers
       actionTriggerOptions={actionTriggers}
     />

@@ -15,6 +15,11 @@ interface Props {
   questions: TemplateQuestion[];
   initialData: FormValues;
   crossRefData?: Record<string, FormValues>;
+  /**
+   * Extra read-only variables made available to formula expressions but never
+   * saved back to the engagement. Use for firm-wide assumptions like firm_fees.
+   */
+  externalValues?: FormValues;
   currencySymbol?: string;
   showActionTriggers?: boolean;
   actionTriggerOptions?: string[];
@@ -27,6 +32,7 @@ export function DynamicAppendixForm({
   questions,
   initialData,
   crossRefData,
+  externalValues,
   showActionTriggers = false,
   actionTriggerOptions = [],
   priorYearData,
@@ -79,16 +85,19 @@ export function DynamicAppendixForm({
     return Array.from(map.values());
   }, [questions]);
 
-  // Compute formula values
+  // Compute formula values. External (firm-wide) variables are merged into a
+  // read-only view passed to the formula engine so bare identifiers like
+  // `firm_fees` resolve — but are never saved to the engagement.
   const computedValues = useMemo(() => {
+    const merged: FormValues = { ...(externalValues || {}), ...values };
     const computed: FormValues = {};
     for (const q of questions) {
       if (q.inputType === 'formula' && q.formulaExpression) {
-        computed[q.id] = evaluateFormula(q.formulaExpression, values, crossRefData);
+        computed[q.id] = evaluateFormula(q.formulaExpression, merged, crossRefData);
       }
     }
     return computed;
-  }, [questions, values, crossRefData]);
+  }, [questions, values, externalValues, crossRefData]);
 
   function handleChange(questionId: string, value: string | number | boolean | null) {
     setValues(prev => ({ ...prev, [questionId]: value }));

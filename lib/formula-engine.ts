@@ -14,11 +14,94 @@ export function evaluateFormula(
   if (!expression) return null;
 
   try {
-    const resolved = resolveReferences(expression, values, crossRefValues);
+    // First pass: replace {fieldId} / {appendix.fieldId} references
+    let resolved = resolveReferences(expression, values, crossRefValues);
+    // Second pass: also replace bare identifiers that match a value name.
+    // A bare identifier is any snake_case / camelCase token NOT preceded by
+    // a letter/digit/underscore and NOT inside a quoted string. This lets
+    // admins write `audit_fee + non_audit_fee` without having to wrap every
+    // reference in braces — closer to Excel-style references.
+    resolved = resolveBareIdentifiers(resolved, values);
     return parseExpression(resolved.trim());
   } catch {
     return null; // Gracefully return null on any parse error
   }
+}
+
+/** Known formula function names that must NOT be treated as value references. */
+const FORMULA_FUNCTIONS = new Set(['IF', 'SUM', 'ROUND', 'OR', 'AND', 'TRUE', 'FALSE', 'INDEX', 'MATCH']);
+
+/**
+ * Replace bare identifiers with their values from `values`. Skips anything
+ * inside double-quoted string literals and anything immediately followed by
+ * `(` (function calls).
+ */
+function resolveBareIdentifiers(expr: string, values: FormValues): string {
+  // Walk the expression character-by-character so we can skip quoted strings.
+  let out = '';
+  let i = 0;
+  while (i < expr.length) {
+    const ch = expr[i];
+
+    // Quoted string literal — copy verbatim until the closing quote
+    if (ch === '"') {
+      const end = expr.indexOf('"', i + 1);
+      if (end === -1) {
+        out += expr.slice(i);
+        break;
+      }
+      out += expr.slice(i, end + 1);
+      i = end + 1;
+      continue;
+    }
+
+    // Potential identifier start
+    if (/[A-Za-z_]/.test(ch)) {
+      let j = i + 1;
+      while (j < expr.length && /[A-Za-z0-9_]/.test(expr[j])) j++;
+      const ident = expr.slice(i, j);
+      const nextNonSpace = expr.slice(j).match(/^\s*(.)/)?.[1];
+
+      // Skip function names — they're followed by "("
+      if (nextNonSpace === '(' && FORMULA_FUNCTIONS.has(ident.toUpperCase())) {
+        out += ident;
+        i = j;
+        continue;
+      }
+
+      // Skip keywords that parseExpression handles directly
+      if (ident === 'TRUE' || ident === 'FALSE') {
+        out += ident;
+        i = j;
+        continue;
+      }
+
+      // Look up in values. If found and numeric/bool, substitute literally;
+      // if string, wrap in quotes. If not found, leave the identifier as-is
+      // (which will fall through to parseArithmetic and either fail gracefully
+      // or return the string).
+      if (Object.prototype.hasOwnProperty.call(values, ident)) {
+        const v = values[ident];
+        if (v === null || v === undefined || v === '') {
+          out += '""';
+        } else if (typeof v === 'string') {
+          // If the string is a number, substitute as number (allows stored "123" to math)
+          const asNum = Number(v);
+          out += !Number.isNaN(asNum) && v.trim() !== '' ? String(asNum) : `"${v}"`;
+        } else {
+          out += String(v);
+        }
+      } else {
+        out += ident;
+      }
+      i = j;
+      continue;
+    }
+
+    out += ch;
+    i++;
+  }
+  return out;
 }
 
 /** Replace {fieldId} and {appendix_x.fieldId} with actual values */

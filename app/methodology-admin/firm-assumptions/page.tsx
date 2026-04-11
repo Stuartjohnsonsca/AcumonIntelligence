@@ -38,6 +38,7 @@ export default async function FirmAssumptionsPage() {
   const testCategories: string[] = (tablesMap.testCategories?.categories as string[]) || ['Significant Risk', 'Area of Focus', 'Other', 'Analytical Review', 'Mandatory'];
   const arConfidenceFactor: number = (tablesMap.arConfidenceFactor?.confidenceFactor as number) ?? 1.0;
   const largeUnusualScoring = tablesMap.large_unusual_scoring || null;
+  const firmFees: number = (tablesMap.firm_fees?.amount as number) ?? 0;
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-6xl">
@@ -59,6 +60,7 @@ export default async function FirmAssumptionsPage() {
         initialTestCategories={testCategories}
         initialArConfidenceFactor={arConfidenceFactor}
         initialLargeUnusualScoring={largeUnusualScoring}
+        initialFirmFees={firmFees}
       />
     </div>
   );
