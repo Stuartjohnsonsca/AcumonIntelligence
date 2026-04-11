@@ -77,11 +77,11 @@ export async function populateMergeFields(
     recipient_first_name: recipient?.firstName || primaryContact?.name?.split(' ')[0] || '',
     recipient_surname: recipient?.surname || primaryContact?.name?.split(' ').slice(1).join(' ') || '',
     recipient_email: recipient?.email || primaryContact?.email || '',
-    recipient_role: recipient?.role || primaryContact?.role || '',
+    recipient_role: recipient?.role || (primaryContact as any)?.role || '',
 
     // Client
-    client_name: client?.companyName || '',
-    client_ref: client?.clientRef || '',
+    client_name: client?.clientName || '',
+    client_ref: (client as any)?.clientRef || '',
     client_address: (client as any)?.address || '',
     client_reg_number: (client as any)?.registrationNumber || '',
     client_industry: (client as any)?.industry || '',

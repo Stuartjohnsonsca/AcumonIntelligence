@@ -174,7 +174,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const engagement = await prisma.auditEngagement.findUnique({
       where: { id: engagementId },
       include: {
-        client: { select: { companyName: true } },
+        client: { select: { clientName: true } },
         period: { select: { endDate: true } },
       },
     });
@@ -182,7 +182,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     try {
       const { generateSRMMMemo } = await import('@/lib/srmm-docx');
       const buffer = await generateSRMMMemo({
-        clientName: engagement?.client?.companyName || 'Unknown',
+        clientName: engagement?.client?.clientName || 'Unknown',
         periodEnd: engagement?.period?.endDate ? new Date(engagement.period.endDate).toLocaleDateString('en-GB') : '',
         rmmRow: {
           lineItem: rmmRow.lineItem,
@@ -197,7 +197,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         signOffs,
       });
 
-      return new Response(buffer, {
+      return new Response(new Uint8Array(buffer), {
         headers: {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           'Content-Disposition': `attachment; filename="SRMM_${rmmRow.lineItem.replace(/[^a-zA-Z0-9]/g, '_')}.docx"`,

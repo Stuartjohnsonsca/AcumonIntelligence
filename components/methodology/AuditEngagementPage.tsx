@@ -420,7 +420,7 @@ export function AuditEngagementPage({ auditType }: Props) {
 
               {/* Open Audit File */}
               <button
-                onClick={handleOpenAuditFile}
+                onClick={() => { void handleOpenAuditFile(); }}
                 disabled={!selectedPeriodId}
                 className="w-full px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 text-sm font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >

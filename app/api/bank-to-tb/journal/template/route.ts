@@ -34,8 +34,9 @@ export async function GET(req: NextRequest) {
   }
 
   // Fetch Chart of Accounts for this session's firm
-  const coa = await prisma.chartOfAccounts.findMany({
-    where: { firmId: session.user.firmId, isActive: true },
+  // (model is FirmChartOfAccount; isActive does not exist on it)
+  const coa = await prisma.firmChartOfAccount.findMany({
+    where: { firmId: session.user.firmId },
     orderBy: { sortOrder: 'asc' },
     select: { accountCode: true, accountName: true, categoryType: true },
   });
@@ -96,11 +97,11 @@ export async function GET(req: NextRequest) {
   }
 
   // Account Code dropdown (column B) — from Chart of Accounts
-  const accountCodes = coa.map(a => a.accountCode).slice(0, 200); // Excel limit on dropdown items
+  const accountCodes = coa.map((a: { accountCode: string }) => a.accountCode).slice(0, 200); // Excel limit on dropdown items
   if (accountCodes.length > 0) {
     // Use a hidden reference sheet for long lists
     const refSheet = wb.addWorksheet('_Ref', { state: 'veryHidden' });
-    accountCodes.forEach((code, i) => {
+    accountCodes.forEach((code: string, i: number) => {
       refSheet.getCell(`A${i + 1}`).value = code;
     });
 
@@ -124,7 +125,7 @@ export async function GET(req: NextRequest) {
   // VLOOKUP for Account Name (auto-fills from Account Code)
   // Use a lookup sheet
   const lookupSheet = wb.addWorksheet('_Lookup', { state: 'veryHidden' });
-  coa.forEach((a, i) => {
+  coa.forEach((a: { accountCode: string; accountName: string }, i: number) => {
     lookupSheet.getCell(`A${i + 1}`).value = a.accountCode;
     lookupSheet.getCell(`B${i + 1}`).value = a.accountName;
   });

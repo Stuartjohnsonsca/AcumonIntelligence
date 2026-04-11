@@ -10,6 +10,8 @@ export interface ExecutionContext {
     clientName: string;
     periodStart: string;
     periodEnd: string;
+    /** Period end + 2 months — used for cut-off windows */
+    periodEndPlus2M?: string;
     materiality: number;
     performanceMateriality: number;
     clearlyTrivial: number;
@@ -20,6 +22,14 @@ export interface ExecutionContext {
     description: string;
     fsLine: string;
     assertion: string;
+    /** Optional triggering TB row attached to the test context */
+    tbRow?: {
+      accountCode: string;
+      description: string;
+      currentYear: number;
+      priorYear: number;
+      fsNote?: string;
+    };
   };
   nodes: Record<string, any>;    // outputs keyed by nodeId
   vars: Record<string, any>;     // flow-level variables — persist across nodes and sub-flows

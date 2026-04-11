@@ -445,8 +445,21 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                               </label>
                               <label className="flex items-center gap-1.5 text-xs text-slate-500">
                                 Conditional on:
-                                <input type="text" value={q.conditionalOn || ''} onChange={e => updateQuestion(q.id, { conditionalOn: e.target.value || undefined })}
-                                  className="border border-slate-200 rounded px-2 py-1 text-xs w-44" placeholder="other_question_key=Y" />
+                                <input
+                                  type="text"
+                                  value={typeof q.conditionalOn === 'string' ? q.conditionalOn : q.conditionalOn ? `${q.conditionalOn.questionId}=${q.conditionalOn.value}` : ''}
+                                  onChange={e => {
+                                    const raw = e.target.value;
+                                    if (!raw) {
+                                      updateQuestion(q.id, { conditionalOn: undefined });
+                                    } else {
+                                      const [questionId, value] = raw.split('=');
+                                      updateQuestion(q.id, { conditionalOn: { questionId: questionId || '', value: value || '' } });
+                                    }
+                                  }}
+                                  className="border border-slate-200 rounded px-2 py-1 text-xs w-44"
+                                  placeholder="other_question_key=Y"
+                                />
                               </label>
                             </div>
                           </div>

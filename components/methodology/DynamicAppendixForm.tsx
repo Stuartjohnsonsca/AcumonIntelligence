@@ -142,7 +142,7 @@ export function DynamicAppendixForm({
                         <input
                           type={q.inputType === 'number' || q.inputType === 'currency' ? 'text' : 'text'}
                           inputMode={q.inputType === 'number' || q.inputType === 'currency' ? 'decimal' : 'text'}
-                          value={values[`py_${q.id}`] ?? ''}
+                          value={(values[`py_${q.id}`] as string | number | undefined) ?? ''}
                           onChange={e => {
                             const v = q.inputType === 'number' || q.inputType === 'currency'
                               ? (e.target.value ? parseFloat(e.target.value.replace(/[^0-9.\-]/g, '')) || null : null)

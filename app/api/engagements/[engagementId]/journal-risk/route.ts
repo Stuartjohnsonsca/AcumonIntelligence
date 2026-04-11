@@ -118,8 +118,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       validateConfig(config);
 
       // Get entity name
-      const client = await prisma.client.findUnique({ where: { id: engagement.clientId }, select: { companyName: true } });
-      const entityName = client?.companyName || 'Unknown';
+      const client = await prisma.client.findUnique({ where: { id: engagement.clientId }, select: { clientName: true } });
+      const entityName = client?.clientName || 'Unknown';
 
       // Run analysis
       const result = runJournalRiskAnalysis({
@@ -248,7 +248,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       selection: { selected: e.selected, selectionLayer: e.selectionLayer, mandatory: e.mandatory, rationale: e.rationale || '' },
     }));
 
-    const csv = generateScoredCsv(results);
+    const csv = generateScoredCsv(results as any);
     return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="journal_risk_${run.runId}.csv"` } });
   }
 

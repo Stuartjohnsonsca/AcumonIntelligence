@@ -145,8 +145,8 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
     }
 
     // Also check samplingResults from local state (includes sampleItems from "Investigate" click)
-    if (samplingResults?.selectedIndices?.length > 0 && selectedIndices.length === 0) {
-      selectedIndices = samplingResults.selectedIndices;
+    if ((samplingResults?.selectedIndices?.length ?? 0) > 0 && selectedIndices.length === 0) {
+      selectedIndices = samplingResults!.selectedIndices!;
     }
     if ((samplingResults as any)?.sampleItems?.length > 0 && actualSampleItems.length === 0) {
       actualSampleItems = (samplingResults as any).sampleItems;
@@ -201,7 +201,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
 
         // Use the match assessment from the flow engine (actual comparison)
         const evidenceGross = Number(inv?.Total || 0);
-        const sampleGross = Number(sampleItem?.gross || sampleItem?.amount || 0);
+        const sampleGross = Number(sampleItem?.amount || 0);
         const amountMatches = r.amountMatches;
         let matchStatus: 'matched' | 'partial' | 'missing' | 'pending' = 'pending';
         if (r.evidenceRetrieved && inv) {
@@ -986,7 +986,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     gross: item.amount || 0,
                   }))}
                   evidenceDocs={evidence.map((ev, i) => {
-                    const si = ev.sampleIndex ?? sampleItems.findIndex(s => s.id === ev.itemId || s.ref === ev.itemId);
+                    const si = (ev as any).sampleIndex ?? sampleItems.findIndex(s => s.id === ev.itemId || s.ref === ev.itemId);
                     return {
                       sampleIndex: si >= 0 ? si : i,
                       itemId: ev.itemId,
@@ -1006,7 +1006,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     };
                   })}
                   verificationResults={results.map(r => ({
-                    sampleIndex: r.sampleIndex ?? sampleItems.findIndex(s => s.id === r.itemId),
+                    sampleIndex: (r as any).sampleIndex ?? sampleItems.findIndex(s => s.id === r.itemId),
                     amountMatch: r.amountMatch as any,
                     dateMatch: r.dateMatch as any,
                     periodCheck: r.periodCheck as any,
@@ -1208,7 +1208,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     clearlyTrivial={clearlyTrivial}
                     performanceMateriality={tolerableMisstatement}
                     tolerableMisstatement={tolerableMisstatement}
-                    onConclusionChange={(c) => onConclusionChange?.(c)}
+                    onConclusionChange={(c) => onConclusionChange?.(c === 'failed' ? 'red' : c)}
                   />
                 )}
 

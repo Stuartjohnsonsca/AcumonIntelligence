@@ -126,7 +126,7 @@ function parseHtmlToBlocks(html: string): Block[] {
 
     // Detect if this was inside a heading (check preceding tag)
     const headingMatch = cleaned.match(new RegExp(`<(h[1-3])[^>]*>[^]*?${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'));
-    const isBold = /<(b|strong)[^>]*>/i.test(seg) || (headingMatch && headingMatch[1]);
+    const isBold = /<(b|strong)[^>]*>/i.test(seg) || !!(headingMatch && headingMatch[1]);
 
     if (headingMatch) {
       const level = headingMatch[1].toLowerCase();

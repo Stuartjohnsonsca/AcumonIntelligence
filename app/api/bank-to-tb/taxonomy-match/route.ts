@@ -162,7 +162,7 @@ export async function PUT(req: Request) {
   try {
     // Update each trial balance entry
     await Promise.all(updates.map(u =>
-      prisma.bankToTBTrialBalance.update({
+      prisma.trialBalanceEntry.update({
         where: { id: u.id },
         data: { accountCode: u.accountCode },
       })

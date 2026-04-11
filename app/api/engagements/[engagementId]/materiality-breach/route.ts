@@ -61,7 +61,7 @@ export async function POST(
       ? [techTeam.email]
       : techTeam.members?.map(m => m.email) || [];
     for (const to of recipients) {
-      await sendEmail({ to, subject, body });
+      await sendEmail(to, subject, body);
     }
   } catch (err) {
     console.warn('[TechBreach] Email send failed (non-fatal):', err);

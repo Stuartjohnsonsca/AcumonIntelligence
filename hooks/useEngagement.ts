@@ -50,6 +50,8 @@ export interface ContactData {
   name: string;
   email?: string;
   phone?: string;
+  /** Optional job title / role description for the contact */
+  role?: string;
   isMainContact: boolean;
   portalAccess?: boolean;
 }

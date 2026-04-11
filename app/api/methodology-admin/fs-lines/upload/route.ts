@@ -27,9 +27,9 @@ export async function POST(req: Request) {
   const file = formData.get('file') as File;
   if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
 
-  const buffer = Buffer.from(await file.arrayBuffer());
+  const arrayBuf = await file.arrayBuffer();
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  await wb.xlsx.load(arrayBuf as any);
   const ws = wb.getWorksheet(1);
   if (!ws) return NextResponse.json({ error: 'No worksheet found' }, { status: 400 });
 

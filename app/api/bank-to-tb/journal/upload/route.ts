@@ -49,9 +49,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const arrayBuf = await file.arrayBuffer();
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(buffer);
+    await wb.xlsx.load(arrayBuf as any);
     const ws = wb.getWorksheet(1);
 
     if (!ws) {

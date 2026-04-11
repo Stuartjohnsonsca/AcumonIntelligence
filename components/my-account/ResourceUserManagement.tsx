@@ -53,7 +53,7 @@ function UserRow({ s, specialistRoles }: { s: StaffData; specialistRoles: string
   }
 
   function toggleCore(limitKey: string) {
-    setData(prev => ({ ...prev, [limitKey]: prev[limitKey] != null ? null : 5 }));
+    setData(prev => ({ ...prev, [limitKey]: (prev as any)[limitKey] != null ? null : 5 }));
     setSaved(false);
   }
 
@@ -136,7 +136,7 @@ function UserRow({ s, specialistRoles }: { s: StaffData; specialistRoles: string
 
       {/* Core role circles: Preparer, Reviewer, RI */}
       {CORE_CIRCLES.map(({ role, color, limitKey }) => {
-        const enabled = data[limitKey] != null;
+        const enabled = (data as any)[limitKey] != null;
         return (
           <td key={role} className="px-3 py-3 align-top text-center">
             <div className="flex flex-col items-center gap-1">
@@ -148,7 +148,7 @@ function UserRow({ s, specialistRoles }: { s: StaffData; specialistRoles: string
               </button>
               <input
                 type="number" min={0} max={99}
-                value={enabled ? data[limitKey] : 0}
+                value={enabled ? (data as any)[limitKey] : 0}
                 disabled={!enabled}
                 onChange={e => set(limitKey, parseInt(e.target.value) || 0)}
                 className={`w-12 text-xs text-center border rounded py-0.5 px-1 ${

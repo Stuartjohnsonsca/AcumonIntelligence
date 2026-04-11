@@ -160,7 +160,7 @@ function evaluateCondition(condStr: string): boolean {
   return !!val && val !== '' && val !== 0;
 }
 
-function parseArithmetic(expr: string): number | string | null {
+function parseArithmetic(expr: string): number | string | boolean | null {
   // Simple left-to-right arithmetic for +, -, *, /
   // Find the last + or - outside parentheses (lowest precedence)
   let depth = 0;

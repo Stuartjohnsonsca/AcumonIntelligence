@@ -101,7 +101,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       },
     });
 
-    return new Response(pdfBuffer, {
+    return new Response(new Uint8Array(pdfBuffer), {
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${template.name.replace(/[^a-zA-Z0-9 ]/g, '_')}.pdf"`,

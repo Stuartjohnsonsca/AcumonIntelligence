@@ -65,16 +65,30 @@ export function getActionHandler(handlerName: string): ActionHandler | null {
 async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
   const { engagementId, inputs } = ctx;
 
+  // Look up the engagement to get its clientId + the requesting user's name (PortalRequest requires both)
+  const engagement = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { clientId: true },
+  });
+  if (!engagement) {
+    return { action: 'error', outputs: {}, errorMessage: 'Engagement not found' };
+  }
+  const requestingUser = await prisma.user.findUnique({
+    where: { id: ctx.config.userId },
+    select: { name: true, email: true },
+  });
+
   // Create a portal request for the client
   try {
     const portalRequest = await prisma.portalRequest.create({
       data: {
+        clientId: engagement.clientId,
         engagementId,
         section: 'evidence',
-        questionText: inputs.message_to_client || 'Please provide the requested documents.',
+        question: inputs.message_to_client || 'Please provide the requested documents.',
         status: 'outstanding',
         requestedById: ctx.config.userId,
-        fsLine: ctx.config.fsLine,
+        requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
         evidenceTag: inputs.area_of_work || ctx.config.fsLine,
       },
     });
@@ -130,7 +144,7 @@ async function handleAccountingExtract(ctx: ActionHandlerContext): Promise<Actio
     if (!engagement) return { action: 'error', outputs: {}, errorMessage: 'Engagement not found' };
 
     const connection = await prisma.accountingConnection.findFirst({
-      where: { clientId: engagement.clientId, isActive: true },
+      where: { clientId: engagement.clientId, expiresAt: { gt: new Date() } },
     });
 
     if (!connection) {

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
@@ -94,8 +95,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
 
   // Clear all existing farSchedule for this engagement
   await prisma.auditTBRow.updateMany({
-    where: { engagementId, farSchedule: { not: null } },
-    data: { farSchedule: null },
+    where: { engagementId, farSchedule: { not: Prisma.JsonNull } },
+    data: { farSchedule: Prisma.JsonNull },
   });
 
   // Set farSchedule on linked TB rows

@@ -241,6 +241,10 @@ export interface AiTokenUsage {
   completionTokens: number;
   totalTokens: number;
   model: string;
+  /** Optional computed cost in USD (set by some callers, e.g. azure-document-intelligence) */
+  costUsd?: number;
+  /** Optional page count for the analysed document (set by document-extraction callers) */
+  pageCount?: number;
 }
 
 const AI_PRICING: Record<string, { inputPerToken: number; outputPerToken: number }> = {

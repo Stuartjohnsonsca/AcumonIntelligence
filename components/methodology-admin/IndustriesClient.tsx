@@ -131,7 +131,11 @@ export function IndustriesClient({ firmId, initialIndustries }: Props) {
               <tr key={ind.id} className={`border-t hover:bg-slate-50 ${!ind.isActive ? 'opacity-50' : ''}`}>
                 <td className="p-3 text-sm text-slate-700 flex items-center space-x-2">
                   <span>{ind.name}</span>
-                  {ind.isDefault && <Lock className="h-3 w-3 text-slate-400" title="Default - cannot delete" />}
+                  {ind.isDefault && (
+                    <span title="Default - cannot delete">
+                      <Lock className="h-3 w-3 text-slate-400" />
+                    </span>
+                  )}
                 </td>
                 <td className="p-3 text-sm text-slate-500 font-mono">{ind.code}</td>
                 <td className="p-3 text-center">

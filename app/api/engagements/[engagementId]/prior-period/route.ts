@@ -94,7 +94,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   const body = await req.json();
 
   if (body.action === 'signoff') {
-    return handlePermanentFileSignOff(engagementId, { userId: session.user.id, userName: session.user.name || '', role: body.role }, 'prior-period');
+    return handlePermanentFileSignOff(engagementId, { engagementId, userId: session.user.id, userName: session.user.name || '', role: body.role }, 'prior-period');
   }
   if (body.action === 'unsignoff') {
     return handlePermanentFileUnsignOff(engagementId, session.user.id, body.role, 'prior-period');
@@ -148,8 +148,9 @@ Extract actual monetary figures where available (e.g. "Revenue: £2,345,678"). I
             const buffer = await downloadBlob(doc.storagePath, process.env.AZURE_STORAGE_CONTAINER_INBOX || 'upload-inbox');
             if (doc.mimeType?.includes('pdf')) {
               try {
-                const pdf = await import('pdf-parse');
-                const parsed = await pdf.default(buffer);
+                const pdfModule: any = await import('pdf-parse');
+                const pdfFn = pdfModule.default || pdfModule;
+                const parsed = await pdfFn(buffer);
                 documentContent = parsed.text?.slice(0, 8000) || '';
               } catch {
                 documentContent = buffer.toString('utf-8').slice(0, 8000);

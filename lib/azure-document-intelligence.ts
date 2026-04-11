@@ -41,7 +41,7 @@ export async function extractBankStatementWithAzureDI(
       'Ocp-Apim-Subscription-Key': API_KEY,
       'Content-Type': 'application/pdf',
     },
-    body: pdfBuffer,
+    body: new Uint8Array(pdfBuffer),
   });
 
   if (!startRes.ok) {

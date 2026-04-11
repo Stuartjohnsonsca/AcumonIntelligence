@@ -1005,7 +1005,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
                 let rowClassification: string | null = null;
                 if (rmmMatch) {
-                  rowClassification = classifyRisk(rmmMatch.overallRisk);
+                  rowClassification = classifyRisk(rmmMatch.overallRisk ?? undefined);
                 } else if (performanceMateriality > 0 && rowValue > performanceMateriality) {
                   rowClassification = 'Normal';
                 } else if (performanceMateriality > 0) {
@@ -1020,7 +1020,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                   const seen = new Set<string>();
                   tests = [];
                   for (const rm of rmmMatches) {
-                    const rmClass = classifyRisk(rm.overallRisk);
+                    const rmClass = classifyRisk(rm.overallRisk ?? undefined);
                     const rmTests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rm.assertions || null, effectiveStatement || undefined, rmClass);
                     for (const t of rmTests) {
                       if (!seen.has(t.description)) { seen.add(t.description); tests.push(t); }

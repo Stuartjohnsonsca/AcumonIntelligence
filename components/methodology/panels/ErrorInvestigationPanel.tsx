@@ -57,6 +57,7 @@ function ConclusionDot({ conclusion }: { conclusion: string }) {
 export function ErrorInvestigationPanel({
   engagementId, executionId, conclusionId: initialConclusionId, fsLine, testDescription, accountCode,
   sampleItems, verificationResults, populationSize, sampleSize,
+  populationData, priorSelectedIndices, clientId, periodId,
   clearlyTrivial, performanceMateriality, tolerableMisstatement,
   onConclusionChange, onClose,
 }: Props) {

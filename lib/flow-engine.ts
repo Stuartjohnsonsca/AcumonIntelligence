@@ -326,6 +326,7 @@ async function handleRequirePriorEvidence(
     const { downloadBlob } = await import('@/lib/azure-blob');
     const allRows: any[] = [];
     for (const doc of docs) {
+      if (!doc.storagePath) continue;
       try {
         const buffer = await downloadBlob(doc.storagePath, doc.containerName || 'upload-inbox');
         const parsed = JSON.parse(buffer.toString('utf-8'));
@@ -754,7 +755,7 @@ async function handleProcessBankData(
       select: { id: true },
     });
     if (engagement) {
-      const pfData = await prisma.auditPermanentFileData.findMany({
+      const pfData = await prisma.auditPermanentFile.findMany({
         where: { engagementId },
       });
       for (const pf of pfData) {

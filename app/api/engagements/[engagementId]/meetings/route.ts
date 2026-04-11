@@ -275,14 +275,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
     const meeting = await prisma.auditMeeting.findUnique({
       where: { id: meetingId },
-      include: { engagement: { select: { clientName: true, teamMembers: { include: { user: { select: { name: true, email: true } } } } } } },
+      include: {
+        engagement: {
+          select: {
+            client: { select: { clientName: true } },
+            teamMembers: { include: { user: { select: { name: true, email: true } } } },
+          },
+        },
+      },
     });
     if (!meeting) return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
 
     const minutes = meeting.minutes as any;
     if (!minutes?.actionItems?.length) return NextResponse.json({ error: 'No action items to email' }, { status: 400 });
 
-    const clientName = meeting.engagement?.clientName || 'Client';
+    const clientName = meeting.engagement?.client?.clientName || 'Client';
     const meetingDate = meeting.meetingDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     const summary = minutes.summary || '';
     const actionItems = minutes.actionItems;

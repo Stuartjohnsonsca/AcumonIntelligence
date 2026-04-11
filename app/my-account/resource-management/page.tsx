@@ -92,7 +92,7 @@ export default async function ResourceManagementPage() {
       <ResourceManagementClient
         staff={staff}
         clients={clients}
-        profiles={profiles}
+        profiles={profiles as any}
         firmId={firmId}
         specialistRoles={specialistRoles}
       />
