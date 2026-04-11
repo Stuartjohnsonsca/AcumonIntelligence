@@ -42,11 +42,14 @@ export async function GET(
     effectiveIndustryId = defaultIndustry?.id;
   }
 
-  // Return ALL allocations for the firm (client filters by industry if needed)
+  // Return ALL allocations for the firm (client filters by industry if needed).
+  // Drafts are excluded — they're hidden from every engagement's audit plan
+  // and from the Plan Customiser. They remain visible in the Test Bank admin
+  // so the Methodology Admin can finish building them and toggle off Draft.
   const [allocations, fsLines, allTests] = await Promise.all([
     prisma.methodologyTestAllocation.findMany({
       where: {
-        test: { firmId: engagement.firmId, isActive: true },
+        test: { firmId: engagement.firmId, isActive: true, isDraft: false },
       },
       include: {
         test: {
@@ -76,8 +79,9 @@ export async function GET(
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     }),
     // Also return all tests so the client can match by name if no allocations exist
+    // (drafts excluded — see comment on the allocations query above).
     prisma.methodologyTest.findMany({
-      where: { firmId: engagement.firmId, isActive: true },
+      where: { firmId: engagement.firmId, isActive: true, isDraft: false },
       select: {
         id: true,
         name: true,

@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { name, description, testTypeCode, assertions, framework, significantRisk, category, outputFormat, isIngest, flow } = await req.json();
+  const { name, description, testTypeCode, assertions, framework, significantRisk, category, outputFormat, isIngest, isDraft, flow } = await req.json();
   if (!name?.trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
 
   // Resolve category: prefer explicit category, fall back to significantRisk boolean for backward compat
@@ -67,6 +67,10 @@ export async function POST(req: NextRequest) {
       category: resolvedCategory,
       outputFormat: outputFormat || 'three_section_no_sampling',
       isIngest: isIngest || false,
+      // New tests default to draft so they don't appear in any engagement's
+      // audit plan until the Methodology Admin has finished building them
+      // and explicitly toggles the Draft flag off.
+      isDraft: isDraft !== undefined ? !!isDraft : true,
       flow: flow || null,
     },
   });
@@ -97,6 +101,7 @@ export async function PATCH(req: NextRequest) {
   }
   if (updates.outputFormat !== undefined) data.outputFormat = updates.outputFormat || 'three_section_no_sampling';
   if (updates.isIngest !== undefined) data.isIngest = updates.isIngest;
+  if (updates.isDraft !== undefined) data.isDraft = !!updates.isDraft;
   if (updates.flow !== undefined) data.flow = updates.flow;
   if (updates.sortOrder !== undefined) data.sortOrder = updates.sortOrder;
   if (updates.isActive !== undefined) data.isActive = updates.isActive;

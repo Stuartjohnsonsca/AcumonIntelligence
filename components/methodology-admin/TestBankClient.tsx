@@ -29,6 +29,7 @@ interface MethodologyTestItem {
   category: string;
   outputFormat: string | null;
   isIngest: boolean;
+  isDraft: boolean;
   flow: any | null;
   executionMode: string;
   sortOrder: number;
@@ -109,7 +110,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   // Test Bank tab state
   const [editingTest, setEditingTest] = useState<MethodologyTestItem | null>(null);
   const [testModalOpen, setTestModalOpen] = useState(false);
-  const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false, category: 'Normal', outputFormat: 'three_section_no_sampling', isIngest: false });
+  const [testForm, setTestForm] = useState({ name: '', description: '', testTypeCode: '', assertions: [] as string[], framework: '', significantRisk: false, category: 'Normal', outputFormat: 'three_section_no_sampling', isIngest: false, isDraft: true });
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -211,7 +212,9 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   // ── Test Bank CRUD ──
   function openNewTestModal() {
     setEditingTest(null);
-    setTestForm({ name: '', description: '', testTypeCode: '', assertions: [], framework: '', significantRisk: false, category: 'Normal', outputFormat: 'three_section_no_sampling', isIngest: false });
+    // New tests start as drafts so they don't appear in any engagement's
+    // audit plan until the Methodology Admin has finished building them.
+    setTestForm({ name: '', description: '', testTypeCode: '', assertions: [], framework: '', significantRisk: false, category: 'Normal', outputFormat: 'three_section_no_sampling', isIngest: false, isDraft: true });
     setTestModalOpen(true);
   }
 
@@ -227,6 +230,8 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
       category: test.category || (test.significantRisk ? 'Significant Risk' : 'Other'),
       outputFormat: test.outputFormat || 'three_section_no_sampling',
       isIngest: test.isIngest || false,
+      // Draft defaults to true if the field is missing on older test rows.
+      isDraft: test.isDraft ?? true,
     });
     setTestModalOpen(true);
   }
@@ -237,13 +242,13 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
       if (editingTest) {
         const res = await fetch('/api/methodology-admin/tests', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: editingTest.id, name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.category === 'Significant Risk', category: testForm.category, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest }),
+          body: JSON.stringify({ id: editingTest.id, name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.category === 'Significant Risk', category: testForm.category, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest, isDraft: testForm.isDraft }),
         });
         if (res.ok) { const { test } = await res.json(); setTests(prev => prev.map(t => t.id === test.id ? test : t)); }
       } else {
         const res = await fetch('/api/methodology-admin/tests', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.category === 'Significant Risk', category: testForm.category, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest }),
+          body: JSON.stringify({ name: testForm.name.trim(), description: testForm.description.trim() || null, testTypeCode: testForm.testTypeCode, assertions: testForm.assertions, framework: testForm.framework || 'ALL', significantRisk: testForm.category === 'Significant Risk', category: testForm.category, outputFormat: testForm.outputFormat, isIngest: testForm.isIngest, isDraft: testForm.isDraft }),
         });
         if (res.ok) { const { test } = await res.json(); setTests(prev => [...prev, test]); }
       }
@@ -264,6 +269,9 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           significantRisk: test.significantRisk,
           outputFormat: test.outputFormat,
           isIngest: test.isIngest,
+          // Duplicates start as drafts so they don't accidentally publish
+          // copies of an in-use test before they've been edited.
+          isDraft: true,
           flow: test.flow,
         }),
       });
@@ -512,6 +520,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-100 border-b">
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold">Test Name</th>
+                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-16">Status</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-28">Action Type</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-32">Assertions</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-20">Framework</th>
@@ -527,6 +536,18 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                   return (
                     <tr key={test.id} className={`border-b border-slate-50 hover:bg-slate-50/50 group ${i % 2 ? 'bg-slate-50/20' : ''}`}>
                       <td className="px-3 py-2"><div className="text-slate-700 text-xs font-medium">{test.name}</div>{test.description && <div className="text-slate-400 text-[10px] mt-0.5 line-clamp-1">{test.description}</div>}</td>
+                      {/*
+                        Draft / Published badge — drafts are hidden from every
+                        engagement's audit plan and the Plan Customiser; only
+                        published tests are surfaced to auditors.
+                      */}
+                      <td className="px-3 py-2 text-center">
+                        {test.isDraft ? (
+                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-300" title="Draft — hidden from engagement audit plans and the Plan Customiser. Toggle off in the edit modal to publish.">Draft</span>
+                        ) : (
+                          <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-green-100 text-green-700 border border-green-300" title="Published — visible to auditors in the audit plan and Plan Customiser.">Live</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2">{tt && <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.name}</span>}</td>
                       <td className="px-3 py-2">{((test.assertions as string[]) || []).map((a, ai) => <span key={ai} className="text-[10px] px-1 py-0.5 bg-purple-100 text-purple-700 rounded mr-0.5">{assertionShortLabel(a)}</span>)}</td>
                       <td className="px-3 py-2 text-[10px] text-slate-500">{test.framework || 'All'}</td>
@@ -542,7 +563,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                     </tr>
                   );
                 })}
-                {tests.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-slate-400 text-sm">No tests yet. Add tests or upload a CSV.</td></tr>}
+                {tests.length === 0 && <tr><td colSpan={9} className="text-center py-8 text-slate-400 text-sm">No tests yet. Add tests or upload a CSV.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -658,6 +679,15 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                   </select>
                 </div>
                 <label className="inline-flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={testForm.isIngest} onChange={e => setTestForm(prev => ({ ...prev, isIngest: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-slate-500" /><span className="text-sm text-slate-700">Ingest / Prerequisite</span></label>
+                {/*
+                  Draft toggle — when ON, the test is hidden from every
+                  engagement's audit plan and the Plan Customiser. Used while
+                  the test is being built. Leave OFF to publish.
+                */}
+                <label className="inline-flex items-center gap-2 cursor-pointer" title="When ticked, this test is hidden from engagement audit plans and the Plan Customiser. Untick to publish.">
+                  <input type="checkbox" checked={testForm.isDraft} onChange={e => setTestForm(prev => ({ ...prev, isDraft: e.target.checked }))} className="w-4 h-4 rounded border-amber-400 text-amber-600" />
+                  <span className="text-sm font-medium text-amber-700">Draft (hidden from auditors)</span>
+                </label>
               </div>
               <div><label className="text-xs font-medium text-slate-600 block mb-1">Results Display <span className="text-red-500">*</span></label><select value={testForm.outputFormat} onChange={e => setTestForm(prev => ({ ...prev, outputFormat: e.target.value }))} className={`w-full border rounded-md px-2 py-2 text-sm bg-white ${!testForm.outputFormat ? 'border-red-300' : 'border-slate-300'}`} required>
                 <optgroup label="Standard Displays">

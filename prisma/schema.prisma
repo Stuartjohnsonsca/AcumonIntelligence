@@ -2158,6 +2158,7 @@ model MethodologyTest {
   category        String   @default("Normal") @map("category") // Significant Risk | Area of Focus | Normal | Analytical Review | Mandatory
   outputFormat    String?  @map("output_format") // three_section_sampling | three_section_no_sampling | document_summary | spreadsheet
   isIngest        Boolean  @default(false) @map("is_ingest") // Data collection/prep, not an auditable test
+  isDraft         Boolean  @default(true) @map("is_draft") // Hidden from engagement audit plans + Plan Customiser; visible only in Test Bank admin
   flow            Json?    // { nodes, edges }
   sortOrder       Int      @default(0) @map("sort_order")
   isActive        Boolean  @default(true) @map("is_active")

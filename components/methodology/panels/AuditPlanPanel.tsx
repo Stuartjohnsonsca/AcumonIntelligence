@@ -51,6 +51,7 @@ interface AllocationEntry {
     assertions: string[] | null;
     framework: string;
     significantRisk: boolean;
+    isDraft?: boolean;
     flow: any | null;
   };
 }
@@ -571,11 +572,16 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       }
     }
 
-    // Get all tests allocated to the matched FS Lines, skipping any that the
-    // auditor has marked N/A for this engagement via the Plan Customiser.
+    // Get all tests allocated to the matched FS Lines, skipping:
+    //  - draft tests (defence in depth — the API already filters these but
+    //    we double-check on the client so legacy cached responses can't
+    //    leak drafts into the audit plan)
+    //  - tests the auditor has marked N/A for this engagement via the
+    //    Plan Customiser
     const matchedTestsMap = new Map<string, { test: AllocationEntry['test']; fsLineId: string }>();
     for (const a of allocations) {
       if (!a.test) continue; // Guard against deleted tests
+      if (a.test.isDraft) continue; // Drafts never appear in the audit plan
       if (!matchingFsLineIds.has(a.fsLineId)) continue;
       const overrideKey = `${a.test.id}__${a.fsLineId}`;
       if (planCustomiser.overrides[overrideKey]?.status === 'na') continue;
@@ -1612,6 +1618,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         const nameLower = ctx.fsLineName.toLowerCase().trim();
         const matching = allocations.filter(a => {
           if (!a.test) return false;
+          // Drafts never appear in the Plan Customiser — they live only in
+          // Test Bank admin until the Methodology Admin publishes them.
+          if (a.test.isDraft) return false;
           if (!isSynthetic && a.fsLineId === ctx.fsLineId) return true;
           // Synthetic or id-miss: match by name
           return a.fsLine?.name?.toLowerCase().trim() === nameLower;
