@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { Loader2, Upload, ChevronDown, ChevronUp, AlertTriangle, FileText, RefreshCw, Trash2 } from 'lucide-react';
+import { expandZipFiles } from '@/lib/client-unzip';
 
 interface HeadingExtraction {
   content: string;
@@ -83,11 +84,15 @@ export function TCWGPanel({ engagementId }: Props) {
     if (!files?.length) return;
 
     setUploading(true);
+    // Expand any .zip files so each archive member is uploaded as if
+    // selected directly. Non-zip files pass through unchanged.
+    const expanded = await expandZipFiles(Array.from(files));
+
     const formData = new FormData();
     formData.append('type', 'tcwg');
     formData.append('meetingDate', uploadDate);
     if (uploadTitle.trim()) formData.append('title', uploadTitle.trim());
-    for (const file of Array.from(files)) formData.append('files', file);
+    for (const file of expanded) formData.append('files', file);
 
     try {
       const res = await fetch(`/api/engagements/${engagementId}/board-minutes`, {
@@ -200,7 +205,7 @@ export function TCWGPanel({ engagementId }: Props) {
             </div>
             <div>
               <label className="block text-[10px] text-slate-500 mb-0.5">PDF / DOCX Files</label>
-              <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.doc,.txt"
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.zip"
                 className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 file:mr-2 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:bg-blue-50 file:text-blue-600" />
             </div>
           </div>
