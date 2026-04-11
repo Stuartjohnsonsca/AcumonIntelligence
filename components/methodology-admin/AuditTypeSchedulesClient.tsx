@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ChevronUp, ChevronDown, Plus, X, Save, Loader2, Copy, GripVertical, Eye, Zap, Trash2 } from 'lucide-react';
 import {
   DndContext,
@@ -9,6 +9,7 @@ import {
   useSensors,
   closestCenter,
   DragOverlay,
+  useDroppable,
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
@@ -154,9 +155,38 @@ const QUICK_TOOLTIPS: Record<QuickKind, string> = {
   firstYear:   'Only show on first-year audits (no prior-period engagement)',
 };
 
+/**
+ * Compose a stage-scoped sortable id so the same schedule key can live in
+ * multiple stages without colliding in dnd-kit's id registry. Format:
+ *   card:<stage>:<scheduleKey>
+ * A separate format `stage:<stage>` is used by empty stage-column droppables,
+ * and the two are kept distinguishable by the `card:` prefix.
+ */
+function sortableIdFor(stage: Stage, scheduleKey: string): string {
+  return `card:${stage}:${scheduleKey}`;
+}
+
+/**
+ * Parse a sortable id back into (stage, scheduleKey). Returns null for non-
+ * card ids (e.g. the stage column droppable `stage:<key>`).
+ */
+function parseSortableId(id: string): { stage: Stage; key: string } | null {
+  if (!id.startsWith('card:')) return null;
+  const rest = id.slice('card:'.length);
+  const firstColon = rest.indexOf(':');
+  if (firstColon === -1) return null;
+  const stage = rest.slice(0, firstColon) as Stage;
+  const key = rest.slice(firstColon + 1);
+  if (stage !== 'planning' && stage !== 'fieldwork' && stage !== 'completion') return null;
+  return { stage, key };
+}
+
 function ScheduleCard({
   id,
+  scheduleKey,
   label,
+  stagePresence,
+  onTogglePresence,
   triggersContainingMe,
   allTriggers,
   quickStates,
@@ -165,8 +195,25 @@ function ScheduleCard({
   onRemoveFromTrigger,
   onRemove,
 }: {
+  /**
+   * Stage-namespaced sortable id, e.g. card:fieldwork:par. Required so
+   * dnd-kit treats the same schedule key in different stages as distinct
+   * drag targets — a single schedule can now persist across multiple
+   * stages and each stage renders its own ScheduleCard instance sharing
+   * the same underlying schedule identity.
+   */
   id: string;
+  /** Raw schedule key (without stage namespace) — used for stage presence
+   *  callbacks below. */
+  scheduleKey: string;
   label: string;
+  /** Which stages this schedule is currently in for the active audit type.
+   *  Drives the P/F/C presence pills on the card. */
+  stagePresence: { planning: boolean; fieldwork: boolean; completion: boolean };
+  /** Click-to-toggle presence in a given stage. Called with the raw schedule
+   *  key and target stage. This is the preferred way to make a schedule
+   *  persist across multiple stages — no drag modifiers required. */
+  onTogglePresence: (key: string, stage: Stage) => void;
   /** Triggers (in the current audit type) whose members list contains this schedule */
   triggersContainingMe: Trigger[];
   /** All triggers — used to populate the "+ trigger" dropdown */
@@ -241,6 +288,46 @@ function ScheduleCard({
         </button>
       </div>
 
+      {/*
+        Stage presence pills — the bullet-proof alternative to drag-drop.
+        Click P / F / C to toggle this schedule's presence in Planning /
+        Fieldwork / Completion. A schedule can be in any combination of
+        stages simultaneously (one underlying schedule key shared across
+        multiple stage lists). This avoids all drag-modifier timing issues.
+      */}
+      <div className="flex items-center gap-1 mt-1">
+        <span className="text-[9px] uppercase tracking-wide text-slate-400 font-semibold mr-0.5">Stages:</span>
+        {(['planning', 'fieldwork', 'completion'] as const).map(s => {
+          const on = stagePresence[s];
+          const letter = s === 'planning' ? 'P' : s === 'fieldwork' ? 'F' : 'C';
+          const activeClass =
+            s === 'planning' ? 'bg-blue-600 border-blue-700 text-white' :
+            s === 'fieldwork' ? 'bg-amber-600 border-amber-700 text-white' :
+            'bg-green-600 border-green-700 text-white';
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onTogglePresence(scheduleKey, s);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              title={on
+                ? `In ${s} — click to remove from ${s}`
+                : `Not in ${s} — click to add to ${s}`}
+              className={`inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold rounded border transition-colors ${
+                on ? activeClass : 'bg-white border-slate-300 text-slate-400 hover:border-slate-500 hover:text-slate-600'
+              }`}
+              aria-pressed={on}
+              aria-label={`Toggle ${s} stage for ${label}`}
+            >
+              {letter}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Non-quick trigger badges (custom / Q&A / multi-member). Quick ones are already shown
           above as buttons. */}
       {(nonQuickContainingMe.length > 0 || candidateTriggers.length > 0) && (
@@ -298,6 +385,8 @@ function StageColumn({
   keys,
   masterSchedules,
   triggers,
+  stagePresenceByKey,
+  onTogglePresence,
   onToggleQuick,
   onAddKeyToTrigger,
   onRemoveKeyFromTrigger,
@@ -307,19 +396,65 @@ function StageColumn({
   keys: string[];
   masterSchedules: MasterSchedule[];
   triggers: Trigger[];
+  /** Map of scheduleKey → which stages it's present in for the active audit type */
+  stagePresenceByKey: Record<string, { planning: boolean; fieldwork: boolean; completion: boolean }>;
+  onTogglePresence: (scheduleKey: string, stage: Stage) => void;
   onToggleQuick: (scheduleKey: string, kind: QuickKind) => void;
   onAddKeyToTrigger: (key: string, triggerId: string) => void;
   onRemoveKeyFromTrigger: (key: string, triggerId: string) => void;
   onRemoveKey: (key: string) => void;
 }) {
+  // Make the whole column a droppable target, with a well-known id that
+  // handleDragEnd recognises. This is what lets users drop into an empty
+  // Fieldwork column — without it, dnd-kit only fires onDragEnd when the
+  // pointer is over an existing sortable item, so empty columns silently
+  // rejected drops.
+  const { isOver, setNodeRef } = useDroppable({ id: `stage:${stage.key}` });
+  const isFieldwork = stage.key === 'fieldwork';
   return (
-    <div className={`rounded-lg border ${stage.colour} ${stage.bg} p-2 min-h-[300px]`}>
+    <div
+      ref={setNodeRef}
+      className={`rounded-lg border ${stage.colour} ${stage.bg} p-2 min-h-[300px] transition-colors ${isOver ? 'ring-2 ring-blue-400' : ''}`}
+    >
       <h3 className={`text-xs font-bold uppercase tracking-wide ${stage.colour} mb-2 text-center`}>
         {stage.label}
       </h3>
-      <SortableContext items={keys} strategy={verticalListSortingStrategy}>
+      {/*
+        Fieldwork has a mandatory auto-populated FS-level tab section that
+        the engagement derives from the trial balance. It's not something
+        admins manage here — they can only reorder or restage the customised
+        schedules that follow. A "|" divider makes the split explicit.
+      */}
+      {isFieldwork && (
+        <>
+          <div className="bg-white/70 border border-amber-200 rounded px-2 py-1.5 mb-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+              FS Level tabs
+            </div>
+            <div className="text-[10px] text-slate-500 leading-tight">
+              Auto-populated from the engagement's trial balance (Revenue, Cost of Sales, etc.). Not editable here.
+            </div>
+          </div>
+          <div className="flex items-center gap-2 my-2">
+            <div className="flex-1 border-t border-amber-300" />
+            <span className="text-sm font-bold text-amber-700 select-none" aria-hidden>|</span>
+            <div className="flex-1 border-t border-amber-300" />
+          </div>
+          <div className="text-[9px] uppercase tracking-wide text-slate-500 mb-1 font-semibold">
+            Customised schedules
+          </div>
+        </>
+      )}
+      {/*
+        Each card's sortable id is namespaced by stage via sortableIdFor so
+        the same schedule key can appear in multiple stages without dnd-kit
+        id collisions. React keys are namespaced for the same reason.
+      */}
+      <SortableContext items={keys.map(k => sortableIdFor(stage.key, k))} strategy={verticalListSortingStrategy}>
         {keys.length === 0 && (
-          <div className="text-[10px] text-slate-400 text-center py-4 italic">Drop schedules here</div>
+          <div className="text-[10px] text-slate-400 text-center py-4 italic border border-dashed border-slate-300 rounded">
+            Drop schedules here
+          </div>
         )}
         {keys.map(k => {
           const label = masterSchedules.find(s => s.key === k)?.label || k;
@@ -332,11 +467,16 @@ function StageColumn({
             priorPeriod: containing.some(t => t.condition.kind === 'priorPeriod'),
             firstYear:   containing.some(t => t.condition.kind === 'firstYear'),
           };
+          const scopedId = sortableIdFor(stage.key, k);
+          const presence = stagePresenceByKey[k] || { planning: false, fieldwork: false, completion: false };
           return (
             <ScheduleCard
-              key={k}
-              id={k}
+              key={scopedId}
+              id={scopedId}
+              scheduleKey={k}
               label={label}
+              stagePresence={presence}
+              onTogglePresence={onTogglePresence}
               triggersContainingMe={containing}
               allTriggers={triggers}
               quickStates={quickStates}
@@ -644,6 +784,12 @@ export function AuditTypeSchedulesClient({
 
   // Drag state
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+
+  // Note: an earlier Shift+drop / Copy Mode approach was removed. Keyboard
+  // modifier timing during drags is too unreliable to build a stable UX on.
+  // Multi-stage presence is now controlled by click-to-toggle P/F/C pills
+  // on each ScheduleCard (see togglePresenceInStage below). Drags remain
+  // for plain move/reorder.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const activeMapping = stageMappings[activeAuditType] || emptyMapping();
@@ -707,38 +853,83 @@ export function AuditTypeSchedulesClient({
     const overId = String(over.id);
     if (activeId === overId) return;
 
+    // Drags are always moves. Multi-stage persistence is handled by the
+    // click-to-toggle P/F/C pills on each card, not by drag modifiers.
+    const persistAcross = false;
+
+    // Source is always a card (sortable id format: card:<stage>:<key>).
+    const activeParsed = parseSortableId(activeId);
+    if (!activeParsed) return;
+    const sourceStage = activeParsed.stage;
+    const sourceKey = activeParsed.key;
+
+    // Target can be either another card or a stage column droppable.
+    let targetStage: Stage | null = null;
+    let targetKey: string | null = null;
+    let appendToEnd = false;
+    const overParsed = parseSortableId(overId);
+    if (overParsed) {
+      targetStage = overParsed.stage;
+      targetKey = overParsed.key;
+    } else if (overId.startsWith('stage:')) {
+      const stageName = overId.slice('stage:'.length) as Stage;
+      if (STAGES.some(s => s.key === stageName)) {
+        targetStage = stageName;
+        appendToEnd = true;
+      }
+    }
+    if (!targetStage) return;
+
     setStageMappings(prev => {
       const next = { ...prev };
       const am = { ...next[activeAuditType] };
-      const pl = [...am.planning];
-      const fw = [...am.fieldwork];
-      const co = [...am.completion];
-      const lookup: Record<Stage, string[]> = { planning: pl, fieldwork: fw, completion: co };
-
-      let sourceStage: Stage | null = null;
-      for (const s of STAGES) {
-        if (lookup[s.key].includes(activeId)) { sourceStage = s.key; break; }
-      }
-      if (!sourceStage) return prev;
-
-      let targetStage: Stage | null = null;
-      for (const s of STAGES) {
-        if (lookup[s.key].includes(overId)) { targetStage = s.key; break; }
-      }
-      if (!targetStage) return prev;
+      const lookup: Record<Stage, string[]> = {
+        planning: [...am.planning],
+        fieldwork: [...am.fieldwork],
+        completion: [...am.completion],
+      };
 
       const sourceList = lookup[sourceStage];
-      const targetList = lookup[targetStage];
+      const targetList = lookup[targetStage!];
 
       if (sourceStage === targetStage) {
-        const oldIdx = sourceList.indexOf(activeId);
-        const newIdx = targetList.indexOf(overId);
-        lookup[sourceStage] = arrayMove(sourceList, oldIdx, newIdx);
+        // Same-stage drop — pure reorder within the one list.
+        const oldIdx = sourceList.indexOf(sourceKey);
+        if (oldIdx === -1) return prev;
+        if (appendToEnd) {
+          lookup[sourceStage] = arrayMove(sourceList, oldIdx, sourceList.length - 1);
+        } else if (targetKey) {
+          const newIdx = sourceList.indexOf(targetKey);
+          if (newIdx === -1) return prev;
+          lookup[sourceStage] = arrayMove(sourceList, oldIdx, newIdx);
+        }
       } else {
-        const srcIdx = sourceList.indexOf(activeId);
-        sourceList.splice(srcIdx, 1);
-        const overIdx = targetList.indexOf(overId);
-        targetList.splice(overIdx, 0, activeId);
+        // Cross-stage drop. Move by default, or persist-across if Shift held.
+        const alreadyInTarget = targetList.includes(sourceKey);
+
+        if (persistAcross) {
+          // Leave source row in place; add to target (if not already there).
+          if (!alreadyInTarget) {
+            if (appendToEnd || !targetKey) {
+              targetList.push(sourceKey);
+            } else {
+              const overIdx = targetList.indexOf(targetKey);
+              targetList.splice(overIdx >= 0 ? overIdx : targetList.length, 0, sourceKey);
+            }
+          }
+        } else {
+          // Plain move: remove from source, insert into target.
+          const srcIdx = sourceList.indexOf(sourceKey);
+          if (srcIdx !== -1) sourceList.splice(srcIdx, 1);
+          if (!alreadyInTarget) {
+            if (appendToEnd || !targetKey) {
+              targetList.push(sourceKey);
+            } else {
+              const overIdx = targetList.indexOf(targetKey);
+              targetList.splice(overIdx >= 0 ? overIdx : targetList.length, 0, sourceKey);
+            }
+          }
+        }
       }
 
       am.planning = lookup.planning;
@@ -942,6 +1133,37 @@ export function AuditTypeSchedulesClient({
       const next = { ...prev };
       const am = { ...next[activeAuditType] };
       if (!am[stage].includes(key)) {
+        am[stage] = [...am[stage], key];
+      }
+      next[activeAuditType] = am;
+      return next;
+    });
+    setSaved(false);
+  }
+
+  /**
+   * Toggle a schedule's presence in a given stage for the active audit type.
+   * This is the bullet-proof alternative to drag-drop for the "same schedule
+   * in multiple stages" use case — clicking a P/F/C pill on a card adds it
+   * to that stage if it's not there, or removes it if it is. At least one
+   * stage must remain — if clicking would remove the last stage, we keep
+   * it and show a browser confirm for explicit removal via the × button.
+   */
+  function togglePresenceInStage(key: string, stage: Stage) {
+    setStageMappings(prev => {
+      const next = { ...prev };
+      const am = { ...next[activeAuditType] };
+      const currentlyIn = am[stage].includes(key);
+      const totalPresence =
+        (am.planning.includes(key) ? 1 : 0) +
+        (am.fieldwork.includes(key) ? 1 : 0) +
+        (am.completion.includes(key) ? 1 : 0);
+      if (currentlyIn) {
+        // Removing — but refuse to remove the last one. Direct users to the
+        // × button on the card for full removal.
+        if (totalPresence <= 1) return prev;
+        am[stage] = am[stage].filter(k => k !== key);
+      } else {
         am[stage] = [...am[stage], key];
       }
       next[activeAuditType] = am;
@@ -1245,7 +1467,20 @@ export function AuditTypeSchedulesClient({
         onLoadQuestions={loadQuestions}
       />
 
-      {/* ═══ Drag-drop 3-column grid ═══ */}
+      {/* Drag-drop + stage pill usage hint */}
+      <div className="p-2 border border-indigo-200 rounded bg-indigo-50/50 text-[11px] text-slate-700 leading-relaxed">
+        <strong className="text-indigo-800">Two ways to manage which stages a schedule appears in:</strong>
+        <ul className="mt-1 ml-4 list-disc space-y-0.5 text-slate-600">
+          <li>
+            <strong>Click the P / F / C pills on each card</strong> to toggle presence in Planning, Fieldwork and Completion. A schedule can live in any combination of stages — the same underlying schedule shown in multiple places. This is the reliable way to persist a schedule across stages.
+          </li>
+          <li>
+            <strong>Drag a card</strong> to reorder it within a stage, or move it to a different stage.
+          </li>
+        </ul>
+      </div>
+
+      {/* ═══ Drag-drop 3-column grid (with P/F/C presence pills on cards) ═══ */}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -1253,26 +1488,45 @@ export function AuditTypeSchedulesClient({
         onDragEnd={handleDragEnd}
       >
         <div className="grid grid-cols-3 gap-4">
-          {STAGES.map(stage => (
-            <StageColumn
-              key={stage.key}
-              stage={stage}
-              keys={activeMapping[stage.key]}
-              masterSchedules={masterSchedules}
-              triggers={activeMapping.triggers}
-              onToggleQuick={toggleQuickCondition}
-              onAddKeyToTrigger={addKeyToTrigger}
-              onRemoveKeyFromTrigger={removeKeyFromTrigger}
-              onRemoveKey={removeKey}
-            />
-          ))}
+          {(() => {
+            const stagePresenceByKey: Record<string, { planning: boolean; fieldwork: boolean; completion: boolean }> = {};
+            for (const k of [...activeMapping.planning, ...activeMapping.fieldwork, ...activeMapping.completion]) {
+              if (!stagePresenceByKey[k]) {
+                stagePresenceByKey[k] = {
+                  planning: activeMapping.planning.includes(k),
+                  fieldwork: activeMapping.fieldwork.includes(k),
+                  completion: activeMapping.completion.includes(k),
+                };
+              }
+            }
+            return STAGES.map(stage => (
+              <StageColumn
+                key={stage.key}
+                stage={stage}
+                keys={activeMapping[stage.key]}
+                masterSchedules={masterSchedules}
+                triggers={activeMapping.triggers}
+                stagePresenceByKey={stagePresenceByKey}
+                onTogglePresence={togglePresenceInStage}
+                onToggleQuick={toggleQuickCondition}
+                onAddKeyToTrigger={addKeyToTrigger}
+                onRemoveKeyFromTrigger={removeKeyFromTrigger}
+                onRemoveKey={removeKey}
+              />
+            ));
+          })()}
         </div>
         <DragOverlay>
-          {activeDragId ? (
-            <div className="bg-white border border-blue-400 shadow-lg rounded-md px-2 py-1.5 text-[11px] font-medium text-slate-700">
-              {masterSchedules.find(s => s.key === activeDragId)?.label || activeDragId}
-            </div>
-          ) : null}
+          {activeDragId ? (() => {
+            const parsed = parseSortableId(activeDragId);
+            const scheduleKey = parsed?.key || activeDragId;
+            const label = masterSchedules.find(s => s.key === scheduleKey)?.label || scheduleKey;
+            return (
+              <div className="bg-white shadow-lg rounded-md px-2 py-1.5 text-[11px] font-medium text-slate-700 border border-blue-400">
+                {label}
+              </div>
+            );
+          })() : null}
         </DragOverlay>
       </DndContext>
 
