@@ -180,7 +180,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [enabledSchedules, setEnabledSchedules] = useState<Set<string> | null>(null); // null = loading/all enabled
   const [scheduleOrder, setScheduleOrder] = useState<string[] | null>(null); // ordered schedule keys from config
   // Per-schedule visibility conditions (from the new stage-keyed mapping shape, Part E)
-  const [scheduleConditions, setScheduleConditions] = useState<Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean }>>({});
+  const [scheduleConditions, setScheduleConditions] = useState<Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean; requiresFirstYear?: boolean }>>({});
   const [stageKeyedMapping, setStageKeyedMapping] = useState<{ planning: string[]; fieldwork: string[]; completion: string[] } | null>(null);
   const [outstandingTeamCount, setOutstandingTeamCount] = useState(0);
   const [outstandingClientCount, setOutstandingClientCount] = useState(0);
@@ -291,6 +291,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     if (c.requiresListed && !clientIsListed) return false;
     if (c.requiresEQR && !teamHasEQR) return false;
     if (c.requiresPriorPeriod && !hasPriorPeriodEngagement) return false;
+    // First-year audit = no prior period. Hide any schedule tagged "FY" on a returning client.
+    if (c.requiresFirstYear && hasPriorPeriodEngagement) return false;
     return true;
   }
 

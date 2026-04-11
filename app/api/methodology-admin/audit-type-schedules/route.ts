@@ -6,6 +6,8 @@ type ScheduleVisibility = {
   requiresListed?: boolean;
   requiresEQR?: boolean;
   requiresPriorPeriod?: boolean;
+  /** Only show if this IS a first-year audit (no prior-period engagement). Mutually exclusive with requiresPriorPeriod. */
+  requiresFirstYear?: boolean;
 };
 
 type StageKeyedMapping = {

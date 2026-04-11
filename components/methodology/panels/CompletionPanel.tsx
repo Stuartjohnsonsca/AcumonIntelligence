@@ -49,7 +49,7 @@ interface Props {
   /** Ordered list of schedule keys for the Completion stage (from Part E config) */
   completionScheduleOrder?: string[];
   /** Per-schedule visibility conditions (from Part E config) */
-  scheduleConditions?: Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean }>;
+  scheduleConditions?: Record<string, { requiresListed?: boolean; requiresEQR?: boolean; requiresPriorPeriod?: boolean; requiresFirstYear?: boolean }>;
   /** From engagement payload for visibility evaluation */
   clientIsListed?: boolean;
   hasPriorPeriodEngagement?: boolean;
@@ -87,6 +87,7 @@ export function CompletionPanel({
     if (c.requiresListed && !clientIsListed) return false;
     if (c.requiresEQR && !teamHasEQR) return false;
     if (c.requiresPriorPeriod && !hasPriorPeriodEngagement) return false;
+    if (c.requiresFirstYear && hasPriorPeriodEngagement) return false;
     return true;
   }
 

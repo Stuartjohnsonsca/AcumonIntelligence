@@ -32,6 +32,8 @@ type ScheduleVisibility = {
   requiresListed?: boolean;
   requiresEQR?: boolean;
   requiresPriorPeriod?: boolean;
+  /** Only show if this IS a first-year audit. Mutually exclusive with requiresPriorPeriod. */
+  requiresFirstYear?: boolean;
 };
 
 type StageKeyedMapping = {
@@ -166,12 +168,21 @@ function ScheduleCard({
         </button>
         <button
           onClick={() => onToggleCondition('requiresPriorPeriod')}
-          title="Only show when this client has a prior-period engagement"
+          title="Only show when this client has a prior-period engagement (continuing audit)"
           className={`text-[8px] font-semibold uppercase px-1 py-0.5 rounded ${
             conditions.requiresPriorPeriod ? 'bg-cyan-100 text-cyan-700 border border-cyan-300' : 'bg-slate-50 text-slate-400 border border-slate-200 hover:bg-slate-100'
           }`}
         >
           PP
+        </button>
+        <button
+          onClick={() => onToggleCondition('requiresFirstYear')}
+          title="Only show when this is a first-year audit (no prior-period engagement)"
+          className={`text-[8px] font-semibold uppercase px-1 py-0.5 rounded ${
+            conditions.requiresFirstYear ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-slate-50 text-slate-400 border border-slate-200 hover:bg-slate-100'
+          }`}
+        >
+          FY
         </button>
       </div>
       <button
@@ -366,9 +377,13 @@ export function AuditTypeSchedulesClient({
       const am = { ...next[activeAuditType] };
       const conditions = { ...am.conditions };
       const existing = conditions[key] || {};
-      conditions[key] = { ...existing, [cond]: !existing[cond] };
+      const toggled = { ...existing, [cond]: !existing[cond] };
+      // Mutual exclusivity: FY and PP cannot both be set on the same schedule
+      if (cond === 'requiresFirstYear' && toggled.requiresFirstYear) toggled.requiresPriorPeriod = false;
+      if (cond === 'requiresPriorPeriod' && toggled.requiresPriorPeriod) toggled.requiresFirstYear = false;
+      conditions[key] = toggled;
       // Clean up empty
-      if (!conditions[key].requiresListed && !conditions[key].requiresEQR && !conditions[key].requiresPriorPeriod) {
+      if (!toggled.requiresListed && !toggled.requiresEQR && !toggled.requiresPriorPeriod && !toggled.requiresFirstYear) {
         delete conditions[key];
       }
       am.conditions = conditions;
