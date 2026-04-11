@@ -530,6 +530,36 @@ model AiUsage {
   @@map("ai_usage")
 }
 
+// ─── Land Registry Cost Tracking ────────────────────────────────────────────
+// Platform-level spend tracking for HM Land Registry Business Gateway calls.
+// The HMLR account is held by Super Admin; individual firms use the shared
+// account and Super Admin sees the full aggregated spend. Unlike ai_usage
+// (per-client USD, token-based), this is per-API-call GBP fees.
+
+model LandRegistryCost {
+  id              String   @id @default(uuid())
+  firmId          String   @map("firm_id")
+  clientId        String   @map("client_id")
+  engagementId    String?  @map("engagement_id")
+  executionId     String?  @map("execution_id")
+  userId          String   @map("user_id")
+  apiName         String   @map("api_name") // e.g. 'search_by_description' | 'owner_verification' | ...
+  titleNumber     String?  @map("title_number")
+  propertyAddress String?  @map("property_address")
+  documentType    String?  @map("document_type") // 'pdf' | 'json' | null
+  documentPath    String?  @map("document_path") // Azure blob path if a doc was returned
+  costGbp         Float    @map("cost_gbp")
+  status          String   @default("success") // success | failed | cached
+  errorMessage    String?  @map("error_message")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([firmId, createdAt])
+  @@index([clientId, createdAt])
+  @@index([engagementId])
+  @@index([executionId])
+  @@map("land_registry_costs")
+}
+
 // ─── Background Tasks (replaces in-memory task stores) ──────────────────────
 
 model BackgroundTask {

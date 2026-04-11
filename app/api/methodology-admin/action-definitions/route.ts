@@ -3,10 +3,83 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { SYSTEM_ACTIONS } from '@/lib/action-seed';
 
+/**
+ * Idempotent upsert of SYSTEM_ACTIONS into action_definitions. Runs on
+ * every GET so new actions we ship in code appear in the Methodology
+ * Admin's Action Pipeline Editor catalog without anyone having to click
+ * a "seed" button first. Steady-state cost is one findFirst per system
+ * action; we only write when something is missing or a handlerName has
+ * changed. Failures are swallowed so a seed error never hides the
+ * existing catalog from the user.
+ */
+async function ensureSystemActionsUpserted() {
+  try {
+    for (const def of SYSTEM_ACTIONS) {
+      const existing = await prisma.actionDefinition.findFirst({
+        where: { firmId: null, code: def.code, version: 1 },
+      });
+      if (!existing) {
+        await prisma.actionDefinition.create({
+          data: {
+            firmId: null,
+            code: def.code,
+            name: def.name,
+            description: def.description,
+            category: def.category,
+            version: 1,
+            inputSchema: def.inputSchema as any,
+            outputSchema: def.outputSchema as any,
+            handlerName: def.handlerName || null,
+            icon: def.icon || null,
+            color: def.color || null,
+            isSystem: true,
+            isActive: true,
+          },
+        });
+        continue;
+      }
+      // Refresh schema/handler fields if the code-side definition has
+      // drifted. This lets us ship action updates without forcing a
+      // manual re-seed each time.
+      const needsUpdate =
+        existing.name !== def.name ||
+        existing.description !== def.description ||
+        existing.category !== def.category ||
+        existing.handlerName !== (def.handlerName || null) ||
+        existing.icon !== (def.icon || null) ||
+        existing.color !== (def.color || null) ||
+        JSON.stringify(existing.inputSchema) !== JSON.stringify(def.inputSchema) ||
+        JSON.stringify(existing.outputSchema) !== JSON.stringify(def.outputSchema);
+      if (needsUpdate) {
+        await prisma.actionDefinition.update({
+          where: { id: existing.id },
+          data: {
+            name: def.name,
+            description: def.description,
+            category: def.category,
+            inputSchema: def.inputSchema as any,
+            outputSchema: def.outputSchema as any,
+            handlerName: def.handlerName || null,
+            icon: def.icon || null,
+            color: def.color || null,
+            isActive: true,
+          },
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[action-definitions] system action upsert failed:', err);
+  }
+}
+
 // GET: List all action definitions (system + firm-specific)
 export async function GET() {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  // Auto-upsert SYSTEM_ACTIONS before listing so new code-side actions
+  // (e.g. Verify UK Property Assets) show up in the catalog automatically.
+  await ensureSystemActionsUpserted();
 
   const actions = await prisma.actionDefinition.findMany({
     where: {

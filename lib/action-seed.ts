@@ -267,6 +267,40 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     ],
   },
 
+  {
+    code: 'verify_property_assets',
+    name: 'Verify UK Property Assets',
+    description: 'Independently verifies UK property assets held by the client by pulling title data directly from HM Land Registry Business Gateway. Asks the client for a list of property addresses via the portal (typed response or uploaded file), parses the list, lets the auditor select a sample, then for each sampled property runs the full HMLR pipeline: Enquiry by Property Description (title lookup), Owner Verification, Official Copy Title Known, Register Extract (register, plan, conveyance, deed, lease), Restrictions, and Application Enquiry. Documents are stored against the engagement, AI-summarised per property, and presented as expandable per-property rows with Preparer / Reviewer / RI sign-off.',
+    category: 'verification',
+    handlerName: 'verifyPropertyAssets',
+    icon: 'Home',
+    color: '#059669',
+    isSystem: true,
+    inputSchema: [
+      { code: 'message_to_client', label: 'Message to Client', type: 'textarea', required: true, source: 'user', defaultValue: 'Please provide a list of UK properties owned by the entity. For each property include the full postal address and postcode. You can type the list into the chat or upload a document (PDF, Word, Excel, or CSV).', group: 'Request' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+      { code: 'client_name', label: 'Client Name', type: 'text', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.clientName', group: 'Context' },
+      { code: 'sampling_strategy', label: 'Sampling Strategy', type: 'select', required: false, source: 'user', defaultValue: 'judgemental', group: 'Sampling', options: [
+        { value: 'all', label: 'Test all properties' },
+        { value: 'random', label: 'Random sample' },
+        { value: 'mus', label: 'Monetary Unit Sampling (by value)' },
+        { value: 'judgemental', label: 'Judgemental — auditor picks' },
+      ]},
+      { code: 'restriction_api', label: 'Restrictions Lookup', type: 'select', required: false, source: 'user', defaultValue: 'register_summary', group: 'Advanced', description: 'HMLR restrictions are recorded within the Register Extract by default. Only use the dedicated search if you have a contractual reason to pay the extra fee.', options: [
+        { value: 'register_summary', label: 'Parse from Register Extract (no extra cost)' },
+        { value: 'dedicated_search', label: 'Call dedicated Restrictions Search API (extra fee)' },
+      ]},
+      { code: 'include_application_enquiry', label: 'Include Application Enquiry', type: 'boolean', required: false, source: 'user', defaultValue: true, group: 'Advanced', description: 'Call Application Enquiry to flag any uncompleted transactions against the title at period end.' },
+    ],
+    outputSchema: [
+      { code: 'properties', label: 'Tested Properties', type: 'data_table', description: 'Per-property rows: address, title number, registered proprietor, AI summary, document count, flags.' },
+      { code: 'documents', label: 'Retrieved Documents', type: 'file_array' },
+      { code: 'total_cost_gbp', label: 'Total Land Registry Spend (GBP)', type: 'number' },
+      { code: 'exception_count', label: 'Exceptions', type: 'number' },
+      { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
+    ],
+  },
+
   // ─── Reporting Actions ─────────────────────────────────────────────────────
 
   {

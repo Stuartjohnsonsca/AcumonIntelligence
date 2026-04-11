@@ -9,6 +9,12 @@
 import { prisma } from '@/lib/db';
 import type { InputFieldDef, OutputFieldDef } from './action-registry';
 import { resolveActionInputs } from './action-registry';
+import {
+  extractAddressesFromPortalResponse,
+  runBatch,
+  type ExtractedAddress,
+  type PropertyVerificationResult,
+} from './property-verification';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -51,6 +57,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   compareBankToTB: handleCompareBankToTB,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
+  verifyPropertyAssets: handleVerifyPropertyAssets,
 };
 
 export function getActionHandler(handlerName: string): ActionHandler | null {
@@ -296,6 +303,190 @@ async function handleVerifyEvidence(ctx: ActionHandlerContext): Promise<ActionHa
     pauseReason: 'review',
     pauseRefId: `verify_${ctx.stepIndex}`,
   };
+}
+
+/**
+ * Verify UK Property Assets — multi-phase action that drives the full
+ * HMLR pipeline.
+ *
+ * Phase flow (stored on pipelineState[stepIndex].phase):
+ *   awaiting_addresses → awaiting_sample → awaiting_review → completed
+ *
+ * Each pause returns control to the UI so the auditor (or client) can
+ * supply the next piece of data. `resumePipelineExecution` merges the
+ * resume payload into pipelineState[stepIndex] before re-entering this
+ * handler, so we always read the latest phase marker from stepState.
+ */
+async function handleVerifyPropertyAssets(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, inputs, executionId, stepIndex, pipelineState, config } = ctx;
+  const stepState = pipelineState[stepIndex] || {};
+  const phase: string = stepState.phase || 'new';
+
+  const engagement = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { clientId: true, firmId: true },
+  });
+  if (!engagement) {
+    return { action: 'error', outputs: {}, errorMessage: 'Engagement not found' };
+  }
+
+  const hmlrCtx = {
+    firmId: engagement.firmId,
+    clientId: engagement.clientId,
+    engagementId,
+    executionId,
+    userId: config.userId,
+  };
+
+  try {
+    // ── Phase A: kick off — create a portal request for addresses ─────────
+    if (phase === 'new') {
+      const requestingUser = await prisma.user.findUnique({
+        where: { id: config.userId },
+        select: { name: true, email: true },
+      });
+      const portalRequest = await prisma.portalRequest.create({
+        data: {
+          clientId: engagement.clientId,
+          engagementId,
+          section: 'property_verification',
+          question: inputs.message_to_client || 'Please provide a list of UK properties owned by the entity with full postal addresses.',
+          status: 'outstanding',
+          requestedById: config.userId,
+          requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
+          evidenceTag: 'property_verification',
+        },
+      });
+      await prisma.outstandingItem.create({
+        data: {
+          engagementId,
+          executionId,
+          type: 'portal_request',
+          title: 'Land Registry — request property list from client',
+          description: inputs.message_to_client,
+          source: 'flow',
+          assignedTo: 'client',
+          status: 'awaiting_client',
+          fsLine: config.fsLine,
+          testName: config.testDescription,
+          portalRequestId: portalRequest.id,
+        },
+      });
+      return {
+        action: 'pause',
+        outputs: { phase: 'awaiting_addresses', portal_request_id: portalRequest.id, repeatOnResume: true },
+        pauseReason: 'portal_response',
+        pauseRefId: portalRequest.id,
+      };
+    }
+
+    // ── Phase B: client responded — parse addresses and pause for sample ─
+    if (phase === 'addresses_received') {
+      const portalRequestId = stepState.portal_request_id as string | undefined;
+      let addresses: ExtractedAddress[] = Array.isArray(stepState.addresses) ? stepState.addresses : [];
+      if (addresses.length === 0 && portalRequestId) {
+        addresses = await extractAddressesFromPortalResponse(portalRequestId);
+      }
+      if (addresses.length === 0) {
+        return {
+          action: 'pause',
+          outputs: {
+            phase: 'awaiting_addresses',
+            portal_request_id: portalRequestId,
+            parse_error: 'Could not parse any addresses from the client response. Please ask the client to resend with one address per line.',
+            repeatOnResume: true,
+          },
+          pauseReason: 'portal_response',
+          pauseRefId: portalRequestId,
+        };
+      }
+      return {
+        action: 'pause',
+        outputs: {
+          phase: 'awaiting_sample',
+          portal_request_id: portalRequestId,
+          addresses,
+          data_table: addresses,
+          repeatOnResume: true,
+        },
+        pauseReason: 'sampling',
+        pauseRefId: `property_sample_${stepIndex}`,
+      };
+    }
+
+    // ── Phase C: sample chosen — run HMLR pipeline per property ──────────
+    if (phase === 'sample_selected') {
+      const addresses: ExtractedAddress[] = Array.isArray(stepState.addresses) ? stepState.addresses : [];
+      const selectedIndices: number[] = Array.isArray(stepState.selectedIndices) ? stepState.selectedIndices : [];
+      const valuesByIndex: Record<number, number> = stepState.valuesByIndex || {};
+      const selected = selectedIndices
+        .map(i => addresses[i])
+        .filter(Boolean)
+        .map((addr, j) => ({ ...addr, value: valuesByIndex[selectedIndices[j]] }));
+
+      if (selected.length === 0) {
+        return { action: 'error', outputs: {}, errorMessage: 'No properties were selected for testing.' };
+      }
+
+      const options = {
+        restrictionStrategy: (inputs.restriction_api || 'register_summary') as 'register_summary' | 'dedicated_search',
+        includeApplicationEnquiry: inputs.include_application_enquiry !== false,
+      };
+
+      const results = await runBatch(
+        selected,
+        options,
+        hmlrCtx,
+        inputs.client_name || 'the audit client',
+        inputs.period_end,
+      );
+      // Merge user-supplied values back onto the results for display.
+      results.forEach((r, i) => { r.valueGbp = selected[i]?.value; });
+
+      const totalCost = results.reduce((s, r) => s + r.totalCostGbp, 0);
+      const exceptionCount = results.filter(r => r.flags.length > 0).length;
+      const allDocuments = results.flatMap(r => r.documents);
+
+      return {
+        action: 'pause',
+        outputs: {
+          phase: 'awaiting_review',
+          addresses,
+          selectedIndices,
+          valuesByIndex,
+          properties: results,
+          documents: allDocuments,
+          total_cost_gbp: Math.round(totalCost * 100) / 100,
+          exception_count: exceptionCount,
+          repeatOnResume: true,
+        },
+        pauseReason: 'review',
+        pauseRefId: `property_review_${stepIndex}`,
+      };
+    }
+
+    // ── Phase D: reviewer has signed everything off — finalise ───────────
+    if (phase === 'reviewed') {
+      const properties: PropertyVerificationResult[] = Array.isArray(stepState.properties) ? stepState.properties : [];
+      const conclusion = stepState.conclusion || (stepState.exception_count > 0 ? 'fail' : 'pass');
+      return {
+        action: 'continue',
+        outputs: {
+          phase: 'completed',
+          properties,
+          documents: stepState.documents || [],
+          total_cost_gbp: stepState.total_cost_gbp || 0,
+          exception_count: stepState.exception_count || 0,
+          pass_fail: conclusion === 'green' || conclusion === 'pass' ? 'pass' : conclusion === 'orange' ? 'review' : 'fail',
+        },
+      };
+    }
+
+    return { action: 'error', outputs: {}, errorMessage: `Unknown phase: ${phase}` };
+  } catch (err: any) {
+    console.error('[verify_property_assets] handler error:', err);
+    return { action: 'error', outputs: {}, errorMessage: err?.message || 'Property verification failed' };
+  }
 }
 
 async function handleTeamReview(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {

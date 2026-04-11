@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { fireTrigger } from '@/lib/trigger-engine';
-import { resumeExecution } from '@/lib/flow-engine';
+import { resumeExecution, resumePipelineExecution } from '@/lib/flow-engine';
 
 /**
  * GET /api/portal/requests?clientId=X&status=outstanding|responded
@@ -124,6 +124,35 @@ export async function POST(req: Request) {
           data: { status: 'awaiting_team', responseData: { response: updated.response, respondedByName: updated.respondedByName, respondedAt: updated.respondedAt?.toISOString() } as any },
         });
       } catch {}
+
+      // Auto-resume any action-pipeline execution paused on this portal
+      // request. Specific to the verify_property_assets action (section =
+      // 'property_verification'), but the mechanism is generic — any action
+      // whose pause refs the portal request id picks up automatically.
+      try {
+        const pausedExecutions = await prisma.testExecution.findMany({
+          where: {
+            executionMode: 'action_pipeline',
+            status: 'paused',
+            pauseReason: 'portal_response',
+            pauseRefId: requestId,
+          },
+          select: { id: true },
+        });
+        for (const exec of pausedExecutions) {
+          // For property verification, advance to the `addresses_received`
+          // phase so the handler knows to parse the portal response. Other
+          // action types can add their own phase markers here as needed.
+          const externalData = request.section === 'property_verification'
+            ? { phase: 'addresses_received' }
+            : undefined;
+          resumePipelineExecution(exec.id, externalData).catch(err =>
+            console.error('[Portal Response] Failed to resume pipeline execution', exec.id, err),
+          );
+        }
+      } catch (err) {
+        console.error('[Portal Response] Failed to lookup paused executions:', err);
+      }
 
       // Auto-advance walkthrough stage: if this portal request originated from a walkthrough,
       // update the permanent file stage to 'received' and import the client response as narrative

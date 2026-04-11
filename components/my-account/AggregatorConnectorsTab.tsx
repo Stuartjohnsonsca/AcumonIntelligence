@@ -54,6 +54,20 @@ const CONNECTOR_REGISTRY: ConnectorType[] = [
     testEndpoint: '/api/aggregator-connectors/test',
   },
   {
+    id: 'hmlr_business_gateway',
+    label: 'HM Land Registry — Business Gateway',
+    category: 'government',
+    icon: '🏠',
+    description: 'HMLR paid Business Gateway — SOAP APIs for Enquiry by Property Description (EPD), Owner Verification, Official Copies, Register Extract, and Application Enquiry. A single platform-level account is shared across all firms; the Test button runs the EPD Best Practice fixtures against the dummy-data account.',
+    fields: [
+      { key: 'clientId', label: 'Client ID', type: 'text', required: true, helpText: 'Business Gateway Client ID supplied by HMLR' },
+      { key: 'clientSecret', label: 'Client Secret', type: 'password', required: true },
+      { key: 'environment', label: 'Environment', type: 'select', options: [{ value: 'test', label: 'Test (dummy data account)' }, { value: 'live', label: 'Live' }] },
+      { key: 'baseUrl', label: 'Base URL', type: 'url', placeholder: 'https://business-gateway.landregistry.gov.uk', helpText: 'Override if HMLR provides a tenant-specific endpoint' },
+    ],
+    testEndpoint: '/api/aggregator-connectors/test',
+  },
+  {
     id: 'companies_house',
     label: 'Companies House',
     category: 'government',
@@ -544,6 +558,33 @@ export function AggregatorConnectorsTab({ firmId }: { firmId: string }) {
                               </span>
                             </div>
                           ))}
+                        </div>
+                        {/*
+                          Prominent action buttons — the icon-only RefreshCw
+                          button in the header row is too subtle. Adds a full
+                          "Test Connection" button and (for HMLR Business
+                          Gateway) a "Run EPD Fixtures" button that's the
+                          same API call but clearly labelled so Super Admin
+                          can see exactly what it does.
+                        */}
+                        <div className="flex items-center gap-2 mt-3">
+                          <Button
+                            onClick={() => handleTest(connector)}
+                            disabled={testing === connector.id}
+                            size="sm"
+                            variant="outline"
+                          >
+                            {testing === connector.id ? (
+                              <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Testing…</>
+                            ) : (
+                              <><RefreshCw className="h-3 w-3 mr-1" /> Test Connection</>
+                            )}
+                          </Button>
+                          {connector.connectorType === 'hmlr_business_gateway' && (
+                            <span className="text-[10px] text-slate-500 italic">
+                              Test runs the 10 EPD Best Practice fixtures against the {connector.config.environment || 'test'} account.
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 mt-3 text-[10px] text-slate-400">
                           <span>Added: {new Date(connector.createdAt).toLocaleDateString('en-GB')}</span>

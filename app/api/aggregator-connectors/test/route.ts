@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import {
+  HMLR_BASE_URL_DEFAULT,
+  HMLR_TEST_ADDRESSES,
+  runEpdTestFixtures,
+  toEpdAddress,
+} from '@/lib/hmlr-client';
 
 const LR_SPARQL_ENDPOINT = 'https://landregistry.data.gov.uk/landregistry/query';
 
@@ -69,6 +75,68 @@ async function testConnector(type: string, config: Record<string, string>): Prom
       });
       if (res.ok) return { success: true, message: 'Connected to HM Land Registry SPARQL endpoint' };
       return { success: false, message: `Land Registry returned ${res.status}` };
+    }
+
+    case 'hmlr_business_gateway': {
+      if (!config.clientId || !config.clientSecret) {
+        return { success: false, message: 'Client ID and Client Secret are required' };
+      }
+      // Validate the EPD Best Practice mapping locally — this runs even
+      // without network access, so we always get a mapping health check.
+      const mappingFailures: string[] = [];
+      for (const fixture of HMLR_TEST_ADDRESSES) {
+        const mapped = toEpdAddress(fixture.input);
+        if (
+          mapped.buildingName !== fixture.expected.buildingName ||
+          mapped.buildingNumber !== fixture.expected.buildingNumber ||
+          mapped.streetName !== fixture.expected.streetName ||
+          mapped.cityName !== fixture.expected.cityName ||
+          (mapped.postcode || undefined) !== (fixture.expected.postcode || undefined)
+        ) {
+          mappingFailures.push(fixture.label);
+        }
+      }
+      if (mappingFailures.length > 0) {
+        return {
+          success: false,
+          message: `EPD Best Practice mapping failed for ${mappingFailures.length}/${HMLR_TEST_ADDRESSES.length} fixtures: ${mappingFailures.slice(0, 3).join('; ')}`,
+        };
+      }
+
+      // Attempt a live round-trip against the dummy-data account using the
+      // first fixture. If the Business Gateway endpoint is unreachable from
+      // the server (e.g. network restrictions), we still report mapping
+      // success so Super Admin can at least verify credentials are stored.
+      try {
+        const connector = {
+          clientId: config.clientId,
+          clientSecret: config.clientSecret,
+          environment: (config.environment as 'test' | 'live') || 'test',
+          baseUrl: config.baseUrl || HMLR_BASE_URL_DEFAULT,
+        };
+        const results = await runEpdTestFixtures(connector, {
+          firmId: '__test__',
+          clientId: '__test__',
+          userId: '__test__',
+        });
+        const ok = results.filter(r => r.titleNumber).length;
+        const mappingOk = results.filter(r => r.mappingOk).length;
+        if (ok === 0) {
+          return {
+            success: false,
+            message: `EPD mapping verified (${mappingOk}/${results.length}). Live round-trip returned no titles — check credentials and environment. First error: ${results.find(r => r.error)?.error || 'no response'}`,
+          };
+        }
+        return {
+          success: true,
+          message: `EPD mapping verified (${mappingOk}/${results.length}). Live round-trip: ${ok}/${results.length} returned a title number from the ${connector.environment} account.`,
+        };
+      } catch (err) {
+        return {
+          success: true,
+          message: `EPD mapping verified (${HMLR_TEST_ADDRESSES.length}/${HMLR_TEST_ADDRESSES.length}). Credentials saved. Live round-trip skipped: ${err instanceof Error ? err.message : 'network error'}`,
+        };
+      }
     }
 
     case 'companies_house': {

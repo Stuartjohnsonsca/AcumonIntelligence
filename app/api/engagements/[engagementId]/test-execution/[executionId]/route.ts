@@ -22,6 +22,43 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
 
   if (!execution) return NextResponse.json({ error: 'Execution not found' }, { status: 404 });
 
+  // For action-pipeline executions, resolve the currently-executing action
+  // definition so the client can render per-action UI (e.g. the property
+  // verification section) without needing a separate round-trip. We follow
+  // the same test-lookup pattern as processPipelineStep in lib/flow-engine.ts
+  // (firmId + testDescription), since there's no FK on TestExecution.
+  let currentAction: { code: string; name: string; handlerName: string | null } | null = null;
+  if (execution.executionMode === 'action_pipeline') {
+    try {
+      const currentStepIndex = execution.currentStepIndex ?? 0;
+      const eng = await prisma.auditEngagement.findUnique({
+        where: { id: execution.engagementId },
+        select: { firmId: true },
+      });
+      if (eng) {
+        const test = await prisma.methodologyTest.findFirst({
+          where: { firmId: eng.firmId, name: execution.testDescription, executionMode: 'action_pipeline' },
+          select: { id: true },
+        });
+        if (test) {
+          const step = await prisma.testActionStep.findFirst({
+            where: { testId: test.id, stepOrder: currentStepIndex, isActive: true },
+            include: { actionDefinition: { select: { code: true, name: true, handlerName: true } } },
+          });
+          if (step?.actionDefinition) {
+            currentAction = {
+              code: step.actionDefinition.code,
+              name: step.actionDefinition.name,
+              handlerName: step.actionDefinition.handlerName,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[test-execution] Failed to resolve current action:', err);
+    }
+  }
+
   // Build flow steps sorted by execution order (completed first, then pending)
   const flow = execution.flowSnapshot as any;
   const flowSteps = (flow.nodes || [])
@@ -56,11 +93,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
       testDescription: execution.testDescription,
       currentNodeId: execution.currentNodeId,
       pauseReason: execution.pauseReason,
+      pauseRefId: execution.pauseRefId,
       errorMessage: execution.errorMessage,
       startedAt: execution.startedAt,
       completedAt: execution.completedAt,
       updatedAt: execution.updatedAt,
       context: execution.context, // Includes forEach body outputs not captured in nodeRuns
+      executionMode: execution.executionMode,
+      currentStepIndex: execution.currentStepIndex,
+      pipelineState: execution.pipelineState,
+      currentAction,
     },
     flowSnapshot: execution.flowSnapshot,
     flowSteps,

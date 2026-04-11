@@ -131,6 +131,19 @@ function getPresetRange(preset: string): { from: string; to: string } {
   }
 }
 
+interface LandRegistrySummary {
+  summary: { totalCalls: number; totalCostGbp: number };
+  byApi: Array<{ apiName: string; calls: number; costGbp: number }>;
+  byStatus: Array<{ status: string; calls: number; costGbp: number }>;
+  byFirm: Array<{ firmId: string; calls: number; costGbp: number }>;
+}
+
+function formatGbpDirect(gbp: number): string {
+  if (gbp < 0.01) return `£${gbp.toFixed(4)}`;
+  if (gbp < 1) return `£${gbp.toFixed(3)}`;
+  return `£${gbp.toFixed(2)}`;
+}
+
 export function AiUsageTab() {
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>('all');
@@ -143,24 +156,45 @@ export function AiUsageTab() {
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
   const [clientDetail, setClientDetail] = useState<ClientDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [landRegistry, setLandRegistry] = useState<LandRegistrySummary | null>(null);
 
   const fetchData = useCallback(async (p: Period, from?: string, to?: string) => {
     setLoading(true);
     try {
-      let url = `/api/ai-usage?period=${p}`;
-      if (p === 'custom' && from) url += `&from=${from}`;
-      if (p === 'custom' && to) url += `&to=${to}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        console.error('[AI Usage] API error:', res.status, await res.text().catch(() => ''));
-        setLoading(false);
-        return;
+      const params = new URLSearchParams({ period: p });
+      if (p === 'custom' && from) params.set('from', from);
+      if (p === 'custom' && to) params.set('to', to);
+
+      // Fetch AI usage and Land Registry costs in parallel — they share the
+      // same period filter but are stored in separate tables.
+      const [aiRes, lrRes] = await Promise.all([
+        fetch(`/api/ai-usage?${params.toString()}`),
+        fetch(`/api/land-registry-costs?${params.toString()}`),
+      ]);
+
+      if (aiRes.ok) {
+        const data = await aiRes.json();
+        setFirmSummary(data.firmSummary);
+        setClients(data.clients || []);
+        setByAction(data.byAction || []);
+        setByModel(data.byModel || []);
+      } else {
+        console.error('[AI Usage] API error:', aiRes.status, await aiRes.text().catch(() => ''));
       }
-      const data = await res.json();
-      setFirmSummary(data.firmSummary);
-      setClients(data.clients || []);
-      setByAction(data.byAction || []);
-      setByModel(data.byModel || []);
+
+      if (lrRes.ok) {
+        const lrData = await lrRes.json();
+        setLandRegistry({
+          summary: lrData.summary || { totalCalls: 0, totalCostGbp: 0 },
+          byApi: lrData.byApi || [],
+          byStatus: lrData.byStatus || [],
+          byFirm: lrData.byFirm || [],
+        });
+      } else {
+        // Non-fatal — Land Registry section just hides if the endpoint errors.
+        console.error('[Land Registry costs] API error:', lrRes.status);
+        setLandRegistry(null);
+      }
     } catch (e) {
       console.error('[AI Usage] fetch error:', e);
     }
@@ -329,6 +363,59 @@ export function AiUsageTab() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Land Registry Business Gateway spend — separate table, GBP */}
+          {landRegistry && landRegistry.summary.totalCalls > 0 && (
+            <div className="border-t border-slate-200 pt-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-slate-800">HM Land Registry — Business Gateway (GBP)</h3>
+                <span className="text-xs text-slate-400">platform-level spend via the shared HMLR account</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <SummaryCard label="Total LR Calls" value={landRegistry.summary.totalCalls.toLocaleString()} />
+                <SummaryCard label="Total Spend" value={formatGbpDirect(landRegistry.summary.totalCostGbp)} />
+                <SummaryCard
+                  label="Successful"
+                  value={(landRegistry.byStatus.find(s => s.status === 'success')?.calls || 0).toLocaleString()}
+                />
+                <SummaryCard
+                  label="Failed"
+                  value={(landRegistry.byStatus.find(s => s.status === 'failed')?.calls || 0).toLocaleString()}
+                />
+              </div>
+              <div className={`grid grid-cols-1 ${landRegistry.byFirm.length > 0 ? 'md:grid-cols-2' : ''} gap-4`}>
+                {landRegistry.byApi.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">By API</h4>
+                    <div className="space-y-1.5">
+                      {landRegistry.byApi.map(a => (
+                        <div key={a.apiName} className="flex items-center justify-between bg-white border border-slate-200 rounded px-3 py-2">
+                          <div>
+                            <span className="text-sm font-medium text-slate-800">{a.apiName.replace(/_/g, ' ')}</span>
+                            <span className="text-xs text-slate-400 ml-2">{a.calls.toLocaleString()} calls</span>
+                          </div>
+                          <span className="text-sm font-bold text-slate-800">{formatGbpDirect(a.costGbp)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {landRegistry.byFirm.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">By Firm (Super Admin)</h4>
+                    <div className="space-y-1.5">
+                      {landRegistry.byFirm.map(f => (
+                        <div key={f.firmId} className="flex items-center justify-between bg-white border border-slate-200 rounded px-3 py-2">
+                          <span className="text-sm font-mono text-slate-800 truncate">{f.firmId}</span>
+                          <span className="text-sm font-bold text-slate-800">{formatGbpDirect(f.costGbp)} <span className="text-xs text-slate-400 ml-1">({f.calls})</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

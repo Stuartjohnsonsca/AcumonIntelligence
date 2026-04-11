@@ -7,6 +7,8 @@ import { ItemErrorDetailPanel } from './ItemErrorDetailPanel';
 import { InlineSamplingPanel } from './InlineSamplingPanel';
 import { AuditVerificationPanel } from './AuditVerificationPanel';
 import { ErrorInvestigationPanel } from './ErrorInvestigationPanel';
+import { PropertyVerificationSection } from './PropertyVerificationSection';
+import { PlanCustomiserModal } from './PlanCustomiserModal';
 
 // ─── Types ───
 interface SampleItem { id: string; ref: string; description: string; amount: number; date?: string; reference?: string; }
@@ -60,6 +62,20 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
   const [executionStatus, setExecutionStatus] = useState<string>('not_started');
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [pauseReason, setPauseReason] = useState<string | null>(null);
+  // Action-pipeline: current action + step state for per-action UI branches.
+  const [currentAction, setCurrentAction] = useState<{ code: string; name: string; handlerName: string | null } | null>(null);
+  const [currentStepState, setCurrentStepState] = useState<Record<string, any> | null>(null);
+  // Plan Customiser modal state — opened from the header button with the
+  // current FS Line pre-populated. Allocated tests are fetched on open.
+  const [planCustomiserOpen, setPlanCustomiserOpen] = useState(false);
+  const [planCustomiserAllocated, setPlanCustomiserAllocated] = useState<Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    testTypeCode: string;
+    assertions: string[] | null;
+    framework: string;
+  }>>([]);
   const [diagnostics, setDiagnostics] = useState<string[]>([]);
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [samplingResults, setSamplingResults] = useState<{ runId: string; selectedIndices: number[]; sampleSize: number; coverage: number } | null>(null);
@@ -289,6 +305,11 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
             if (detailRes.ok) {
               const detail = await detailRes.json();
               const ctx = detail.execution?.context || (detail.flowSnapshot ? null : null);
+              // Capture action-pipeline state for per-action UI branches
+              if (detail.execution?.currentAction) setCurrentAction(detail.execution.currentAction);
+              if (detail.execution?.pipelineState && detail.execution.currentStepIndex != null) {
+                setCurrentStepState(detail.execution.pipelineState[detail.execution.currentStepIndex] || null);
+              }
               // Inject loop results and evidence data from context into flowSteps
               if (ctx?.nodes) {
                 for (const [nodeId, nodeOutput] of Object.entries(ctx.nodes)) {
@@ -375,6 +396,11 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           }
         }
         setFlowSteps(steps);
+        // Action-pipeline: capture current action + step state for per-action UI
+        if (data.execution?.currentAction !== undefined) setCurrentAction(data.execution.currentAction);
+        if (data.execution?.pipelineState && data.execution.currentStepIndex != null) {
+          setCurrentStepState(data.execution.pipelineState[data.execution.currentStepIndex] || null);
+        }
         if (data.execution.errorMessage) setExecutionError(data.execution.errorMessage);
         if (data.execution.pauseReason) setPauseReason(data.execution.pauseReason);
         if (['completed', 'failed', 'cancelled'].includes(data.execution.status)) {
@@ -473,6 +499,37 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           {executionId && executionStatus !== 'not_started' && (
             <button onClick={handleReset} className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100"><RotateCcw className="h-3 w-3" /> Reset</button>
           )}
+          {/* Plan Customiser — trim or extend the auto-generated audit plan
+              for this engagement. Allocated tests are fetched once when the
+              modal opens, scoped to this test's FS Line. */}
+          {fsLineId && (
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch(`/api/engagements/${engagementId}/test-allocations`);
+                  if (res.ok) {
+                    const data = await res.json();
+                    const allocated = (data.allocations || [])
+                      .filter((a: any) => a.fsLineId === fsLineId && a.test)
+                      .map((a: any) => ({
+                        id: a.test.id,
+                        name: a.test.name,
+                        description: a.test.description,
+                        testTypeCode: a.test.testTypeCode,
+                        assertions: a.test.assertions,
+                        framework: a.test.framework,
+                      }));
+                    setPlanCustomiserAllocated(allocated);
+                  }
+                } catch {}
+                setPlanCustomiserOpen(true);
+              }}
+              className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+              title="Plan Customiser — mark tests N/A or add engagement-specific custom tests for this FS Line"
+            >
+              Plan Customiser
+            </button>
+          )}
           <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded"><X className="h-4 w-4 text-slate-400" /></button>
         </div>
       </div>
@@ -516,6 +573,20 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   <p className="text-xs text-red-600 mt-0.5">{executionError}</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Action-specific: UK Property Asset Verification */}
+          {currentAction?.code === 'verify_property_assets' && executionId && (
+            <div className="p-4">
+              <PropertyVerificationSection
+                executionId={executionId}
+                engagementId={engagementId}
+                pipelineStepState={currentStepState}
+                pauseReason={pauseReason}
+                currentUserName={conclusionRecord?.reviewedByName || 'Current User'}
+                onResumed={() => { /* poll loop will refresh state */ }}
+              />
             </div>
           )}
 
@@ -1273,6 +1344,17 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         </div>
       )}
     </div>
+
+    {/* Plan Customiser modal — mark tests N/A for this engagement, add custom tests */}
+    {planCustomiserOpen && fsLineId && (
+      <PlanCustomiserModal
+        engagementId={engagementId}
+        fsLineId={fsLineId}
+        fsLineName={fsLine}
+        allocatedTests={planCustomiserAllocated}
+        onClose={() => setPlanCustomiserOpen(false)}
+      />
+    )}
     </div>
   );
 }

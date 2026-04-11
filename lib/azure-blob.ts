@@ -33,6 +33,26 @@ export async function uploadToInbox(
   return blobName;
 }
 
+/**
+ * Upload a buffer to an arbitrary container. The container is created if it
+ * does not already exist. Used for cases like Land Registry title documents
+ * that live in a dedicated container separate from the generic inbox.
+ */
+export async function uploadToContainer(
+  containerName: string,
+  blobName: string,
+  buffer: Buffer,
+  mimeType: string,
+): Promise<string> {
+  const containerClient = getContainerClient(containerName);
+  await containerClient.createIfNotExists();
+  const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+  await blockBlobClient.uploadData(buffer, {
+    blobHTTPHeaders: { blobContentType: mimeType },
+  });
+  return blobName;
+}
+
 async function awaitCopyCompletion(
   destClient: ReturnType<ContainerClient['getBlockBlobClient']>,
   maxWaitMs = 30000,

@@ -3328,18 +3328,32 @@ export async function resumePipelineExecution(executionId: string, externalData?
     pipelineState[currentStepIndex] = { ...currentOutputs, ...externalData };
   }
 
+  // Multi-phase actions (e.g. verify_property_assets) set repeatOnResume=true
+  // on their paused outputs to indicate that the same step should run again
+  // on the next resume rather than advancing. When we re-enter the handler
+  // it reads the updated `phase` field from stepState and runs the next
+  // sub-phase. The marker is cleared each resume so the handler must re-set
+  // it on the next non-terminal pause.
+  const mergedState = pipelineState[currentStepIndex] || {};
+  const shouldRepeat = mergedState.repeatOnResume === true;
+  if (shouldRepeat) {
+    delete mergedState.repeatOnResume;
+    pipelineState[currentStepIndex] = mergedState;
+  }
+
   // Mark paused node run as completed
   await prisma.testExecutionNodeRun.updateMany({
     where: { executionId, actionStepId: execution.actionStepId || undefined, status: 'paused' },
     data: { status: 'completed', completedAt: new Date(), output: pipelineState[currentStepIndex] as any },
   });
 
-  // Advance to next step
+  // Advance to next step — unless the current step is a multi-phase action
+  // that asked to be re-run at the same index.
   await prisma.testExecution.update({
     where: { id: executionId },
     data: {
       status: 'running',
-      currentStepIndex: currentStepIndex + 1,
+      currentStepIndex: shouldRepeat ? currentStepIndex : currentStepIndex + 1,
       pauseReason: null,
       pauseRefId: null,
       pipelineState: pipelineState as any,
