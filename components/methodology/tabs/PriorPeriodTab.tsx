@@ -230,7 +230,20 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
                       <span className="text-[8px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded-full font-medium">{docPoints.length} point{docPoints.length !== 1 ? 's' : ''}</span>
                     )}
                   </div>
-                  {isLinked && doc.documentName && <p className="text-[10px] text-slate-500">Linked: {doc.documentName}</p>}
+                  {isLinked && doc.documentName && (
+                    <p className="text-[10px] text-slate-500">
+                      Linked:{' '}
+                      <a
+                        href={`/api/documents/preview?docId=${doc.documentId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        className="text-blue-600 hover:text-blue-800 underline"
+                      >
+                        {doc.documentName}
+                      </a>
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
