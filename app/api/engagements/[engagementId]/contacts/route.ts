@@ -47,7 +47,7 @@ export async function PUT(
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
-  const { contacts } = body as { contacts: { id?: string; name: string; email?: string; phone?: string; isMainContact: boolean }[] };
+  const { contacts } = body as { contacts: { id?: string; name: string; email?: string; phone?: string; isMainContact: boolean; isInformedManagement?: boolean }[] };
 
   const existingIds = contacts.filter(c => c.id).map(c => c.id!);
   await prisma.auditClientContact.deleteMany({
@@ -55,14 +55,21 @@ export async function PUT(
   });
 
   for (const contact of contacts) {
+    const common = {
+      name: contact.name,
+      email: contact.email,
+      phone: contact.phone,
+      isMainContact: contact.isMainContact,
+      isInformedManagement: contact.isInformedManagement ?? false,
+    };
     if (contact.id) {
       await prisma.auditClientContact.update({
         where: { id: contact.id },
-        data: { name: contact.name, email: contact.email, phone: contact.phone, isMainContact: contact.isMainContact },
+        data: common,
       });
     } else {
       await prisma.auditClientContact.create({
-        data: { engagementId, name: contact.name, email: contact.email, phone: contact.phone, isMainContact: contact.isMainContact },
+        data: { engagementId, ...common },
       });
     }
   }

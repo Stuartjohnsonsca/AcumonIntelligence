@@ -20,6 +20,7 @@ interface Client {
   contactFirstName: string | null;
   contactSurname: string | null;
   contactEmail: string | null;
+  address: string | null;
   portfolioManagerId: string | null;
   isActive: boolean;
   readOnly: boolean;
@@ -38,7 +39,7 @@ type ViewMode = 'list' | 'create' | 'edit' | 'archived';
 type SortKey = 'clientName' | 'software' | 'contactFirstName' | 'contactEmail';
 type SortDir = 'asc' | 'desc';
 
-const EMPTY_FORM = { clientName: '', software: '', contactFirstName: '', contactSurname: '', contactEmail: '', portfolioManagerId: '' };
+const EMPTY_FORM = { clientName: '', software: '', contactFirstName: '', contactSurname: '', contactEmail: '', address: '', portfolioManagerId: '' };
 
 export default function AddDeletePage() {
   const { data: session, status } = useSession();
@@ -134,6 +135,7 @@ export default function AddDeletePage() {
         contactFirstName: form.contactFirstName || null,
         contactSurname: form.contactSurname || null,
         contactEmail: form.contactEmail || null,
+        address: form.address || null,
         portfolioManagerId: form.portfolioManagerId || null,
         firmId,
       }),
@@ -157,6 +159,7 @@ export default function AddDeletePage() {
         contactFirstName: form.contactFirstName || null,
         contactSurname: form.contactSurname || null,
         contactEmail: form.contactEmail || null,
+        address: form.address || null,
         portfolioManagerId: form.portfolioManagerId || null,
       }),
     });
@@ -179,6 +182,7 @@ export default function AddDeletePage() {
       contactFirstName: client.contactFirstName || '',
       contactSurname: client.contactSurname || '',
       contactEmail: client.contactEmail || '',
+      address: client.address || '',
       portfolioManagerId: client.portfolioManagerId || '',
     });
     setViewMode('edit');
@@ -365,6 +369,19 @@ export default function AddDeletePage() {
                     <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                   ))}
                 </select>
+              </div>
+              <div className="sm:col-span-2 space-y-1.5">
+                <Label className="flex items-center gap-1.5">
+                  Postal Address
+                  <span className="text-[10px] text-red-600 font-normal">(appears on client letters)</span>
+                </Label>
+                <textarea
+                  value={form.address}
+                  onChange={(e) => setForm({ ...form, address: e.target.value })}
+                  rows={3}
+                  placeholder={'1 High Street\nLondon\nSW1 1AA'}
+                  className="w-full border-2 border-red-400 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-500"
+                />
               </div>
               <div className="sm:col-span-2 flex gap-2">
                 <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">

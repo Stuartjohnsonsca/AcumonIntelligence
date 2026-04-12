@@ -3,8 +3,9 @@ import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { populateMergeFields } from '@/lib/template-merge';
-import { generatePdfFromTemplate } from '@/lib/template-pdf';
+import { generatePdfFromTemplate, type PdfOptions } from '@/lib/template-pdf';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
+import { downloadBlob, CONTAINERS } from '@/lib/azure-blob';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true, auditType: true } });
@@ -44,6 +45,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   const body = await req.json();
   const { action, templateId } = body;
+  const auditPlanDetail = body.auditPlanDetail === 'detailed' ? 'detailed' : 'high';
 
   if (!templateId) return NextResponse.json({ error: 'templateId required' }, { status: 400 });
 
@@ -51,13 +53,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   const template = await prisma.documentTemplate.findUnique({ where: { id: templateId } });
   if (!template) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
 
-  // Populate merge fields
+  // Populate merge fields (scalar + block expansion + detail option)
   const recipient = body.recipientName ? { name: body.recipientName, email: body.recipientEmail } : undefined;
   const populatedHtml = await populateMergeFields(
     template.content,
     engagementId,
     session.user.name || session.user.email || '',
     recipient,
+    { auditPlanDetail },
   );
 
   // Also populate the subject line
@@ -65,8 +68,61 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     ? await populateMergeFields(template.subject, engagementId, session.user.name || '', recipient)
     : template.name;
 
-  // Get firm name for PDF header
-  const firm = await prisma.firm.findUnique({ where: { id: session.user.firmId! }, select: { name: true } });
+  // Load firm branding (all fields needed by the letterhead renderer)
+  const firm = await prisma.firm.findUnique({
+    where: { id: session.user.firmId! },
+    select: {
+      name: true,
+      logoStoragePath: true,
+      groupLogoStoragePath: true,
+      letterheadHeaderText: true,
+      letterheadFooterText: true,
+    },
+  });
+
+  // Load client (for recipient block)
+  const engagementWithClient = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { client: { select: { clientName: true, address: true } } },
+  });
+  const client = engagementWithClient?.client;
+
+  // Fetch logo blob bytes (best effort — don't block generation)
+  let firmLogoBytes: Uint8Array | undefined;
+  let firmLogoMime: string | undefined;
+  let groupLogoBytes: Uint8Array | undefined;
+  let groupLogoMime: string | undefined;
+  if (firm?.logoStoragePath) {
+    try {
+      const buf = await downloadBlob(firm.logoStoragePath, CONTAINERS.INBOX);
+      firmLogoBytes = new Uint8Array(buf);
+      firmLogoMime = firm.logoStoragePath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    } catch (err) { console.error('[Generate Document] firm logo fetch failed:', err); }
+  }
+  if (firm?.groupLogoStoragePath) {
+    try {
+      const buf = await downloadBlob(firm.groupLogoStoragePath, CONTAINERS.INBOX);
+      groupLogoBytes = new Uint8Array(buf);
+      groupLogoMime = firm.groupLogoStoragePath.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    } catch (err) { console.error('[Generate Document] group logo fetch failed:', err); }
+  }
+
+  const currentDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  const pdfOptions: PdfOptions = {
+    documentTitle: template.name,
+    firmName: firm?.name || '',
+    firmLogoBytes,
+    firmLogoMime,
+    groupLogoBytes,
+    groupLogoMime,
+    letterheadHeaderText: firm?.letterheadHeaderText || undefined,
+    letterheadFooterText: firm?.letterheadFooterText || undefined,
+    recipientHeadline: 'For the attention of the members',
+    clientNameUpper: (client?.clientName || '').toUpperCase(),
+    clientAddress: client?.address || undefined,
+    currentDate,
+  };
 
   // ── Preview: return populated HTML for display ──
   if (action === 'preview_html') {
@@ -75,10 +131,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   // ── Generate PDF and return as download ──
   if (action === 'preview' || action === 'download') {
-    const pdfBuffer = await generatePdfFromTemplate(populatedHtml, {
-      firmName: firm?.name || '',
-      documentTitle: template.name,
-    });
+    const pdfBuffer = await generatePdfFromTemplate(populatedHtml, pdfOptions);
 
     // Save to document repository
     const doc = await prisma.auditDocument.create({
@@ -115,10 +168,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const recipientEmail = body.recipientEmail;
     if (!recipientEmail) return NextResponse.json({ error: 'recipientEmail required' }, { status: 400 });
 
-    const pdfBuffer = await generatePdfFromTemplate(populatedHtml, {
-      firmName: firm?.name || '',
-      documentTitle: template.name,
-    });
+    const pdfBuffer = await generatePdfFromTemplate(populatedHtml, pdfOptions);
 
     // Send email with PDF attachment
     const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING;
@@ -178,10 +228,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   // ── Send to portal ──
   if (action === 'send_portal') {
-    const pdfBuffer = await generatePdfFromTemplate(populatedHtml, {
-      firmName: firm?.name || '',
-      documentTitle: template.name,
-    });
+    const pdfBuffer = await generatePdfFromTemplate(populatedHtml, pdfOptions);
 
     // Upload to Azure Blob
     let storagePath: string | null = null;

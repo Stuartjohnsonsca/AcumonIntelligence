@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Loader2, Save, Upload, Link2, Check, X, Search, ChevronRight, BookOpen, Plug, Eye, EyeOff, RefreshCw, Sparkles, Pencil, Plus, Trash2 } from 'lucide-react';
 import { CrmFilterChat } from './CrmFilterChat';
+import { FirmBrandingPanel } from './FirmBrandingPanel';
 
 interface TaxonomyConfig {
   taxonomySourceType: string | null;
@@ -505,6 +506,9 @@ export function FirmSettingsTab({ firmId }: Props) {
           </a>.
         </p>
       </div>
+
+      {/* ─── Letterhead / Branding ─────────────────────────────────────────── */}
+      <FirmBrandingPanel />
 
       {/* ─── Taxonomy / Chart of Accounts ───────────────────────────────────── */}
       <div className="bg-white rounded-lg border border-slate-200 p-5">

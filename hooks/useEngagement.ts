@@ -53,6 +53,8 @@ export interface ContactData {
   /** Optional job title / role description for the contact */
   role?: string;
   isMainContact: boolean;
+  /** Flagged as "informed management" — appears on the planning letter. */
+  isInformedManagement?: boolean;
   portalAccess?: boolean;
 }
 

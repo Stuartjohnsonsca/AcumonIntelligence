@@ -38,6 +38,8 @@ interface RMMRow {
   finalRiskAssessment: string | null;
   controlRisk: string | null;
   overallRisk: string | null;
+  /** Drives the Planning Letter's Significant Risks / Areas of Focus sections. */
+  rowCategory: 'significant_risk' | 'area_of_focus' | null;
   isHidden: boolean;
   isMandatory: boolean;
   notes: string | null;
@@ -229,7 +231,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
 
   function makeEmptyRow(): RMMRow {
     return {
-      id: '', lineItem: '', lineType: viewMode, category: null, riskIdentified: null, amount: null,
+      id: '', lineItem: '', lineType: viewMode, category: null, rowCategory: null, riskIdentified: null, amount: null,
       assertions: [], relevance: null, complexityText: null, subjectivityText: null,
       changeText: null, uncertaintyText: null, susceptibilityText: null,
       inherentRiskLevel: null, aiSummary: null, isAiEdited: false,
@@ -687,6 +689,24 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                   {isExpanded && (
                     <tr className="bg-blue-50/30 border-b border-slate-200">
                       <td colSpan={showCategory ? 18 : 17} className="px-4 py-3">
+                        {/* Planning Letter category — client-visible */}
+                        <div className="mb-3 flex items-center gap-3 p-2 rounded border-2 border-red-400 bg-red-50/30">
+                          <label className="text-[11px] font-semibold text-red-700 whitespace-nowrap">
+                            Planning Letter category:
+                          </label>
+                          <select
+                            value={row.rowCategory || ''}
+                            onChange={e => updateRow(i, 'rowCategory', (e.target.value || null) as any)}
+                            className="border border-red-300 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
+                          >
+                            <option value="">— Not in letter —</option>
+                            <option value="significant_risk">Significant Risk</option>
+                            <option value="area_of_focus">Area of Focus</option>
+                          </select>
+                          <span className="text-[10px] text-red-600 italic">
+                            If set, this row will appear on the Planning Letter sent to the client.
+                          </span>
+                        </div>
                         <div className="grid grid-cols-5 gap-3">
                           {INHERENT_RISK_COMPONENTS.map(comp => {
                             const textKey = `${comp.key}Text` as keyof RMMRow;

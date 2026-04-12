@@ -26,6 +26,21 @@ model Firm {
 
   ethicsPartnerId     String?  @map("ethics_partner_id")
 
+  // Letterhead / branding / regulatory (used by client letter templates)
+  logoStoragePath          String? @map("logo_storage_path")
+  groupLogoStoragePath     String? @map("group_logo_storage_path")
+  address                  String? @db.Text
+  phone                    String?
+  email                    String?
+  website                  String?
+  registeredCompanyNumber  String? @map("registered_company_number")
+  statutoryAuditorNumber   String? @map("statutory_auditor_number")
+  legalStatus              String? @map("legal_status") // Ltd | LLP | Partnership | Sole Trader
+  registeredOfficeAddress  String? @map("registered_office_address") @db.Text
+  vatNumber                String? @map("vat_number")
+  letterheadHeaderText     String? @map("letterhead_header_text") @db.Text
+  letterheadFooterText     String? @map("letterhead_footer_text") @db.Text
+
   // PowerApps / Dynamics 365 integration
   powerAppsClientId     String?  @map("power_apps_client_id")
   powerAppsClientSecret String?  @map("power_apps_client_secret")
@@ -180,6 +195,7 @@ model Client {
   contactFirstName    String?  @map("contact_first_name")
   contactSurname      String?  @map("contact_surname")
   contactEmail        String?  @map("contact_email")
+  address             String?  @db.Text // Multi-line postal address (used on client letters)
   sector              String?  // Financial Services, Healthcare, Manufacturing, Technology, Public Sector, Retail, Energy, Education, Construction, Legal, Charities & Non-Profit
   portfolioManagerId  String?  @map("portfolio_manager_id")
   crmAccountId        String?  @unique @map("crm_account_id") // Dynamics 365 account GUID
@@ -1794,7 +1810,8 @@ model AuditClientContact {
   name         String
   email        String?
   phone        String?
-  isMainContact Boolean @default(false) @map("is_main_contact")
+  isMainContact       Boolean @default(false) @map("is_main_contact")
+  isInformedManagement Boolean @default(false) @map("is_informed_management")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
@@ -1980,6 +1997,7 @@ model AuditRMMRow {
   finalRiskAssessment  String? @map("final_risk_assessment")
   controlRisk          String? @map("control_risk") // Not Tested | Not Effective | Partially Effective | Effective
   overallRisk          String? @map("overall_risk")
+  rowCategory          String? @map("row_category") // significant_risk | area_of_focus | null — drives planning letter risk sections
   isHidden             Boolean @default(false) @map("is_hidden")
   isMandatory          Boolean @default(false) @map("is_mandatory")
   notes                String? @db.Text

@@ -87,6 +87,42 @@ const MERGE_FIELD_CATEGORIES = [
       { key: 'job_section_link', label: 'Job Section Link', source: 'engagement', path: 'jobSectionLink' },
     ],
   },
+  {
+    category: 'Planning — Materiality',
+    fields: [
+      { key: 'materiality_overall', label: 'Overall materiality', source: 'planning', path: 'materiality.overall' },
+      { key: 'materiality_overall_prior', label: 'Overall materiality (prior year)', source: 'planning', path: 'materiality.overallPrior' },
+      { key: 'materiality_method', label: 'Materiality method (e.g. "2% of Revenue")', source: 'planning', path: 'materiality.method' },
+      { key: 'materiality_method_prior', label: 'Materiality method (prior year)', source: 'planning', path: 'materiality.methodPrior' },
+      { key: 'materiality_performance', label: 'Performance materiality', source: 'planning', path: 'materiality.performance' },
+      { key: 'materiality_performance_percent', label: 'Performance materiality %', source: 'planning', path: 'materiality.performancePercent' },
+      { key: 'materiality_trivial', label: 'Clearly trivial / error reporting threshold', source: 'planning', path: 'materiality.trivial' },
+      { key: 'materiality_benchmark_rationale', label: 'Benchmark rationale narrative', source: 'planning', path: 'materiality.rationale' },
+    ],
+  },
+  {
+    category: 'Planning — Other',
+    fields: [
+      { key: 'entity_activities_description', label: 'Principal activities description', source: 'planning', path: 'permFile.understandingEntity' },
+      { key: 'engagement_letter_date', label: 'Engagement letter date', source: 'planning', path: 'continuance.engagementLetterDate' },
+      { key: 'prior_auditor', label: 'Prior auditor firm name', source: 'planning', path: 'continuance.priorAuditor' },
+      { key: 'prior_year_review_narrative', label: 'Prior year review narrative', source: 'planning', path: 'continuance.mgmtLetterNarrative' },
+      { key: 'informed_management_names', label: 'Informed management names', source: 'planning', path: 'contacts.informedManagement' },
+      { key: 'client_name_upper', label: 'Client name (UPPERCASE)', source: 'client', path: 'clientNameUpper' },
+      { key: 'ri_email', label: 'RI email', source: 'team', path: 'riEmail' },
+      { key: 'ri_role', label: 'RI role label', source: 'team', path: 'riRole' },
+    ],
+  },
+  {
+    category: 'Blocks (auto-generated tables)',
+    fields: [
+      { key: 'ethics_safeguards_table', label: 'Ethics — non-audit services safeguards table', source: 'block', path: 'ethics' },
+      { key: 'significant_risks_table', label: 'Significant risks table (respects detail toggle)', source: 'block', path: 'significantRisks' },
+      { key: 'areas_of_focus_table', label: 'Areas of focus table (respects detail toggle)', source: 'block', path: 'areasOfFocus' },
+      { key: 'engagement_team_table', label: 'Engagement team table', source: 'block', path: 'team' },
+      { key: 'timetable_table', label: 'Timetable table (from Agreed Dates)', source: 'block', path: 'timetable' },
+    ],
+  },
 ];
 
 // Flat lookup for field key → label
@@ -943,6 +979,32 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            onClick={async () => {
+              try {
+                const res = await fetch('/api/methodology-admin/template-documents/seed-defaults', { method: 'POST' });
+                if (res.ok) {
+                  const data = await res.json();
+                  const created = (data.results || []).filter((r: any) => r.created).map((r: any) => r.name);
+                  if (created.length) {
+                    alert(`Loaded standard templates: ${created.join(', ')}. Reload the page to see them.`);
+                    window.location.reload();
+                  } else {
+                    alert('Standard templates already exist — nothing to do.');
+                  }
+                } else {
+                  alert('Failed to seed standard templates.');
+                }
+              } catch (err: any) {
+                alert(`Error: ${err.message}`);
+              }
+            }}
+            size="sm"
+            variant="outline"
+            title="Load the standard Planning Letter (and future default templates) for this firm"
+          >
+            Load standard templates
+          </Button>
           <Button onClick={() => setShowCategoryManager(!showCategoryManager)} size="sm" variant="outline">
             {showCategoryManager ? 'Hide Categories' : 'Manage Categories'}
           </Button>

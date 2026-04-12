@@ -134,6 +134,8 @@ function buildContinuanceQuestions() {
     dropdownOptions: ['Functioning as designed', 'Partially Functioning as Designed', 'Not Functioning as Designed']
   }));
   questions.push(q('continuity_engagement_letter_date', 'Continuity', 'Engagement Letter Signed Date', 'date', i++));
+  questions.push(q('prior_auditor_firm_name', 'Continuity', 'Prior auditor firm name (appears on Planning Letter)', 'text', i++));
+  questions.push(q('continuity_mgmt_letter_narrative', 'Continuity', 'Prior year management letter narrative (appears on Planning Letter)', 'textarea', i++));
 
   // 4. Management information
   questions.push(q('mgmt_directors_changed', 'Management information', 'Discuss with management to assess if there is any changes in directors/trustees during the year?', 'yes_only', i++));

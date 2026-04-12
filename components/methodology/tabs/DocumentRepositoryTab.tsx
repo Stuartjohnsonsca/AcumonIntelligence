@@ -63,6 +63,7 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
   const [templates, setTemplates] = useState<{ id: string; name: string; category: string }[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [generateAction, setGenerateAction] = useState<'download' | 'send_email' | 'send_portal'>('download');
+  const [auditPlanDetail, setAuditPlanDetail] = useState<'high' | 'detailed'>('high');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [recipientName, setRecipientName] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -144,7 +145,7 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
     setGenerating(true);
     setGenerateResult(null);
     try {
-      const body: Record<string, string> = { templateId: selectedTemplate, action: generateAction };
+      const body: Record<string, string> = { templateId: selectedTemplate, action: generateAction, auditPlanDetail };
       if (generateAction === 'send_email') { body.recipientEmail = recipientEmail; body.recipientName = recipientName; }
 
       if (generateAction === 'download') {
@@ -281,6 +282,24 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
               </div>
             </div>
           )}
+          {/* Audit plan detail toggle — only affects templates that use {{significant_risks_table}} / {{areas_of_focus_table}} */}
+          <div className="mb-3">
+            <label className="block text-xs text-slate-500 mb-1">
+              Audit plan detail <span className="text-slate-400 italic">(applies when the template renders audit procedures)</span>
+            </label>
+            <div className="flex gap-3 text-xs">
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input type="radio" name="auditPlanDetail" value="high" checked={auditPlanDetail === 'high'}
+                  onChange={() => setAuditPlanDetail('high')} className="w-3 h-3" />
+                <span>High-level (test names only)</span>
+              </label>
+              <label className="inline-flex items-center gap-1 cursor-pointer">
+                <input type="radio" name="auditPlanDetail" value="detailed" checked={auditPlanDetail === 'detailed'}
+                  onChange={() => setAuditPlanDetail('detailed')} className="w-3 h-3" />
+                <span>Detailed (full procedure descriptions)</span>
+              </label>
+            </div>
+          </div>
           {generateResult && (
             <div className={`text-xs mb-2 p-2 rounded ${generateResult.includes('Failed') || generateResult.includes('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
               {generateResult}

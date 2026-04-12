@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import type { ContactData } from '@/hooks/useEngagement';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { ClientVisibleField } from '@/components/ui/client-visible-field';
 
 interface Props {
   engagementId: string;
@@ -205,17 +206,30 @@ export function ClientContactsPanel({ engagementId, clientId, initialContacts }:
                     {portalLoading[i] ? 'Updating...' : 'Portal Access'}
                   </span>
                 </label>
+                <label className="flex items-center gap-1.5 text-xs" title="Flagging this contact as Informed Management lists them on the Planning Letter.">
+                  <input
+                    type="checkbox"
+                    checked={contact.isInformedManagement ?? false}
+                    onChange={(e) => updateContact(i, 'isInformedManagement', e.target.checked)}
+                    className="w-3 h-3 rounded border-red-500 ring-2 ring-red-200"
+                  />
+                  <span className={contact.isInformedManagement ? 'text-red-600 font-medium' : 'text-slate-400'}>
+                    Informed Management
+                  </span>
+                </label>
               </div>
               <button onClick={() => removeContact(i)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
             </div>
             <div className="space-y-1.5">
-              <input
-                type="text"
-                value={contact.name}
-                onChange={e => updateContact(i, 'name', e.target.value)}
-                placeholder="Name"
-                className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
+              <ClientVisibleField letterName="Planning Letter" active={contact.isInformedManagement}>
+                <input
+                  type="text"
+                  value={contact.name}
+                  onChange={e => updateContact(i, 'name', e.target.value)}
+                  placeholder="Name"
+                  className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
+                />
+              </ClientVisibleField>
               <div className="grid grid-cols-2 gap-1.5">
                 <input
                   type="email"
