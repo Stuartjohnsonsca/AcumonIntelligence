@@ -222,11 +222,12 @@ export interface CRMJobRaw {
 export async function fetchFilteredAccountsWithJobs(firmId: string): Promise<{ clients: CRMOrganisation[]; jobs: CRMJobRaw[] }> {
   const config = await getFirmCrmConfig(firmId);
 
-  // NB: jca_firstcustomdeadline removed — the field no longer exists on jca_job in some
-  // CRM tenants and Dynamics rejects the whole request with a 400 if any selected field
-  // is missing. firstCustomDeadline now defaults to null. If you re-introduce this field,
-  // confirm it exists in every tenant first or fall back via a defensive try/catch.
-  const jobSelect = 'jca_jobid,jca_customername,jca_clientguid,jca_name,jca_jobtyperef,jca_startdate,jca_completiondate,jca_budget,jca_year,jca_firststatutorydeadline,jca_totalunits';
+  // NB: jca_firstcustomdeadline AND jca_firststatutorydeadline were both removed from the
+  // $select — neither field exists on jca_job in the Acumon prod tenant and Dynamics
+  // rejects the whole request with a 400 if any selected field is unknown. Both values
+  // now default to null in CRMJobRaw. If re-introduced, confirm they exist in every
+  // tenant first (or fall back via defensive per-field probing).
+  const jobSelect = 'jca_jobid,jca_customername,jca_clientguid,jca_name,jca_jobtyperef,jca_startdate,jca_completiondate,jca_budget,jca_year,jca_totalunits';
   let jobPath = `jca_jobs?$select=${jobSelect}&$top=5000`;
   if (config.clientFilter) {
     jobPath += `&$filter=${encodeURIComponent(config.clientFilter)}`;
