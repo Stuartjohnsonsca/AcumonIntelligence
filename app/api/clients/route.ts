@@ -3,32 +3,41 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
 export async function GET(req: Request) {
-  const session = await auth();
-  if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+  try {
+    const session = await auth();
+    if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
 
-  const { searchParams } = new URL(req.url);
-  const requestedFirmId = searchParams.get('firmId');
-  const firmId = session.user.isSuperAdmin && requestedFirmId ? requestedFirmId : session.user.firmId;
-  const includeInactive = searchParams.get('includeInactive') === 'true';
+    const { searchParams } = new URL(req.url);
+    const requestedFirmId = searchParams.get('firmId');
+    const firmId = session.user.isSuperAdmin && requestedFirmId ? requestedFirmId : session.user.firmId;
+    const includeInactive = searchParams.get('includeInactive') === 'true';
 
-  const clients = await prisma.client.findMany({
-    where: {
-      firmId,
-      ...(includeInactive ? {} : { isActive: true }),
-    },
-    include: {
-      _count: { select: { subscriptions: true, userAssignments: true } },
-      userAssignments: { include: { user: { select: { id: true, name: true, displayId: true, email: true } } } },
-      portfolioManager: { select: { id: true, name: true, email: true } },
-      accountingConnections: {
-        select: { system: true, orgName: true, connectedAt: true, expiresAt: true },
-        where: { expiresAt: { gt: new Date() } },
+    const clients = await prisma.client.findMany({
+      where: {
+        firmId,
+        ...(includeInactive ? {} : { isActive: true }),
       },
-    },
-    orderBy: { clientName: 'asc' },
-  });
+      include: {
+        _count: { select: { subscriptions: true, userAssignments: true } },
+        userAssignments: { include: { user: { select: { id: true, name: true, displayId: true, email: true } } } },
+        portfolioManager: { select: { id: true, name: true, email: true } },
+        accountingConnections: {
+          select: { system: true, orgName: true, connectedAt: true, expiresAt: true },
+          where: { expiresAt: { gt: new Date() } },
+        },
+      },
+      orderBy: { clientName: 'asc' },
+    });
 
-  return NextResponse.json(clients);
+    return NextResponse.json(clients);
+  } catch (err: unknown) {
+    // Surface the real error in the response so diagnostics work without Vercel log access.
+    // Safe because this endpoint is already auth-gated above.
+    const message = err instanceof Error ? err.message : String(err);
+    const code = (err as { code?: string })?.code;
+    console.error('[/api/clients][GET] failed:', message, code);
+    return NextResponse.json({ error: 'clients_fetch_failed', message, code }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
