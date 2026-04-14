@@ -103,6 +103,12 @@ for (const block of src.matchAll(modelBlockRe)) {
   const mapMatch = body.match(/@@map\(\s*"([^"]+)"\s*\)/);
   const tableName = mapMatch ? mapMatch[1] : snake(modelName);
 
+  // Emit CREATE TABLE IF NOT EXISTS first so missing-table errors don't kill the patch.
+  // Empty stub — columns are added via ALTER TABLE below. If the table already exists
+  // with its real PK, this is a no-op; if it doesn't, it gets created and the columns
+  // (including any PK column) are added next.
+  out.push(`CREATE TABLE IF NOT EXISTS "${tableName}" ();`);
+
   for (const line of body.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('//')) continue;
