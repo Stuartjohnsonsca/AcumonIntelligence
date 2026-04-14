@@ -338,6 +338,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
   const [activeExecution, setActiveExecution] = useState<string | null>(null);
+  const [autoStartKeys, setAutoStartKeys] = useState<Set<string>>(new Set());
   const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'>>({});
   const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
   const [performanceMateriality, setPerformanceMateriality] = useState(0);
@@ -1319,20 +1320,36 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                             <div className="flex items-center gap-1.5">
                               <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
                               <span className={`text-[9px] min-w-0 truncate ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`} style={{maxWidth: '60%'}}>{test.description}</span>
-                              {isApplicable && (
+                              {isApplicable && (() => {
+                                const hasRun = !!dbExec || conc !== 'pending';
+                                const label = isExecutionOpen ? 'Close' : hasRun ? 'Open' : 'Execute';
+                                return (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); setActiveExecution(isExecutionOpen ? null : testKey); }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isExecutionOpen) {
+                                      setActiveExecution(null);
+                                    } else {
+                                      if (!hasRun) {
+                                        setAutoStartKeys(prev => { const n = new Set(prev); n.add(testKey); return n; });
+                                      }
+                                      setActiveExecution(testKey);
+                                    }
+                                  }}
                                   className={`inline-flex items-center gap-0.5 text-[8px] font-medium px-1.5 py-0.5 rounded transition-colors flex-shrink-0 ${
                                     isExecutionOpen
                                       ? 'bg-blue-600 text-white'
-                                      : 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200'
+                                      : hasRun
+                                        ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200'
+                                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
                                   }`}
-                                  title="Open test execution workspace"
+                                  title={hasRun ? 'Open test execution workspace' : 'Run this test now'}
                                 >
                                   <Play className="h-2.5 w-2.5" />
-                                  {isExecutionOpen ? 'Close' : (dbExec || conc !== 'pending') ? 'Open' : 'Execute'}
+                                  {label}
                                 </button>
-                              )}
+                                );
+                              })()}
                               {/* Conclusion dot — clickable to toggle results */}
                               {conc !== 'pending' && (
                                 <button
@@ -1415,6 +1432,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 executionDef={(test as any).executionDef || null}
                                 assertions={(test as any).assertions || []}
                                 conclusionRecord={dbConc || null}
+                                autoStart={autoStartKeys.has(testKey)}
+                                onAutoStartConsumed={() => setAutoStartKeys(prev => { const n = new Set(prev); n.delete(testKey); return n; })}
                                 onClose={() => setActiveExecution(null)}
                                 onConclusionChange={(c) => setTestConclusions(prev => ({ ...prev, [testKey]: c }))}
                               />

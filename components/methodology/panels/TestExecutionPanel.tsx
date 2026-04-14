@@ -23,8 +23,10 @@ interface Props {
   sessionId?: string; flowData?: any; executionDef?: any;
   assertions?: string[];  // Test assertions — drives verification columns
   conclusionRecord?: any; // Full AuditTestConclusion — used to check RI approval
+  autoStart?: boolean;    // If true, auto-fire handleStartExecution when no prior execution exists
   onClose: () => void;
   onConclusionChange?: (conclusion: 'green' | 'orange' | 'red' | 'pending') => void;
+  onAutoStartConsumed?: () => void; // Called once auto-start has fired to clear the flag in the parent
 }
 
 function fmt(n: number | undefined | null): string {
@@ -40,7 +42,7 @@ function ResultIcon({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5 text-slate-300" />;
 }
 
-export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, fsLineId, clientId, periodId, tbRow, flowData, executionDef, assertions, conclusionRecord, onClose, onConclusionChange }: Props) {
+export function TestExecutionPanel({ testId, testDescription, testType, engagementId, fsLine, fsLineId, clientId, periodId, tbRow, flowData, executionDef, assertions, conclusionRecord, autoStart, onClose, onConclusionChange, onAutoStartConsumed }: Props) {
   // RI Approved = Read-Only
   const riApproved = !!conclusionRecord?.riSignedByName;
   const riApprovedBy = conclusionRecord?.riSignedByName;
@@ -284,6 +286,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
 
   async function loadExistingExecution() {
     setLoading(true);
+    let foundExisting = false;
     try {
       const res = await fetch(`/api/engagements/${engagementId}/test-execution?fsLine=${encodeURIComponent(fsLine)}`);
       if (res.ok) {
@@ -294,6 +297,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           .sort((a: any, b: any) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
         const existing = allExecs.find((e: any) => e.status === 'running' || e.status === 'paused') || allExecs[0];
         if (existing) {
+          foundExisting = true;
           setExecutionId(existing.id);
           setExecutionStatus(existing.status);
           const steps = existing.nodeRuns?.map((r: any) => ({ id: r.nodeId, label: r.label || r.nodeType, status: r.status, output: r.output, errorMessage: r.errorMessage, duration: r.duration })) || [];
@@ -340,7 +344,14 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
           if (existing.status === 'running' || existing.status === 'paused') startPolling(existing.id);
         }
       }
-    } catch {} finally { setLoading(false); }
+    } catch {} finally {
+      setLoading(false);
+      // Auto-start when "Execute" was clicked from the audit plan and no prior execution exists.
+      if (autoStart && !foundExisting && !starting) {
+        onAutoStartConsumed?.();
+        handleStartExecution();
+      }
+    }
   }
 
   async function handleStartExecution() {
