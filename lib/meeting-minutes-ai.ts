@@ -11,11 +11,6 @@ export interface MeetingMinutes {
   issues: { issue: string; raisedBy: string; status: 'open' | 'resolved' }[];
   keyDiscussions: { topic: string; points: string[] }[];
   nextSteps: string[];
-  /**
-   * Preparer-authored free-form grid. The AI never produces this field;
-   * it's populated manually in MeetingsPanel via the BespokeSpreadsheet.
-   */
-  custom?: { title?: string; rows: string[][]; columns: string[] };
 }
 
 const SYSTEM_PROMPT = `You are an expert meeting minutes writer for a UK audit firm. Given a meeting transcript or notes, extract structured minutes.
