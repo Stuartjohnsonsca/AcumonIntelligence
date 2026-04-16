@@ -188,6 +188,15 @@ function TypingIndicator({ persona }: { persona: Persona }) {
   );
 }
 
+function TypingIndicators({ personas }: { personas: Persona[] }) {
+  if (personas.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      {personas.map(p => <TypingIndicator key={p.id} persona={p} />)}
+    </div>
+  );
+}
+
 function SimMessageRow({ msg, personas }: { msg: SimMessage; personas: Persona[] }) {
   if (msg.type === 'phase') return (
     <div className="flex items-center gap-3 py-4">
@@ -241,7 +250,7 @@ export default function RiskForumClient({ user }: Props) {
   const [protocol, setProtocol] = useState('');
   const [useProtocol, setUseProtocol] = useState(false);
   const [messages, setMessages] = useState<SimMessage[]>([]);
-  const [typingPersona, setTypingPersona] = useState<Persona | null>(null);
+  const [typingPersonas, setTypingPersonas] = useState<Persona[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [currentPhaseIdx, setCurrentPhaseIdx] = useState(0);
   const [debrief, setDebrief] = useState<DebriefData | null>(null);
@@ -253,7 +262,7 @@ export default function RiskForumClient({ user }: Props) {
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, typingPersona]);
+  }, [messages, typingPersonas]);
 
   const getTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -283,8 +292,8 @@ export default function RiskForumClient({ user }: Props) {
     setMessages(prev => [...prev, msg]);
   }, []);
 
-  const callPersonaAPI = async (persona: Persona, phaseText: string, curveball: string | null) => {
-    const conversationHistory = historyRef.current
+  const callPersonaAPI = async (persona: Persona, phaseText: string, curveball: string | null, snapshotHistory: SimMessage[]) => {
+    const conversationHistory = snapshotHistory
       .filter(m => m.type === 'message')
       .slice(-14)
       .map(m => {
@@ -292,23 +301,34 @@ export default function RiskForumClient({ user }: Props) {
         return { name: p?.name ?? '', role: p?.role ?? '', text: m.text };
       });
 
-    const res = await fetch('/api/risk-forum/simulate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        persona: { name: persona.name, role: persona.role, m365Summary: persona.m365Summary },
-        conversationHistory,
-        scenario: { description: activeScenario?.description },
-        phaseText,
-        curveball,
-        protocol,
-        useProtocol,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
-    if (!res.ok) return '[No response]';
-    const data = await res.json();
-    return data.text ?? '[No response]';
+    try {
+      const res = await fetch('/api/risk-forum/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          persona: { name: persona.name, role: persona.role, m365Summary: persona.m365Summary },
+          conversationHistory,
+          scenario: { description: activeScenario?.description },
+          phaseText,
+          curveball,
+          protocol,
+          useProtocol,
+        }),
+      });
+
+      clearTimeout(timeout);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const text = data.text?.trim();
+      return (text && text !== '...' && text !== '[No response]') ? text : null;
+    } catch {
+      clearTimeout(timeout);
+      return null;
+    }
   };
 
   const runDebrief = async () => {
@@ -357,40 +377,66 @@ export default function RiskForumClient({ user }: Props) {
 
       addMessage({ id: `phase-${phaseIdx}`, type: 'phase', label: phase.label, text: phase.text });
       setCurrentPhaseIdx(phaseIdx);
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
 
       let curveball: string | null = null;
       if (phaseIdx > 0 && Math.random() > 0.3 && curveballIdx < curveballs.length) {
         curveball = curveballs[curveballIdx++];
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 400));
         if (!abortRef.current) {
           addMessage({ id: `cb-${phaseIdx}`, type: 'curveball', text: curveball });
-          await new Promise(r => setTimeout(r, 1000));
+          await new Promise(r => setTimeout(r, 400));
         }
       }
 
-      const count = phaseIdx === 0 ? 4 : 3;
+      // Pick speakers for this phase — more in first phase
+      const count = phaseIdx === 0 ? 5 : 3 + Math.floor(Math.random() * 2);
       const speakers = [...personas].sort(() => Math.random() - 0.5).slice(0, count);
 
-      for (const persona of speakers) {
-        if (abortRef.current) break;
-        setTypingPersona(persona);
-        await new Promise(r => setTimeout(r, 700 + Math.random() * 1300));
-        if (abortRef.current) break;
+      // Snapshot history BEFORE this batch so all speakers react to the same state
+      const historySnapshot = [...historyRef.current];
 
-        let text = '[No response]';
-        try { text = await callPersonaAPI(persona, phase.text, curveball); } catch { /* silent */ }
-        if (abortRef.current) break;
+      // Show all speakers typing at once
+      setTypingPersonas(speakers);
 
-        addMessage({ id: `${persona.id}-${Date.now()}`, type: 'message', personaId: persona.id, text, time: getTime() });
-        setTypingPersona(null);
-        await new Promise(r => setTimeout(r, 200 + Math.random() * 500));
+      // Fire ALL persona calls in parallel
+      const results = await Promise.all(
+        speakers.map(async (persona) => {
+          // Stagger start slightly so Together AI doesn't rate-limit
+          await new Promise(r => setTimeout(r, Math.random() * 300));
+          const text = await callPersonaAPI(persona, phase.text, curveball, historySnapshot);
+          return { persona, text };
+        })
+      );
+
+      if (abortRef.current) break;
+
+      // Stream results in with short realistic gaps — like messages landing in a group chat
+      for (const { persona, text } of results) {
+        if (abortRef.current) break;
+        if (!text) continue; // skip failed/empty responses
+
+        // Remove this persona from typing indicators
+        setTypingPersonas(prev => prev.filter(p => p.id !== persona.id));
+
+        addMessage({
+          id: `${persona.id}-${Date.now()}`,
+          type: 'message',
+          personaId: persona.id,
+          text,
+          time: getTime(),
+        });
+
+        // Brief gap between messages appearing — like reading a group chat
+        await new Promise(r => setTimeout(r, 150 + Math.random() * 250));
       }
 
-      if (phaseIdx < phases.length - 1) await new Promise(r => setTimeout(r, 1200));
+      setTypingPersonas([]);
+
+      if (phaseIdx < phases.length - 1) await new Promise(r => setTimeout(r, 600));
     }
 
-    setTypingPersona(null);
+    setTypingPersonas([]);
     setIsRunning(false);
 
     if (!abortRef.current) {
@@ -612,9 +658,9 @@ export default function RiskForumClient({ user }: Props) {
               style={{
                 fontSize: '8px',
                 background: '#0D0D0D',
-                border: `1.5px solid ${typingPersona?.id === p.id ? p.color : '#181818'}`,
-                color: typingPersona?.id === p.id ? p.color : '#2A2A2A',
-                boxShadow: typingPersona?.id === p.id ? `0 0 8px ${p.color}55` : 'none',
+                border: `1.5px solid ${typingPersonas.some(t => t.id === p.id) ? p.color : '#181818'}`,
+                color: typingPersonas.some(t => t.id === p.id) ? p.color : '#2A2A2A',
+                boxShadow: typingPersonas.some(t => t.id === p.id) ? `0 0 8px ${p.color}55` : 'none',
               }}
             >{p.initial}</div>
           ))}
@@ -658,7 +704,7 @@ export default function RiskForumClient({ user }: Props) {
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
         {messages.map(msg => <SimMessageRow key={msg.id} msg={msg} personas={personas} />)}
-        {typingPersona && <TypingIndicator persona={typingPersona} />}
+        <TypingIndicators personas={typingPersonas} />
         {debriefLoading && (
           <div className="text-center py-6 text-xs font-mono tracking-widest" style={{ color: '#2E2E2E' }}>
             SIMULATION COMPLETE · GENERATING REPORT
