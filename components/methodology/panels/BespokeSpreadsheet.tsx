@@ -5,70 +5,102 @@ import { Plus, Trash2, Download, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { expandZipFile } from '@/lib/client-unzip';
 
+interface GridData {
+  rows: string[][];
+  columns: string[];
+}
+
 interface Props {
   title?: string;
   onClose?: () => void;
-  onSave?: (data: { rows: string[][]; columns: string[] }) => void;
+  onSave?: (data: GridData) => void;
+  /** Controlled mode: when provided, the component renders from these values instead of internal state. */
+  value?: GridData;
+  /** Controlled mode: called on every mutation (cell edit, add row/col, delete row). */
+  onChange?: (data: GridData) => void;
+  /** Hide the blue "Save" button in the toolbar (useful when saving is handled externally, e.g. on-blur auto-save). */
+  hideSaveButton?: boolean;
 }
 
-export function BespokeSpreadsheet({ title, onClose, onSave }: Props) {
-  const [columns, setColumns] = useState(['A', 'B', 'C', 'D', 'E']);
-  const [rows, setRows] = useState<string[][]>(() => Array.from({ length: 10 }, () => Array(5).fill('')));
+export function BespokeSpreadsheet({ title, onClose, onSave, value, onChange, hideSaveButton }: Props) {
+  const controlled = value !== undefined;
+
+  const [internalColumns, setInternalColumns] = useState(['A', 'B', 'C', 'D', 'E']);
+  const [internalRows, setInternalRows] = useState<string[][]>(() => Array.from({ length: 10 }, () => Array(5).fill('')));
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const columns = controlled ? value!.columns : internalColumns;
+  const rows = controlled ? value!.rows : internalRows;
+
+  function commit(next: GridData) {
+    if (controlled) {
+      onChange?.(next);
+    } else {
+      setInternalColumns(next.columns);
+      setInternalRows(next.rows);
+    }
+  }
+
   function updateCell(row: number, col: number, value: string) {
-    setRows(prev => {
-      const next = prev.map(r => [...r]);
-      // Auto-calculate if formula
-      if (value.startsWith('=')) {
-        try {
-          const formula = value.slice(1).toUpperCase();
-          // SUM(A1:A5)
-          const sumMatch = formula.match(/^SUM\(([A-Z])(\d+):([A-Z])(\d+)\)$/);
-          if (sumMatch) {
-            const colIdx = sumMatch[1].charCodeAt(0) - 65;
-            const startRow = parseInt(sumMatch[2]) - 1;
-            const endRow = parseInt(sumMatch[4]) - 1;
-            let total = 0;
-            for (let r = startRow; r <= endRow; r++) {
-              total += parseFloat(next[r]?.[colIdx] || '0') || 0;
-            }
-            next[row][col] = String(total);
-            return next;
+    const next = rows.map(r => [...r]);
+    // Auto-calculate if formula
+    if (value.startsWith('=')) {
+      try {
+        const formula = value.slice(1).toUpperCase();
+        // SUM(A1:A5)
+        const sumMatch = formula.match(/^SUM\(([A-Z])(\d+):([A-Z])(\d+)\)$/);
+        if (sumMatch) {
+          const colIdx = sumMatch[1].charCodeAt(0) - 65;
+          const startRow = parseInt(sumMatch[2]) - 1;
+          const endRow = parseInt(sumMatch[4]) - 1;
+          let total = 0;
+          for (let r = startRow; r <= endRow; r++) {
+            total += parseFloat(next[r]?.[colIdx] || '0') || 0;
           }
-          // Simple arithmetic: =A1+B1, =A1*2, etc.
-          const cellRefFormula = formula.replace(/([A-Z])(\d+)/g, (_, letter, num) => {
-            const c = letter.charCodeAt(0) - 65;
-            const r = parseInt(num) - 1;
-            return next[r]?.[c] || '0';
-          });
-          const result = Function(`"use strict"; return (${cellRefFormula})`)();
-          next[row][col] = String(result);
-          return next;
-        } catch {
-          next[row][col] = value; // Keep formula text if evaluation fails
-          return next;
+          next[row][col] = String(total);
+          commit({ rows: next, columns });
+          return;
         }
+        // Simple arithmetic: =A1+B1, =A1*2, etc.
+        const cellRefFormula = formula.replace(/([A-Z])(\d+)/g, (_, letter, num) => {
+          const c = letter.charCodeAt(0) - 65;
+          const r = parseInt(num) - 1;
+          return next[r]?.[c] || '0';
+        });
+        const result = Function(`"use strict"; return (${cellRefFormula})`)();
+        next[row][col] = String(result);
+        commit({ rows: next, columns });
+        return;
+      } catch {
+        next[row][col] = value; // Keep formula text if evaluation fails
+        commit({ rows: next, columns });
+        return;
       }
-      next[row][col] = value;
-      return next;
-    });
+    }
+    next[row][col] = value;
+    commit({ rows: next, columns });
   }
 
   function addRow() {
-    setRows(prev => [...prev, Array(columns.length).fill('')]);
+    commit({ rows: [...rows, Array(columns.length).fill('')], columns });
   }
 
   function addColumn() {
     const nextLetter = String.fromCharCode(65 + columns.length);
-    setColumns(prev => [...prev, nextLetter]);
-    setRows(prev => prev.map(r => [...r, '']));
+    commit({
+      rows: rows.map(r => [...r, '']),
+      columns: [...columns, nextLetter],
+    });
   }
 
   function deleteRow(idx: number) {
     if (rows.length <= 1) return;
-    setRows(prev => prev.filter((_, i) => i !== idx));
+    commit({ rows: rows.filter((_, i) => i !== idx), columns });
+  }
+
+  function renameColumn(ci: number, label: string) {
+    commit({ rows, columns: columns.map((c, i) => i === ci ? label : c) });
   }
 
   function downloadCSV() {
@@ -91,8 +123,7 @@ export function BespokeSpreadsheet({ title, onClose, onSave }: Props) {
         while (cells.length < headers.length) cells.push('');
         return cells;
       });
-      setColumns(headers);
-      setRows(data.length > 0 ? data : [Array(headers.length).fill('')]);
+      commit({ rows: data.length > 0 ? data : [Array(headers.length).fill('')], columns: headers });
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
@@ -111,7 +142,7 @@ export function BespokeSpreadsheet({ title, onClose, onSave }: Props) {
           <Button onClick={downloadCSV} size="sm" variant="outline" className="h-6 text-[10px]"><Download className="h-2.5 w-2.5 mr-0.5" />CSV</Button>
           <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" className="h-6 text-[10px]"><Upload className="h-2.5 w-2.5 mr-0.5" />Upload</Button>
           <input ref={fileInputRef} type="file" accept=".csv,.zip" onChange={handleUpload} className="hidden" />
-          {onSave && <Button onClick={() => onSave({ rows, columns })} size="sm" className="h-6 text-[10px] bg-blue-600">Save</Button>}
+          {onSave && !hideSaveButton && <Button onClick={() => onSave({ rows, columns })} size="sm" className="h-6 text-[10px] bg-blue-600">Save</Button>}
           {onClose && <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded ml-1"><X className="h-3.5 w-3.5 text-slate-400" /></button>}
         </div>
       </div>
@@ -124,7 +155,7 @@ export function BespokeSpreadsheet({ title, onClose, onSave }: Props) {
               <th className="w-8 px-1 py-1 border-r border-b border-slate-200 text-slate-400 font-mono text-[9px]">#</th>
               {columns.map((col, ci) => (
                 <th key={ci} className="px-2 py-1 border-r border-b border-slate-200 text-slate-600 font-semibold min-w-[80px]">
-                  <input value={col} onChange={e => setColumns(prev => prev.map((c, i) => i === ci ? e.target.value : c))}
+                  <input value={col} onChange={e => renameColumn(ci, e.target.value)}
                     className="w-full bg-transparent text-center text-xs font-semibold outline-none" />
                 </th>
               ))}

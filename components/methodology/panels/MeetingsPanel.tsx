@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
+import { BespokeSpreadsheet } from './BespokeSpreadsheet';
 
 interface Props {
   engagementId: string;
@@ -15,6 +16,12 @@ interface Attendee {
   role: string;
 }
 
+interface CustomGrid {
+  title?: string;
+  rows: string[][];
+  columns: string[];
+}
+
 interface MeetingMinutes {
   summary: string;
   agenda: string[];
@@ -23,6 +30,7 @@ interface MeetingMinutes {
   issues: { issue: string; raisedBy: string; status: string }[];
   keyDiscussions: { topic: string; points: string[] }[];
   nextSteps: string[];
+  custom?: CustomGrid;
 }
 
 interface Meeting {
@@ -48,10 +56,14 @@ interface TeamsMeeting {
   participants: string[];
 }
 
+type SectionStatus = 'idle' | 'saving' | 'saved';
+
 const MEETING_TYPES = ['planning', 'interim', 'final', 'other'] as const;
 const TYPE_LABELS: Record<string, string> = { planning: 'Planning', interim: 'Interim', final: 'Final', other: 'Other' };
 const TYPE_COLOURS: Record<string, string> = { planning: 'bg-blue-100 text-blue-700', interim: 'bg-amber-100 text-amber-700', final: 'bg-green-100 text-green-700', other: 'bg-slate-100 text-slate-600' };
 const STATUS_LABELS: Record<string, string> = { draft: 'Draft', generated: 'AI Generated', reviewed: 'Reviewed', signed_off: 'Signed Off' };
+
+const EMPTY_GRID: CustomGrid = { rows: [['']], columns: ['A'] };
 
 function fmtDate(d: string) { try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } }
 function fmtDateTime(d: string) { try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } }
@@ -74,7 +86,11 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** Per-section save state, keyed by `${meetingId}:${sectionKey}`. */
+  const [sectionStatus, setSectionStatus] = useState<Record<string, SectionStatus>>({});
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
+  const meetingsRef = useRef<Meeting[]>([]);
+  useEffect(() => { meetingsRef.current = meetings; }, [meetings]);
 
   // Create form state
   const [newTitle, setNewTitle] = useState('');
@@ -101,8 +117,6 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
 
   useEffect(() => { loadMeetings(); }, [loadMeetings]);
 
-  const current = meetings.find(m => m.id === selectedMeeting);
-
   async function postAction(body: Record<string, unknown>) {
     return fetch(`/api/engagements/${engagementId}/meetings`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -122,8 +136,18 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
   }
 
   async function handleGenerateMinutes(meetingId: string) {
+    // Preserve any preparer-authored custom grid across regeneration — AI never produces it.
+    const preserveCustom = meetingsRef.current.find(m => m.id === meetingId)?.minutes?.custom;
     setGenerating(true);
     const res = await postAction({ action: 'generate_minutes', meetingId });
+    if (res.ok && preserveCustom) {
+      try {
+        const data = await res.clone().json();
+        if (data?.minutes) {
+          await postAction({ action: 'save', meetingId, minutes: { ...data.minutes, custom: preserveCustom } });
+        }
+      } catch { /* if the response body can't be parsed, just reload — worst case regenerate wins */ }
+    }
     if (res.ok) await loadMeetings();
     setGenerating(false);
   }
@@ -147,20 +171,48 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
     }
   }
 
-  function updateMinutesField(meetingId: string, path: string, value: unknown) {
+  /**
+   * Update a single top-level minutes field in local state.
+   * Summary keeps its 1.5s debounced auto-save; every other field relies on the
+   * per-section on-blur save (handleSectionBlur) so we don't fire a save on every keystroke.
+   */
+  function updateMinutesField<K extends keyof MeetingMinutes>(meetingId: string, key: K, value: MeetingMinutes[K]) {
     setMeetings(prev => prev.map(m => {
       if (m.id !== meetingId || !m.minutes) return m;
-      const updated = { ...m.minutes, [path]: value };
-      return { ...m, minutes: updated };
+      return { ...m, minutes: { ...m.minutes, [key]: value } };
     }));
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      const meeting = meetings.find(m => m.id === meetingId);
-      if (!meeting?.minutes) return;
-      setSaving(true);
-      await postAction({ action: 'save', meetingId, minutes: { ...meeting.minutes, [path]: value } });
-      setSaving(false);
-    }, 1500);
+    if (key === 'summary') {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(async () => {
+        const meeting = meetingsRef.current.find(m => m.id === meetingId);
+        if (!meeting?.minutes) return;
+        setSaving(true);
+        await postAction({ action: 'save', meetingId, minutes: { ...meeting.minutes, [key]: value } });
+        setSaving(false);
+      }, 1500);
+    }
+  }
+
+  /**
+   * Per-section on-blur save. Fires only when focus leaves the section DOM subtree
+   * (not when focus moves between inputs within the same section). The API does a full
+   * replace on `minutes`, so we always send the latest merged object from state.
+   */
+  function handleSectionBlur(meetingId: string, sectionKey: string, e: React.FocusEvent<HTMLElement>) {
+    // If focus moved to a node still inside this section, don't save yet.
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    const meeting = meetingsRef.current.find(m => m.id === meetingId);
+    if (!meeting?.minutes) return;
+    const statusKey = `${meetingId}:${sectionKey}`;
+    setSectionStatus(s => ({ ...s, [statusKey]: 'saving' }));
+    postAction({ action: 'save', meetingId, minutes: meeting.minutes })
+      .then(res => {
+        setSectionStatus(s => ({ ...s, [statusKey]: res.ok ? 'saved' : 'idle' }));
+        if (res.ok) {
+          setTimeout(() => setSectionStatus(s => ({ ...s, [statusKey]: 'idle' })), 1500);
+        }
+      })
+      .catch(() => setSectionStatus(s => ({ ...s, [statusKey]: 'idle' })));
   }
 
   async function handleSignOff(meetingId: string, role: string) {
@@ -328,94 +380,108 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
 
                   {/* Minutes display */}
                   {mins && (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       {/* Summary */}
-                      <div>
-                        <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Summary</label>
+                      <EditableSection
+                        label="Summary"
+                        status={sectionStatus[`${meeting.id}:summary`]}
+                      >
                         <textarea value={mins.summary || ''} onChange={e => updateMinutesField(meeting.id, 'summary', e.target.value)}
                           rows={2} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
-                      </div>
+                      </EditableSection>
 
                       {/* Decisions */}
-                      {mins.decisions?.length > 0 && (
-                        <div>
-                          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Decisions ({mins.decisions.length})</label>
-                          <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
-                            <thead><tr className="bg-slate-100"><th className="px-2 py-1 text-left text-slate-500">Decision</th><th className="px-2 py-1 text-left text-slate-500 w-32">Made By</th></tr></thead>
-                            <tbody>
-                              {mins.decisions.map((d, i) => (
-                                <tr key={i} className="border-t border-slate-100">
-                                  <td className="px-2 py-1 text-slate-700">{d.decision}</td>
-                                  <td className="px-2 py-1 text-slate-500">{d.madeBy}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+                      <EditableSection
+                        label={`Decisions${mins.decisions?.length ? ` (${mins.decisions.length})` : ''}`}
+                        status={sectionStatus[`${meeting.id}:decisions`]}
+                        onBlur={e => handleSectionBlur(meeting.id, 'decisions', e)}
+                      >
+                        <EditableTable
+                          columns={[
+                            { key: 'decision', label: 'Decision' },
+                            { key: 'madeBy', label: 'Made By', width: 'w-40' },
+                          ]}
+                          rows={mins.decisions || []}
+                          emptyRow={{ decision: '', madeBy: '' }}
+                          onChange={next => updateMinutesField(meeting.id, 'decisions', next)}
+                        />
+                      </EditableSection>
 
                       {/* Action Items */}
-                      {mins.actionItems?.length > 0 && (
-                        <div>
-                          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Action Items ({mins.actionItems.length})</label>
-                          <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
-                            <thead><tr className="bg-slate-100"><th className="px-2 py-1 text-left text-slate-500">Action</th><th className="px-2 py-1 text-left text-slate-500 w-28">Assigned To</th><th className="px-2 py-1 text-left text-slate-500 w-24">Deadline</th></tr></thead>
-                            <tbody>
-                              {mins.actionItems.map((a, i) => (
-                                <tr key={i} className="border-t border-slate-100">
-                                  <td className="px-2 py-1 text-slate-700">{a.action}</td>
-                                  <td className="px-2 py-1 text-slate-500">{a.assignedTo}</td>
-                                  <td className="px-2 py-1 text-slate-400">{a.deadline || '—'}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+                      <EditableSection
+                        label={`Action Items${mins.actionItems?.length ? ` (${mins.actionItems.length})` : ''}`}
+                        status={sectionStatus[`${meeting.id}:actionItems`]}
+                        onBlur={e => handleSectionBlur(meeting.id, 'actionItems', e)}
+                      >
+                        <EditableTable
+                          columns={[
+                            { key: 'action', label: 'Action' },
+                            { key: 'assignedTo', label: 'Assigned To', width: 'w-36' },
+                            { key: 'deadline', label: 'Deadline', width: 'w-32' },
+                          ]}
+                          rows={(mins.actionItems || []).map(a => ({ ...a, deadline: a.deadline ?? '' }))}
+                          emptyRow={{ action: '', assignedTo: '', deadline: '' }}
+                          onChange={next => updateMinutesField(meeting.id, 'actionItems', next.map(r => ({ ...r, deadline: r.deadline || null })))}
+                        />
+                      </EditableSection>
 
                       {/* Issues */}
-                      {mins.issues?.length > 0 && (
-                        <div>
-                          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Issues ({mins.issues.length})</label>
-                          <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
-                            <thead><tr className="bg-slate-100"><th className="px-2 py-1 text-left text-slate-500">Issue</th><th className="px-2 py-1 text-left text-slate-500 w-28">Raised By</th><th className="px-2 py-1 text-left text-slate-500 w-20">Status</th></tr></thead>
-                            <tbody>
-                              {mins.issues.map((iss, i) => (
-                                <tr key={i} className="border-t border-slate-100">
-                                  <td className="px-2 py-1 text-slate-700">{iss.issue}</td>
-                                  <td className="px-2 py-1 text-slate-500">{iss.raisedBy}</td>
-                                  <td className="px-2 py-1"><span className={`px-1.5 py-0.5 rounded text-[9px] ${iss.status === 'resolved' ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>{iss.status}</span></td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+                      <EditableSection
+                        label={`Issues${mins.issues?.length ? ` (${mins.issues.length})` : ''}`}
+                        status={sectionStatus[`${meeting.id}:issues`]}
+                        onBlur={e => handleSectionBlur(meeting.id, 'issues', e)}
+                      >
+                        <EditableTable
+                          columns={[
+                            { key: 'issue', label: 'Issue' },
+                            { key: 'raisedBy', label: 'Raised By', width: 'w-36' },
+                            { key: 'status', label: 'Status', width: 'w-28', type: 'select', options: ['open', 'resolved'] },
+                          ]}
+                          rows={(mins.issues || []).map(i => ({ ...i, status: i.status || 'open' }))}
+                          emptyRow={{ issue: '', raisedBy: '', status: 'open' }}
+                          onChange={next => updateMinutesField(meeting.id, 'issues', next)}
+                        />
+                      </EditableSection>
 
                       {/* Key Discussions */}
-                      {mins.keyDiscussions?.length > 0 && (
-                        <div>
-                          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Key Discussions</label>
-                          {mins.keyDiscussions.map((kd, i) => (
-                            <div key={i} className="mb-2">
-                              <p className="text-[10px] font-medium text-slate-600">{kd.topic}</p>
-                              <ul className="ml-3 list-disc">
-                                {kd.points.map((p, j) => <li key={j} className="text-[10px] text-slate-500">{p}</li>)}
-                              </ul>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      <EditableSection
+                        label={`Key Discussions${mins.keyDiscussions?.length ? ` (${mins.keyDiscussions.length})` : ''}`}
+                        status={sectionStatus[`${meeting.id}:keyDiscussions`]}
+                        onBlur={e => handleSectionBlur(meeting.id, 'keyDiscussions', e)}
+                      >
+                        <EditableKeyDiscussions
+                          items={mins.keyDiscussions || []}
+                          onChange={next => updateMinutesField(meeting.id, 'keyDiscussions', next)}
+                        />
+                      </EditableSection>
 
                       {/* Next Steps */}
-                      {mins.nextSteps?.length > 0 && (
-                        <div>
-                          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Next Steps</label>
-                          <ul className="ml-3 list-disc">
-                            {mins.nextSteps.map((s, i) => <li key={i} className="text-[10px] text-slate-600">{s}</li>)}
-                          </ul>
-                        </div>
-                      )}
+                      <EditableSection
+                        label="Next Steps"
+                        status={sectionStatus[`${meeting.id}:nextSteps`]}
+                        onBlur={e => handleSectionBlur(meeting.id, 'nextSteps', e)}
+                      >
+                        <EditableStringList
+                          items={mins.nextSteps || []}
+                          placeholder="Next step…"
+                          addLabel="+ Add step"
+                          onChange={next => updateMinutesField(meeting.id, 'nextSteps', next)}
+                        />
+                      </EditableSection>
+
+                      {/* Custom / Notes spreadsheet (add rows AND columns) */}
+                      <EditableSection
+                        label="Notes / Custom Grid"
+                        status={sectionStatus[`${meeting.id}:custom`]}
+                        onBlur={e => handleSectionBlur(meeting.id, 'custom', e)}
+                      >
+                        <BespokeSpreadsheet
+                          title="Meeting Notes"
+                          value={mins.custom ?? EMPTY_GRID}
+                          onChange={next => updateMinutesField(meeting.id, 'custom', next)}
+                          hideSaveButton
+                        />
+                      </EditableSection>
                     </div>
                   )}
 
@@ -465,6 +531,267 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Helper components                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A minutes sub-section. Wraps children with a label + status pill and wires
+ * the on-blur save. `tabIndex={-1}` lets the div participate in focus bubbling
+ * without being a tab stop itself.
+ */
+function EditableSection({
+  label,
+  status,
+  onBlur,
+  children,
+}: {
+  label: string;
+  status?: SectionStatus;
+  onBlur?: (e: React.FocusEvent<HTMLDivElement>) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      tabIndex={-1}
+      onBlur={onBlur}
+      className="focus:outline-none"
+    >
+      <div className="flex items-center justify-between mb-1">
+        <label className="block text-[10px] font-semibold text-slate-500">{label}</label>
+        {status === 'saving' && <span className="text-[9px] text-blue-500 animate-pulse">Saving…</span>}
+        {status === 'saved' && <span className="text-[9px] text-green-600">Saved</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+interface ColumnDef<T> {
+  key: keyof T & string;
+  label: string;
+  width?: string;
+  type?: 'text' | 'select';
+  options?: string[];
+}
+
+/**
+ * Generic editable table with fixed, schema-defined columns.
+ * Add / delete rows only — columns are fixed so that the AI round-trip stays intact.
+ */
+function EditableTable<T extends Record<string, string>>({
+  columns,
+  rows,
+  emptyRow,
+  onChange,
+}: {
+  columns: ColumnDef<T>[];
+  rows: T[];
+  emptyRow: T;
+  onChange: (next: T[]) => void;
+}) {
+  function updateCell(rowIdx: number, key: keyof T, value: string) {
+    onChange(rows.map((r, i) => i === rowIdx ? { ...r, [key]: value } : r));
+  }
+  function deleteRow(rowIdx: number) {
+    onChange(rows.filter((_, i) => i !== rowIdx));
+  }
+  function addRow() {
+    onChange([...rows, { ...emptyRow }]);
+  }
+
+  return (
+    <div className="border border-slate-200 rounded overflow-hidden">
+      <table className="w-full text-[10px]">
+        <thead>
+          <tr className="bg-slate-100">
+            {columns.map(c => (
+              <th key={c.key} className={`px-2 py-1 text-left text-slate-500 ${c.width || ''}`}>{c.label}</th>
+            ))}
+            <th className="w-8"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length + 1} className="px-2 py-2 text-slate-400 italic text-center">No items</td>
+            </tr>
+          ) : rows.map((row, ri) => (
+            <tr key={ri} className="border-t border-slate-100 group">
+              {columns.map(col => (
+                <td key={col.key} className="px-1 py-0.5 align-top">
+                  {col.type === 'select' ? (
+                    <select
+                      value={row[col.key] ?? ''}
+                      onChange={e => updateCell(ri, col.key, e.target.value)}
+                      className="w-full text-[10px] bg-transparent border border-transparent hover:border-slate-200 focus:border-blue-400 rounded px-1 py-0.5 outline-none"
+                    >
+                      {(col.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      value={row[col.key] ?? ''}
+                      onChange={e => updateCell(ri, col.key, e.target.value)}
+                      className="w-full text-[10px] bg-transparent border border-transparent hover:border-slate-200 focus:border-blue-400 rounded px-1 py-0.5 outline-none"
+                    />
+                  )}
+                </td>
+              ))}
+              <td className="px-1 text-right">
+                <button
+                  onClick={() => deleteRow(ri)}
+                  className="text-slate-300 hover:text-red-500 text-[12px] leading-none px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Delete row"
+                  type="button"
+                >×</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-slate-100 bg-slate-50/40">
+            <td colSpan={columns.length + 1} className="px-2 py-1">
+              <button
+                onClick={addRow}
+                className="text-[10px] text-blue-600 hover:text-blue-800"
+                type="button"
+              >+ Add row</button>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Editable list of simple strings (Next Steps / generic bullet list).
+ */
+function EditableStringList({
+  items,
+  placeholder,
+  addLabel,
+  onChange,
+}: {
+  items: string[];
+  placeholder?: string;
+  addLabel: string;
+  onChange: (next: string[]) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      {items.length === 0 && (
+        <p className="text-[10px] text-slate-400 italic">No items</p>
+      )}
+      {items.map((item, i) => (
+        <div key={i} className="flex items-center gap-1 group">
+          <span className="text-slate-300 text-[10px] w-4">{i + 1}.</span>
+          <input
+            value={item}
+            placeholder={placeholder}
+            onChange={e => onChange(items.map((v, j) => j === i ? e.target.value : v))}
+            className="flex-1 text-[10px] border border-slate-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-400"
+          />
+          <button
+            onClick={() => onChange(items.filter((_, j) => j !== i))}
+            className="text-slate-300 hover:text-red-500 text-[12px] leading-none px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+            title="Delete"
+            type="button"
+          >×</button>
+        </div>
+      ))}
+      <button
+        onClick={() => onChange([...items, ''])}
+        className="text-[10px] text-blue-600 hover:text-blue-800"
+        type="button"
+      >{addLabel}</button>
+    </div>
+  );
+}
+
+/**
+ * Editable Key Discussions — a list of topics, each with its own bullet points.
+ */
+function EditableKeyDiscussions({
+  items,
+  onChange,
+}: {
+  items: { topic: string; points: string[] }[];
+  onChange: (next: { topic: string; points: string[] }[]) => void;
+}) {
+  function updateTopic(idx: number, topic: string) {
+    onChange(items.map((kd, i) => i === idx ? { ...kd, topic } : kd));
+  }
+  function updatePoint(idx: number, pointIdx: number, value: string) {
+    onChange(items.map((kd, i) => i === idx ? { ...kd, points: kd.points.map((p, j) => j === pointIdx ? value : p) } : kd));
+  }
+  function addPoint(idx: number) {
+    onChange(items.map((kd, i) => i === idx ? { ...kd, points: [...kd.points, ''] } : kd));
+  }
+  function deletePoint(idx: number, pointIdx: number) {
+    onChange(items.map((kd, i) => i === idx ? { ...kd, points: kd.points.filter((_, j) => j !== pointIdx) } : kd));
+  }
+  function deleteTopic(idx: number) {
+    onChange(items.filter((_, i) => i !== idx));
+  }
+  function addTopic() {
+    onChange([...items, { topic: '', points: [''] }]);
+  }
+
+  return (
+    <div className="space-y-2">
+      {items.length === 0 && <p className="text-[10px] text-slate-400 italic">No topics</p>}
+      {items.map((kd, i) => (
+        <div key={i} className="border border-slate-200 rounded p-2 bg-white/60 group">
+          <div className="flex items-center gap-1 mb-1">
+            <input
+              value={kd.topic}
+              placeholder="Topic…"
+              onChange={e => updateTopic(i, e.target.value)}
+              className="flex-1 text-[10px] font-medium border border-slate-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-400"
+            />
+            <button
+              onClick={() => deleteTopic(i)}
+              className="text-slate-300 hover:text-red-500 text-[12px] leading-none px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Delete topic"
+              type="button"
+            >× topic</button>
+          </div>
+          <div className="ml-3 space-y-1">
+            {kd.points.map((p, j) => (
+              <div key={j} className="flex items-center gap-1 group/point">
+                <span className="text-slate-300 text-[10px]">•</span>
+                <input
+                  value={p}
+                  placeholder="Key point…"
+                  onChange={e => updatePoint(i, j, e.target.value)}
+                  className="flex-1 text-[10px] border border-slate-200 rounded px-1.5 py-0.5 outline-none focus:border-blue-400"
+                />
+                <button
+                  onClick={() => deletePoint(i, j)}
+                  className="text-slate-300 hover:text-red-500 text-[12px] leading-none px-1 opacity-0 group-hover/point:opacity-100 transition-opacity"
+                  title="Delete point"
+                  type="button"
+                >×</button>
+              </div>
+            ))}
+            <button
+              onClick={() => addPoint(i)}
+              className="text-[10px] text-blue-600 hover:text-blue-800"
+              type="button"
+            >+ Add bullet</button>
+          </div>
+        </div>
+      ))}
+      <button
+        onClick={addTopic}
+        className="text-[10px] text-blue-600 hover:text-blue-800"
+        type="button"
+      >+ Add topic</button>
     </div>
   );
 }
