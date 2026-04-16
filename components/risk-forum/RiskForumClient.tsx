@@ -292,8 +292,9 @@ export default function RiskForumClient({ user }: Props) {
     setMessages(prev => [...prev, msg]);
   }, []);
 
-  const callPersonaAPI = async (persona: Persona, phaseText: string, curveball: string | null, snapshotHistory: SimMessage[]) => {
-    const conversationHistory = snapshotHistory
+  const callPersonaAPI = async (persona: Persona, phaseText: string, curveball: string | null) => {
+    // Use live history so each speaker sees what previous speakers said
+    const conversationHistory = historyRef.current
       .filter(m => m.type === 'message')
       .slice(-14)
       .map(m => {
@@ -377,63 +378,44 @@ export default function RiskForumClient({ user }: Props) {
 
       addMessage({ id: `phase-${phaseIdx}`, type: 'phase', label: phase.label, text: phase.text });
       setCurrentPhaseIdx(phaseIdx);
-      await new Promise(r => setTimeout(r, 300));
 
       let curveball: string | null = null;
       if (phaseIdx > 0 && Math.random() > 0.3 && curveballIdx < curveballs.length) {
         curveball = curveballs[curveballIdx++];
-        await new Promise(r => setTimeout(r, 400));
         if (!abortRef.current) {
           addMessage({ id: `cb-${phaseIdx}`, type: 'curveball', text: curveball });
-          await new Promise(r => setTimeout(r, 400));
         }
       }
 
-      // Pick speakers for this phase — more in first phase
+      // Pick speakers — more voices in first phase, varies after
       const count = phaseIdx === 0 ? 5 : 3 + Math.floor(Math.random() * 2);
       const speakers = [...personas].sort(() => Math.random() - 0.5).slice(0, count);
 
-      // Snapshot history BEFORE this batch so all speakers react to the same state
-      const historySnapshot = [...historyRef.current];
-
-      // Show all speakers typing at once
-      setTypingPersonas(speakers);
-
-      // Fire ALL persona calls in parallel
-      const results = await Promise.all(
-        speakers.map(async (persona) => {
-          // Stagger start slightly so Together AI doesn't rate-limit
-          await new Promise(r => setTimeout(r, Math.random() * 300));
-          const text = await callPersonaAPI(persona, phase.text, curveball, historySnapshot);
-          return { persona, text };
-        })
-      );
-
-      if (abortRef.current) break;
-
-      // Stream results in with short realistic gaps — like messages landing in a group chat
-      for (const { persona, text } of results) {
+      // Sequential: each speaker sees what all previous speakers said
+      for (const persona of speakers) {
         if (abortRef.current) break;
-        if (!text) continue; // skip failed/empty responses
 
-        // Remove this persona from typing indicators
-        setTypingPersonas(prev => prev.filter(p => p.id !== persona.id));
+        // Show this person typing — the API response time IS the typing delay
+        setTypingPersonas([persona]);
 
-        addMessage({
-          id: `${persona.id}-${Date.now()}`,
-          type: 'message',
-          personaId: persona.id,
-          text,
-          time: getTime(),
-        });
+        const text = await callPersonaAPI(persona, phase.text, curveball);
+        if (abortRef.current) break;
 
-        // Brief gap between messages appearing — like reading a group chat
-        await new Promise(r => setTimeout(r, 150 + Math.random() * 250));
+        setTypingPersonas([]);
+
+        if (text) {
+          addMessage({
+            id: `${persona.id}-${Date.now()}`,
+            type: 'message',
+            personaId: persona.id,
+            text,
+            time: getTime(),
+          });
+        }
+        // No artificial delay — straight to next speaker
       }
 
       setTypingPersonas([]);
-
-      if (phaseIdx < phases.length - 1) await new Promise(r => setTimeout(r, 600));
     }
 
     setTypingPersonas([]);
