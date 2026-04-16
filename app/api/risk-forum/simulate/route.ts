@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 
 const TOGETHER_API_URL = 'https://api.together.xyz/v1/chat/completions';
-const MODEL = 'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8';
+const MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
 
 export async function POST(req: NextRequest) {
   const session = await auth();
