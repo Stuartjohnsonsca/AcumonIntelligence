@@ -322,13 +322,20 @@ export default function RiskForumClient({ user }: Props) {
       });
 
       clearTimeout(timeout);
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.error(`Risk Forum API error for ${persona.name}: ${res.status}`);
+        return `[${persona.name} is unavailable — API error ${res.status}]`;
+      }
       const data = await res.json();
       const text = data.text?.trim();
-      return (text && text !== '...' && text !== '[No response]') ? text : null;
-    } catch {
+      if (!text || text === '...' || text === '[No response]') {
+        return `[${persona.name} didn't respond]`;
+      }
+      return text;
+    } catch (err) {
       clearTimeout(timeout);
-      return null;
+      console.error(`Risk Forum fetch error for ${persona.name}:`, err);
+      return `[${persona.name} timed out]`;
     }
   };
 
@@ -403,16 +410,13 @@ export default function RiskForumClient({ user }: Props) {
 
         setTypingPersonas([]);
 
-        if (text) {
-          addMessage({
-            id: `${persona.id}-${Date.now()}`,
-            type: 'message',
-            personaId: persona.id,
-            text,
-            time: getTime(),
-          });
-        }
-        // No artificial delay — straight to next speaker
+        addMessage({
+          id: `${persona.id}-${Date.now()}`,
+          type: 'message',
+          personaId: persona.id,
+          text: text ?? `[${persona.name} — no response]`,
+          time: getTime(),
+        });
       }
 
       setTypingPersonas([]);
@@ -610,7 +614,7 @@ export default function RiskForumClient({ user }: Props) {
 
   // ── SIMULATION VIEW ──────────────────────────────────────────────────────────
   if (view === 'sim') return (
-    <div className="h-screen flex flex-col" style={{ background: '#080808', color: '#C8C8C0' }}>
+    <div className="min-h-[calc(100vh-4rem)] flex flex-col" style={{ background: '#080808', color: '#C8C8C0' }}>
       <style>{`
         @keyframes rfBounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
         @keyframes rfPulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
