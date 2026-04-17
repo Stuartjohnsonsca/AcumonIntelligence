@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle2, XCircle, Clock, FileText, ChevronDown, ChevronUp, AlertTriangle, AlertOctagon, Download, Upload } from 'lucide-react';
 import { BankCheckResultPanel } from './BankCheckResultPanel';
+import { AccrualsOutput } from './accruals/AccrualsOutput';
 
 /**
  * TestResultsPanel — displays test results in the selected output format.
@@ -79,6 +80,11 @@ export function TestResultsPanel({
   const [saving, setSaving] = useState(false);
   const [sectionsOpen, setSectionsOpen] = useState({ results: true, errors: true, signoff: true });
   const [fetchedOutput, setFetchedOutput] = useState<any>(null);
+  // Full TestExecution record, populated only for pipeline-mode tests
+  // (e.g. four_section_accruals) that need access to pipelineState /
+  // currentStepIndex / pauseReason. Lazily fetched by the same effect
+  // that builds fetchedOutput so we share the API call.
+  const [executionRecord, setExecutionRecord] = useState<any>(null);
 
   // Resolve effective executionId — prop or from conclusion record
   const effectiveExecutionId = executionId || conclusionRecord?.executionId || null;
@@ -139,6 +145,7 @@ export function TestResultsPanel({
         // Also check the execution context for accumulated data
         const ctx = data.execution?.context || (data.flowSnapshot ? null : null);
         setFetchedOutput(Object.keys(merged).length > 0 ? merged : null);
+        if (data.execution) setExecutionRecord(data.execution);
       } catch {}
     })();
   }, [effectiveExecutionId, executionOutput, engagementId]);
@@ -263,7 +270,17 @@ export function TestResultsPanel({
             {(outputFormat === 'three_section_sampling' || outputFormat === 'three_section_no_sampling' || !outputFormat) && effectiveOutput && !effectiveOutput.comparisons && (
               <ThreeSectionOutput data={effectiveOutput} />
             )}
-            {!effectiveOutput && (
+            {outputFormat === 'four_section_accruals' && (
+              <AccrualsOutput
+                engagementId={engagementId}
+                executionId={effectiveExecutionId}
+                executionStatus={executionStatus}
+                pipelineState={executionRecord?.pipelineState}
+                currentStepIndex={executionRecord?.currentStepIndex}
+                pauseReason={executionRecord?.pauseReason}
+              />
+            )}
+            {!effectiveOutput && outputFormat !== 'four_section_accruals' && (
               <div className="text-xs text-slate-400 text-center py-4">
                 {effectiveExecutionId ? (
                   <span className="animate-pulse">Loading execution data...</span>

@@ -864,3 +864,164 @@ function parseResult(result: OpenAI.Chat.Completions.ChatCompletion, usedModel: 
     usage,
   };
 }
+
+// ─── Year-End Accruals Supporting Evidence Extraction ──────────────────────
+
+export interface AccrualEvidenceExtract {
+  supplier: string | null;
+  amount: number | null;
+  currency: string | null;
+  invoiceDate: string | null;          // ISO yyyy-mm-dd
+  paymentDate: string | null;          // ISO yyyy-mm-dd (if a remittance / bank trail)
+  servicePeriodStart: string | null;   // ISO yyyy-mm-dd
+  servicePeriodEnd: string | null;     // ISO yyyy-mm-dd
+  description: string | null;
+  references: string[];                // PO refs, invoice no, contract no, GRN no
+  documentKind: string | null;         // "invoice" | "supplier_statement" | "po" | "grn" | ...
+  confidence: number;                  // 0..1
+  notes: string | null;
+}
+
+export interface AccrualEvidenceExtractResult {
+  evidence: AccrualEvidenceExtract;
+  usage: AiTokenUsage;
+}
+
+const ACCRUALS_PROMPT = `You are extracting structured data from a document supporting a year-end accrual.
+Return ONLY JSON (no prose, no markdown fences) matching this schema:
+
+{
+  "supplier": string | null,
+  "amount": number | null,               // gross amount on the document (positive)
+  "currency": string | null,             // ISO code like "GBP" if discernible
+  "invoiceDate": "YYYY-MM-DD" | null,    // date the invoice was issued
+  "paymentDate": "YYYY-MM-DD" | null,    // date of payment if this is a remittance / bank proof
+  "servicePeriodStart": "YYYY-MM-DD" | null,  // first day the goods/services relate to
+  "servicePeriodEnd": "YYYY-MM-DD" | null,    // last day the goods/services relate to
+  "description": string | null,          // concise description of the goods/services
+  "references": [string],                // invoice no, PO, contract no, GRN etc. — empty array if none
+  "documentKind": string | null,         // "invoice" | "supplier_statement" | "po" | "grn" | "service_evidence" | "remittance" | "other"
+  "confidence": number,                  // 0..1 — your confidence in the whole extraction
+  "notes": string | null                 // anything unusual the reviewer should know (e.g. "document is illegible in places")
+}
+
+Principles:
+- If a field is not stated on the document, return null — do NOT guess.
+- Service period: prefer explicit text like "for the period 1 Dec 2025 to 31 Jan 2026". If the document shows only a single date or just a month, set servicePeriodStart and End to the same value (the last day of that month when only a month is given).
+- "references" should include every identifier visible (invoice number, PO, supplier ref, GRN, contract number).
+- Amount is the gross total payable. If only net + VAT are shown, sum them.
+- Dates must be ISO yyyy-mm-dd.`;
+
+/**
+ * Extract structured supporting-evidence data from a single document for
+ * the Year-End Accruals pipeline. Shares model selection, PDF handling
+ * and retry logic with the invoice extractor.
+ */
+export async function extractAccrualSupportingEvidence(
+  base64Data: string,
+  mimeType: string,
+  fileName: string,
+): Promise<AccrualEvidenceExtractResult> {
+  type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
+  let contentParts: ContentPart[];
+  let inputMode = 'image';
+
+  if (isPdf(mimeType)) {
+    const pdfBuffer = Buffer.from(base64Data, 'base64');
+    const pdfContent = await processPdf(pdfBuffer, 10);
+    if (pdfContent.mode === 'text' && pdfContent.text) {
+      inputMode = 'pdf-text';
+      contentParts = [
+        { type: 'text', text: `File name: ${fileName}\n\nDocument text content (extracted from PDF, ${pdfContent.pageCount} pages):\n\n${pdfContent.text}\n\n${ACCRUALS_PROMPT}` },
+      ];
+    } else {
+      inputMode = 'pdf-raw';
+      contentParts = [
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+        { type: 'text', text: `File name: ${fileName}\n\n${ACCRUALS_PROMPT}` },
+      ];
+    }
+  } else {
+    contentParts = [
+      { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+      { type: 'text', text: `File name: ${fileName}\n\n${ACCRUALS_PROMPT}` },
+    ];
+  }
+
+  console.log(`[Accruals:AI] Starting extraction | file=${fileName} | mode=${inputMode}`);
+
+  const requireVision = inputMode !== 'pdf-text';
+  const models = selectModels(EXTRACTION_PRIORITIES, requireVision);
+  let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+  let usedModel = models[0];
+  const errors: string[] = [];
+
+  for (const modelId of models) {
+    usedModel = modelId;
+    try {
+      result = await retryWithBackoff(
+        () => client.chat.completions.create({
+          model: modelId,
+          messages: [{ role: 'user', content: contentParts }],
+          max_tokens: 2048,
+        }),
+        `accrual-evidence:${fileName}`,
+      );
+      break;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      errors.push(`${modelId}: ${errMsg}`);
+      console.warn(`[Accruals:AI] Model ${modelId} failed for ${fileName}: ${errMsg}`);
+      if (isModelUnavailableError(err)) { markModelUnavailable(modelId); continue; }
+      if (err instanceof Error && err.message.includes('400')) { continue; }
+      throw err;
+    }
+  }
+
+  if (!result) {
+    throw new Error(`[accrual-evidence:${fileName}] All models failed. ${errors.join(' | ')}`);
+  }
+
+  const usage = extractUsageMetadata(result);
+  usage.model = usedModel;
+
+  const text = result.choices[0]?.message?.content || '';
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/) || cleaned.match(/(\{[\s\S]*\})/);
+  const jsonText = jsonMatch ? jsonMatch[1] : cleaned;
+
+  try {
+    const parsed = JSON.parse(jsonText.trim());
+    const refs = Array.isArray(parsed.references) ? parsed.references.map((r: unknown) => String(r)) : [];
+    return {
+      evidence: {
+        supplier: parsed.supplier ?? null,
+        amount: parsed.amount != null ? Number(parsed.amount) : null,
+        currency: parsed.currency ?? null,
+        invoiceDate: parsed.invoiceDate ?? null,
+        paymentDate: parsed.paymentDate ?? null,
+        servicePeriodStart: parsed.servicePeriodStart ?? null,
+        servicePeriodEnd: parsed.servicePeriodEnd ?? null,
+        description: parsed.description ?? null,
+        references: refs,
+        documentKind: parsed.documentKind ?? null,
+        confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
+        notes: parsed.notes ?? null,
+      },
+      usage,
+    };
+  } catch (parseError) {
+    const snippet = text.substring(0, 200).replace(/\n/g, '\\n');
+    console.error(`[Accruals:AI] JSON parse failed | file=${fileName} | error=${parseError instanceof Error ? parseError.message : 'Unknown'} | snippet="${snippet}"`);
+    return {
+      evidence: {
+        supplier: null, amount: null, currency: null,
+        invoiceDate: null, paymentDate: null,
+        servicePeriodStart: null, servicePeriodEnd: null,
+        description: null, references: [], documentKind: null,
+        confidence: 0, notes: 'Extraction failed to parse',
+      },
+      usage,
+    };
+  }
+}

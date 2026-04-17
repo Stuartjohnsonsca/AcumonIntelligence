@@ -12,87 +12,87 @@ datasource db {
 }
 
 model Firm {
-  id         String   @id @default(uuid())
-  name       String
-  dataRegion String   @default("uk") @map("data_region") // uk | eu | us | ap — determines where data is processed and stored
-  taxonomySourceType       String?  @map("taxonomy_source_type") // "url" | "file" — once set, locked for the firm
-  taxonomyEndpointUrl      String?  @map("taxonomy_endpoint_url") // URL/API endpoint when sourceType = "url"
-  chartOfAccountsBlobPath  String?  @map("chart_of_accounts_blob_path")
-  chartOfAccountsContainer String?  @map("chart_of_accounts_container")
-  chartOfAccountsFileName  String?  @map("chart_of_accounts_file_name")
+  id                       String    @id @default(uuid())
+  name                     String
+  dataRegion               String    @default("uk") @map("data_region") // uk | eu | us | ap — determines where data is processed and stored
+  taxonomySourceType       String?   @map("taxonomy_source_type") // "url" | "file" — once set, locked for the firm
+  taxonomyEndpointUrl      String?   @map("taxonomy_endpoint_url") // URL/API endpoint when sourceType = "url"
+  chartOfAccountsBlobPath  String?   @map("chart_of_accounts_blob_path")
+  chartOfAccountsContainer String?   @map("chart_of_accounts_container")
+  chartOfAccountsFileName  String?   @map("chart_of_accounts_file_name")
   chartOfAccountsUpdatedAt DateTime? @map("chart_of_accounts_updated_at")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
 
-  ethicsPartnerId     String?  @map("ethics_partner_id")
+  ethicsPartnerId String? @map("ethics_partner_id")
 
   // Letterhead / branding / regulatory (used by client letter templates)
-  logoStoragePath          String? @map("logo_storage_path")
-  groupLogoStoragePath     String? @map("group_logo_storage_path")
-  address                  String? @db.Text
-  phone                    String?
-  email                    String?
-  website                  String?
-  registeredCompanyNumber  String? @map("registered_company_number")
-  statutoryAuditorNumber   String? @map("statutory_auditor_number")
-  legalStatus              String? @map("legal_status") // Ltd | LLP | Partnership | Sole Trader
-  registeredOfficeAddress  String? @map("registered_office_address") @db.Text
-  vatNumber                String? @map("vat_number")
-  letterheadHeaderText     String? @map("letterhead_header_text") @db.Text
-  letterheadFooterText     String? @map("letterhead_footer_text") @db.Text
+  logoStoragePath         String? @map("logo_storage_path")
+  groupLogoStoragePath    String? @map("group_logo_storage_path")
+  address                 String? @db.Text
+  phone                   String?
+  email                   String?
+  website                 String?
+  registeredCompanyNumber String? @map("registered_company_number")
+  statutoryAuditorNumber  String? @map("statutory_auditor_number")
+  legalStatus             String? @map("legal_status") // Ltd | LLP | Partnership | Sole Trader
+  registeredOfficeAddress String? @map("registered_office_address") @db.Text
+  vatNumber               String? @map("vat_number")
+  letterheadHeaderText    String? @map("letterhead_header_text") @db.Text
+  letterheadFooterText    String? @map("letterhead_footer_text") @db.Text
 
   // PowerApps / Dynamics 365 integration
-  powerAppsClientId     String?  @map("power_apps_client_id")
-  powerAppsClientSecret String?  @map("power_apps_client_secret")
-  powerAppsBaseUrl      String?  @map("power_apps_base_url")
-  powerAppsTenantId     String?  @map("power_apps_tenant_id")
-  powerAppsClientFilter String?  @map("power_apps_client_filter") // Compiled OData filter for client extraction
-  powerAppsClientFilterDesc String? @map("power_apps_client_filter_desc") // Natural language description of the filter
-  timesheetLastSyncedAt DateTime? @map("timesheet_last_synced_at") // Last time jca_totalunits was synced from CRM
+  powerAppsClientId         String?   @map("power_apps_client_id")
+  powerAppsClientSecret     String?   @map("power_apps_client_secret")
+  powerAppsBaseUrl          String?   @map("power_apps_base_url")
+  powerAppsTenantId         String?   @map("power_apps_tenant_id")
+  powerAppsClientFilter     String?   @map("power_apps_client_filter") // Compiled OData filter for client extraction
+  powerAppsClientFilterDesc String?   @map("power_apps_client_filter_desc") // Natural language description of the filter
+  timesheetLastSyncedAt     DateTime? @map("timesheet_last_synced_at") // Last time jca_totalunits was synced from CRM
 
-  users               User[]
-  ethicsPartner       User?    @relation("FirmEthicsPartner", fields: [ethicsPartnerId], references: [id])
-  clients             Client[]
-  samplingConfig      FirmSamplingConfig?
-  chartOfAccounts     FirmChartOfAccount[]
-  accountCodeMappings AccountCodeMapping[]
-  assuranceChats       AssuranceChat[]
-  assuranceEngagements AssuranceEngagement[]
-  riskChats            RiskChat[]
-  iaFeedbackUsers      IAFeedbackUser[]
+  users                     User[]
+  ethicsPartner             User?                      @relation("FirmEthicsPartner", fields: [ethicsPartnerId], references: [id])
+  clients                   Client[]
+  samplingConfig            FirmSamplingConfig?
+  chartOfAccounts           FirmChartOfAccount[]
+  accountCodeMappings       AccountCodeMapping[]
+  assuranceChats            AssuranceChat[]
+  assuranceEngagements      AssuranceEngagement[]
+  riskChats                 RiskChat[]
+  iaFeedbackUsers           IAFeedbackUser[]
   // Methodology relations
-  auditEngagements         AuditEngagement[]
-  clientIntelligence       ClientIntelligence[]
-  methodologyConfigs       MethodologyConfig[]
-  methodologyTemplates     MethodologyTemplate[]
-  methodologyIndustries    MethodologyIndustry[]
-  methodologyTestTypes     MethodologyTestType[]
-  methodologyTestBanks     MethodologyTestBank[]
-  methodologyTests         MethodologyTest[]
-  methodologyFsLines       MethodologyFsLine[]
-  methodologyToolSettings  MethodologyToolSetting[]
-  methodologyRiskTables    MethodologyRiskTable[]
+  auditEngagements          AuditEngagement[]
+  clientIntelligence        ClientIntelligence[]
+  methodologyConfigs        MethodologyConfig[]
+  methodologyTemplates      MethodologyTemplate[]
+  methodologyIndustries     MethodologyIndustry[]
+  methodologyTestTypes      MethodologyTestType[]
+  methodologyTestBanks      MethodologyTestBank[]
+  methodologyTests          MethodologyTest[]
+  methodologyFsLines        MethodologyFsLine[]
+  methodologyToolSettings   MethodologyToolSetting[]
+  methodologyRiskTables     MethodologyRiskTable[]
   // Resource planning relations
-  resourceStaffSettings    ResourceStaffSetting[]
-  resourceAllocations      ResourceAllocation[]
-  resourceJobs             ResourceJob[]
-  resourceJobProfiles      ResourceJobProfile[]
-  resourceClientSettings   ResourceClientSetting[]
+  resourceStaffSettings     ResourceStaffSetting[]
+  resourceAllocations       ResourceAllocation[]
+  resourceJobs              ResourceJob[]
+  resourceJobProfiles       ResourceJobProfile[]
+  resourceClientSettings    ResourceClientSetting[]
   resourceOptimizerSettings ResourceOptimizerSettings?
-  documentTemplates        DocumentTemplate[]
-  actionDefinitions        ActionDefinition[]
+  documentTemplates         DocumentTemplate[]
+  actionDefinitions         ActionDefinition[]
 
   @@map("firms")
 }
 
 model User {
-  id                String    @id @default(uuid())
-  firmId            String    @map("firm_id")
-  displayId         String    @unique @map("display_id") // e.g. ST001
-  name              String
-  email             String    @unique
-  passwordHash      String    @map("password_hash")
-  twoFactorMethod   String    @default("email") @map("two_factor_method")
+  id                 String    @id @default(uuid())
+  firmId             String    @map("firm_id")
+  displayId          String    @unique @map("display_id") // e.g. ST001
+  name               String
+  email              String    @unique
+  passwordHash       String    @map("password_hash")
+  twoFactorMethod    String    @default("email") @map("two_factor_method")
   isSuperAdmin       Boolean   @default(false) @map("is_super_admin")
   isFirmAdmin        Boolean   @default(false) @map("is_firm_admin")
   isPortfolioOwner   Boolean   @default(false) @map("is_portfolio_owner")
@@ -100,70 +100,73 @@ model User {
   isResourceAdmin    Boolean   @default(false) @map("is_resource_admin")
   isAuditStaff       Boolean   @default(false) @map("is_audit_staff")
   isTestBuilder      Boolean   @default(false) @map("is_test_builder")
-  entraObjectId     String?   @unique @map("entra_object_id")
-  jobTitle          String?   @map("job_title")
-  department        String?
-  officeLocation    String?   @map("office_location")
-  lastSyncedAt      DateTime? @map("last_synced_at")
-  expiryDate        DateTime? @map("expiry_date")
-  isActive          Boolean   @default(true) @map("is_active")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  entraObjectId      String?   @unique @map("entra_object_id")
+  jobTitle           String?   @map("job_title")
+  department         String?
+  officeLocation     String?   @map("office_location")
+  lastSyncedAt       DateTime? @map("last_synced_at")
+  expiryDate         DateTime? @map("expiry_date")
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  firm                       Firm                       @relation(fields: [firmId], references: [id])
-  twoFactorCodes             TwoFactorCode[]
-  clientAssignments          UserClientAssignment[]
-  purchasedSubscriptions     Subscription[]
-  extractionJobs             ExtractionJob[]
-  managedClients             Client[]                   @relation("PortfolioManagerClients")
-  docSummaryJobs             DocSummaryJob[]
-  activityLogs               ActivityLog[]
-  periodProductAssignments   PeriodProductAssignment[]
-  samplingEngagements        SamplingEngagement[]
-  samplingReviews            SamplingReview[]           @relation("SamplingReviewer")
-  samplingEngagementsReview  SamplingEngagement[]       @relation("SamplingEngagementReviewer")
+  firm                      Firm                       @relation(fields: [firmId], references: [id])
+  twoFactorCodes            TwoFactorCode[]
+  clientAssignments         UserClientAssignment[]
+  purchasedSubscriptions    Subscription[]
+  extractionJobs            ExtractionJob[]
+  managedClients            Client[]                   @relation("PortfolioManagerClients")
+  docSummaryJobs            DocSummaryJob[]
+  activityLogs              ActivityLog[]
+  periodProductAssignments  PeriodProductAssignment[]
+  samplingEngagements       SamplingEngagement[]
+  samplingReviews           SamplingReview[]           @relation("SamplingReviewer")
+  samplingEngagementsReview SamplingEngagement[]       @relation("SamplingEngagementReviewer")
   evidenceRequestsCreated   AuditEvidenceRequest[]     @relation("EvidenceRequestCreator")
-  bankToTBSessions           BankToTBSession[]
-  bankAuditSessions          BankAuditSession[]
-  toolSessions               ToolSession[]
-  assuranceChats             AssuranceChat[]
-  assuranceEngagements       AssuranceEngagement[]
-  riskChats                  RiskChat[]
-  riskFeedback               RiskFeedback[]
-  iaFeedbackRoles            IAFeedbackUser[]
-  assuranceFeedback          AssuranceFeedback[]
+  bankToTBSessions          BankToTBSession[]
+  bankAuditSessions         BankAuditSession[]
+  toolSessions              ToolSession[]
+  assuranceChats            AssuranceChat[]
+  assuranceEngagements      AssuranceEngagement[]
+  riskChats                 RiskChat[]
+  riskFeedback              RiskFeedback[]
+  iaFeedbackRoles           IAFeedbackUser[]
+  assuranceFeedback         AssuranceFeedback[]
   // Methodology relations
-  auditTeamMemberships       AuditTeamMember[]
-  auditEngagementsCreated    AuditEngagement[]          @relation("EngagementCreator")
-  intelligenceReviews        ClientIntelligenceReview[]
-  auditDocumentsRequested    AuditDocument[]            @relation("DocumentRequester")
-  auditDocumentsUploaded     AuditDocument[]            @relation("DocumentUploader")
-  methodologyConfigsCreated  MethodologyConfig[]
-  firmEthicsPartnerOf        Firm[]                     @relation("FirmEthicsPartner")
-  journalRiskRuns            JournalRiskRun[]           @relation("JournalRiskRunBy")
-  meetingsCreated            AuditMeeting[]             @relation("MeetingCreator")
+  auditTeamMemberships      AuditTeamMember[]
+  auditEngagementsCreated   AuditEngagement[]          @relation("EngagementCreator")
+  intelligenceReviews       ClientIntelligenceReview[]
+  auditDocumentsRequested   AuditDocument[]            @relation("DocumentRequester")
+  auditDocumentsUploaded    AuditDocument[]            @relation("DocumentUploader")
+  methodologyConfigsCreated MethodologyConfig[]
+  firmEthicsPartnerOf       Firm[]                     @relation("FirmEthicsPartner")
+  journalRiskRuns           JournalRiskRun[]           @relation("JournalRiskRunBy")
+  meetingsCreated           AuditMeeting[]             @relation("MeetingCreator")
   // Resource planning relations
-  resourceStaffSetting       ResourceStaffSetting?
-  resourceAllocations        ResourceAllocation[]
+  resourceStaffSetting      ResourceStaffSetting?
+  resourceAllocations       ResourceAllocation[]
   // Team familiarity (Part H)
-  teamFamiliarityEntries     TeamFamiliarityEntry[]     @relation("UserTeamFamiliarity")
+  teamFamiliarityEntries    TeamFamiliarityEntry[]     @relation("UserTeamFamiliarity")
+  // Self-healing error system
+  errorReports              ErrorAutoFix[]             @relation("ErrorReporter")
+  errorReverts              ErrorAutoFix[]             @relation("ErrorReverter")
 
   @@map("users")
 }
 
 model Product {
-  id          String   @id @default(uuid())
-  name        String
-  category    String   // "Statutory Audit" | "Internal Audit"
-  urlPrefix   String   @unique @map("url_prefix")
-  expiryDays  Int      @map("expiry_days")
-  price1      Float    @map("price_1")
-  price5      Float    @map("price_5")
-  price10     Float    @map("price_10")
-  price20     Float    @map("price_20")
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id         String   @id @default(uuid())
+  name       String
+  category   String // "Statutory Audit" | "Internal Audit"
+  urlPrefix  String   @unique @map("url_prefix")
+  expiryDays Int      @map("expiry_days")
+  price1     Float    @map("price_1")
+  price5     Float    @map("price_5")
+  price10    Float    @map("price_10")
+  price20    Float    @map("price_20")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
   subscriptions Subscription[]
   priceChanges  PriceChange[]
@@ -188,26 +191,26 @@ model PriceChange {
 }
 
 model Client {
-  id                  String   @id @default(uuid())
-  firmId              String   @map("firm_id")
-  clientName          String   @map("client_name")
-  software            String?
-  contactFirstName    String?  @map("contact_first_name")
-  contactSurname      String?  @map("contact_surname")
-  contactEmail        String?  @map("contact_email")
-  address             String?  @db.Text // Multi-line postal address (used on client letters)
-  sector              String?  // Financial Services, Healthcare, Manufacturing, Technology, Public Sector, Retail, Energy, Education, Construction, Legal, Charities & Non-Profit
-  portfolioManagerId  String?  @map("portfolio_manager_id")
-  crmAccountId        String?  @unique @map("crm_account_id") // Dynamics 365 account GUID
-  isActive            Boolean  @default(true) @map("is_active")
-  readOnly            Boolean  @default(false) @map("read_only")
-  isListed            Boolean  @default(false) @map("is_listed")
-  isPIE               Boolean  @default(false) @map("is_pie")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                 String   @id @default(uuid())
+  firmId             String   @map("firm_id")
+  clientName         String   @map("client_name")
+  software           String?
+  contactFirstName   String?  @map("contact_first_name")
+  contactSurname     String?  @map("contact_surname")
+  contactEmail       String?  @map("contact_email")
+  address            String?  @db.Text // Multi-line postal address (used on client letters)
+  sector             String? // Financial Services, Healthcare, Manufacturing, Technology, Public Sector, Retail, Energy, Education, Construction, Legal, Charities & Non-Profit
+  portfolioManagerId String?  @map("portfolio_manager_id")
+  crmAccountId       String?  @unique @map("crm_account_id") // Dynamics 365 account GUID
+  isActive           Boolean  @default(true) @map("is_active")
+  readOnly           Boolean  @default(false) @map("read_only")
+  isListed           Boolean  @default(false) @map("is_listed")
+  isPIE              Boolean  @default(false) @map("is_pie")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
-  firm                   Firm                    @relation(fields: [firmId], references: [id])
-  portfolioManager       User?                   @relation("PortfolioManagerClients", fields: [portfolioManagerId], references: [id], onDelete: SetNull)
+  firm                   Firm                   @relation(fields: [firmId], references: [id])
+  portfolioManager       User?                  @relation("PortfolioManagerClients", fields: [portfolioManagerId], references: [id], onDelete: SetNull)
   apiKeys                ClientApiKey[]
   subscriptions          Subscription[]
   userAssignments        UserClientAssignment[]
@@ -246,19 +249,19 @@ model Client {
 // One row per (firmId, clientId, userId, role) tuple. Auto-derived from existing
 // engagement history; user can override the date fields.
 model TeamFamiliarityEntry {
-  id                  String   @id @default(uuid())
-  firmId              String   @map("firm_id")
-  clientId            String   @map("client_id")
-  userId              String   @map("user_id")
-  role                String   // Junior | Manager | RI | Partner | EQR
+  id                  String    @id @default(uuid())
+  firmId              String    @map("firm_id")
+  clientId            String    @map("client_id")
+  userId              String    @map("user_id")
+  role                String // Junior | Manager | RI | Partner | EQR
   engagementStartDate DateTime? @map("engagement_start_date")
   roleStartedDate     DateTime? @map("role_started_date")
   ceasedActingDate    DateTime? @map("ceased_acting_date")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  client              Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  user                User     @relation("UserTeamFamiliarity", fields: [userId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User   @relation("UserTeamFamiliarity", fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([firmId, clientId, userId, role])
   @@index([firmId, clientId])
@@ -279,17 +282,17 @@ model ClientApiKey {
 }
 
 model Subscription {
-  id               String    @id @default(uuid())
-  clientId         String    @map("client_id")
-  productId        String    @map("product_id")
-  purchasedById    String    @map("purchased_by_id")
-  quantity         Int
-  startDate        DateTime  @map("start_date")
-  expiryDate       DateTime  @map("expiry_date")
-  stripePaymentId  String?   @map("stripe_payment_id")
-  isActive         Boolean   @default(true) @map("is_active")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  id              String   @id @default(uuid())
+  clientId        String   @map("client_id")
+  productId       String   @map("product_id")
+  purchasedById   String   @map("purchased_by_id")
+  quantity        Int
+  startDate       DateTime @map("start_date")
+  expiryDate      DateTime @map("expiry_date")
+  stripePaymentId String?  @map("stripe_payment_id")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   client      Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
   product     Product @relation(fields: [productId], references: [id])
@@ -347,14 +350,14 @@ model PasswordResetToken {
 // ─── Access Requests ────────────────────────────────────────────────────────
 
 model AccessRequest {
-  id            String    @id @default(uuid())
-  userId        String    @map("user_id")
-  clientId      String    @map("client_id")
-  token         String    @unique
-  status        String    @default("pending") // pending | approved | rejected | expired
-  respondedAt   DateTime? @map("responded_at")
-  expiresAt     DateTime  @map("expires_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  clientId    String    @map("client_id")
+  token       String    @unique
+  status      String    @default("pending") // pending | approved | rejected | expired
+  respondedAt DateTime? @map("responded_at")
+  expiresAt   DateTime  @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   @@map("access_requests")
 }
@@ -362,17 +365,17 @@ model AccessRequest {
 // ─── Xero Delegated Auth Requests ───────────────────────────────────────────
 
 model XeroAuthRequest {
-  id           String    @id @default(uuid())
-  clientId     String    @map("client_id")
-  requestedBy  String    @map("requested_by")
-  recipientEmail String  @map("recipient_email")
-  recipientName  String? @map("recipient_name")
-  token        String    @unique
-  codeVerifier String?   @map("code_verifier")
-  status       String    @default("pending") // pending | authorised | expired
-  respondedAt  DateTime? @map("responded_at")
-  expiresAt    DateTime  @map("expires_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
+  id             String    @id @default(uuid())
+  clientId       String    @map("client_id")
+  requestedBy    String    @map("requested_by")
+  recipientEmail String    @map("recipient_email")
+  recipientName  String?   @map("recipient_name")
+  token          String    @unique
+  codeVerifier   String?   @map("code_verifier")
+  status         String    @default("pending") // pending | authorised | expired
+  respondedAt    DateTime? @map("responded_at")
+  expiresAt      DateTime  @map("expires_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
@@ -382,21 +385,21 @@ model XeroAuthRequest {
 // ─── Accounting System Connections ───────────────────────────────────────────
 
 model AccountingConnection {
-  id              String   @id @default(uuid())
-  clientId        String   @map("client_id")
-  system          String   // "xero" | "sage" | "quickbooks"
-  accessToken     String   @map("access_token")
-  refreshToken    String   @map("refresh_token")
-  tokenExpiresAt  DateTime @map("token_expires_at")
-  tenantId        String?  @map("tenant_id")
-  orgName         String?  @map("org_name")
-  connectedBy     String   @map("connected_by")
-  connectedAt     DateTime @default(now()) @map("connected_at")
-  expiresAt       DateTime @map("expires_at")
-  accountsCache   Json?    @map("accounts_cache")
+  id               String    @id @default(uuid())
+  clientId         String    @map("client_id")
+  system           String // "xero" | "sage" | "quickbooks"
+  accessToken      String    @map("access_token")
+  refreshToken     String    @map("refresh_token")
+  tokenExpiresAt   DateTime  @map("token_expires_at")
+  tenantId         String?   @map("tenant_id")
+  orgName          String?   @map("org_name")
+  connectedBy      String    @map("connected_by")
+  connectedAt      DateTime  @default(now()) @map("connected_at")
+  expiresAt        DateTime  @map("expires_at")
+  accountsCache    Json?     @map("accounts_cache")
   accountsCachedAt DateTime? @map("accounts_cached_at")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
@@ -414,7 +417,7 @@ model PendingXeroAuth {
   connectedBy    String   @map("connected_by")
   isDelegated    Boolean  @default(false) @map("is_delegated")
   delegatedToken String?  @map("delegated_token")
-  tenants        Json     // Array of { tenantId, tenantName, createdDateUtc }
+  tenants        Json // Array of { tenantId, tenantName, createdDateUtc }
   returnUrl      String?  @map("return_url")
   createdAt      DateTime @default(now()) @map("created_at")
 
@@ -424,30 +427,30 @@ model PendingXeroAuth {
 // ─── Data Extraction Tool ────────────────────────────────────────────────────
 
 model ExtractionJob {
-  id                   String    @id @default(uuid())
-  clientId             String    @map("client_id")
-  userId               String    @map("user_id")
-  engagementId         String?   @map("engagement_id")    // Links to audit engagement
-  testExecutionId      String?   @map("test_execution_id") // Links to test execution that created this job
-  fsLine               String?   @map("fs_line")           // FS line being tested
-  status               String    @default("pending") // pending | processing | complete | failed | expired
-  totalFiles           Int       @default(0) @map("total_files")
-  processedCount       Int       @default(0) @map("processed_count")
-  failedCount          Int       @default(0) @map("failed_count")
-  duplicateCount       Int       @default(0) @map("duplicate_count")
-  accountingSystem     String?   @map("accounting_system")
-  orgName              String?   @map("org_name")
-  extractedAt          DateTime? @map("extracted_at")
-  expiresAt            DateTime? @map("expires_at")
-  reminderSentAt       DateTime? @map("reminder_sent_at")
-  finalReminderSentAt  DateTime? @map("final_reminder_sent_at")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
+  id                  String    @id @default(uuid())
+  clientId            String    @map("client_id")
+  userId              String    @map("user_id")
+  engagementId        String?   @map("engagement_id") // Links to audit engagement
+  testExecutionId     String?   @map("test_execution_id") // Links to test execution that created this job
+  fsLine              String?   @map("fs_line") // FS line being tested
+  status              String    @default("pending") // pending | processing | complete | failed | expired
+  totalFiles          Int       @default(0) @map("total_files")
+  processedCount      Int       @default(0) @map("processed_count")
+  failedCount         Int       @default(0) @map("failed_count")
+  duplicateCount      Int       @default(0) @map("duplicate_count")
+  accountingSystem    String?   @map("accounting_system")
+  orgName             String?   @map("org_name")
+  extractedAt         DateTime? @map("extracted_at")
+  expiresAt           DateTime? @map("expires_at")
+  reminderSentAt      DateTime? @map("reminder_sent_at")
+  finalReminderSentAt DateTime? @map("final_reminder_sent_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  client    Client              @relation(fields: [clientId], references: [id])
-  user      User                @relation(fields: [userId], references: [id])
-  files     ExtractionFile[]
-  records   ExtractedRecord[]
+  client  Client            @relation(fields: [clientId], references: [id])
+  user    User              @relation(fields: [userId], references: [id])
+  files   ExtractionFile[]
+  records ExtractedRecord[]
 
   @@index([engagementId])
   @@index([testExecutionId])
@@ -471,37 +474,37 @@ model ExtractionFile {
   pageCount     Int?     @map("page_count")
   createdAt     DateTime @default(now()) @map("created_at")
 
-  job          ExtractionJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  records      ExtractedRecord[]
-  duplicateOf  ExtractionFile?   @relation("FileDuplicates", fields: [duplicateOfId], references: [id])
-  duplicates   ExtractionFile[]  @relation("FileDuplicates")
+  job         ExtractionJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  records     ExtractedRecord[]
+  duplicateOf ExtractionFile?   @relation("FileDuplicates", fields: [duplicateOfId], references: [id])
+  duplicates  ExtractionFile[]  @relation("FileDuplicates")
 
   @@map("extraction_files")
 }
 
 model ExtractedRecord {
-  id              String   @id @default(uuid())
-  jobId           String   @map("job_id")
-  fileId          String   @map("file_id")
-  referenceId     String   @map("reference_id") // short system-generated ref e.g. DOC-001
-  purchaserName   String?  @map("purchaser_name")
-  purchaserTaxId  String?  @map("purchaser_tax_id")
-  purchaserCountry String? @map("purchaser_country")
-  sellerName      String?  @map("seller_name")
-  sellerTaxId     String?  @map("seller_tax_id")
-  sellerCountry   String?  @map("seller_country")
-  documentRef     String?  @map("document_ref")
-  documentDate    String?  @map("document_date")
-  dueDate         String?  @map("due_date")
-  netTotal        Float?   @map("net_total")
-  dutyTotal       Float?   @map("duty_total")
-  taxTotal        Float?   @map("tax_total")
-  grossTotal      Float?   @map("gross_total")
-  lineItems       Json?    @map("line_items") // array of {description, quantity, productId, net, tax, duty}
-  accountCategory String?  @map("account_category")
-  rawExtraction   Json?    @map("raw_extraction")
-  fieldLocations  Json?    @map("field_locations")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id               String   @id @default(uuid())
+  jobId            String   @map("job_id")
+  fileId           String   @map("file_id")
+  referenceId      String   @map("reference_id") // short system-generated ref e.g. DOC-001
+  purchaserName    String?  @map("purchaser_name")
+  purchaserTaxId   String?  @map("purchaser_tax_id")
+  purchaserCountry String?  @map("purchaser_country")
+  sellerName       String?  @map("seller_name")
+  sellerTaxId      String?  @map("seller_tax_id")
+  sellerCountry    String?  @map("seller_country")
+  documentRef      String?  @map("document_ref")
+  documentDate     String?  @map("document_date")
+  dueDate          String?  @map("due_date")
+  netTotal         Float?   @map("net_total")
+  dutyTotal        Float?   @map("duty_total")
+  taxTotal         Float?   @map("tax_total")
+  grossTotal       Float?   @map("gross_total")
+  lineItems        Json?    @map("line_items") // array of {description, quantity, productId, net, tax, duty}
+  accountCategory  String?  @map("account_category")
+  rawExtraction    Json?    @map("raw_extraction")
+  fieldLocations   Json?    @map("field_locations")
+  createdAt        DateTime @default(now()) @map("created_at")
 
   job  ExtractionJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
   file ExtractionFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
@@ -512,8 +515,8 @@ model ExtractedRecord {
 model AccountCategoryLearning {
   id          String   @id @default(uuid())
   clientId    String   @map("client_id")
-  description String   // the description text pattern
-  category    String   // the assigned category
+  description String // the description text pattern
+  category    String // the assigned category
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -530,8 +533,8 @@ model AiUsage {
   fileId           String?  @map("file_id")
   userId           String   @map("user_id")
   action           String   @default("Financial Data Extraction") // which tool/product triggered the AI call
-  model            String   // e.g. "gemini-2.5-flash"
-  operation        String   // "extraction" | "categorisation"
+  model            String // e.g. "gemini-2.5-flash"
+  operation        String // "extraction" | "categorisation"
   promptTokens     Int      @map("prompt_tokens")
   completionTokens Int      @map("completion_tokens")
   totalTokens      Int      @map("total_tokens")
@@ -582,10 +585,10 @@ model BackgroundTask {
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
   clientId  String?  @map("client_id")
-  type      String   // 'xero-fetch' | 'xero-attachments'
+  type      String // 'xero-fetch' | 'xero-attachments'
   status    String   @default("running") // running | completed | error
-  progress  Json?    // { phase, current, total }
-  result    Json?    // task-specific result data
+  progress  Json? // { phase, current, total }
+  result    Json? // task-specific result data
   error     String?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -609,10 +612,10 @@ model DocSummaryJob {
   updatedAt      DateTime  @updatedAt @map("updated_at")
   expiresAt      DateTime? @map("expires_at")
 
-  client   Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  user     User               @relation(fields: [userId], references: [id])
-  files    DocSummaryFile[]
-  findings DocSummaryFinding[]
+  client     Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user       User                @relation(fields: [userId], references: [id])
+  files      DocSummaryFile[]
+  findings   DocSummaryFinding[]
   qaMessages DocSummaryQA[]
 
   @@index([clientId])
@@ -621,22 +624,22 @@ model DocSummaryJob {
 }
 
 model DocSummaryFile {
-  id            String    @id @default(uuid())
-  jobId         String    @map("job_id")
-  originalName  String    @map("original_name")
-  storagePath   String    @map("storage_path")
-  containerName String    @default("upload-inbox") @map("container_name")
-  fileSize      Int       @map("file_size")
-  mimeType      String    @map("mime_type")
-  status        String    @default("uploaded") // uploaded | processing | analysed | failed
-  errorMessage  String?   @map("error_message")
-  pageCount            Int?      @map("page_count")
-  hidden               Boolean   @default(false)
-  documentDescription  String?   @map("document_description") @db.Text
-  extractedText        String?   @map("extracted_text") @db.Text
-  keyTerms             Json?     @map("key_terms")
-  missingInformation   Json?     @map("missing_information")
-  createdAt            DateTime  @default(now()) @map("created_at")
+  id                  String   @id @default(uuid())
+  jobId               String   @map("job_id")
+  originalName        String   @map("original_name")
+  storagePath         String   @map("storage_path")
+  containerName       String   @default("upload-inbox") @map("container_name")
+  fileSize            Int      @map("file_size")
+  mimeType            String   @map("mime_type")
+  status              String   @default("uploaded") // uploaded | processing | analysed | failed
+  errorMessage        String?  @map("error_message")
+  pageCount           Int?     @map("page_count")
+  hidden              Boolean  @default(false)
+  documentDescription String?  @map("document_description") @db.Text
+  extractedText       String?  @map("extracted_text") @db.Text
+  keyTerms            Json?    @map("key_terms")
+  missingInformation  Json?    @map("missing_information")
+  createdAt           DateTime @default(now()) @map("created_at")
 
   job        DocSummaryJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
   findings   DocSummaryFinding[]
@@ -650,11 +653,11 @@ model DocSummaryFinding {
   id                String   @id @default(uuid())
   jobId             String   @map("job_id")
   fileId            String   @map("file_id")
-  area              String   // e.g. "Parties", "Obligations", "Risks", or AI-identified area
+  area              String // e.g. "Parties", "Obligations", "Risks", or AI-identified area
   finding           String   @db.Text
   clauseReference   String   @map("clause_reference")
-  isSignificantRisk   Boolean  @default(false) @map("is_significant_risk")
-  aiSignificantRisk   Boolean  @default(false) @map("ai_significant_risk")
+  isSignificantRisk Boolean  @default(false) @map("is_significant_risk")
+  aiSignificantRisk Boolean  @default(false) @map("ai_significant_risk")
   userResponse      String?  @map("user_response") @db.Text
   accountingImpact  String?  @map("accounting_impact") @db.Text
   auditImpact       String?  @map("audit_impact") @db.Text
@@ -675,7 +678,7 @@ model DocSummaryQA {
   id        String   @id @default(uuid())
   jobId     String   @map("job_id")
   fileId    String   @map("file_id")
-  role      String   // "user" | "assistant"
+  role      String // "user" | "assistant"
   content   String   @db.Text
   turnOrder Int      @map("turn_order")
   createdAt DateTime @default(now()) @map("created_at")
@@ -698,8 +701,8 @@ model ClientPeriod {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  client             Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  productAssignments PeriodProductAssignment[]
+  client              Client                    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  productAssignments  PeriodProductAssignment[]
   samplingEngagements SamplingEngagement[]
   evidenceRequests    AuditEvidenceRequest[]
   bankToTBSessions    BankToTBSession[]
@@ -733,9 +736,9 @@ model ActivityLog {
   userId    String?  @map("user_id")
   firmId    String?  @map("firm_id")
   clientId  String?  @map("client_id")
-  action    String   // e.g. 'upload', 'analyse', 'export', 'login', 'xero_connect'
-  tool      String?  // e.g. 'doc-summary', 'data-extraction'
-  detail    String?  // JSON string with action-specific details
+  action    String // e.g. 'upload', 'analyse', 'export', 'login', 'xero_connect'
+  tool      String? // e.g. 'doc-summary', 'data-extraction'
+  detail    String? // JSON string with action-specific details
   ipAddress String?  @map("ip_address")
   userAgent String?  @map("user_agent")
   createdAt DateTime @default(now()) @map("created_at")
@@ -751,22 +754,24 @@ model ActivityLog {
 }
 
 model ErrorLog {
-  id            String   @id @default(uuid())
-  userId        String?  @map("user_id")
-  firmId        String?  @map("firm_id")
-  engagementId  String?  @map("engagement_id")
-  clientId      String?  @map("client_id")
-  periodEnd     String?  @map("period_end")    // e.g. "2025-03-31"
-  route         String?  // e.g. '/api/doc-summary/analyse'
-  tool          String?  // e.g. 'doc-summary', 'data-extraction'
-  message       String
-  stack         String?
-  context       String?  // JSON string with request context
-  severity      String   @default("error") // 'error', 'warning', 'critical'
-  resolved      Boolean  @default(false)
-  resolvedAt    DateTime? @map("resolved_at")
-  resolvedById  String?  @map("resolved_by_id")
-  createdAt     DateTime @default(now()) @map("created_at")
+  id           String    @id @default(uuid())
+  userId       String?   @map("user_id")
+  firmId       String?   @map("firm_id")
+  engagementId String?   @map("engagement_id")
+  clientId     String?   @map("client_id")
+  periodEnd    String?   @map("period_end") // e.g. "2025-03-31"
+  route        String? // e.g. '/api/doc-summary/analyse'
+  tool         String? // e.g. 'doc-summary', 'data-extraction'
+  message      String
+  stack        String?
+  context      String? // JSON string with request context
+  severity     String    @default("error") // 'error', 'warning', 'critical'
+  resolved     Boolean   @default(false)
+  resolvedAt   DateTime? @map("resolved_at")
+  resolvedById String?   @map("resolved_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  autoFix ErrorAutoFix?
 
   @@index([userId])
   @@index([firmId])
@@ -777,6 +782,52 @@ model ErrorLog {
   @@index([createdAt])
   @@index([resolved])
   @@map("error_logs")
+}
+
+// Self-healing error system: each row is one attempted AI fix lifecycle.
+// Spawned by either a user-clicking the report-issue flag or by an auto-detected
+// error (404, uncaught JS, server 500). The orchestrator (lib/error-fixer/orchestrator.ts)
+// drives status through analyzing -> branch_created -> merged (or no_fix_proposed/failed).
+model ErrorAutoFix {
+  id                    String    @id @default(uuid())
+  errorLogId            String?   @unique @map("error_log_id")
+  source                String // 'user_reported' | 'auto_detected'
+  reporterId            String?   @map("reporter_id")
+  firmId                String?   @map("firm_id")
+  userDescription       String?   @map("user_description") @db.Text
+  superAdminMessage     String?   @map("super_admin_message") @db.Text
+  url                   String?
+  userAgent             String?   @map("user_agent")
+  httpStatus            Int?      @map("http_status")
+  errorMessage          String?   @map("error_message") @db.Text
+  errorStack            String?   @map("error_stack") @db.Text
+  networkTrace          Json?     @map("network_trace")
+  consoleErrors         Json?     @map("console_errors")
+  status                String    @default("pending") // pending|analyzing|no_fix_proposed|branch_created|merged|reverted|failed
+  claudeAnalysis        String?   @map("claude_analysis") @db.Text
+  claudeProposedChanges Json?     @map("claude_proposed_changes")
+  branchName            String?   @map("branch_name")
+  commitSha             String?   @map("commit_sha")
+  prUrl                 String?   @map("pr_url")
+  autoMerged            Boolean   @default(false) @map("auto_merged")
+  mergedAt              DateTime? @map("merged_at")
+  revertedAt            DateTime? @map("reverted_at")
+  revertedById          String?   @map("reverted_by_id")
+  revertCommitSha       String?   @map("revert_commit_sha")
+  processingError       String?   @map("processing_error") @db.Text
+  notifiedAt            DateTime? @map("notified_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  errorLog   ErrorLog? @relation(fields: [errorLogId], references: [id], onDelete: SetNull)
+  reporter   User?     @relation("ErrorReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  revertedBy User?     @relation("ErrorReverter", fields: [revertedById], references: [id], onDelete: SetNull)
+
+  @@index([source])
+  @@index([status])
+  @@index([url])
+  @@index([createdAt])
+  @@map("error_auto_fixes")
 }
 
 // ─── Sampling Calculator ─────────────────────────────────────────────────────
@@ -800,20 +851,20 @@ model SamplingEngagement {
   clientId    String   @map("client_id")
   periodId    String   @map("period_id")
   userId      String   @map("user_id")
-  name        String?  // engagement name / code
+  name        String? // engagement name / code
   auditArea   String?  @map("audit_area") // e.g. revenue, purchases, payroll
   testingType String?  @map("testing_type") // "test_of_details" | "test_of_controls"
-  assertions  Json?    // ["Occurrence", "Completeness", "Accuracy", ...]
+  assertions  Json? // ["Occurrence", "Completeness", "Accuracy", ...]
   status      String   @default("draft") // draft | configured | running | complete | locked
   reviewerId  String?  @map("reviewer_id")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  period    ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  user      User         @relation(fields: [userId], references: [id])
-  reviewer  User?        @relation("SamplingEngagementReviewer", fields: [reviewerId], references: [id])
-  auditData SamplingAuditData?
+  client      Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period      ClientPeriod         @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  user        User                 @relation(fields: [userId], references: [id])
+  reviewer    User?                @relation("SamplingEngagementReviewer", fields: [reviewerId], references: [id])
+  auditData   SamplingAuditData?
   populations SamplingPopulation[]
   runs        SamplingRun[]
 
@@ -840,23 +891,23 @@ model SamplingAuditData {
 }
 
 model SamplingPopulation {
-  id                    String   @id @default(uuid())
-  engagementId          String   @map("engagement_id")
+  id                    String    @id @default(uuid())
+  engagementId          String    @map("engagement_id")
   description           String?
   periodStart           DateTime? @map("period_start")
   periodEnd             DateTime? @map("period_end")
-  completenessStatement String?  @map("completeness_statement") @db.Text
-  recordCount           Int      @default(0) @map("record_count")
-  currency              String   @default("GBP")
-  unitOfSampling        String?  @map("unit_of_sampling") // transaction, line, journal, invoice, payment
-  fileHash              String?  @map("file_hash") // SHA-256 of uploaded file
-  originalFileName      String?  @map("original_file_name")
-  storagePath           String?  @map("storage_path")
-  containerName         String   @default("upload-inbox") @map("container_name")
-  columnMapping         Json?    @map("column_mapping") // {transactionId: "col_A", date: "col_B", amount: "col_C", ...}
-  dataQualitySummary    Json?    @map("data_quality_summary") // {missingCounts, duplicates, dateRange, outlierStats}
-  parsedData            Json?    @map("parsed_data") // stored population rows for engine use
-  createdAt             DateTime @default(now()) @map("created_at")
+  completenessStatement String?   @map("completeness_statement") @db.Text
+  recordCount           Int       @default(0) @map("record_count")
+  currency              String    @default("GBP")
+  unitOfSampling        String?   @map("unit_of_sampling") // transaction, line, journal, invoice, payment
+  fileHash              String?   @map("file_hash") // SHA-256 of uploaded file
+  originalFileName      String?   @map("original_file_name")
+  storagePath           String?   @map("storage_path")
+  containerName         String    @default("upload-inbox") @map("container_name")
+  columnMapping         Json?     @map("column_mapping") // {transactionId: "col_A", date: "col_B", amount: "col_C", ...}
+  dataQualitySummary    Json?     @map("data_quality_summary") // {missingCounts, duplicates, dateRange, outlierStats}
+  parsedData            Json?     @map("parsed_data") // stored population rows for engine use
+  createdAt             DateTime  @default(now()) @map("created_at")
 
   engagement SamplingEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   runs       SamplingRun[]
@@ -870,11 +921,11 @@ model SamplingRun {
   engagementId    String   @map("engagement_id")
   populationId    String   @map("population_id")
   parentRunId     String?  @map("parent_run_id") // for extend/rerun linking
-  mode            String   // "A" | "B"
-  method          String   // random, systematic, mus, judgemental, composite
+  mode            String // "A" | "B"
+  method          String // random, systematic, mus, judgemental, composite
   stratification  String   @default("simple") // simple | stratified
-  parameters      Json     // full config snapshot for reproducibility
-  seed            Int?     // PRNG seed
+  parameters      Json // full config snapshot for reproducibility
+  seed            Int? // PRNG seed
   toolVersion     String   @default("1.0") @map("tool_version")
   status          String   @default("pending") // pending | running | complete | failed
   sampleSize      Int?     @map("sample_size")
@@ -883,15 +934,15 @@ model SamplingRun {
   auditTrailHash  String?  @map("audit_trail_hash")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  engagement  SamplingEngagement  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
-  population  SamplingPopulation  @relation(fields: [populationId], references: [id], onDelete: Cascade)
-  parentRun   SamplingRun?        @relation("RunExtensions", fields: [parentRunId], references: [id])
-  childRuns   SamplingRun[]       @relation("RunExtensions")
-  items       SamplingItem[]
-  strata      SamplingStratum[]
-  judgementChat SamplingJudgementChat[]
-  reviews     SamplingReview[]
-  artifacts   SamplingExportArtifact[]
+  engagement       SamplingEngagement       @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  population       SamplingPopulation       @relation(fields: [populationId], references: [id], onDelete: Cascade)
+  parentRun        SamplingRun?             @relation("RunExtensions", fields: [parentRunId], references: [id])
+  childRuns        SamplingRun[]            @relation("RunExtensions")
+  items            SamplingItem[]
+  strata           SamplingStratum[]
+  judgementChat    SamplingJudgementChat[]
+  reviews          SamplingReview[]
+  artifacts        SamplingExportArtifact[]
   evidenceRequests AuditEvidenceRequest[]
 
   @@index([engagementId])
@@ -924,7 +975,7 @@ model SamplingStratum {
   id           String @id @default(uuid())
   runId        String @map("run_id")
   name         String
-  definition   Json?  // {scoreRange, ruleFlags, ...}
+  definition   Json? // {scoreRange, ruleFlags, ...}
   itemCount    Int    @default(0) @map("item_count")
   totalValue   Float  @default(0) @map("total_value")
   summaryStats Json?  @map("summary_stats")
@@ -939,7 +990,7 @@ model SamplingStratum {
 model SamplingJudgementChat {
   id        String   @id @default(uuid())
   runId     String   @map("run_id")
-  role      String   // "user" | "assistant"
+  role      String // "user" | "assistant"
   content   String   @db.Text
   turnOrder Int      @map("turn_order")
   createdAt DateTime @default(now()) @map("created_at")
@@ -955,7 +1006,7 @@ model SamplingReview {
   runId      String   @map("run_id")
   reviewerId String   @map("reviewer_id")
   notes      String?  @db.Text
-  decision   String   // approved | rejected | needs_revision
+  decision   String // approved | rejected | needs_revision
   createdAt  DateTime @default(now()) @map("created_at")
 
   run      SamplingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
@@ -966,13 +1017,13 @@ model SamplingReview {
 }
 
 model SamplingExportArtifact {
-  id           String   @id @default(uuid())
-  runId        String   @map("run_id")
-  artifactType String   @map("artifact_type") // sampling_plan_pdf | sample_schedule_xlsx | coverage_appendix | run_log_json
-  fileHash     String?  @map("file_hash")
-  storagePath  String?  @map("storage_path")
-  containerName String  @default("sampling-artifacts") @map("container_name")
-  createdAt    DateTime @default(now()) @map("created_at")
+  id            String   @id @default(uuid())
+  runId         String   @map("run_id")
+  artifactType  String   @map("artifact_type") // sampling_plan_pdf | sample_schedule_xlsx | coverage_appendix | run_log_json
+  fileHash      String?  @map("file_hash")
+  storagePath   String?  @map("storage_path")
+  containerName String   @default("sampling-artifacts") @map("container_name")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   run SamplingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
@@ -997,9 +1048,9 @@ model ClientPortalUser {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  client             Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  twoFactorCodes     ClientPortalTwoFactor[]
-  evidenceUploads    EvidenceUpload[]
+  client          Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  twoFactorCodes  ClientPortalTwoFactor[]
+  evidenceUploads EvidenceUpload[]
 
   @@unique([clientId, email])
   @@map("client_portal_users")
@@ -1022,22 +1073,22 @@ model ClientPortalTwoFactor {
 // ─── Portal Requests (Outstanding / Responded) ──────────────────────────────
 
 model PortalRequest {
-  id            String    @id @default(uuid())
-  clientId      String    @map("client_id")
-  engagementId  String?   @map("engagement_id")
-  section       String    // questions | calculations | evidence | connections
-  question      String    @db.Text
-  response      String?   @db.Text
-  status        String    @default("outstanding") // outstanding | responded | verified | committed | chat_replied
-  requestedById String    @map("requested_by_id") // Firm User who created the request
-  requestedByName String  @map("requested_by_name")
-  respondedById String?   @map("responded_by_id") // ClientPortalUser who responded
-  respondedByName String? @map("responded_by_name")
-  requestedAt   DateTime  @default(now()) @map("requested_at")
-  respondedAt   DateTime? @map("responded_at")
-  verifiedAt    DateTime? @map("verified_at")
-  chatHistory   Json?     @map("chat_history") // Array of { from, name, message, timestamp }
-  evidenceTag   String?   @map("evidence_tag") // Structured tag for evidence type (e.g. bank_statements, invoices)
+  id              String    @id @default(uuid())
+  clientId        String    @map("client_id")
+  engagementId    String?   @map("engagement_id")
+  section         String // questions | calculations | evidence | connections
+  question        String    @db.Text
+  response        String?   @db.Text
+  status          String    @default("outstanding") // outstanding | responded | verified | committed | chat_replied
+  requestedById   String    @map("requested_by_id") // Firm User who created the request
+  requestedByName String    @map("requested_by_name")
+  respondedById   String?   @map("responded_by_id") // ClientPortalUser who responded
+  respondedByName String?   @map("responded_by_name")
+  requestedAt     DateTime  @default(now()) @map("requested_at")
+  respondedAt     DateTime? @map("responded_at")
+  verifiedAt      DateTime? @map("verified_at")
+  chatHistory     Json?     @map("chat_history") // Array of { from, name, message, timestamp }
+  evidenceTag     String?   @map("evidence_tag") // Structured tag for evidence type (e.g. bank_statements, invoices)
 
   client  Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
   uploads PortalUpload[]
@@ -1052,36 +1103,36 @@ model PortalRequest {
 // ─── Audit Evidence Requests ──────────────────────────────────────────────────
 
 model AuditEvidenceRequest {
-  id              String   @id @default(uuid())
-  runId           String   @map("run_id")
-  clientId        String   @map("client_id")
-  periodId        String   @map("period_id")
-  createdBy       String   @map("created_by")
-  transactionId   String   @map("transaction_id")
-  description     String   @db.Text
-  amount          Float?
-  date            String?
-  reference       String?
-  contact         String?
+  id                   String   @id @default(uuid())
+  runId                String   @map("run_id")
+  clientId             String   @map("client_id")
+  periodId             String   @map("period_id")
+  createdBy            String   @map("created_by")
+  transactionId        String   @map("transaction_id")
+  description          String   @db.Text
+  amount               Float?
+  date                 String?
+  reference            String?
+  contact              String?
   // Evidence type checkboxes
-  invoiceRequired       Boolean @default(false) @map("invoice_required")
-  paymentRequired       Boolean @default(false) @map("payment_required")
-  supplierConfirmation  Boolean @default(false) @map("supplier_confirmation")
-  debtorConfirmation    Boolean @default(false) @map("debtor_confirmation")
-  contractRequired      Boolean @default(false) @map("contract_required")
-  intercompanyRequired  Boolean @default(false) @map("intercompany_required")
-  directorMatters       Boolean @default(false) @map("director_matters")
+  invoiceRequired      Boolean  @default(false) @map("invoice_required")
+  paymentRequired      Boolean  @default(false) @map("payment_required")
+  supplierConfirmation Boolean  @default(false) @map("supplier_confirmation")
+  debtorConfirmation   Boolean  @default(false) @map("debtor_confirmation")
+  contractRequired     Boolean  @default(false) @map("contract_required")
+  intercompanyRequired Boolean  @default(false) @map("intercompany_required")
+  directorMatters      Boolean  @default(false) @map("director_matters")
   // Status tracking
-  status          String   @default("pending") // pending | partial | complete | cancelled
-  assignedTo      Json?    @map("assigned_to") // Array of client team member emails
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  status               String   @default("pending") // pending | partial | complete | cancelled
+  assignedTo           Json?    @map("assigned_to") // Array of client team member emails
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
-  run       SamplingRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
-  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  period    ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  creator   User         @relation("EvidenceRequestCreator", fields: [createdBy], references: [id])
-  uploads   EvidenceUpload[]
+  run     SamplingRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  client  Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period  ClientPeriod     @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  creator User             @relation("EvidenceRequestCreator", fields: [createdBy], references: [id])
+  uploads EvidenceUpload[]
 
   @@index([runId])
   @@index([clientId, periodId])
@@ -1089,24 +1140,24 @@ model AuditEvidenceRequest {
 }
 
 model EvidenceUpload {
-  id              String   @id @default(uuid())
-  requestId       String   @map("request_id")
-  uploadedBy      String   @map("uploaded_by") // ClientPortalUser ID
-  originalName    String   @map("original_name")
-  storagePath     String   @map("storage_path")
-  containerName   String   @default("audit-evidence") @map("container_name")
-  fileSize        Int?     @map("file_size")
-  mimeType        String?  @map("mime_type")
-  evidenceType    String   @map("evidence_type") // invoice | payment | supplier_confirmation | debtor_confirmation | contract | intercompany | director_matters
+  id             String   @id @default(uuid())
+  requestId      String   @map("request_id")
+  uploadedBy     String   @map("uploaded_by") // ClientPortalUser ID
+  originalName   String   @map("original_name")
+  storagePath    String   @map("storage_path")
+  containerName  String   @default("audit-evidence") @map("container_name")
+  fileSize       Int?     @map("file_size")
+  mimeType       String?  @map("mime_type")
+  evidenceType   String   @map("evidence_type") // invoice | payment | supplier_confirmation | debtor_confirmation | contract | intercompany | director_matters
   // Verification
-  aiVerified      Boolean? @map("ai_verified") // null=pending, true=matches, false=mismatch
-  aiVerifyNotes   String?  @map("ai_verify_notes") @db.Text
-  firmAccepted    Boolean? @map("firm_accepted") // null=pending, true=accepted, false=rejected
-  firmReviewedBy  String?  @map("firm_reviewed_by")
-  createdAt       DateTime @default(now()) @map("created_at")
+  aiVerified     Boolean? @map("ai_verified") // null=pending, true=matches, false=mismatch
+  aiVerifyNotes  String?  @map("ai_verify_notes") @db.Text
+  firmAccepted   Boolean? @map("firm_accepted") // null=pending, true=accepted, false=rejected
+  firmReviewedBy String?  @map("firm_reviewed_by")
+  createdAt      DateTime @default(now()) @map("created_at")
 
-  request         AuditEvidenceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  uploader        ClientPortalUser     @relation(fields: [uploadedBy], references: [id])
+  request  AuditEvidenceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  uploader ClientPortalUser     @relation(fields: [uploadedBy], references: [id])
 
   @@index([requestId])
   @@map("evidence_uploads")
@@ -1159,9 +1210,9 @@ model AssuranceChat {
 model AssuranceChatMessage {
   id        String   @id @default(uuid())
   chatId    String   @map("chat_id")
-  role      String   // "user" | "assistant" | "system"
+  role      String // "user" | "assistant" | "system"
   content   String   @db.Text
-  metadata  Json?    // structured data: recommendedSubTool, shouldBook, etc.
+  metadata  Json? // structured data: recommendedSubTool, shouldBook, etc.
   turnOrder Int      @map("turn_order")
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -1172,23 +1223,23 @@ model AssuranceChatMessage {
 }
 
 model AssuranceEngagement {
-  id              String    @id @default(uuid())
-  chatId          String    @unique @map("chat_id")
-  clientId        String    @map("client_id")
-  firmId          String    @map("firm_id")
-  userId          String    @map("user_id")
-  subTool         String    @map("sub_tool") // Governance | CyberResiliance | TalentRisk | ESGSustainability | Diversity
-  engagementType  String    @map("engagement_type") // terms_of_reference | sample_testing | duplicate_transactions
-  sector          String?
-  projectDetails  Json?     @map("project_details") // captured from chat drill-down
-  termsOfReference String?  @map("terms_of_reference") @db.Text // generated ToR content (JSON)
-  torGeneratedAt  DateTime? @map("tor_generated_at")
-  reportContent   String?   @map("report_content") @db.Text // final board report content
+  id                String    @id @default(uuid())
+  chatId            String    @unique @map("chat_id")
+  clientId          String    @map("client_id")
+  firmId            String    @map("firm_id")
+  userId            String    @map("user_id")
+  subTool           String    @map("sub_tool") // Governance | CyberResiliance | TalentRisk | ESGSustainability | Diversity
+  engagementType    String    @map("engagement_type") // terms_of_reference | sample_testing | duplicate_transactions
+  sector            String?
+  projectDetails    Json?     @map("project_details") // captured from chat drill-down
+  termsOfReference  String?   @map("terms_of_reference") @db.Text // generated ToR content (JSON)
+  torGeneratedAt    DateTime? @map("tor_generated_at")
+  reportContent     String?   @map("report_content") @db.Text // final board report content
   reportGeneratedAt DateTime? @map("report_generated_at")
-  score           Int?      // 0-100 overall score
-  status          String    @default("draft") // draft | tor_generated | evidence_collection | review_in_progress | complete
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  score             Int? // 0-100 overall score
+  status            String    @default("draft") // draft | tor_generated | evidence_collection | review_in_progress | complete
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   chat      AssuranceChat       @relation(fields: [chatId], references: [id], onDelete: Cascade)
   client    Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -1246,9 +1297,9 @@ model AssuranceScore {
   firmId       String   @map("firm_id")
   subTool      String   @map("sub_tool")
   sector       String?
-  score        Int      // 0-100
+  score        Int // 0-100
   scoredAt     DateTime @default(now()) @map("scored_at")
-  metadata     Json?    // breakdown by section
+  metadata     Json? // breakdown by section
 
   engagement AssuranceEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   client     Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -1262,7 +1313,7 @@ model AssuranceScore {
 model AssuranceLearning {
   id          String   @id @default(uuid())
   firmId      String   @map("firm_id")
-  sector      String?  // sector this learning applies to, null = all sectors
+  sector      String? // sector this learning applies to, null = all sectors
   subTool     String?  @map("sub_tool") // sub-tool this learning applies to, null = all
   patternType String   @map("pattern_type") // routing_pattern | common_concern | sector_insight | successful_approach
   pattern     String   @db.Text // the learned pattern description
@@ -1291,9 +1342,9 @@ model RiskChat {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  client   Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  user     User             @relation(fields: [userId], references: [id])
-  firm     Firm             @relation(fields: [firmId], references: [id])
+  client   Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id])
+  firm     Firm              @relation(fields: [firmId], references: [id])
   messages RiskChatMessage[]
 
   @@index([clientId, userId])
@@ -1304,7 +1355,7 @@ model RiskChat {
 model RiskChatMessage {
   id        String   @id @default(uuid())
   chatId    String   @map("chat_id")
-  role      String   // "user" | "assistant" | "system"
+  role      String // "user" | "assistant" | "system"
   content   String   @db.Text
   metadata  Json?
   turnOrder Int      @map("turn_order")
@@ -1325,7 +1376,7 @@ model RiskFeedback {
   chatId     String?  @map("chat_id")
   userId     String   @map("user_id")
   firmId     String   @map("firm_id")
-  rating     String   // "helpful" | "unhelpful" | "needs_improvement"
+  rating     String // "helpful" | "unhelpful" | "needs_improvement"
   comment    String?  @db.Text
   createdAt  DateTime @default(now()) @map("created_at")
 
@@ -1377,17 +1428,17 @@ model AccountCodeMapping {
 // ─── Bank to TB Tool ────────────────────────────────────────────────────────
 
 model BankToTBSession {
-  id                    String    @id @default(uuid())
-  clientId              String    @map("client_id")
-  periodId              String    @map("period_id")
-  userId                String    @map("user_id")
-  firmId                String    @map("firm_id")
-  status                String    @default("active") // active | complete | archived
-  openingPositionSource String?   @map("opening_position_source") // firm_standard | upload | paste | prior_period
-  openingPositionData   Json?     @map("opening_position_data")
-  combineMode           String?   @map("combine_mode") // together | separate
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  id                    String   @id @default(uuid())
+  clientId              String   @map("client_id")
+  periodId              String   @map("period_id")
+  userId                String   @map("user_id")
+  firmId                String   @map("firm_id")
+  status                String   @default("active") // active | complete | archived
+  openingPositionSource String?  @map("opening_position_source") // firm_standard | upload | paste | prior_period
+  openingPositionData   Json?    @map("opening_position_data")
+  combineMode           String?  @map("combine_mode") // together | separate
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   client       Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
   period       ClientPeriod        @relation(fields: [periodId], references: [id], onDelete: Cascade)
@@ -1417,7 +1468,7 @@ model BankToTBFile {
   pageCount     Int?     @map("page_count")
   createdAt     DateTime @default(now()) @map("created_at")
 
-  session      BankToTBSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session      BankToTBSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   transactions BankTransaction[]
 
   @@index([sessionId])
@@ -1437,7 +1488,7 @@ model BankAccount {
   tabOrder       Int      @default(0) @map("tab_order")
   createdAt      DateTime @default(now()) @map("created_at")
 
-  session      BankToTBSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session      BankToTBSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   transactions BankTransaction[]
 
   @@index([sessionId])
@@ -1445,27 +1496,27 @@ model BankAccount {
 }
 
 model BankTransaction {
-  id            String   @id @default(uuid())
-  sessionId     String   @map("session_id")
-  fileId        String?  @map("file_id")
-  accountId     String?  @map("account_id")
-  date          DateTime
-  description   String
-  reference     String?
-  debit         Float    @default(0)
-  credit        Float    @default(0)
-  balance       Float?
-  bankName      String?  @map("bank_name")
-  sortCode      String?  @map("sort_code")
-  accountNumber String?  @map("account_number")
-  statementDate String?  @map("statement_date")
-  statementPage Int?     @map("statement_page")
-  accountCode   String?  @map("account_code")
-  accountNameMapped String? @map("account_name_mapped")
-  categoryType  String?  @map("category_type")
-  inPeriod      Boolean  @default(true) @map("in_period")
-  sortOrder     Int      @default(0) @map("sort_order")
-  createdAt     DateTime @default(now()) @map("created_at")
+  id                String   @id @default(uuid())
+  sessionId         String   @map("session_id")
+  fileId            String?  @map("file_id")
+  accountId         String?  @map("account_id")
+  date              DateTime
+  description       String
+  reference         String?
+  debit             Float    @default(0)
+  credit            Float    @default(0)
+  balance           Float?
+  bankName          String?  @map("bank_name")
+  sortCode          String?  @map("sort_code")
+  accountNumber     String?  @map("account_number")
+  statementDate     String?  @map("statement_date")
+  statementPage     Int?     @map("statement_page")
+  accountCode       String?  @map("account_code")
+  accountNameMapped String?  @map("account_name_mapped")
+  categoryType      String?  @map("category_type")
+  inPeriod          Boolean  @default(true) @map("in_period")
+  sortOrder         Int      @default(0) @map("sort_order")
+  createdAt         DateTime @default(now()) @map("created_at")
 
   session BankToTBSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   file    BankToTBFile?   @relation(fields: [fileId], references: [id], onDelete: SetNull)
@@ -1503,7 +1554,7 @@ model TrialBalanceEntry {
 model Journal {
   id          String   @id @default(uuid())
   sessionId   String   @map("session_id")
-  category    String   // depreciation | prepayments | accruals | distributions | unbundle_fa | general
+  category    String // depreciation | prepayments | accruals | distributions | unbundle_fa | general
   description String?  @db.Text
   status      String   @default("draft") // draft | approved | posted | unposted
   journalRef  String?  @map("journal_ref")
@@ -1519,14 +1570,14 @@ model Journal {
 }
 
 model JournalLine {
-  id          String @id @default(uuid())
-  journalId   String @map("journal_id")
-  accountCode String @map("account_code")
-  accountName String @map("account_name")
+  id          String  @id @default(uuid())
+  journalId   String  @map("journal_id")
+  accountCode String  @map("account_code")
+  accountName String  @map("account_name")
   description String?
-  debit       Float  @default(0)
-  credit      Float  @default(0)
-  sortOrder   Int    @default(0) @map("sort_order")
+  debit       Float   @default(0)
+  credit      Float   @default(0)
+  sortOrder   Int     @default(0) @map("sort_order")
 
   journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
 
@@ -1578,7 +1629,7 @@ model AssuranceFeedback {
   chatId     String?  @map("chat_id")
   userId     String   @map("user_id")
   firmId     String   @map("firm_id")
-  rating     String   // "helpful" | "unhelpful" | "needs_improvement"
+  rating     String // "helpful" | "unhelpful" | "needs_improvement"
   comment    String?  @db.Text
   createdAt  DateTime @default(now()) @map("created_at")
 
@@ -1612,28 +1663,28 @@ model ClientChartOfAccount {
 // ─── Bank Audit Tool ─────────────────────────────────────────────────────────
 
 model BankAuditSession {
-  id                    String   @id @default(uuid())
-  userId                String   @map("user_id")
-  clientId              String   @map("client_id")
-  periodId              String   @map("period_id")
-  performanceMateriality Float?  @map("performance_materiality")
-  clearlyTrivial        Float?   @map("clearly_trivial")
-  tolerableError        Float?   @map("tolerable_error")
-  functionalCurrency    String   @default("GBP") @map("functional_currency")
-  dataSource            String?  @map("data_source")
-  bankData              Json?    @map("bank_data")
-  auditTestResults      Json?    @map("audit_test_results")
-  status                String   @default("draft")
-  reviewedBy            String?  @map("reviewed_by")
-  reviewedAt            DateTime? @map("reviewed_at")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  id                     String    @id @default(uuid())
+  userId                 String    @map("user_id")
+  clientId               String    @map("client_id")
+  periodId               String    @map("period_id")
+  performanceMateriality Float?    @map("performance_materiality")
+  clearlyTrivial         Float?    @map("clearly_trivial")
+  tolerableError         Float?    @map("tolerable_error")
+  functionalCurrency     String    @default("GBP") @map("functional_currency")
+  dataSource             String?   @map("data_source")
+  bankData               Json?     @map("bank_data")
+  auditTestResults       Json?     @map("audit_test_results")
+  status                 String    @default("draft")
+  reviewedBy             String?   @map("reviewed_by")
+  reviewedAt             DateTime? @map("reviewed_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
-  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  client  Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  period  ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  tests   BankAuditTest[]
-  files   BankAuditFile[]
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period ClientPeriod    @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  tests  BankAuditTest[]
+  files  BankAuditFile[]
 
   @@unique([clientId, periodId, userId])
   @@index([userId])
@@ -1642,17 +1693,17 @@ model BankAuditSession {
 }
 
 model BankAuditTest {
-  id          String   @id @default(uuid())
-  sessionId   String   @map("session_id")
-  testKey     String   @map("test_key")
-  testLabel   String   @map("test_label")
-  isChecked   Boolean  @default(false) @map("is_checked")
-  status      String   @default("pending")
-  progress    Float    @default(0)
-  resultData  Json?    @map("result_data")
-  errorMsg    String?  @map("error_msg")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id         String   @id @default(uuid())
+  sessionId  String   @map("session_id")
+  testKey    String   @map("test_key")
+  testLabel  String   @map("test_label")
+  isChecked  Boolean  @default(false) @map("is_checked")
+  status     String   @default("pending")
+  progress   Float    @default(0)
+  resultData Json?    @map("result_data")
+  errorMsg   String?  @map("error_msg")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
   session BankAuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
@@ -1661,17 +1712,17 @@ model BankAuditTest {
 }
 
 model BankAuditFile {
-  id          String   @id @default(uuid())
-  sessionId   String   @map("session_id")
-  fileName    String   @map("file_name")
-  blobPath    String   @map("blob_path")
-  container   String
-  fileType    String   @map("file_type")
-  status      String   @default("uploading")
-  progress    Float    @default(0)
-  extractedData Json?  @map("extracted_data")
-  errorMsg    String?  @map("error_msg")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id            String   @id @default(uuid())
+  sessionId     String   @map("session_id")
+  fileName      String   @map("file_name")
+  blobPath      String   @map("blob_path")
+  container     String
+  fileType      String   @map("file_type")
+  status        String   @default("uploading")
+  progress      Float    @default(0)
+  extractedData Json?    @map("extracted_data")
+  errorMsg      String?  @map("error_msg")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   session BankAuditSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
@@ -1682,23 +1733,23 @@ model BankAuditFile {
 // ─── FS Assertions Mapping ───────────────────────────────────────────────────
 
 model FSAssertionMapping {
-  id           String  @id @default(uuid())
-  clientId     String  @map("client_id")
-  periodId     String  @map("period_id")
-  mappingType  String  @map("mapping_type")
-  rowKey       String  @map("row_key")
-  rowLabel     String  @map("row_label")
-  completeness Boolean @default(false)
-  occurrence   Boolean @default(false)
-  cutOff       Boolean @default(false) @map("cut_off")
-  classification Boolean @default(false)
-  presentation Boolean @default(false)
-  existence    Boolean @default(false)
-  valuation    Boolean @default(false)
-  rights       Boolean @default(false)
-  source       String  @default("manual")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id             String   @id @default(uuid())
+  clientId       String   @map("client_id")
+  periodId       String   @map("period_id")
+  mappingType    String   @map("mapping_type")
+  rowKey         String   @map("row_key")
+  rowLabel       String   @map("row_label")
+  completeness   Boolean  @default(false)
+  occurrence     Boolean  @default(false)
+  cutOff         Boolean  @default(false) @map("cut_off")
+  classification Boolean  @default(false)
+  presentation   Boolean  @default(false)
+  existence      Boolean  @default(false)
+  valuation      Boolean  @default(false)
+  rights         Boolean  @default(false)
+  source         String   @default("manual")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   client Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   period ClientPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
@@ -1711,63 +1762,64 @@ model FSAssertionMapping {
 // ─── Audit Methodology ──────────────────────────────────────────────────────
 
 model AuditEngagement {
-  id                    String    @id @default(uuid())
-  clientId              String    @map("client_id")
-  periodId              String    @map("period_id")
-  firmId                String    @map("firm_id")
-  auditType             String    @map("audit_type") // SME | PIE | SME_CONTROLS | PIE_CONTROLS | GROUP
-  status                String    @default("pre_start") // pre_start | active | review | complete | archived
-  methodologyVersionId  String?   @map("methodology_version_id")
-  infoRequestType       String    @default("standard") @map("info_request_type") // preliminary | standard
-  hardCloseDate         DateTime? @map("hard_close_date")
-  isGroupAudit          Boolean   @default(false) @map("is_group_audit")
-  isNewClient           Boolean?  @map("is_new_client")  // null = auto-detect, true = force new client, false = force continuance
-  tbViewMode            String    @default("fs_line") @map("tb_view_mode") // fs_line | tb_account
-  tbXeroSummary         Json?     @map("tb_xero_summary") // Raw accounting system TB totals for verification
-  planCreated           Boolean   @default(false) @map("plan_created")
-  farEnabled            Boolean   @default(false) @map("far_enabled")
-  farAssetType          String?   @map("far_asset_type")    // "cost" | "valuation"
-  farScope              String?   @map("far_scope")          // "tangible" | "intangible" | "both"
-  farCategories         Json?     @map("far_categories")     // [{ id, name, order }]
-  createdById           String    @map("created_by_id")
-  startedAt             DateTime? @map("started_at")
-  completedAt           DateTime? @map("completed_at")
-  priorPeriodEngagementId String? @map("prior_period_engagement_id")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  id                      String    @id @default(uuid())
+  clientId                String    @map("client_id")
+  periodId                String    @map("period_id")
+  firmId                  String    @map("firm_id")
+  auditType               String    @map("audit_type") // SME | PIE | SME_CONTROLS | PIE_CONTROLS | GROUP
+  status                  String    @default("pre_start") // pre_start | active | review | complete | archived
+  methodologyVersionId    String?   @map("methodology_version_id")
+  infoRequestType         String    @default("standard") @map("info_request_type") // preliminary | standard
+  hardCloseDate           DateTime? @map("hard_close_date")
+  isGroupAudit            Boolean   @default(false) @map("is_group_audit")
+  isNewClient             Boolean?  @map("is_new_client") // null = auto-detect, true = force new client, false = force continuance
+  tbViewMode              String    @default("fs_line") @map("tb_view_mode") // fs_line | tb_account
+  tbXeroSummary           Json?     @map("tb_xero_summary") // Raw accounting system TB totals for verification
+  planCreated             Boolean   @default(false) @map("plan_created")
+  farEnabled              Boolean   @default(false) @map("far_enabled")
+  farAssetType            String?   @map("far_asset_type") // "cost" | "valuation"
+  farScope                String?   @map("far_scope") // "tangible" | "intangible" | "both"
+  farCategories           Json?     @map("far_categories") // [{ id, name, order }]
+  createdById             String    @map("created_by_id")
+  startedAt               DateTime? @map("started_at")
+  completedAt             DateTime? @map("completed_at")
+  priorPeriodEngagementId String?   @map("prior_period_engagement_id")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
 
-  client              Client                @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  period              ClientPeriod          @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  firm                Firm                  @relation(fields: [firmId], references: [id])
-  createdBy           User                  @relation("EngagementCreator", fields: [createdById], references: [id])
-  methodologyVersion  MethodologyConfig?    @relation(fields: [methodologyVersionId], references: [id])
-  priorPeriodEngagement AuditEngagement?    @relation("EngagementPriorPeriod", fields: [priorPeriodEngagementId], references: [id], onDelete: SetNull)
-  nextPeriodEngagements AuditEngagement[]   @relation("EngagementPriorPeriod")
-  teamMembers         AuditTeamMember[]
-  specialists         AuditSpecialist[]
-  contacts            AuditClientContact[]
-  agreedDates         AuditAgreedDate[]
-  informationRequests AuditInformationRequest[]
-  permanentFile       AuditPermanentFile[]
-  ethics              AuditEthics?
-  continuance         AuditContinuance?
-  newClientTakeOn     AuditNewClientTakeOn?
-  subsequentEvents    AuditSubsequentEvents?
-  materiality         AuditMateriality?
-  parRows             AuditPARRow[]
-  rmmRows             AuditRMMRow[]
-  documents           AuditDocument[]
-  tbRows              AuditTBRow[]
-  testExecutions       TestExecution[]
-  outstandingItems     OutstandingItem[]
-  testConclusions      AuditTestConclusion[]
-  errorScheduleItems   AuditErrorSchedule[]
-  auditPoints          AuditPoint[]
-  analyticalReviews    AuditAnalyticalReview[]
-  payrollTests         AuditPayrollTest[]
-  taxChats             AuditTaxChat[]
-  journalRiskRuns      JournalRiskRun[]
-  meetings             AuditMeeting[]
+  client                Client                    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period                ClientPeriod              @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  firm                  Firm                      @relation(fields: [firmId], references: [id])
+  createdBy             User                      @relation("EngagementCreator", fields: [createdById], references: [id])
+  methodologyVersion    MethodologyConfig?        @relation(fields: [methodologyVersionId], references: [id])
+  priorPeriodEngagement AuditEngagement?          @relation("EngagementPriorPeriod", fields: [priorPeriodEngagementId], references: [id], onDelete: SetNull)
+  nextPeriodEngagements AuditEngagement[]         @relation("EngagementPriorPeriod")
+  teamMembers           AuditTeamMember[]
+  specialists           AuditSpecialist[]
+  contacts              AuditClientContact[]
+  agreedDates           AuditAgreedDate[]
+  informationRequests   AuditInformationRequest[]
+  permanentFile         AuditPermanentFile[]
+  ethics                AuditEthics?
+  continuance           AuditContinuance?
+  newClientTakeOn       AuditNewClientTakeOn?
+  subsequentEvents      AuditSubsequentEvents?
+  materiality           AuditMateriality?
+  parRows               AuditPARRow[]
+  rmmRows               AuditRMMRow[]
+  documents             AuditDocument[]
+  tbRows                AuditTBRow[]
+  testExecutions        TestExecution[]
+  outstandingItems      OutstandingItem[]
+  testConclusions       AuditTestConclusion[]
+  errorScheduleItems    AuditErrorSchedule[]
+  auditPoints           AuditPoint[]
+  analyticalReviews     AuditAnalyticalReview[]
+  payrollTests          AuditPayrollTest[]
+  taxChats              AuditTaxChat[]
+  journalRiskRuns       JournalRiskRun[]
+  meetings              AuditMeeting[]
+
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
@@ -1779,7 +1831,7 @@ model AuditTeamMember {
   id           String   @id @default(uuid())
   engagementId String   @map("engagement_id")
   userId       String   @map("user_id")
-  role         String   // Junior | Manager | RI
+  role         String // Junior | Manager | RI
   joinedAt     DateTime @default(now()) @map("joined_at")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
@@ -1805,12 +1857,12 @@ model AuditSpecialist {
 }
 
 model AuditClientContact {
-  id           String  @id @default(uuid())
-  engagementId String  @map("engagement_id")
-  name         String
-  email        String?
-  phone        String?
-  isMainContact       Boolean @default(false) @map("is_main_contact")
+  id                   String  @id @default(uuid())
+  engagementId         String  @map("engagement_id")
+  name                 String
+  email                String?
+  phone                String?
+  isMainContact        Boolean @default(false) @map("is_main_contact")
   isInformedManagement Boolean @default(false) @map("is_informed_management")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
@@ -1825,7 +1877,7 @@ model AuditAgreedDate {
   description   String
   targetDate    DateTime? @map("target_date")
   revisedTarget DateTime? @map("revised_target")
-  progress      String?   // Not Started | In Progress | Complete | Overdue
+  progress      String? // Not Started | In Progress | Complete | Overdue
   sortOrder     Int       @default(0) @map("sort_order")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
@@ -1850,20 +1902,20 @@ model AuditInformationRequest {
 // ─── Client Intelligence ────────────────────────────────────────────────────
 
 model ClientIntelligence {
-  id                String   @id @default(uuid())
-  clientId          String   @map("client_id")
-  firmId            String   @map("firm_id")
-  category          String   // background | financial | positive_adverse | competitors | regulatory | sector | other
-  content           String   @db.Text
-  source            String?  // manual | companies_house | ai_search
-  significantChange Boolean  @default(false) @map("significant_change")
-  lastUpdated       DateTime @default(now()) @map("last_updated")
+  id                String    @id @default(uuid())
+  clientId          String    @map("client_id")
+  firmId            String    @map("firm_id")
+  category          String // background | financial | positive_adverse | competitors | regulatory | sector | other
+  content           String    @db.Text
+  source            String? // manual | companies_house | ai_search
+  significantChange Boolean   @default(false) @map("significant_change")
+  lastUpdated       DateTime  @default(now()) @map("last_updated")
   lastCheckedAt     DateTime? @map("last_checked_at")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  client  Client                    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  firm    Firm                      @relation(fields: [firmId], references: [id])
+  client  Client                     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  firm    Firm                       @relation(fields: [firmId], references: [id])
   reviews ClientIntelligenceReview[]
 
   @@index([clientId])
@@ -1872,10 +1924,10 @@ model ClientIntelligence {
 }
 
 model ClientIntelligenceReview {
-  id              String   @id @default(uuid())
-  intelligenceId  String   @map("intelligence_id")
-  userId          String   @map("user_id")
-  reviewedAt      DateTime @default(now()) @map("reviewed_at")
+  id             String   @id @default(uuid())
+  intelligenceId String   @map("intelligence_id")
+  userId         String   @map("user_id")
+  reviewedAt     DateTime @default(now()) @map("reviewed_at")
 
   intelligence ClientIntelligence @relation(fields: [intelligenceId], references: [id], onDelete: Cascade)
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1902,7 +1954,7 @@ model AuditPermanentFile {
 model AuditEthics {
   id           String @id @default(uuid())
   engagementId String @unique @map("engagement_id")
-  data         Json   // Stores all ethics form data (Appendix B)
+  data         Json // Stores all ethics form data (Appendix B)
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
@@ -1912,7 +1964,7 @@ model AuditEthics {
 model AuditContinuance {
   id           String @id @default(uuid())
   engagementId String @unique @map("engagement_id")
-  data         Json   // Stores all continuance form data (Appendix C)
+  data         Json // Stores all continuance form data (Appendix C)
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
@@ -1922,7 +1974,7 @@ model AuditContinuance {
 model AuditNewClientTakeOn {
   id           String @id @default(uuid())
   engagementId String @unique @map("engagement_id")
-  data         Json   // Stores new client take-on form data (Appendix D)
+  data         Json // Stores new client take-on form data (Appendix D)
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
@@ -1932,7 +1984,7 @@ model AuditNewClientTakeOn {
 model AuditSubsequentEvents {
   id           String   @id @default(uuid())
   engagementId String   @unique @map("engagement_id")
-  data         Json     // Stores subsequent events review form data (ISA 560)
+  data         Json // Stores subsequent events review form data (ISA 560)
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -1944,7 +1996,7 @@ model AuditSubsequentEvents {
 model AuditMateriality {
   id           String @id @default(uuid())
   engagementId String @unique @map("engagement_id")
-  data         Json   // Stores all materiality data (Appendix E)
+  data         Json // Stores all materiality data (Appendix E)
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
@@ -1976,36 +2028,36 @@ model AuditPARRow {
 }
 
 model AuditRMMRow {
-  id                   String  @id @default(uuid())
-  engagementId         String  @map("engagement_id")
-  lineItem             String  @map("line_item")
-  lineType             String  @map("line_type") // fs_line | tb_account
-  riskIdentified       String? @map("risk_identified") @db.Text
-  amount               Float?
-  assertions           Json?   // Array of assertion strings
-  relevance            String? // Y | N
-  complexityText       String? @map("complexity_text") @db.Text
-  subjectivityText     String? @map("subjectivity_text") @db.Text
-  changeText           String? @map("change_text") @db.Text
-  uncertaintyText      String? @map("uncertainty_text") @db.Text
-  susceptibilityText   String? @map("susceptibility_text") @db.Text
-  inherentRiskLevel    String? @map("inherent_risk_level") // Remote | Low | Medium | High | Very High
-  aiSummary            String? @map("ai_summary") @db.Text
-  isAiEdited           Boolean @default(false) @map("is_ai_edited")
-  likelihood           String? // Remote | Unlikely | Neutral | Likely | Very Likely
-  magnitude            String? // Remote | Low | Medium | High | Very High
-  finalRiskAssessment  String? @map("final_risk_assessment")
-  controlRisk          String? @map("control_risk") // Not Tested | Not Effective | Partially Effective | Effective
-  overallRisk          String? @map("overall_risk")
-  rowCategory          String? @map("row_category") // significant_risk | area_of_focus | null — drives planning letter risk sections
-  isHidden             Boolean @default(false) @map("is_hidden")
-  isMandatory          Boolean @default(false) @map("is_mandatory")
-  notes                String? @db.Text
-  sortOrder            Int     @default(0) @map("sort_order")
+  id                  String  @id @default(uuid())
+  engagementId        String  @map("engagement_id")
+  lineItem            String  @map("line_item")
+  lineType            String  @map("line_type") // fs_line | tb_account
+  riskIdentified      String? @map("risk_identified") @db.Text
+  amount              Float?
+  assertions          Json? // Array of assertion strings
+  relevance           String? // Y | N
+  complexityText      String? @map("complexity_text") @db.Text
+  subjectivityText    String? @map("subjectivity_text") @db.Text
+  changeText          String? @map("change_text") @db.Text
+  uncertaintyText     String? @map("uncertainty_text") @db.Text
+  susceptibilityText  String? @map("susceptibility_text") @db.Text
+  inherentRiskLevel   String? @map("inherent_risk_level") // Remote | Low | Medium | High | Very High
+  aiSummary           String? @map("ai_summary") @db.Text
+  isAiEdited          Boolean @default(false) @map("is_ai_edited")
+  likelihood          String? // Remote | Unlikely | Neutral | Likely | Very Likely
+  magnitude           String? // Remote | Low | Medium | High | Very High
+  finalRiskAssessment String? @map("final_risk_assessment")
+  controlRisk         String? @map("control_risk") // Not Tested | Not Effective | Partially Effective | Effective
+  overallRisk         String? @map("overall_risk")
+  rowCategory         String? @map("row_category") // significant_risk | area_of_focus | null — drives planning letter risk sections
+  isHidden            Boolean @default(false) @map("is_hidden")
+  isMandatory         Boolean @default(false) @map("is_mandatory")
+  notes               String? @db.Text
+  sortOrder           Int     @default(0) @map("sort_order")
   // FS hierarchy — auto-populated when imported from TB/PAR
-  fsStatement          String? @map("fs_statement")  // e.g. "Profit & Loss"
-  fsLevel              String? @map("fs_level")      // e.g. "Revenue"
-  fsNote               String? @map("fs_note")       // e.g. "Trade Debtors"
+  fsStatement         String? @map("fs_statement") // e.g. "Profit & Loss"
+  fsLevel             String? @map("fs_level") // e.g. "Revenue"
+  fsNote              String? @map("fs_note") // e.g. "Trade Debtors"
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
@@ -2035,9 +2087,9 @@ model AuditDocument {
   utilisedByName  String?   @map("utilised_by_name")
   utilisedTab     String?   @map("utilised_tab") // which tab the document is used in
   mappedItems     Json?     @map("mapped_items") // JSON array of item keys this doc maps to
-  source          String?   @map("source")         // e.g. Client, Bank, Solicitor, Third Party, Team
+  source          String?   @map("source") // e.g. Client, Bank, Solicitor, Third Party, Team
   usageLocation   String?   @map("usage_location") // which tab/section: Ethics, Materiality, etc.
-  documentType    String?   @map("document_type")  // e.g. Bank Statement, Confirmation, Invoice
+  documentType    String?   @map("document_type") // e.g. Bank Statement, Confirmation, Invoice
   createdAt       DateTime  @default(now()) @map("created_at")
 
   engagement  AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
@@ -2049,25 +2101,31 @@ model AuditDocument {
 }
 
 model AuditTBRow {
-  id             String  @id @default(uuid())
-  engagementId   String  @map("engagement_id")
-  accountCode         String  @map("account_code")              // Working code — may change to merged code
-  originalAccountCode String? @map("original_account_code")     // Real code from TB import, never changes
-  description    String
-  category       String? // User-defined classification, toggleable
-  currentYear    Float?  @map("current_year")
-  priorYear      Float?  @map("prior_year")
-  fsNoteLevel    String? @map("fs_note_level")
-  fsLevel        String? @map("fs_level")
-  fsLineId       String? @map("fs_line_id")    // Canonical FK to MethodologyFsLine
-  fsStatement    String? @map("fs_statement")
-  groupName      String? @map("group_name") // Only display for GROUP audit type
-  aiConfidence   Int?    @map("ai_confidence") // 0-100 confidence of AI classification
-  sourceMetadata Json?   @map("source_metadata") // Additional data from accounting system (e.g. { xeroType, xeroClass })
-  farSchedule    Json?   @map("far_schedule")    // Fixed Asset Register movement data per category
-  sortOrder      Int     @default(0) @map("sort_order")
+  id                  String  @id @default(uuid())
+  engagementId        String  @map("engagement_id")
+  accountCode         String  @map("account_code") // Working code — may change to merged code
+  originalAccountCode String? @map("original_account_code") // Real code from TB import, never changes
+  description         String
+  category            String? // User-defined classification, toggleable
+  currentYear         Float?  @map("current_year")
+  priorYear           Float?  @map("prior_year")
+  fsNoteLevel         String? @map("fs_note_level")
+  fsLevel             String? @map("fs_level")
+  fsLineId            String? @map("fs_line_id") // Canonical FK to MethodologyFsLine
+  fsStatement         String? @map("fs_statement")
+  groupName           String? @map("group_name") // Only display for GROUP audit type
+  aiConfidence        Int?    @map("ai_confidence") // 0-100 confidence of AI classification
+  sourceMetadata      Json?   @map("source_metadata") // Additional data from accounting system (e.g. { xeroType, xeroClass })
+  farSchedule         Json?   @map("far_schedule") // Fixed Asset Register movement data per category
+  sortOrder           Int     @default(0) @map("sort_order")
 
-  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  // Firm/client-level classification: is this TB row an accruals/creditors account?
+  // Used by the Year-End Accruals pipeline to reconcile the client-supplied
+  // accruals listing total back to the TB. Defaults false; flipped either
+  // manually by the methodology admin or inferred from fsLine mapping.
+  isAccrualAccount Boolean @default(false) @map("is_accrual_account")
+
+  engagement      AuditEngagement    @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   canonicalFsLine MethodologyFsLine? @relation(fields: [fsLineId], references: [id], onDelete: SetNull)
 
   @@index([engagementId])
@@ -2082,7 +2140,7 @@ model MethodologyConfig {
   firmId      String   @map("firm_id")
   auditType   String   @map("audit_type") // SME | PIE | SME_CONTROLS | PIE_CONTROLS
   version     Int      @default(1)
-  config      Json     // Full methodology config snapshot
+  config      Json // Full methodology config snapshot
   isActive    Boolean  @default(true) @map("is_active")
   createdById String   @map("created_by_id")
   createdAt   DateTime @default(now()) @map("created_at")
@@ -2101,7 +2159,7 @@ model MethodologyTemplate {
   firmId       String   @map("firm_id")
   templateType String   @map("template_type") // information_request | agreed_dates | permanent_file | ethics | continuance | materiality | assertions
   auditType    String   @map("audit_type") // SME | PIE | SME_CONTROLS | PIE_CONTROLS | ALL
-  items        Json     // Template items/sections
+  items        Json // Template items/sections
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -2120,10 +2178,10 @@ model MethodologyIndustry {
   isDefault Boolean @default(false) @map("is_default")
   isActive  Boolean @default(true) @map("is_active")
 
-  firm      Firm                @relation(fields: [firmId], references: [id], onDelete: Cascade)
-  testBanks MethodologyTestBank[]
-  fsLineMappings   MethodologyFsLineIndustry[]
-  testAllocations  MethodologyTestAllocation[]
+  firm            Firm                        @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  testBanks       MethodologyTestBank[]
+  fsLineMappings  MethodologyFsLineIndustry[]
+  testAllocations MethodologyTestAllocation[]
 
   @@unique([firmId, code])
   @@index([firmId])
@@ -2131,14 +2189,14 @@ model MethodologyIndustry {
 }
 
 model MethodologyTestType {
-  id            String  @id @default(uuid())
-  firmId        String  @map("firm_id")
-  name          String  // Action name (e.g. "AI Verification", "Request Data")
-  code          String
-  actionType    String  @default("human_action") @map("action_type") // client_action | ai_action | human_action
-  codeSection   String? @map("code_section") // Reference to code/logic section
-  executionDef  Json?   @map("execution_def") // Execution definition: prompts, templates, inputs, output format
-  isActive      Boolean @default(true) @map("is_active")
+  id           String  @id @default(uuid())
+  firmId       String  @map("firm_id")
+  name         String // Action name (e.g. "AI Verification", "Request Data")
+  code         String
+  actionType   String  @default("human_action") @map("action_type") // client_action | ai_action | human_action
+  codeSection  String? @map("code_section") // Reference to code/logic section
+  executionDef Json?   @map("execution_def") // Execution definition: prompts, templates, inputs, output format
+  isActive     Boolean @default(true) @map("is_active")
 
   firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
 
@@ -2152,8 +2210,8 @@ model MethodologyTestBank {
   firmId     String @map("firm_id")
   industryId String @map("industry_id")
   fsLine     String @map("fs_line")
-  tests      Json   // Array of { description: string, testTypeCode: string }
-  assertions Json?  // Array of applicable assertions
+  tests      Json // Array of { description: string, testTypeCode: string }
+  assertions Json? // Array of applicable assertions
 
   firm     Firm                @relation(fields: [firmId], references: [id], onDelete: Cascade)
   industry MethodologyIndustry @relation(fields: [industryId], references: [id], onDelete: Cascade)
@@ -2170,22 +2228,30 @@ model MethodologyTest {
   name            String
   description     String?  @db.Text
   testTypeCode    String   @map("test_type_code")
-  assertions      Json?    // ["Completeness", "Existence", ...]
+  assertions      Json? // ["Completeness", "Existence", ...]
   framework       String   @default("ALL")
   significantRisk Boolean  @default(false) @map("significant_risk") // DEPRECATED — use category instead
   category        String   @default("Normal") @map("category") // Significant Risk | Area of Focus | Normal | Analytical Review | Mandatory
   outputFormat    String?  @map("output_format") // three_section_sampling | three_section_no_sampling | document_summary | spreadsheet
   isIngest        Boolean  @default(false) @map("is_ingest") // Data collection/prep, not an auditable test
   isDraft         Boolean  @default(true) @map("is_draft") // Hidden from engagement audit plans + Plan Customiser; visible only in Test Bank admin
-  flow            Json?    // { nodes, edges }
+  flow            Json? // { nodes, edges }
   sortOrder       Int      @default(0) @map("sort_order")
   isActive        Boolean  @default(true) @map("is_active")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  executionMode String   @default("flow") @map("execution_mode") // flow | action_pipeline
+  executionMode String @default("flow") @map("execution_mode") // flow | action_pipeline
 
-  firm        Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  // Declarative schema for the "start-of-test" config modal (e.g. the
+  // Year-End Accruals pipeline captures x_days_post_ye here before any
+  // action runs). Shape matches ActionDefinition.inputSchema: an array of
+  // { code, label, type, required, defaultValue, description, ... }.
+  // When set, the runtime prompts the user once and stores the answers on
+  // TestExecution.configJson for $ctx.execution.config.<code> access.
+  pipelineConfigSchema Json? @map("pipeline_config_schema")
+
+  firm        Firm                        @relation(fields: [firmId], references: [id], onDelete: Cascade)
   allocations MethodologyTestAllocation[]
   actionSteps TestActionStep[]
 
@@ -2212,19 +2278,19 @@ model MethodologyTestAllocation {
 }
 
 model MethodologyFsLine {
-  id              String  @id @default(uuid())
-  firmId          String  @map("firm_id")
-  name            String  // e.g. "Revenue", "Trade Debtors", "Going Concern"
-  lineType        String  @map("line_type") // fs_line_item | note_item
-  fsCategory      String  @map("fs_category") // pnl | balance_sheet | cashflow | notes
-  sortOrder       Int     @default(0) @map("sort_order")
-  isActive        Boolean @default(true) @map("is_active")
-  isMandatory     Boolean @default(false) @map("is_mandatory")
-  parentFsLineId  String? @map("parent_fs_line_id") // note_item links to parent fs_line_item
+  id             String  @id @default(uuid())
+  firmId         String  @map("firm_id")
+  name           String // e.g. "Revenue", "Trade Debtors", "Going Concern"
+  lineType       String  @map("line_type") // fs_line_item | note_item
+  fsCategory     String  @map("fs_category") // pnl | balance_sheet | cashflow | notes
+  sortOrder      Int     @default(0) @map("sort_order")
+  isActive       Boolean @default(true) @map("is_active")
+  isMandatory    Boolean @default(false) @map("is_mandatory")
+  parentFsLineId String? @map("parent_fs_line_id") // note_item links to parent fs_line_item
 
-  firm             Firm                @relation(fields: [firmId], references: [id], onDelete: Cascade)
-  parent           MethodologyFsLine?  @relation("FsLineHierarchy", fields: [parentFsLineId], references: [id], onDelete: SetNull)
-  children         MethodologyFsLine[] @relation("FsLineHierarchy")
+  firm             Firm                        @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  parent           MethodologyFsLine?          @relation("FsLineHierarchy", fields: [parentFsLineId], references: [id], onDelete: SetNull)
+  children         MethodologyFsLine[]         @relation("FsLineHierarchy")
   industryMappings MethodologyFsLineIndustry[]
   testAllocations  MethodologyTestAllocation[]
   tbRows           AuditTBRow[]
@@ -2240,8 +2306,8 @@ model MethodologyFsLineIndustry {
   fsLineId   String @map("fs_line_id")
   industryId String @map("industry_id")
 
-  fsLine     MethodologyFsLine  @relation(fields: [fsLineId], references: [id], onDelete: Cascade)
-  industry   MethodologyIndustry @relation(fields: [industryId], references: [id], onDelete: Cascade)
+  fsLine   MethodologyFsLine   @relation(fields: [fsLineId], references: [id], onDelete: Cascade)
+  industry MethodologyIndustry @relation(fields: [industryId], references: [id], onDelete: Cascade)
 
   @@unique([fsLineId, industryId])
   @@map("methodology_fs_line_industries")
@@ -2266,7 +2332,7 @@ model MethodologyRiskTable {
   id        String @id @default(uuid())
   firmId    String @map("firm_id")
   tableType String @map("table_type") // inherent | control | assertions
-  data      Json   // Matrix data for the risk table
+  data      Json // Matrix data for the risk table
 
   firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
 
@@ -2305,7 +2371,7 @@ model ResourceAllocation {
   firmId       String   @map("firm_id")
   engagementId String   @map("engagement_id")
   userId       String   @map("user_id")
-  role         String   // Specialist | Preparer | Reviewer | RI
+  role         String // Specialist | Preparer | Reviewer | RI
   startDate    DateTime @map("start_date")
   endDate      DateTime @map("end_date")
   hoursPerDay  Float    @default(7.5) @map("hours_per_day")
@@ -2326,36 +2392,36 @@ model ResourceAllocation {
 }
 
 model ResourceJob {
-  id                     String   @id @default(uuid())
-  firmId                 String   @map("firm_id")
-  clientId               String   @map("client_id")
-  auditType              String   @map("audit_type")
-  periodEnd              DateTime @map("period_end")
-  targetCompletion       DateTime @map("target_completion")
-  budgetHoursSpecialist  Float    @default(0) @map("budget_hours_specialist")
-  budgetHoursRI          Float    @default(0) @map("budget_hours_ri")
-  budgetHoursReviewer    Float    @default(0) @map("budget_hours_reviewer")
-  budgetHoursPreparer    Float    @default(0) @map("budget_hours_preparer")
-  timesheetHours         Float    @default(0) @map("timesheet_hours")
-  schedulingStatus       String   @default("unscheduled") @map("scheduling_status") // unscheduled | pre_scheduled | scheduled | completed
-  isScheduleLocked       Boolean  @default(false) @map("is_schedule_locked")
-  complianceDeadline     DateTime? @map("compliance_deadline")
-  customDeadline         DateTime? @map("custom_deadline")
-  jobProfileId           String?  @map("job_profile_id")
-  crmJobId               String?  @unique @map("crm_job_id")
-  actualHoursSpecialist  Float    @default(0) @map("actual_hours_specialist")
-  actualHoursRI          Float    @default(0) @map("actual_hours_ri")
-  actualHoursReviewer    Float    @default(0) @map("actual_hours_reviewer")
-  actualHoursPreparer    Float    @default(0) @map("actual_hours_preparer")
-  previousJobId          String?  @map("previous_job_id")
-  createdAt              DateTime @default(now()) @map("created_at")
-  updatedAt              DateTime @updatedAt @map("updated_at")
+  id                    String    @id @default(uuid())
+  firmId                String    @map("firm_id")
+  clientId              String    @map("client_id")
+  auditType             String    @map("audit_type")
+  periodEnd             DateTime  @map("period_end")
+  targetCompletion      DateTime  @map("target_completion")
+  budgetHoursSpecialist Float     @default(0) @map("budget_hours_specialist")
+  budgetHoursRI         Float     @default(0) @map("budget_hours_ri")
+  budgetHoursReviewer   Float     @default(0) @map("budget_hours_reviewer")
+  budgetHoursPreparer   Float     @default(0) @map("budget_hours_preparer")
+  timesheetHours        Float     @default(0) @map("timesheet_hours")
+  schedulingStatus      String    @default("unscheduled") @map("scheduling_status") // unscheduled | pre_scheduled | scheduled | completed
+  isScheduleLocked      Boolean   @default(false) @map("is_schedule_locked")
+  complianceDeadline    DateTime? @map("compliance_deadline")
+  customDeadline        DateTime? @map("custom_deadline")
+  jobProfileId          String?   @map("job_profile_id")
+  crmJobId              String?   @unique @map("crm_job_id")
+  actualHoursSpecialist Float     @default(0) @map("actual_hours_specialist")
+  actualHoursRI         Float     @default(0) @map("actual_hours_ri")
+  actualHoursReviewer   Float     @default(0) @map("actual_hours_reviewer")
+  actualHoursPreparer   Float     @default(0) @map("actual_hours_preparer")
+  previousJobId         String?   @map("previous_job_id")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
 
-  firm        Firm                @relation(fields: [firmId], references: [id])
-  client      Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  jobProfile  ResourceJobProfile? @relation(fields: [jobProfileId], references: [id])
-  previousJob ResourceJob?        @relation("JobRollForward", fields: [previousJobId], references: [id])
-  rolledForwardJobs ResourceJob[] @relation("JobRollForward")
+  firm              Firm                @relation(fields: [firmId], references: [id])
+  client            Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  jobProfile        ResourceJobProfile? @relation(fields: [jobProfileId], references: [id])
+  previousJob       ResourceJob?        @relation("JobRollForward", fields: [previousJobId], references: [id])
+  rolledForwardJobs ResourceJob[]       @relation("JobRollForward")
 
   @@index([firmId])
   @@index([schedulingStatus])
@@ -2363,39 +2429,39 @@ model ResourceJob {
 }
 
 model ResourceJobProfile {
-  id                           String   @id @default(uuid())
-  firmId                       String   @map("firm_id")
-  name                         String
-  budgetHoursSpecialist        Float    @default(0) @map("budget_hours_specialist")
-  budgetHoursRI                Float    @default(0) @map("budget_hours_ri")
-  budgetHoursReviewer          Float    @default(0) @map("budget_hours_reviewer")
-  budgetHoursPreparer          Float    @default(0) @map("budget_hours_preparer")
-  budgetHoursSpecialistDetail  Json     @default("{}") @map("budget_hours_specialist_detail")
-  isDefault                    Boolean  @default(false) @map("is_default")
-  createdAt              DateTime @default(now()) @map("created_at")
-  updatedAt              DateTime @updatedAt @map("updated_at")
+  id                          String   @id @default(uuid())
+  firmId                      String   @map("firm_id")
+  name                        String
+  budgetHoursSpecialist       Float    @default(0) @map("budget_hours_specialist")
+  budgetHoursRI               Float    @default(0) @map("budget_hours_ri")
+  budgetHoursReviewer         Float    @default(0) @map("budget_hours_reviewer")
+  budgetHoursPreparer         Float    @default(0) @map("budget_hours_preparer")
+  budgetHoursSpecialistDetail Json     @default("{}") @map("budget_hours_specialist_detail")
+  isDefault                   Boolean  @default(false) @map("is_default")
+  createdAt                   DateTime @default(now()) @map("created_at")
+  updatedAt                   DateTime @updatedAt @map("updated_at")
 
-  firm            Firm                    @relation(fields: [firmId], references: [id])
-  clientSettings  ResourceClientSetting[]
-  resourceJobs    ResourceJob[]
+  firm           Firm                    @relation(fields: [firmId], references: [id])
+  clientSettings ResourceClientSetting[]
+  resourceJobs   ResourceJob[]
 
   @@index([firmId])
   @@map("resource_job_profiles")
 }
 
 model ResourceClientSetting {
-  id                    String   @id @default(uuid())
-  firmId                String   @map("firm_id")
-  clientId              String   @unique @map("client_id")
-  resourceCategoryId    String?  @map("resource_category_id")
-  serviceType           String?  @map("service_type")
-  rollForwardTimeframe  String?  @map("roll_forward_timeframe")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  id                   String   @id @default(uuid())
+  firmId               String   @map("firm_id")
+  clientId             String   @unique @map("client_id")
+  resourceCategoryId   String?  @map("resource_category_id")
+  serviceType          String?  @map("service_type")
+  rollForwardTimeframe String?  @map("roll_forward_timeframe")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
-  firm              Firm                @relation(fields: [firmId], references: [id])
-  client            Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  resourceCategory  ResourceJobProfile? @relation(fields: [resourceCategoryId], references: [id])
+  firm             Firm                @relation(fields: [firmId], references: [id])
+  client           Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  resourceCategory ResourceJobProfile? @relation(fields: [resourceCategoryId], references: [id])
 
   @@index([firmId])
   @@map("resource_client_settings")
@@ -2405,11 +2471,11 @@ model ResourceClientSetting {
 model DocumentTemplate {
   id          String   @id @default(cuid())
   firmId      String   @map("firm_id")
-  name        String   // e.g. "Engagement Letter", "Management Letter"
+  name        String // e.g. "Engagement Letter", "Management Letter"
   description String?
   category    String   @default("general") // general, engagement, reporting, correspondence
   auditType   String   @default("ALL") @map("audit_type") // ALL, SME, PIE, SME_CONTROLS, PIE_CONTROLS
-  subject     String?  // Email subject line (can contain merge fields)
+  subject     String? // Email subject line (can contain merge fields)
   content     String   @db.Text // Rich text / HTML with merge field placeholders
   mergeFields Json     @default("[]") @map("merge_fields") // Array of { key, label, source, path }
   recipients  Json     @default("[]") // Array of recipient category keys e.g. ["client","ri","reviewer"]
@@ -2458,30 +2524,35 @@ model TestExecution {
   engagementId    String    @map("engagement_id")
   firmId          String    @map("firm_id")
   fsLine          String    @map("fs_line")
-  fsLineId        String?   @map("fs_line_id")             // Canonical FK to MethodologyFsLine
+  fsLineId        String?   @map("fs_line_id") // Canonical FK to MethodologyFsLine
   testDescription String    @map("test_description")
   testTypeCode    String?   @map("test_type_code")
-  flowSnapshot    Json      @map("flow_snapshot")          // Frozen FlowData at execution start
-  status          String    @default("running")            // running | paused | completed | failed | cancelled
-  currentNodeId   String?   @map("current_node_id")        // ReactFlow node ID where paused/active
-  pauseReason     String?   @map("pause_reason")           // portal_response | team_task | evidence | sampling | review
-  pauseRefId      String?   @map("pause_ref_id")           // ID of external resource being waited on
+  flowSnapshot    Json      @map("flow_snapshot") // Frozen FlowData at execution start
+  status          String    @default("running") // running | paused | completed | failed | cancelled
+  currentNodeId   String?   @map("current_node_id") // ReactFlow node ID where paused/active
+  pauseReason     String?   @map("pause_reason") // portal_response | team_task | evidence | sampling | review
+  pauseRefId      String?   @map("pause_ref_id") // ID of external resource being waited on
   context         Json      @default("{}") @map("context") // Accumulated outputs keyed by nodeId
-  loopState       Json?     @map("loop_state")             // Active forEach/loopUntil state
+  loopState       Json?     @map("loop_state") // Active forEach/loopUntil state
   errorMessage    String?   @map("error_message") @db.Text
   startedById     String    @map("started_by_id")
   startedAt       DateTime  @default(now()) @map("started_at")
   completedAt     DateTime? @map("completed_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  executionMode    String   @default("flow") @map("execution_mode")    // flow | action_pipeline
-  currentStepIndex Int?     @map("current_step_index")                // For action_pipeline mode
-  actionStepId     String?  @map("action_step_id")                    // Current TestActionStep being executed
-  pipelineState    Json?    @map("pipeline_state")                    // Accumulated outputs from completed steps
+  executionMode    String  @default("flow") @map("execution_mode") // flow | action_pipeline
+  currentStepIndex Int?    @map("current_step_index") // For action_pipeline mode
+  actionStepId     String? @map("action_step_id") // Current TestActionStep being executed
+  pipelineState    Json?   @map("pipeline_state") // Accumulated outputs from completed steps
 
-  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
-  nodeRuns   TestExecutionNodeRun[]
-  outstandingItems OutstandingItem[]
+  // User-supplied answers to the test's pipelineConfigSchema modal, captured
+  // before the first action runs. Read by handlers via $ctx.execution.config.
+  configJson Json? @map("config_json")
+
+  engagement        AuditEngagement        @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  nodeRuns          TestExecutionNodeRun[]
+  outstandingItems  OutstandingItem[]
+  sampleItemMarkers SampleItemMarker[]
 
   @@index([engagementId])
   @@index([status])
@@ -2490,23 +2561,23 @@ model TestExecution {
 }
 
 model TestExecutionNodeRun {
-  id            String    @id @default(uuid())
-  executionId   String    @map("execution_id")
-  nodeId        String    @map("node_id")
-  nodeType      String    @map("node_type")      // start | action | decision | forEach | loopUntil | wait | end
-  assignee      String?                           // ai | client | team
-  label         String?
-  status        String    @default("pending")     // pending | running | paused | completed | failed | skipped
-  input         Json?
-  output        Json?
-  errorMessage  String?   @map("error_message")
-  aiModel       String?   @map("ai_model")
-  aiTokensUsed  Int?      @map("ai_tokens_used")
-  duration      Int?                               // milliseconds
-  loopIndex     Int?      @map("loop_index")
-  actionStepId  String?   @map("action_step_id")   // Which pipeline step this node run belongs to
-  startedAt     DateTime  @default(now()) @map("started_at")
-  completedAt   DateTime? @map("completed_at")
+  id           String    @id @default(uuid())
+  executionId  String    @map("execution_id")
+  nodeId       String    @map("node_id")
+  nodeType     String    @map("node_type") // start | action | decision | forEach | loopUntil | wait | end
+  assignee     String? // ai | client | team
+  label        String?
+  status       String    @default("pending") // pending | running | paused | completed | failed | skipped
+  input        Json?
+  output       Json?
+  errorMessage String?   @map("error_message")
+  aiModel      String?   @map("ai_model")
+  aiTokensUsed Int?      @map("ai_tokens_used")
+  duration     Int? // milliseconds
+  loopIndex    Int?      @map("loop_index")
+  actionStepId String?   @map("action_step_id") // Which pipeline step this node run belongs to
+  startedAt    DateTime  @default(now()) @map("started_at")
+  completedAt  DateTime? @map("completed_at")
 
   execution TestExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
 
@@ -2516,25 +2587,25 @@ model TestExecutionNodeRun {
 }
 
 model OutstandingItem {
-  id            String    @id @default(uuid())
-  engagementId  String    @map("engagement_id")
-  executionId   String?   @map("execution_id")
-  nodeId        String?   @map("node_id")
-  type          String                              // flow_task | portal_request | evidence_request | review_point
-  title         String
-  description   String?   @db.Text
-  source        String    @default("manual")        // flow | manual
-  assignedTo    String?   @map("assigned_to")
-  status        String    @default("pending")        // pending | in_progress | awaiting_client | awaiting_team | complete
-  fsLine        String?   @map("fs_line")
-  testName      String?   @map("test_name")
-  flowNodeType  String?   @map("flow_node_type")
-  priority      String    @default("normal")         // normal | high | urgent
-  portalRequestId String? @map("portal_request_id")
-  responseData  Json?     @map("response_data")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  completedAt   DateTime? @map("completed_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id              String    @id @default(uuid())
+  engagementId    String    @map("engagement_id")
+  executionId     String?   @map("execution_id")
+  nodeId          String?   @map("node_id")
+  type            String // flow_task | portal_request | evidence_request | review_point
+  title           String
+  description     String?   @db.Text
+  source          String    @default("manual") // flow | manual
+  assignedTo      String?   @map("assigned_to")
+  status          String    @default("pending") // pending | in_progress | awaiting_client | awaiting_team | complete
+  fsLine          String?   @map("fs_line")
+  testName        String?   @map("test_name")
+  flowNodeType    String?   @map("flow_node_type")
+  priority        String    @default("normal") // normal | high | urgent
+  portalRequestId String?   @map("portal_request_id")
+  responseData    Json?     @map("response_data")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  completedAt     DateTime? @map("completed_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   execution  TestExecution?  @relation(fields: [executionId], references: [id], onDelete: SetNull)
@@ -2548,46 +2619,46 @@ model OutstandingItem {
 // ─── Test Conclusions & Error Handling ───────────────────────────────────────
 
 model AuditTestConclusion {
-  id                     String    @id @default(uuid())
-  engagementId           String    @map("engagement_id")
-  executionId            String?   @map("execution_id")
-  fsLine                 String    @map("fs_line")
-  fsLineId               String?   @map("fs_line_id")           // Canonical FK to MethodologyFsLine
-  testDescription        String    @map("test_description")
-  accountCode            String?   @map("account_code")
+  id              String  @id @default(uuid())
+  engagementId    String  @map("engagement_id")
+  executionId     String? @map("execution_id")
+  fsLine          String  @map("fs_line")
+  fsLineId        String? @map("fs_line_id") // Canonical FK to MethodologyFsLine
+  testDescription String  @map("test_description")
+  accountCode     String? @map("account_code")
 
   // Conclusion
-  status                 String    @default("pending")          // pending | concluded | reviewed | signed_off
-  conclusion             String?                                // green | orange | red | failed
-  totalErrors            Float     @default(0)                  @map("total_errors")
-  extrapolatedError      Float     @default(0)                  @map("extrapolated_error")
-  populationSize         Int       @default(0)                  @map("population_size")
-  sampleSize             Int       @default(0)                  @map("sample_size")
+  status            String  @default("pending") // pending | concluded | reviewed | signed_off
+  conclusion        String? // green | orange | red | failed
+  totalErrors       Float   @default(0) @map("total_errors")
+  extrapolatedError Float   @default(0) @map("extrapolated_error")
+  populationSize    Int     @default(0) @map("population_size")
+  sampleSize        Int     @default(0) @map("sample_size")
 
   // Error items: [{ itemIndex, difference, explanation, isFraud, isIsolated, isAnomaly }]
-  errors                 Json?
+  errors Json?
 
   // Auditor analysis
-  controlRelianceConcern Boolean   @default(false)              @map("control_reliance_concern")
-  extrapolationExceedsTM Boolean   @default(false)              @map("extrapolation_exceeds_tm")
-  auditorNotes           String?   @map("auditor_notes") @db.Text
+  controlRelianceConcern Boolean @default(false) @map("control_reliance_concern")
+  extrapolationExceedsTM Boolean @default(false) @map("extrapolation_exceeds_tm")
+  auditorNotes           String? @map("auditor_notes") @db.Text
 
   // Follow-up actions: ["expand_sample", "alternative_procedures", "request_management", "revise_approach", "error_schedule"]
-  followUpActions        Json?                                  @map("follow_up_actions")
-  followUpData           Json?                                  @map("follow_up_data")  // Per-action data (e.g. revise approach text)
+  followUpActions Json? @map("follow_up_actions")
+  followUpData    Json? @map("follow_up_data") // Per-action data (e.g. revise approach text)
 
   // Review signoffs
-  reviewedBy             String?   @map("reviewed_by")
-  reviewedByName         String?   @map("reviewed_by_name")
-  reviewedAt             DateTime? @map("reviewed_at")
-  riSignedBy             String?   @map("ri_signed_by")
-  riSignedByName         String?   @map("ri_signed_by_name")
-  riSignedAt             DateTime? @map("ri_signed_at")
+  reviewedBy     String?   @map("reviewed_by")
+  reviewedByName String?   @map("reviewed_by_name")
+  reviewedAt     DateTime? @map("reviewed_at")
+  riSignedBy     String?   @map("ri_signed_by")
+  riSignedByName String?   @map("ri_signed_by_name")
+  riSignedAt     DateTime? @map("ri_signed_at")
 
-  createdAt              DateTime  @default(now())              @map("created_at")
-  updatedAt              DateTime  @updatedAt                   @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  engagement             AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@index([engagementId])
   @@index([engagementId, fsLine])
@@ -2595,60 +2666,60 @@ model AuditTestConclusion {
 }
 
 model AuditAnalyticalReview {
-  id                   String    @id @default(uuid())
-  engagementId         String    @map("engagement_id")
-  fsLine               String    @map("fs_line")
-  accountCode          String    @map("account_code")
-  description          String?
+  id           String  @id @default(uuid())
+  engagementId String  @map("engagement_id")
+  fsLine       String  @map("fs_line")
+  accountCode  String  @map("account_code")
+  description  String?
 
   // TB amounts
-  recordedAmount       Float     @default(0) @map("recorded_amount")
-  priorYearAmount      Float     @default(0) @map("prior_year_amount")
+  recordedAmount  Float @default(0) @map("recorded_amount")
+  priorYearAmount Float @default(0) @map("prior_year_amount")
 
   // Formula selectors (what each variable represents)
-  formulaX             String?   @map("formula_x")  // PY value(s) | Sales | CoS | Non-Financial Data | 0 | Opening Balance | 12 | Units Sold
-  formulaA             String?   @map("formula_a")
-  formulaB             String?   @map("formula_b")
-  formulaZ             String?   @map("formula_z")  // Change in Sales | Change in CoS | GPM% | Inflation | GDP | FX USD | FX Euro | Interest rate | User Entered
+  formulaX String? @map("formula_x") // PY value(s) | Sales | CoS | Non-Financial Data | 0 | Opening Balance | 12 | Units Sold
+  formulaA String? @map("formula_a")
+  formulaB String? @map("formula_b")
+  formulaZ String? @map("formula_z") // Change in Sales | Change in CoS | GPM% | Inflation | GDP | FX USD | FX Euro | Interest rate | User Entered
 
   // Resolved numeric values
-  xValue               Float?    @map("x_value")
-  aValue               Float?    @map("a_value")
-  bValue               Float?    @map("b_value")
-  zValue               Float?    @map("z_value")
+  xValue Float? @map("x_value")
+  aValue Float? @map("a_value")
+  bValue Float? @map("b_value")
+  zValue Float? @map("z_value")
 
   // User-entered explanations (for Non-Financial Data / User Entered selectors)
-  xExplanation         String?   @map("x_explanation") @db.Text
-  zExplanation         String?   @map("z_explanation") @db.Text
+  xExplanation String? @map("x_explanation") @db.Text
+  zExplanation String? @map("z_explanation") @db.Text
 
   // Calculated results
-  expectedAmount       Float?    @map("expected_amount")    // X + (A + B) / 2 * Z
-  difference           Float?                               // Recorded - Expected
-  toleranceMateriality Float?    @map("tolerance_materiality") // (Recorded / FS Note rollup) × PM
-  threshold            Float?                               // Confidence Factor × Tolerance Materiality
-  withinThreshold      Boolean   @default(true) @map("within_threshold")
+  expectedAmount       Float?  @map("expected_amount") // X + (A + B) / 2 * Z
+  difference           Float? // Recorded - Expected
+  toleranceMateriality Float?  @map("tolerance_materiality") // (Recorded / FS Note rollup) × PM
+  threshold            Float? // Confidence Factor × Tolerance Materiality
+  withinThreshold      Boolean @default(true) @map("within_threshold")
 
   // Auditor assessment
-  justification        String?   @db.Text
-  differenceAssessment String?   @map("difference_assessment") // Isolated and justifiable | Isolated not explainable | Systemic and justifiable | Systemic and not justifiable
+  justification        String? @db.Text
+  differenceAssessment String? @map("difference_assessment") // Isolated and justifiable | Isolated not explainable | Systemic and justifiable | Systemic and not justifiable
 
   // RMM reconsideration
-  rmmErrors            String    @default("No") @map("rmm_errors")
-  rmmBias              String    @default("No") @map("rmm_bias")
-  rmmControlFailures   String    @default("No") @map("rmm_control_failures")
-  rmmFraudRisks        String    @default("No") @map("rmm_fraud_risks")
+  rmmErrors          String @default("No") @map("rmm_errors")
+  rmmBias            String @default("No") @map("rmm_bias")
+  rmmControlFailures String @default("No") @map("rmm_control_failures")
+  rmmFraudRisks      String @default("No") @map("rmm_fraud_risks")
 
   // Sign-offs
-  signOffs             Json?     @map("sign_offs") // { preparer: {...}, reviewer: {...}, ri: {...} }
-  status               String    @default("pending") // pending | calculated | reviewed | signed_off
+  signOffs Json?  @map("sign_offs") // { preparer: {...}, reviewer: {...}, ri: {...} }
+  status   String @default("pending") // pending | calculated | reviewed | signed_off
 
   // Merge support
-  mergedWithCode       String?   @map("merged_with_code") // Account code this is merged into
+  mergedWithCode String? @map("merged_with_code") // Account code this is merged into
 
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  engagement           AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@unique([engagementId, accountCode])
   @@index([engagementId])
@@ -2657,40 +2728,40 @@ model AuditAnalyticalReview {
 }
 
 model AuditPayrollTest {
-  id               String    @id @default(uuid())
-  engagementId     String    @map("engagement_id")
-  fsLine           String    @map("fs_line")
-  status           String    @default("pending") // pending | in_progress | completed | reviewed | signed_off
+  id           String @id @default(uuid())
+  engagementId String @map("engagement_id")
+  fsLine       String @map("fs_line")
+  status       String @default("pending") // pending | in_progress | completed | reviewed | signed_off
 
   // Ingested payroll data (monthly summaries parsed from CSV/Excel)
-  payrollData      Json?     @map("payroll_data") @db.JsonB // { months: [{ period, gross, tax, eeNI, erNI, eePension, erPension, studentLoan, otherDed, netPay, ... }] }
+  payrollData Json? @map("payroll_data") @db.JsonB // { months: [{ period, gross, tax, eeNI, erNI, eePension, erPension, studentLoan, otherDed, netPay, ... }] }
 
   // Lead schedule (account codes mapped to TB)
-  leadSchedule     Json?     @map("lead_schedule") @db.JsonB // { rows: [{ accountCode, accountName, cyBalance, adjustment, finalCY, pyBalance, variance, pct, wpRef }] }
+  leadSchedule Json? @map("lead_schedule") @db.JsonB // { rows: [{ accountCode, accountName, cyBalance, adjustment, finalCY, pyBalance, variance, pct, wpRef }] }
 
   // Reconciliation grids
-  payrollRecon     Json?     @map("payroll_recon") @db.JsonB // { months: [{ period, gross, salSacrifice, tax, eeNI, hscLevy, studentLoan, eePension, netDed, pensionRefund, netPerReport, netPerCalc, diff, erNI, erPension, bankNetPay }], reconToTB: [...] }
-  hmrcRecon        Json?     @map("hmrc_recon") @db.JsonB // { months: [{ period, paye, studentLoan, erNI, eeNI, other, total, bankDate, bankAmount, bankName, diff, notes }] }
-  pensionsRecon    Json?     @map("pensions_recon") @db.JsonB // { months: [{ period, eePension, erPension, totalPension, bankDate, bankAmount, bankName, diff, notes }] }
+  payrollRecon  Json? @map("payroll_recon") @db.JsonB // { months: [{ period, gross, salSacrifice, tax, eeNI, hscLevy, studentLoan, eePension, netDed, pensionRefund, netPerReport, netPerCalc, diff, erNI, erPension, bankNetPay }], reconToTB: [...] }
+  hmrcRecon     Json? @map("hmrc_recon") @db.JsonB // { months: [{ period, paye, studentLoan, erNI, eeNI, other, total, bankDate, bankAmount, bankName, diff, notes }] }
+  pensionsRecon Json? @map("pensions_recon") @db.JsonB // { months: [{ period, eePension, erPension, totalPension, bankDate, bankAmount, bankName, diff, notes }] }
 
   // Joiners & Leavers
-  joiners          Json?     @db.JsonB // [{ name, contractSeen, startMonth, annualSalary, monthlySalary, firstFullMonthPayroll, diff, notes }]
-  leavers          Json?     @db.JsonB // [{ name, p45Seen, lastMonthPaid, lastMonthP45, diff, notes, terminationChecks: {...} }]
+  joiners Json? @db.JsonB // [{ name, contractSeen, startMonth, annualSalary, monthlySalary, firstFullMonthPayroll, diff, notes }]
+  leavers Json? @db.JsonB // [{ name, p45Seen, lastMonthPaid, lastMonthP45, diff, notes, terminationChecks: {...} }]
 
   // Holiday pay & accruals
-  holidayPay       Json?     @map("holiday_pay") @db.JsonB // { calculation, liability, accrual, notes }
+  holidayPay Json? @map("holiday_pay") @db.JsonB // { calculation, liability, accrual, notes }
 
   // Errors and conclusion
-  errors           Json?     @db.JsonB // [{ description, amount, type, section }]
-  conclusion       String?   // green | orange | red
-  auditorNotes     String?   @map("auditor_notes") @db.Text
+  errors       Json?   @db.JsonB // [{ description, amount, type, section }]
+  conclusion   String? // green | orange | red
+  auditorNotes String? @map("auditor_notes") @db.Text
 
   // Sign-offs
-  signOffs         Json?     @map("sign_offs") @db.JsonB
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  signOffs  Json?    @map("sign_offs") @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  engagement       AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@unique([engagementId, fsLine])
   @@index([engagementId])
@@ -2705,53 +2776,110 @@ model AuditErrorSchedule {
   accountCode     String?   @map("account_code")
   description     String
   errorAmount     Float     @map("error_amount")
-  errorType       String    @map("error_type")       // factual | judgemental | projected
+  errorType       String    @map("error_type") // factual | judgemental | projected
   explanation     String?   @db.Text
-  isFraud         Boolean   @default(false)           @map("is_fraud")
+  isFraud         Boolean   @default(false) @map("is_fraud")
   committedBy     String?   @map("committed_by")
   committedByName String?   @map("committed_by_name")
   committedAt     DateTime? @map("committed_at")
-  createdAt       DateTime  @default(now())           @map("created_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
-  engagement      AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  // Linkage back to the sample item that produced this error. Populated by
+  // the Year-End Accruals pipeline (and any future pipeline that uses the
+  // Red/Orange/Green marker system). Nullable so legacy/manual errors still
+  // fit the same table.
+  sampleItemMarkerId String?   @map("sample_item_marker_id")
+  // "error" = the Red item flowed through to the error schedule (default
+  // when this row exists). "in_tb" = auditor confirmed the item is already
+  // reflected in the TB, so no error booked — the row is retained for
+  // traceability but excluded from materiality roll-ups.
+  resolution         String?   @map("resolution") // error | in_tb
+  resolvedBy         String?   @map("resolved_by")
+  resolvedByName     String?   @map("resolved_by_name")
+  resolvedAt         DateTime? @map("resolved_at")
+
+  engagement       AuditEngagement   @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  sampleItemMarker SampleItemMarker? @relation(fields: [sampleItemMarkerId], references: [id], onDelete: SetNull)
 
   @@index([engagementId])
+  @@index([sampleItemMarkerId])
   @@map("audit_error_schedules")
+}
+
+/// Per-sample-item Red / Orange / Green marker, written by pipelines that
+/// use the three-colour assessment pattern (e.g. Year-End Accruals).
+///
+/// One row per verified sample item. The handler's output is the source of
+/// truth for `colour` until the user overrides it via the runtime UI, at
+/// which point the `overridden*` fields are populated and `colour` is
+/// updated in place.
+///
+/// `calcJson` holds whatever supporting evidence/refs/apportionment figures
+/// the handler used to reach its decision so the UI can show "why" on
+/// hover and the reviewer can audit the logic.
+model SampleItemMarker {
+  id               String    @id @default(uuid())
+  executionId      String    @map("execution_id")
+  stepIndex        Int       @map("step_index") // Which pipeline step emitted this marker
+  sampleItemRef    String    @map("sample_item_ref") // Stable key identifying the sample item (e.g. row id)
+  colour           String // red | orange | green
+  reason           String    @db.Text
+  // Narrow classification inside a colour so the UI can render subtitles
+  // ("Accrual Supported", "Spread", "Incorrect Accrual", "Support Missing",
+  //  "Apportionment OK", "Apportionment Mismatch", etc.). Free-form string
+  // to allow future pipelines to reuse the marker infra with their own
+  // vocabulary.
+  markerType       String?   @map("marker_type")
+  calcJson         Json?     @map("calc_json") // Matching refs, apportionment breakdown, etc.
+  overriddenBy     String?   @map("overridden_by")
+  overriddenByName String?   @map("overridden_by_name")
+  overriddenAt     DateTime? @map("overridden_at")
+  overrideReason   String?   @map("override_reason") @db.Text
+  originalColour   String?   @map("original_colour") // Snapshot of handler-emitted colour when overridden
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  execution          TestExecution        @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  errorScheduleItems AuditErrorSchedule[]
+
+  @@unique([executionId, stepIndex, sampleItemRef])
+  @@index([executionId])
+  @@map("sample_item_markers")
 }
 
 // ─── Audit Points (Review Points, Management, Representation, RI Matters) ───
 
 model AuditPoint {
-  id              String    @id @default(uuid())
-  engagementId    String    @map("engagement_id")
-  pointType       String    @map("point_type")         // review_point | management | representation | ri_matter
-  chatNumber      Int       @map("chat_number")
-  status          String    @default("open")            // open | closed | committed | cancelled
+  id           String @id @default(uuid())
+  engagementId String @map("engagement_id")
+  pointType    String @map("point_type") // review_point | management | representation | ri_matter
+  chatNumber   Int    @map("chat_number")
+  status       String @default("open") // open | closed | committed | cancelled
 
   // Content
-  description     String    @db.Text
-  heading         String?
-  body            String?   @db.Text                    // Rich text body (for management/representation)
-  reference       String?   @db.Text                    // URL/path to source location
+  description String  @db.Text
+  heading     String?
+  body        String? @db.Text // Rich text body (for management/representation)
+  reference   String? @db.Text // URL/path to source location
 
   // Creator
-  createdById     String    @map("created_by_id")
-  createdByName   String    @map("created_by_name")
-  createdAt       DateTime  @default(now())             @map("created_at")
-  updatedAt       DateTime  @updatedAt                  @map("updated_at")
+  createdById   String   @map("created_by_id")
+  createdByName String   @map("created_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   // Closure / Commit
-  closedById      String?   @map("closed_by_id")
-  closedByName    String?   @map("closed_by_name")
-  closedAt        DateTime? @map("closed_at")
+  closedById   String?   @map("closed_by_id")
+  closedByName String?   @map("closed_by_name")
+  closedAt     DateTime? @map("closed_at")
 
   // Thread responses: [{ id, userId, userName, message, attachments, createdAt }]
-  responses       Json?
+  responses Json?
 
   // Attachments on main point: [{name, url, type, size}]
-  attachments     Json?
+  attachments Json?
 
-  engagement      AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@index([engagementId, pointType])
   @@index([engagementId, pointType, status])
@@ -2761,38 +2889,38 @@ model AuditPoint {
 // ─── Tax Technical Chats ────────────────────────────────────────────────────
 
 model AuditTaxChat {
-  id              String    @id @default(uuid())
-  engagementId    String    @map("engagement_id")
-  taxCategory     String    @map("tax_category")           // vat, corporation_tax, employment_taxes, etc.
-  chatNumber      Int       @map("chat_number")
-  status          String    @default("open")                // open | concluded | referred
-  businessBackground String? @map("business_background") @db.Text  // Sent with first message
+  id                 String  @id @default(uuid())
+  engagementId       String  @map("engagement_id")
+  taxCategory        String  @map("tax_category") // vat, corporation_tax, employment_taxes, etc.
+  chatNumber         Int     @map("chat_number")
+  status             String  @default("open") // open | concluded | referred
+  businessBackground String? @map("business_background") @db.Text // Sent with first message
 
   // Conclusion
-  conclusion      String?   @db.Text                        // Tax technical's conclusion
-  conclusionStatus String?  @map("conclusion_status")       // correct | incorrect | needs_adjustment | inconclusive
+  conclusion       String? @db.Text // Tax technical's conclusion
+  conclusionStatus String? @map("conclusion_status") // correct | incorrect | needs_adjustment | inconclusive
 
   // Creator (audit team member)
-  createdById     String    @map("created_by_id")
-  createdByName   String    @map("created_by_name")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdById   String   @map("created_by_id")
+  createdByName String   @map("created_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   // Assigned tax specialist
-  assignedToId    String?   @map("assigned_to_id")          // User ID (internal) or specialist name
-  assignedToName  String?   @map("assigned_to_name")
-  assignedToType  String    @default("internal") @map("assigned_to_type") // internal | external
-  delegatedToId   String?   @map("delegated_to_id")         // If reassigned by the specialist
-  delegatedToName String?   @map("delegated_to_name")
+  assignedToId    String? @map("assigned_to_id") // User ID (internal) or specialist name
+  assignedToName  String? @map("assigned_to_name")
+  assignedToType  String  @default("internal") @map("assigned_to_type") // internal | external
+  delegatedToId   String? @map("delegated_to_id") // If reassigned by the specialist
+  delegatedToName String? @map("delegated_to_name")
 
   // Messages: [{ id, userId, userName, role, message, attachments, createdAt }]
   // role: 'audit_team' | 'tax_specialist'
-  messages        Json      @default("[]")
+  messages Json @default("[]")
 
   // Attachments: [{name, url, type, size}]
-  attachments     Json?
+  attachments Json?
 
-  engagement      AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@index([engagementId, taxCategory])
   @@index([engagementId, status])
@@ -2803,28 +2931,28 @@ model AuditTaxChat {
 // ─── Action-Based Test Pipeline ─────────────────────────────────────────────
 
 model ActionDefinition {
-  id              String   @id @default(uuid())
-  firmId          String?  @map("firm_id")           // null = system-global action
-  code            String                              // unique slug: "request_documents", "select_sample"
-  name            String                              // Display: "Request Documents from Client"
-  description     String?  @db.Text
-  category        String   @default("general")        // evidence | sampling | analysis | verification | reporting
-  version         Int      @default(1)
+  id          String  @id @default(uuid())
+  firmId      String? @map("firm_id") // null = system-global action
+  code        String // unique slug: "request_documents", "select_sample"
+  name        String // Display: "Request Documents from Client"
+  description String? @db.Text
+  category    String  @default("general") // evidence | sampling | analysis | verification | reporting
+  version     Int     @default(1)
 
-  inputSchema     Json     @map("input_schema")       // InputFieldDef[]
-  outputSchema    Json     @map("output_schema")      // OutputFieldDef[]
+  inputSchema  Json @map("input_schema") // InputFieldDef[]
+  outputSchema Json @map("output_schema") // OutputFieldDef[]
 
-  handlerName     String?  @map("handler_name")       // For system actions: e.g. "requestDocuments"
-  internalFlow    Json?    @map("internal_flow")      // For custom actions: FlowData { nodes, edges }
+  handlerName  String? @map("handler_name") // For system actions: e.g. "requestDocuments"
+  internalFlow Json?   @map("internal_flow") // For custom actions: FlowData { nodes, edges }
 
-  icon            String?                              // lucide icon name
-  color           String?                              // hex color for UI badge
-  isSystem        Boolean  @default(false) @map("is_system")
-  isActive        Boolean  @default(true)  @map("is_active")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  icon      String? // lucide icon name
+  color     String? // hex color for UI badge
+  isSystem  Boolean  @default(false) @map("is_system")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  firm            Firm?    @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  firm            Firm?            @relation(fields: [firmId], references: [id], onDelete: Cascade)
   testActionSteps TestActionStep[]
 
   @@unique([firmId, code, version])
@@ -2834,22 +2962,22 @@ model ActionDefinition {
 }
 
 model TestActionStep {
-  id                  String   @id @default(uuid())
-  testId              String   @map("test_id")
-  actionDefinitionId  String   @map("action_definition_id")
-  stepOrder           Int      @map("step_order")
+  id                 String @id @default(uuid())
+  testId             String @map("test_id")
+  actionDefinitionId String @map("action_definition_id")
+  stepOrder          Int    @map("step_order")
 
-  inputBindings       Json     @map("input_bindings")    // { fieldCode: value | "$prev.outputField" | "$step.2.outputField" }
-  configOverrides     Json?    @map("config_overrides")  // Optional overrides
+  inputBindings   Json  @map("input_bindings") // { fieldCode: value | "$prev.outputField" | "$step.2.outputField" }
+  configOverrides Json? @map("config_overrides") // Optional overrides
 
-  isActive            Boolean  @default(true) @map("is_active")
-  createdAt           DateTime @default(now()) @map("created_at")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
 
-  test                MethodologyTest   @relation(fields: [testId], references: [id], onDelete: Cascade)
-  actionDefinition    ActionDefinition  @relation(fields: [actionDefinitionId], references: [id])
+  test             MethodologyTest  @relation(fields: [testId], references: [id], onDelete: Cascade)
+  actionDefinition ActionDefinition @relation(fields: [actionDefinitionId], references: [id])
 
-  @@index([testId])
   @@unique([testId, stepOrder])
+  @@index([testId])
   @@map("test_action_steps")
 }
 
@@ -2859,18 +2987,18 @@ model JournalRiskRun {
   id                 String   @id @default(uuid())
   engagementId       String   @map("engagement_id")
   runId              String   @unique @map("run_id")
-  status             String   @default("completed")        // completed | superseded
-  config             Json                                   // Frozen Config snapshot
-  populationEvidence Json     @map("population_evidence")   // PopulationEvidence
-  selectionSummary   Json     @map("selection_summary")     // { layer1, layer2, layer3, notSelected }
-  riskModelSnapshot  Json     @map("risk_model_snapshot")   // rules, thresholds, weights
+  status             String   @default("completed") // completed | superseded
+  config             Json // Frozen Config snapshot
+  populationEvidence Json     @map("population_evidence") // PopulationEvidence
+  selectionSummary   Json     @map("selection_summary") // { layer1, layer2, layer3, notSelected }
+  riskModelSnapshot  Json     @map("risk_model_snapshot") // rules, thresholds, weights
   totalJournals      Int      @map("total_journals")
   totalSelected      Int      @map("total_selected")
   runById            String   @map("run_by_id")
   createdAt          DateTime @default(now()) @map("created_at")
 
-  engagement AuditEngagement  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
-  runBy      User             @relation("JournalRiskRunBy", fields: [runById], references: [id])
+  engagement AuditEngagement    @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  runBy      User               @relation("JournalRiskRunBy", fields: [runById], references: [id])
   entries    JournalRiskEntry[]
 
   @@index([engagementId])
@@ -2891,11 +3019,11 @@ model JournalRiskEntry {
   debitAccountId   String    @map("debit_account_id")
   creditAccountId  String    @map("credit_account_id")
   riskScore        Int       @map("risk_score")
-  riskBand         String    @map("risk_band")              // low | medium | high
-  riskTags         Json      @map("risk_tags")              // string[]
-  drivers          Json                                     // RiskDriver[]
+  riskBand         String    @map("risk_band") // low | medium | high
+  riskTags         Json      @map("risk_tags") // string[]
+  drivers          Json // RiskDriver[]
   selected         Boolean   @default(false)
-  selectionLayer   String    @map("selection_layer")        // layer1_mandatory_high_risk | layer2_targeted_coverage | layer3_unpredictable | not_selected
+  selectionLayer   String    @map("selection_layer") // layer1_mandatory_high_risk | layer2_targeted_coverage | layer3_unpredictable | not_selected
   mandatory        Boolean   @default(false)
   rationale        String?   @db.Text
   testStatus       String    @default("pending") @map("test_status") // pending | tested | no_exception | exception
@@ -2913,20 +3041,20 @@ model JournalRiskEntry {
 // ─── Meetings & Minutes ────────────────────────────────────────────────────
 
 model AuditMeeting {
-  id              String    @id @default(uuid())
-  engagementId    String    @map("engagement_id")
-  title           String
-  meetingDate     DateTime  @map("meeting_date")
-  meetingType     String    @default("other") @map("meeting_type") // planning | interim | final | other
-  attendees       Json?     // [{name, role}]
-  source          String    @default("manual")                     // teams | manual
-  teamsEventId    String?   @map("teams_event_id")
-  transcriptRaw   String?   @map("transcript_raw") @db.Text
-  minutes         Json?     // MeetingMinutes structured object
-  minutesStatus   String    @default("draft") @map("minutes_status") // draft | generated | reviewed | signed_off
-  createdById     String    @map("created_by_id")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id            String   @id @default(uuid())
+  engagementId  String   @map("engagement_id")
+  title         String
+  meetingDate   DateTime @map("meeting_date")
+  meetingType   String   @default("other") @map("meeting_type") // planning | interim | final | other
+  attendees     Json? // [{name, role}]
+  source        String   @default("manual") // teams | manual
+  teamsEventId  String?  @map("teams_event_id")
+  transcriptRaw String?  @map("transcript_raw") @db.Text
+  minutes       Json? // MeetingMinutes structured object
+  minutesStatus String   @default("draft") @map("minutes_status") // draft | generated | reviewed | signed_off
+  createdById   String   @map("created_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   createdBy  User            @relation("MeetingCreator", fields: [createdById], references: [id])
