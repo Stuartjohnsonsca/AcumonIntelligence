@@ -38,7 +38,12 @@ export type AnswerSource =
   | { kind: 'materiality' }
   | { kind: 'rmm'; rowId?: string; label?: string }
   | { kind: 'test-conclusion'; conclusionId?: string; label?: string }
-  | { kind: 'error-schedule'; itemId?: string };
+  | { kind: 'error-schedule'; itemId?: string }
+  // Generic reference emitted by the AI Populate endpoint — points at
+  // any main-tab key with an optional scroll anchor. Used when the AI
+  // locates coverage for an Update Procedures row in a tab that isn't
+  // one of the first-class kinds above.
+  | { kind: 'ref'; tab: string; anchor?: string; label?: string };
 
 interface Props {
   engagementId: string;
@@ -184,6 +189,12 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
   const [loading, setLoading] = useState(true);
   const [autoCompleting, setAutoCompleting] = useState(false);
   const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
+  // Tracks which cells are currently being populated by the AI Populate
+  // button (keyed by `${questionId}_${columnKey}`). Used to render per-
+  // cell spinners and to disable the tab-level "Populate All" while a
+  // batch is in flight.
+  const [populatingCells, setPopulatingCells] = useState<Set<string>>(new Set());
+  const [bulkPopulating, setBulkPopulating] = useState(false);
   // Section collapse state — keyed by sectionKey. Sections default to
   // expanded; clicking the header toggles a single section. Persisted
   // per-user per-tab in localStorage so the preference survives page
@@ -433,6 +444,13 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
       case 'error-schedule':
         onCompletionTabChange?.('error-schedule');
         return;
+      case 'ref':
+        // Generic tab + anchor reference from AI Populate. Target tabs
+        // that support scroll-to-anchor read the `scroll` query param
+        // on mount; tabs without that support will just switch to the
+        // tab and the user scrolls manually.
+        onNavigateMainTab?.(source.tab, source.anchor ? { scroll: source.anchor } : undefined);
+        return;
     }
   }
 
@@ -442,6 +460,105 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
       case 'rmm': return source.label ? `Source: RMM — "${source.label}" — click to open` : 'Source: RMM tab — click to open';
       case 'test-conclusion': return source.label ? `Source: Test Conclusions — "${source.label}" — click to open` : 'Source: Test Summary Results — click to open';
       case 'error-schedule': return 'Source: Error Schedule — click to open';
+      case 'ref': return source.label ? `Source: ${source.label} — click to open` : `Source: ${source.tab} — click to open`;
+    }
+  }
+
+  // ─── AI Populate (per cell + tab-wide) ────────────────────────────────
+  /** Returns the populate mode for this tab — 'references' on Update
+   *  Procedures (fill reference column with deep links) and 'procedure'
+   *  on Completion Checklist (write the procedure description). Default
+   *  on any other template is 'references' which is the safer option —
+   *  it won't rewrite existing audit text. */
+  function aiPopulateMode(): 'references' | 'procedure' {
+    if (templateType === 'completion_checklist_questions') return 'procedure';
+    return 'references';
+  }
+  /** Populate a single row+column via the AI Populate endpoint and commit
+   *  the answer + source back into state. The first-column question text
+   *  is the AI's primary prompt; the section label gives scope. */
+  async function populateCell(questionId: string, columnKey: string, questionText: string, sectionLabel?: string, columnHeader?: string): Promise<boolean> {
+    const cellKey = `${questionId}_${columnKey}`;
+    if (!questionText.trim()) return false;
+    setPopulatingCells(prev => { const n = new Set(prev); n.add(cellKey); return n; });
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/ai-populate-cell`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateType,
+          mode: aiPopulateMode(),
+          questionText,
+          sectionLabel,
+          columnHeader,
+        }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      const text: string = typeof data.text === 'string' ? data.text : '';
+      const refs: Array<{ tab: string; anchor?: string; label?: string }> = Array.isArray(data.references) ? data.references : [];
+      if (!text && refs.length === 0) return false;
+
+      const nextAnswers = { ...answers, [cellKey]: text };
+      setAnswers(nextAnswers);
+      // Attach the first reference (if any) as the cell's source so the
+      // existing source-link icon renders and navigateToSource can jump
+      // to the right tab/anchor.
+      let nextSources = answerSources;
+      if (refs.length > 0) {
+        const r = refs[0];
+        nextSources = { ...answerSources, [cellKey]: { kind: 'ref', tab: r.tab, anchor: r.anchor, label: r.label || r.tab } };
+        setAnswerSources(nextSources);
+      }
+      debounceSave(nextAnswers, undefined, nextSources);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setPopulatingCells(prev => { const n = new Set(prev); n.delete(cellKey); return n; });
+    }
+  }
+  /** Tab-level AI button — fires populateCell for every row's "response"
+   *  column (col1 on standard layouts, col1 on table layouts) in sequence.
+   *  Sequential rather than parallel so we don't hammer the provider. */
+  async function populateAllCells() {
+    if (bulkPopulating) return;
+    setBulkPopulating(true);
+    try {
+      // Merge template questions + user-added questions for iteration.
+      const allSections: Array<{ sectionKey: string; sectionLabel: string; questions: TemplateQuestion[]; headers: string[] }> = [];
+      const combined = new Map<string, TemplateQuestion[]>();
+      for (const q of questions) {
+        if (!combined.has(q.sectionKey)) combined.set(q.sectionKey, []);
+        combined.get(q.sectionKey)!.push(q);
+      }
+      for (const [k, qs] of Object.entries(customQuestions)) combined.set(k, qs);
+      for (const [sk, qs] of combined.entries()) {
+        const meta = sectionMeta[sk] || customSections[sk];
+        allSections.push({
+          sectionKey: sk,
+          sectionLabel: meta?.label || sk,
+          questions: qs,
+          headers: meta?.columnHeaders || [],
+        });
+      }
+      for (const sec of allSections) {
+        for (const q of sec.questions) {
+          if (q.isBold) continue; // Bold rows are section headers — skip.
+          // Default target column is col1 (the "Response" column on
+          // standard layouts, the first editable column on table layouts).
+          const colKey = 'col1';
+          const colHeader = sec.headers[1] || sec.headers[0] || undefined;
+          if (!q.questionText?.trim()) continue; // Can't ask the AI about a blank row.
+          // Skip rows that already have a meaningful answer — the user
+          // can always clear and re-run per row.
+          const existing = answers[`${q.id}_${colKey}`];
+          if (typeof existing === 'string' && existing.trim().length > 0) continue;
+          await populateCell(q.id, colKey, q.questionText, sec.sectionLabel, colHeader);
+        }
+      }
+    } finally {
+      setBulkPopulating(false);
     }
   }
 
@@ -573,13 +690,33 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
       {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-700">{title}</h3>
-        {showAutoComplete && (
-          <button onClick={handleAutoComplete} disabled={autoCompleting}
-            className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 disabled:opacity-50">
-            {autoCompleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-            {autoCompleting ? 'Auto-Completing...' : 'Auto-Complete'}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/*
+            Tab-level "AI Populate" button — fires the per-row populate
+            flow for every empty response cell in sequence. Available on
+            templates whose response can usefully be AI-populated
+            (Update Procedures → references; Completion Checklist →
+            procedure text; Overall Review → references).
+          */}
+          {(templateType === 'update_procedures_questions' || templateType === 'completion_checklist_questions' || templateType === 'overall_review_fs_questions') && (
+            <button
+              onClick={populateAllCells}
+              disabled={bulkPopulating || populatingCells.size > 0}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 disabled:opacity-50"
+              title={templateType === 'completion_checklist_questions' ? 'AI-write the procedure for every empty row' : 'AI-add references for every empty row'}
+            >
+              {bulkPopulating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {bulkPopulating ? 'Populating…' : 'AI Populate'}
+            </button>
+          )}
+          {showAutoComplete && (
+            <button onClick={handleAutoComplete} disabled={autoCompleting}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 disabled:opacity-50">
+              {autoCompleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {autoCompleting ? 'Auto-Completing...' : 'Auto-Complete'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Sections */}
@@ -716,6 +853,20 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                                     <ExternalLink className="h-3 w-3" />
                                   </button>
                                 )}
+                                {/* Per-cell AI Populate button — only on
+                                    the primary response column (col1) to
+                                    avoid clutter on wide tables. */}
+                                {ci + 1 === 1 && q.questionText?.trim() && (templateType === 'update_procedures_questions' || templateType === 'completion_checklist_questions' || templateType === 'overall_review_fs_questions') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => populateCell(q.id, `col${ci + 1}`, q.questionText, meta?.label, headers[ci + 1])}
+                                    disabled={populatingCells.has(`${q.id}_col${ci + 1}`) || bulkPopulating}
+                                    className="mt-1 text-blue-500 hover:text-blue-700 flex-shrink-0 disabled:opacity-50"
+                                    title={aiPopulateMode() === 'procedure' ? 'AI-write this procedure' : 'AI-find references for this row'}
+                                  >
+                                    {populatingCells.has(`${q.id}_col${ci + 1}`) ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                                  </button>
+                                )}
                               </div>
                             )}
                           </td>
@@ -783,6 +934,18 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                             title={sourceTooltip(cellSource)}
                           >
                             <ExternalLink className="h-3 w-3" />
+                          </button>
+                        )}
+                        {/* Per-row AI Populate button */}
+                        {q.questionText?.trim() && (templateType === 'update_procedures_questions' || templateType === 'completion_checklist_questions' || templateType === 'overall_review_fs_questions') && (
+                          <button
+                            type="button"
+                            onClick={() => populateCell(q.id, 'col1', q.questionText, meta?.label, headers[1])}
+                            disabled={populatingCells.has(`${q.id}_col1`) || bulkPopulating}
+                            className="mt-1.5 text-blue-500 hover:text-blue-700 flex-shrink-0 disabled:opacity-50"
+                            title={aiPopulateMode() === 'procedure' ? 'AI-write this procedure' : 'AI-find references for this row'}
+                          >
+                            {populatingCells.has(`${q.id}_col1`) ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
                           </button>
                         )}
                       </div>
