@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { EXTERNAL_BENCH, type BenchPersona } from './externalBench';
+import { loadProfiles, type AssessmentProfile } from '@/lib/riskForumAssessment';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -292,6 +294,9 @@ function SimMessageRow({ msg, personas }: { msg: SimMessage; personas: Persona[]
 export default function RiskForumClient({ user }: Props) {
   const [view, setView] = useState<'setup' | 'sim' | 'debrief'>('setup');
   const [personas, setPersonas] = useState<Persona[]>(DEFAULT_PERSONAS);
+  // Profiles the user has built via the Assessment flow — loaded from localStorage.
+  // These can be dropped into a simulation as an authentic behavioural agent.
+  const [savedProfiles, setSavedProfiles] = useState<AssessmentProfile[]>([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
   const [customScenario, setCustomScenario] = useState('');
   const [protocol, setProtocol] = useState('');
@@ -354,6 +359,33 @@ export default function RiskForumClient({ user }: Props) {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [threads, activeThreadId, typingPersonas]);
+
+  // Load saved assessment profiles from localStorage on mount so they can be
+  // swapped into the simulation as authentic behavioural agents.
+  useEffect(() => {
+    setSavedProfiles(loadProfiles());
+  }, []);
+
+  // Converts a saved AssessmentProfile into the simulation's Persona shape
+  // so it can drop straight into the participants list.
+  const profileToPersona = (p: AssessmentProfile): Persona => ({
+    id: `profile-${p.id}`,
+    name: p.subjectName,
+    role: p.subjectRole,
+    dept: p.subjectFirm ?? 'Assessed',
+    m365Summary: p.behaviouralSummary,
+    color: p.displayColor ?? '#6EC8E8',
+    initial: p.displayInitials ?? (p.subjectName.slice(0, 2).toUpperCase()),
+  });
+
+  const addProfileAsPersona = (p: AssessmentProfile) => {
+    const persona = profileToPersona(p);
+    setPersonas(prev => prev.some(x => x.id === persona.id) ? prev : [...prev, persona]);
+  };
+
+  const removePersona = (id: string) => {
+    setPersonas(prev => prev.filter(p => p.id !== id));
+  };
 
   // Clock ticker: updates every second while running, drives the compressed
   // simulated clock and enforces the real-time cap. Paused state freezes the
@@ -1019,9 +1051,16 @@ export default function RiskForumClient({ user }: Props) {
             Risk Forum
           </h1>
           <span className="text-xs font-mono tracking-wider" style={{ color: '#C84040' }}>BEHAVIOURAL SIMULATION</span>
+          <Link
+            href="/tools/risk-forum/assessments"
+            className="ml-auto text-xs font-mono tracking-wider px-3 py-1.5 rounded"
+            style={{ background: '#081822', color: '#6EC8E8', border: '1px solid #6EC8E833' }}
+          >
+            ◉ Assessments
+          </Link>
         </div>
         <p className="mt-2 text-xs leading-relaxed max-w-xl" style={{ color: '#444' }}>
-          Simulate how your people actually behave under crisis — not how they should. Profiles are derived from observed communication patterns.
+          Simulate how your people actually behave under crisis — not how they should. Profiles are derived from observed communication patterns or built via the assessment flow.
         </p>
       </div>
 
@@ -1145,28 +1184,97 @@ export default function RiskForumClient({ user }: Props) {
             <span className="text-xs font-mono" style={{ color: '#2A2A2A' }}>Click to edit profile</span>
           </div>
           <div className="flex flex-col gap-2">
-            {personas.map(p => (
-              <div
-                key={p.id}
-                onClick={() => setEditingPersonaId(p.id)}
-                className="p-3 rounded-lg cursor-pointer"
-                style={{ background: '#0C0C0C', border: '1px solid #1A1A1A', borderLeft: `3px solid ${p.color}` }}
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <div
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 font-mono"
-                    style={{ background: '#111', border: `2px solid ${p.color}`, color: p.color, boxShadow: `0 0 6px ${p.color}33` }}
-                  >{p.initial}</div>
-                  <div>
-                    <div className="text-xs font-bold" style={{ color: '#E8E8E0' }}>{p.name}</div>
-                    <div className="text-xs font-mono" style={{ color: p.color, fontSize: '10px' }}>{p.role} · {p.dept}</div>
+            {personas.map(p => {
+              const isAssessed = p.id.startsWith('profile-');
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => setEditingPersonaId(p.id)}
+                  className="p-3 rounded-lg cursor-pointer relative"
+                  style={{ background: '#0C0C0C', border: '1px solid #1A1A1A', borderLeft: `3px solid ${p.color}` }}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 font-mono"
+                      style={{ background: '#111', border: `2px solid ${p.color}`, color: p.color, boxShadow: `0 0 6px ${p.color}33` }}
+                    >{p.initial}</div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold" style={{ color: '#E8E8E0' }}>{p.name}</span>
+                        {isAssessed && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded" style={{ background: '#081822', color: '#6EC8E8', border: '1px solid #6EC8E833' }}>
+                            ASSESSED
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs font-mono" style={{ color: p.color, fontSize: '10px' }}>{p.role} · {p.dept}</div>
+                    </div>
+                    {isAssessed && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removePersona(p.id); }}
+                        className="text-xs font-mono px-2 py-0.5 rounded"
+                        style={{ background: 'transparent', border: '1px solid #1E1E1E', color: '#554040' }}
+                        title="Remove from participants"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
+                  <p className="text-xs leading-relaxed line-clamp-2" style={{ color: '#555', fontFamily: 'Georgia, serif' }}>
+                    {p.m365Summary}
+                  </p>
                 </div>
-                <p className="text-xs leading-relaxed line-clamp-2" style={{ color: '#555', fontFamily: 'Georgia, serif' }}>
-                  {p.m365Summary}
-                </p>
+              );
+            })}
+          </div>
+
+          {/* Assessed profiles available to add */}
+          <div className="mt-5">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-mono tracking-widest" style={{ color: '#333' }}>ASSESSED PROFILES</span>
+              <Link
+                href="/tools/risk-forum/assessments"
+                className="text-xs font-mono tracking-wider"
+                style={{ color: '#6EC8E8' }}
+              >
+                Manage →
+              </Link>
+            </div>
+            {savedProfiles.length === 0 ? (
+              <div className="p-3 rounded text-xs leading-relaxed" style={{ background: '#0A0A0A', border: '1px dashed #1A1A1A', color: '#555' }}>
+                No profiles yet. Build one via the Assessment flow — survey + AI interview produces a behavioural profile you can use here as a participant.{' '}
+                <Link href="/tools/risk-forum/assessments/new" style={{ color: '#6EC8E8' }}>Start →</Link>
               </div>
-            ))}
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {savedProfiles.map(p => {
+                  const already = personas.some(x => x.id === `profile-${p.id}`);
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => !already && addProfileAsPersona(p)}
+                      disabled={already}
+                      className="flex items-center gap-2 p-2 rounded text-left transition-all"
+                      style={{
+                        background: already ? '#080808' : '#0A0A0A',
+                        border: `1px solid ${already ? '#0F0F0F' : '#1A1A1A'}`,
+                        opacity: already ? 0.5 : 1,
+                      }}
+                    >
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center font-mono font-bold flex-shrink-0"
+                        style={{ fontSize: '9px', background: '#080808', border: `1px solid ${p.displayColor ?? '#888'}66`, color: p.displayColor ?? '#888' }}>
+                        {p.displayInitials ?? '?'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold truncate" style={{ color: already ? '#555' : '#C8C8C0' }}>{p.subjectName}</div>
+                        <div className="text-[10px] font-mono truncate" style={{ color: p.displayColor ?? '#888' }}>{p.subjectRole}</div>
+                      </div>
+                      <span className="text-[9px] font-mono" style={{ color: already ? '#6EC860' : '#6EC8E8' }}>{already ? 'IN' : '+ ADD'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -163,6 +163,12 @@ export function Navbar() {
                     >
                       Risk Forum
                     </button>
+                    <button
+                      onClick={() => { setAssuranceOpen(false); if (!isAuthenticated) { router.push('/login?callbackUrl=/tools/risk-forum/assessments'); } else { router.push('/tools/risk-forum/assessments'); } }}
+                      className="w-full text-left pl-8 pr-4 py-2 text-xs text-slate-500 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                    >
+                      ↳ Behavioural Assessments
+                    </button>
                     {ASSURANCE_PRODUCTS.map((product) => (
                       <button
                         key={product.urlPrefix}
