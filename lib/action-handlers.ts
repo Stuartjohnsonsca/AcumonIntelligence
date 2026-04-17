@@ -66,6 +66,10 @@ const HANDLERS: Record<string, ActionHandler> = {
   extractPostYeBankPayments: handleExtractPostYeBankPayments,
   selectUnrecordedLiabilitiesSample: handleSelectUnrecordedLiabilitiesSample,
   verifyUnrecordedLiabilitiesSample: handleVerifyUnrecordedLiabilitiesSample,
+  requestGmData: handleRequestGmData,
+  computeGmAnalysis: handleComputeGmAnalysis,
+  requestGmExplanations: handleRequestGmExplanations,
+  assessGmExplanations: handleAssessGmExplanations,
 };
 
 export function getActionHandler(handlerName: string): ActionHandler | null {
@@ -1850,6 +1854,736 @@ async function handleVerifyUnrecordedLiabilitiesSample(ctx: ActionHandlerContext
         marker_type: m.marker_type,
         reason: m.reason,
       })),
+      pass_fail: red.length === 0 ? (orange.length === 0 ? 'pass' : 'review') : 'fail',
+    },
+  };
+}
+
+// ─── Gross Margin Analytical Review Handlers ───────────────────────────────
+
+interface GmPeriodRow {
+  period_label: string;
+  period_type: 'current' | 'prior' | 'prior_minus_1' | 'prior_minus_2' | 'budget' | 'benchmark' | 'other';
+  revenue: number;
+  cost_of_sales: number;
+  gross_profit: number;
+  gm_pct: number | null;   // null when revenue = 0
+  source: 'client' | 'tb' | 'benchmark';
+}
+
+/**
+ * Pick a numeric value from a row where the column name may vary.
+ * Accepts several tolerant keys (case/space/punctuation insensitive).
+ */
+function pickNumber(row: Record<string, any>, ...patterns: RegExp[]): number {
+  const key = Object.keys(row).find(k => patterns.some(p => p.test(k.toLowerCase().replace(/[\s_-]/g, ''))));
+  if (!key) return 0;
+  const v = Number(row[key]);
+  return Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Parse a returned P&L listing into one row per period. The client is
+ * expected to provide an Excel/CSV with either:
+ *   - one row per period (columns: period, revenue, cost_of_sales), OR
+ *   - one row per category with period columns (Revenue_CY, COS_CY, Revenue_PY, etc.)
+ * We probe both shapes. Anything else is surfaced to the auditor as a
+ * parsing error rather than silently dropped.
+ */
+function parseGmRows(rows: Array<Record<string, any>>): GmPeriodRow[] {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+
+  // Shape A: one row per period.
+  const hasPeriodColumn = rows.some(r => Object.keys(r).some(k => /period|year|fy/i.test(k)));
+  const hasRevenueRow = rows.some(r => Object.keys(r).some(k => /revenue|sales/i.test(k)));
+  if (hasPeriodColumn && hasRevenueRow) {
+    const out: GmPeriodRow[] = [];
+    for (const r of rows) {
+      const label = String(
+        Object.values(r).find((v, i) => /period|year|fy/i.test(Object.keys(r)[i])) ?? Object.values(r)[0] ?? 'Period',
+      );
+      const revenue = pickNumber(r, /^revenue$/, /^sales$/, /turnover/);
+      const cos = pickNumber(r, /costofsales/, /^cos$/, /^cogs$/, /costofgoods/);
+      if (!revenue && !cos) continue;
+      const gp = revenue - cos;
+      const gm = revenue !== 0 ? Math.round((gp / revenue) * 10000) / 100 : null;
+      const lc = label.toLowerCase();
+      const periodType: GmPeriodRow['period_type'] =
+        /budget|forecast/.test(lc) ? 'budget'
+        : /benchmark|industry/.test(lc) ? 'benchmark'
+        : /current|cy|this/.test(lc) ? 'current'
+        : /prior|py|previous/.test(lc) ? 'prior'
+        : 'other';
+      out.push({
+        period_label: label,
+        period_type: periodType,
+        revenue,
+        cost_of_sales: cos,
+        gross_profit: gp,
+        gm_pct: gm,
+        source: periodType === 'benchmark' ? 'benchmark' : 'client',
+      });
+    }
+    return out;
+  }
+
+  // Shape B: columns per period. Look for "_CY" / "_PY" / "_Budget" suffixes.
+  const first = rows[0];
+  const cyRev = pickNumber(rows.reduce((s, r) => { if (/revenue|sales/i.test(Object.keys(r)[0] || '')) return r; return s; }, first), /revenuecy/, /salescy/, /^revenue$/);
+  // This shape is complicated in practice — fall back to empty if we can't
+  // confidently interpret, rather than emit bad numbers. The auditor will
+  // re-upload in Shape A.
+  if (cyRev === 0) return [];
+  return [];
+}
+
+/**
+ * Best-effort "agrees to TB" check for the current-year figures returned
+ * by the client. We sum all TB rows on the engagement whose fsLine name
+ * is "Revenue" / "Sales" / "Turnover" and whose mirror for COS, then
+ * compare magnitudes to the submitted CY revenue / CY COS. Within 1%
+ * tolerance = reconciled.
+ */
+async function reconcileGmToTB(engagementId: string, cyRow: GmPeriodRow | undefined): Promise<'pass' | 'fail' | 'unknown'> {
+  if (!cyRow) return 'unknown';
+  const tbRows = await prisma.auditTBRow.findMany({
+    where: { engagementId },
+    include: { canonicalFsLine: { select: { name: true } } },
+  });
+  if (tbRows.length === 0) return 'unknown';
+
+  let tbRevenue = 0;
+  let tbCos = 0;
+  for (const r of tbRows) {
+    const fs = r.canonicalFsLine?.name?.toLowerCase() || '';
+    const v = Number(r.currentYear || 0);
+    if (/revenue|sales|turnover/.test(fs)) tbRevenue += v;
+    else if (/cost.*sales|cost.*goods|cogs/.test(fs)) tbCos += v;
+  }
+  // TB stores revenue as negatives (credits); take magnitudes to compare.
+  const revTb = Math.abs(tbRevenue);
+  const cosTb = Math.abs(tbCos);
+  if (revTb === 0 && cosTb === 0) return 'unknown';
+
+  const revVariance = revTb === 0 ? 0 : Math.abs(cyRow.revenue - revTb) / revTb;
+  const cosVariance = cosTb === 0 ? 0 : Math.abs(cyRow.cost_of_sales - cosTb) / cosTb;
+  const tol = 0.01;
+  return revVariance <= tol && cosVariance <= tol ? 'pass' : 'fail';
+}
+
+async function handleRequestGmData(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, executionId, stepIndex, pipelineState, inputs, config } = ctx;
+  const stepState = pipelineState[stepIndex] || {};
+  const phase: string = stepState.phase || 'new';
+
+  try {
+    if (phase === 'new') {
+      const engagement = await prisma.auditEngagement.findUnique({
+        where: { id: engagementId },
+        select: { clientId: true },
+      });
+      if (!engagement) return { action: 'error', outputs: {}, errorMessage: 'Engagement not found' };
+      const requestingUser = await prisma.user.findUnique({
+        where: { id: config.userId },
+        select: { name: true, email: true },
+      });
+      const portalRequest = await prisma.portalRequest.create({
+        data: {
+          clientId: engagement.clientId,
+          engagementId,
+          section: 'evidence',
+          question: inputs.message_to_client || 'Please provide revenue and cost of sales breakdowns for the current and comparison periods, budget figures, and any prepared explanations for significant GM movements.',
+          status: 'outstanding',
+          requestedById: config.userId,
+          requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
+          evidenceTag: 'gm_analytical_review',
+        },
+      });
+      await prisma.outstandingItem.create({
+        data: {
+          engagementId,
+          executionId,
+          type: 'portal_request',
+          title: 'Gross Margin AR — data request',
+          description: inputs.message_to_client,
+          source: 'flow',
+          assignedTo: 'client',
+          status: 'awaiting_client',
+          fsLine: config.fsLine,
+          testName: config.testDescription,
+          portalRequestId: portalRequest.id,
+        },
+      });
+      return {
+        action: 'pause',
+        outputs: { phase: 'awaiting_data', portal_request_id: portalRequest.id, repeatOnResume: true },
+        pauseReason: 'portal_response',
+        pauseRefId: portalRequest.id,
+      };
+    }
+
+    if (phase === 'data_received') {
+      const portalRequestId = stepState.portal_request_id as string | undefined;
+      if (!portalRequestId) {
+        return { action: 'error', outputs: {}, errorMessage: 'No portal request id on step state' };
+      }
+
+      const rawRows = await parseListingFromPortalUploads(portalRequestId);
+      const gmRows = parseGmRows(rawRows);
+      if (gmRows.length === 0) {
+        return {
+          action: 'pause',
+          outputs: {
+            phase: 'awaiting_data',
+            portal_request_id: portalRequestId,
+            parse_error: 'Could not parse a period-by-period P&L from the uploaded file. Please provide an Excel / CSV with one row per period (columns: period, revenue, cost_of_sales).',
+            repeatOnResume: true,
+          },
+          pauseReason: 'portal_response',
+          pauseRefId: portalRequestId,
+        };
+      }
+
+      // Find CY and reconcile to TB. CY takes the row labelled current,
+      // otherwise the row whose period_label contains the engagement's
+      // period-end year.
+      const engagement = await prisma.auditEngagement.findUnique({
+        where: { id: engagementId },
+        include: { period: { select: { periodEnd: true } } as any } as any,
+      }) as any;
+      const periodEnd: Date | null = engagement?.period?.periodEnd || null;
+      const yearStr = periodEnd ? String(periodEnd.getFullYear()) : '';
+      const cyRow = gmRows.find(r => r.period_type === 'current')
+        || gmRows.find(r => yearStr && r.period_label.includes(yearStr))
+        || gmRows[0];
+      const tbReconciled = await reconcileGmToTB(engagementId, cyRow);
+
+      if (tbReconciled === 'fail') {
+        await prisma.outstandingItem.create({
+          data: {
+            engagementId,
+            executionId,
+            type: 'portal_request',
+            title: 'GM analytical review — CY P&L does not agree to TB',
+            description: 'The revenue and cost-of-sales figures returned do not reconcile (within 1%) to the TB revenue/COS account totals. Please confirm the figures or identify the reconciling items.',
+            source: 'flow',
+            assignedTo: 'client',
+            status: 'awaiting_client',
+            fsLine: config.fsLine,
+            testName: config.testDescription,
+            portalRequestId,
+          },
+        });
+        return {
+          action: 'pause',
+          outputs: {
+            phase: 'awaiting_data',
+            portal_request_id: portalRequestId,
+            data_table: gmRows,
+            tb_reconciled: 'fail',
+            repeatOnResume: true,
+          },
+          pauseReason: 'portal_response',
+          pauseRefId: portalRequestId,
+        };
+      }
+
+      // Optionally pull management commentary from the portal request's chat
+      // history. We treat the most recent non-empty message that isn't a
+      // file upload pointer as the commentary.
+      let commentary = '';
+      try {
+        const pr = await prisma.portalRequest.findUnique({
+          where: { id: portalRequestId },
+          select: { chatHistory: true },
+        });
+        const messages: any[] = Array.isArray(pr?.chatHistory) ? (pr!.chatHistory as any[]) : [];
+        const clientMsgs = messages.filter(m => typeof m?.text === 'string' && m.text.trim().length > 0 && m.from !== 'team');
+        if (clientMsgs.length > 0) commentary = String(clientMsgs[clientMsgs.length - 1].text);
+      } catch {}
+
+      return {
+        action: 'continue',
+        outputs: {
+          data_table: gmRows,
+          management_commentary: commentary,
+          tb_reconciled: tbReconciled === 'pass' ? 'pass' : 'unknown',
+          portal_request_id: portalRequestId,
+        },
+      };
+    }
+
+    return { action: 'error', outputs: {}, errorMessage: `Unknown phase: ${phase}` };
+  } catch (err: any) {
+    console.error('[request_gm_data] handler error:', err);
+    return { action: 'error', outputs: {}, errorMessage: err?.message || 'GM data handler failed' };
+  }
+}
+
+async function handleComputeGmAnalysis(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, inputs } = ctx;
+
+  const rows: GmPeriodRow[] = Array.isArray(inputs.data_table) ? (inputs.data_table as GmPeriodRow[]) : [];
+  if (rows.length === 0) {
+    return { action: 'error', outputs: {}, errorMessage: 'No P&L rows available for the GM analysis.' };
+  }
+
+  // Resolve performance materiality once — used for the PM-linked tolerance.
+  // AuditMateriality stores its full Appendix E in a JSON blob; pull the
+  // performanceMateriality value if present.
+  let pm = 0;
+  try {
+    const mat = await prisma.auditMateriality.findUnique({ where: { engagementId } as any, select: { data: true } as any }) as any;
+    if (mat?.data && typeof mat.data === 'object') {
+      const d: any = mat.data;
+      pm = Number(d.performanceMateriality ?? d.pm ?? d.benchmarks?.performanceMateriality ?? 0) || 0;
+    }
+  } catch {}
+
+  const tolPct = Math.max(0, Number(inputs.tolerance_pct || 2));
+  const tolPmMult = Math.max(0, Number(inputs.tolerance_pm_multiple || 1));
+  const tolAmount = pm * tolPmMult;
+
+  const cy = rows.find(r => r.period_type === 'current') || rows[0];
+  const priors = rows.filter(r => r.period_type === 'prior' || r.period_type === 'prior_minus_1' || r.period_type === 'prior_minus_2');
+  const budget = rows.find(r => r.period_type === 'budget');
+  const benchmark = rows.find(r => r.period_type === 'benchmark');
+
+  // Expected GM% based on the selected model.
+  const model = String(inputs.expectation_model || 'consistency_py');
+  let expectedGmPct: number | null = null;
+  let expectedLabel = '';
+  if (model === 'consistency_py') {
+    const prior = priors[0];
+    if (prior?.gm_pct != null) { expectedGmPct = prior.gm_pct; expectedLabel = `Prior (${prior.period_label}) GM %`; }
+  } else if (model === 'consistency_avg') {
+    const pcts = priors.map(p => p.gm_pct).filter((v): v is number => v != null);
+    if (pcts.length > 0) {
+      expectedGmPct = Math.round((pcts.reduce((s, v) => s + v, 0) / pcts.length) * 100) / 100;
+      expectedLabel = `Average of ${pcts.length} prior period(s)`;
+    }
+  } else if (model === 'budget') {
+    if (budget?.gm_pct != null) { expectedGmPct = budget.gm_pct; expectedLabel = `Budget GM %`; }
+  } else if (model === 'reasonableness') {
+    // Apply prior-year margin to current revenue to derive expected GP, then
+    // divide by current revenue to express as %. Same number as PY GM% but
+    // the ££ impact is what matters for the tolerance check.
+    const prior = priors[0];
+    if (prior && prior.gm_pct != null) {
+      expectedGmPct = prior.gm_pct;
+      expectedLabel = `Reasonableness (PY GM % applied to CY revenue)`;
+    }
+  }
+
+  const actualGmPct = cy.gm_pct;
+
+  // Build the variance table. Always include a row for each comparison
+  // period that exists, plus a headline "actual vs expected" row.
+  interface VarianceRow {
+    variance_ref: string;
+    comparison_label: string;
+    expected_gm_pct: number | null;
+    actual_gm_pct: number | null;
+    variance_pct: number | null;    // percentage-point delta
+    variance_amount: number;        // £ impact on profit using CY revenue
+    flagged: boolean;
+    flag_reason: string | null;
+    status: 'amber' | 'pending';
+  }
+  const variances: VarianceRow[] = [];
+
+  function makeVariance(label: string, expected: number | null): VarianceRow {
+    const vPct = expected != null && actualGmPct != null ? Math.round((actualGmPct - expected) * 100) / 100 : null;
+    const vAmount = expected != null && actualGmPct != null
+      ? Math.round(((actualGmPct - expected) / 100) * cy.revenue)
+      : 0;
+    const flaggedPct = vPct != null && Math.abs(vPct) > tolPct;
+    const flaggedAmt = tolAmount > 0 && Math.abs(vAmount) > tolAmount;
+    const flagged = flaggedPct || flaggedAmt;
+    const reasons: string[] = [];
+    if (flaggedPct) reasons.push(`GM% movement ${vPct}pp exceeds tolerance of ${tolPct}pp`);
+    if (flaggedAmt) reasons.push(`£ impact ${vAmount} exceeds ${tolPmMult}× PM (${tolAmount})`);
+    return {
+      variance_ref: `var_${variances.length}`,
+      comparison_label: label,
+      expected_gm_pct: expected,
+      actual_gm_pct: actualGmPct,
+      variance_pct: vPct,
+      variance_amount: vAmount,
+      flagged,
+      flag_reason: flagged ? reasons.join('; ') : null,
+      status: flagged ? 'amber' : 'pending',
+    };
+  }
+
+  // Headline: actual vs the expectation from the model.
+  if (expectedGmPct != null) {
+    variances.push(makeVariance(`Actual vs ${expectedLabel}`, expectedGmPct));
+  }
+  // Each comparison period gets its own variance row for transparency.
+  for (const p of priors) variances.push(makeVariance(`Actual vs ${p.period_label}`, p.gm_pct));
+  if (budget) variances.push(makeVariance(`Actual vs ${budget.period_label}`, budget.gm_pct));
+  if (benchmark) variances.push(makeVariance(`Actual vs ${benchmark.period_label}`, benchmark.gm_pct));
+
+  // Calculations table (for the Data & Sampling section).
+  const calculations = rows.map(r => ({
+    period_label: r.period_label,
+    period_type: r.period_type,
+    revenue: r.revenue,
+    cost_of_sales: r.cost_of_sales,
+    gross_profit: r.gross_profit,
+    gm_pct: r.gm_pct,
+    source: r.source,
+  }));
+
+  const flagged = variances.filter(v => v.flagged);
+
+  return {
+    action: 'continue',
+    outputs: {
+      calculations,
+      variances,
+      data_table: variances,
+      expected_gm_pct: expectedGmPct,
+      actual_gm_pct: actualGmPct,
+      flagged_count: flagged.length,
+      performance_materiality: pm,
+    },
+  };
+}
+
+async function handleRequestGmExplanations(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, executionId, stepIndex, pipelineState, inputs, config } = ctx;
+  const stepState = pipelineState[stepIndex] || {};
+  const phase: string = stepState.phase || 'new';
+
+  // If there's nothing flagged we can skip straight past this step.
+  const variances: any[] = Array.isArray(inputs.variances) ? inputs.variances : [];
+  const flagged = variances.filter(v => v.flagged);
+
+  if (phase === 'new' && flagged.length === 0) {
+    return { action: 'continue', outputs: { explanations: [], portal_request_id: null } };
+  }
+
+  try {
+    if (phase === 'new') {
+      const engagement = await prisma.auditEngagement.findUnique({
+        where: { id: engagementId },
+        select: { clientId: true },
+      });
+      if (!engagement) return { action: 'error', outputs: {}, errorMessage: 'Engagement not found' };
+      const requestingUser = await prisma.user.findUnique({
+        where: { id: config.userId },
+        select: { name: true, email: true },
+      });
+      const varianceSummary = flagged.map(v =>
+        `- ${v.comparison_label}: actual ${v.actual_gm_pct}% vs expected ${v.expected_gm_pct}% (${v.variance_pct}pp, £${v.variance_amount})`,
+      ).join('\n');
+      const question = `${inputs.message_to_client || 'Please explain the following gross-margin variances:'}\n\n${varianceSummary}`;
+      const portalRequest = await prisma.portalRequest.create({
+        data: {
+          clientId: engagement.clientId,
+          engagementId,
+          section: 'evidence',
+          question,
+          status: 'outstanding',
+          requestedById: config.userId,
+          requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
+          evidenceTag: 'gm_variance_explanations',
+        },
+      });
+      await prisma.outstandingItem.create({
+        data: {
+          engagementId,
+          executionId,
+          type: 'portal_request',
+          title: `GM AR — ${flagged.length} variance explanation${flagged.length === 1 ? '' : 's'} requested`,
+          description: varianceSummary,
+          source: 'flow',
+          assignedTo: 'client',
+          status: 'awaiting_client',
+          fsLine: config.fsLine,
+          testName: config.testDescription,
+          portalRequestId: portalRequest.id,
+        },
+      });
+      return {
+        action: 'pause',
+        outputs: { phase: 'awaiting_explanations', portal_request_id: portalRequest.id, flagged_variances: flagged, repeatOnResume: true },
+        pauseReason: 'portal_response',
+        pauseRefId: portalRequest.id,
+      };
+    }
+
+    if (phase === 'explanations_received') {
+      const portalRequestId = stepState.portal_request_id as string | undefined;
+      if (!portalRequestId) return { action: 'error', outputs: {}, errorMessage: 'No portal request id on step state' };
+
+      // Pull the chat history + any attachments. We don't attempt to
+      // align each message to a specific variance — the AI step reads the
+      // full explanation blob and attributes it per variance.
+      let explanationText = '';
+      try {
+        const pr = await prisma.portalRequest.findUnique({
+          where: { id: portalRequestId },
+          select: { chatHistory: true },
+        });
+        const messages: any[] = Array.isArray(pr?.chatHistory) ? (pr!.chatHistory as any[]) : [];
+        explanationText = messages
+          .filter(m => typeof m?.text === 'string' && m.text.trim().length > 0 && m.from !== 'team')
+          .map(m => String(m.text))
+          .join('\n\n');
+      } catch {}
+      const uploads = await prisma.portalUpload.findMany({
+        where: { portalRequestId },
+        select: { id: true, originalName: true, storagePath: true, containerName: true, mimeType: true },
+      });
+
+      // Emit one row per flagged variance with the full explanation blob
+      // attached — the AI step reads it as context.
+      const flaggedNow: any[] = Array.isArray(stepState.flagged_variances) ? stepState.flagged_variances : flagged;
+      const explanations = flaggedNow.map(v => ({
+        variance_ref: v.variance_ref,
+        comparison_label: v.comparison_label,
+        explanation_text: explanationText,
+        attachments: uploads.map(u => ({ id: u.id, name: u.originalName, storagePath: u.storagePath, containerName: u.containerName, mimeType: u.mimeType })),
+      }));
+
+      return {
+        action: 'continue',
+        outputs: {
+          portal_request_id: portalRequestId,
+          explanations,
+        },
+      };
+    }
+
+    return { action: 'error', outputs: {}, errorMessage: `Unknown phase: ${phase}` };
+  } catch (err: any) {
+    console.error('[request_gm_explanations] handler error:', err);
+    return { action: 'error', outputs: {}, errorMessage: err?.message || 'GM explanations handler failed' };
+  }
+}
+
+/**
+ * AI plausibility assessment. We call Llama 3.3 70B once with the full
+ * variance table, calculations and explanation blob, asking for a JSON
+ * verdict per variance. Each verdict becomes a SampleItemMarker so the
+ * generic override / Error-vs-InTB resolution flow works identically to
+ * the accruals pipeline.
+ */
+async function handleAssessGmExplanations(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { executionId, stepIndex, inputs } = ctx;
+  const variances: any[] = Array.isArray(inputs.variances) ? inputs.variances : [];
+  const flagged = variances.filter(v => v.flagged);
+  const explanations: any[] = Array.isArray(inputs.explanations) ? inputs.explanations : [];
+  const calculations: any[] = Array.isArray(inputs.calculations) ? inputs.calculations : [];
+
+  // Nothing flagged → green conclusion with a compact marker record so the
+  // UI still renders a summary line rather than an empty section.
+  if (flagged.length === 0) {
+    return {
+      action: 'continue',
+      outputs: {
+        markers: [],
+        data_table: [],
+        red_count: 0,
+        orange_count: 0,
+        green_count: 0,
+        findings: [],
+        additional_procedures_prompt: '',
+        pass_fail: 'pass',
+      },
+    };
+  }
+
+  interface AiVerdict {
+    variance_ref: string;
+    colour: 'red' | 'orange' | 'green';
+    reason: string;
+    plausibility_notes: string;
+    contradictions: string;
+  }
+
+  const OpenAI = (await import('openai')).default;
+  const client = new OpenAI({
+    apiKey: process.env.TOGETHER_API_KEY || '',
+    baseURL: 'https://api.together.xyz/v1',
+  });
+
+  const context = {
+    calculations,
+    variances: flagged.map(v => ({
+      variance_ref: v.variance_ref,
+      comparison_label: v.comparison_label,
+      expected_gm_pct: v.expected_gm_pct,
+      actual_gm_pct: v.actual_gm_pct,
+      variance_pct: v.variance_pct,
+      variance_amount: v.variance_amount,
+      flag_reason: v.flag_reason,
+    })),
+    explanations: explanations.map(e => ({
+      variance_ref: e.variance_ref,
+      explanation_text: e.explanation_text,
+      attachment_names: Array.isArray(e.attachments) ? e.attachments.map((a: any) => a.name) : [],
+    })),
+  };
+
+  const systemInstruction = `You are a statutory auditor evaluating management's explanations for gross-margin variances under ISA 520. For each variance you will:
+  a) assess whether the explanation is consistent with known business activities, budgets, and prior period patterns;
+  b) check whether the quantitative impacts described reconcile to the identified GM movement;
+  c) flag any contradictory evidence within the financial data already extracted.
+
+Return a JSON array with one object per variance_ref: { "variance_ref": "...", "colour": "green"|"orange"|"red", "reason": "...", "plausibility_notes": "...", "contradictions": "..." }.
+
+Colour rules:
+- "green" — explanation adequately explains and supports the variance.
+- "orange" — explanation provided but is weak or only partially supported.
+- "red" — variance not explained, or explanation is inconsistent with the evidence.
+
+Return ONLY the JSON array, no prose, no markdown fences.`;
+
+  let verdicts: AiVerdict[] = [];
+  try {
+    const response = await client.chat.completions.create({
+      model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: JSON.stringify(context) },
+      ],
+      max_tokens: 2000,
+      temperature: 0.1,
+    });
+    const text = response.choices[0]?.message?.content || '';
+    const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const match = cleaned.match(/\[[\s\S]*\]/);
+    const jsonText = match ? match[0] : cleaned;
+    const parsed = JSON.parse(jsonText);
+    if (Array.isArray(parsed)) verdicts = parsed;
+  } catch (err: any) {
+    console.warn('[assess_gm_explanations] AI call failed:', err?.message || err);
+    // Fall back to Orange — explanation was received but we couldn't
+    // complete the plausibility check server-side. Auditor resolves.
+    verdicts = flagged.map(v => ({
+      variance_ref: v.variance_ref,
+      colour: 'orange' as const,
+      reason: 'Explanation received but AI plausibility assessment could not be completed. Please review manually.',
+      plausibility_notes: '',
+      contradictions: '',
+    }));
+  }
+
+  // Merge verdict by variance_ref; any variance the AI didn't rate falls
+  // back to Orange (so nothing silently passes).
+  const byRef: Record<string, AiVerdict> = {};
+  for (const v of verdicts) if (v?.variance_ref) byRef[v.variance_ref] = v;
+
+  interface MarkerRow {
+    sample_item_ref: string;
+    variance_label: string;
+    variance_pct: number | null;
+    variance_amount: number;
+    colour: 'red' | 'orange' | 'green';
+    marker_type: string;
+    reason: string;
+    calc: Record<string, any>;
+  }
+  const markers: MarkerRow[] = flagged.map(v => {
+    const verdict: AiVerdict = byRef[v.variance_ref] || {
+      variance_ref: v.variance_ref,
+      colour: 'orange',
+      reason: 'No explanation received for this variance.',
+      plausibility_notes: '',
+      contradictions: '',
+    };
+    const markerType = verdict.colour === 'green' ? 'Variance Explained'
+      : verdict.colour === 'orange' ? 'Weak Explanation'
+      : 'Unexplained Variance';
+    return {
+      sample_item_ref: v.variance_ref,
+      variance_label: v.comparison_label,
+      variance_pct: v.variance_pct,
+      variance_amount: v.variance_amount,
+      colour: verdict.colour,
+      marker_type: markerType,
+      reason: verdict.reason || v.flag_reason || 'No explanation received.',
+      calc: {
+        comparison_label: v.comparison_label,
+        expected_gm_pct: v.expected_gm_pct,
+        actual_gm_pct: v.actual_gm_pct,
+        variance_pct: v.variance_pct,
+        variance_amount: v.variance_amount,
+        plausibility_notes: verdict.plausibility_notes,
+        contradictions: verdict.contradictions,
+      },
+    };
+  });
+
+  // Persist markers.
+  await Promise.all(markers.map(m =>
+    prisma.sampleItemMarker.upsert({
+      where: {
+        executionId_stepIndex_sampleItemRef: {
+          executionId,
+          stepIndex,
+          sampleItemRef: m.sample_item_ref,
+        },
+      },
+      update: {
+        colour: m.colour,
+        reason: m.reason,
+        markerType: m.marker_type,
+        calcJson: m.calc as any,
+        overriddenBy: null,
+        overriddenByName: null,
+        overriddenAt: null,
+        overrideReason: null,
+        originalColour: null,
+      },
+      create: {
+        executionId,
+        stepIndex,
+        sampleItemRef: m.sample_item_ref,
+        colour: m.colour,
+        reason: m.reason,
+        markerType: m.marker_type,
+        calcJson: m.calc as any,
+      },
+    }),
+  ));
+
+  const red = markers.filter(m => m.colour === 'red');
+  const orange = markers.filter(m => m.colour === 'orange');
+  const green = markers.filter(m => m.colour === 'green');
+
+  // Conclusion wording tuned to the declared analysis type.
+  const analysisType = String(inputs.analysis_type || 'combination');
+  const analysisPrefix =
+    analysisType === 'trend' ? 'Trend analysis'
+    : analysisType === 'ratio' ? 'Ratio analysis (gross margin %)'
+    : analysisType === 'reasonableness' ? 'Reasonableness test'
+    : 'Combined analytical review';
+
+  const additionalProceduresPrompt = red.length > 0 || orange.length > 0
+    ? `${analysisPrefix}: ${red.length} unexplained and ${orange.length} weakly-explained variance${orange.length === 1 ? '' : 's'} identified — analytical procedures alone do not provide sufficient appropriate audit evidence. Consider additional substantive test-of-details (see the test-of-details workflows for revenue / cost of sales).`
+    : `${analysisPrefix}: all flagged variances adequately explained.`;
+
+  return {
+    action: 'continue',
+    outputs: {
+      markers,
+      data_table: markers,
+      red_count: red.length,
+      orange_count: orange.length,
+      green_count: green.length,
+      findings: red.map(m => ({
+        sample_item_ref: m.sample_item_ref,
+        period: m.variance_label,
+        gm_pct_movement: m.variance_pct,
+        amount_impact: m.variance_amount,
+        summary: m.reason,
+      })),
+      additional_procedures_prompt: additionalProceduresPrompt,
       pass_fail: red.length === 0 ? (orange.length === 0 ? 'pass' : 'review') : 'fail',
     },
   };

@@ -473,6 +473,120 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     ],
   },
 
+  // ─── Analytical Review — Gross Margin % Actions ────────────────────────────
+
+  {
+    code: 'request_gm_data',
+    name: 'Request GM Analytical Data',
+    description: 'Requests the data needed for a gross-margin analytical review: revenue and cost of sales breakdowns for the current year and the selected comparison periods (prior year actual, multiple prior periods, budget/forecast), plus any explanations management has already prepared for material movements. Parses the returned listing, calculates GM % per period, and (where feasible) reconciles CY revenue + CY COS to the TB totals. Pauses with a follow-up outstanding item if the returned data is internally inconsistent.',
+    category: 'evidence',
+    handlerName: 'requestGmData',
+    icon: 'FileSearch',
+    color: '#14b8a6',
+    isSystem: true,
+    inputSchema: [
+      { code: 'message_to_client', label: 'Message to Client', type: 'textarea', required: true, source: 'user', group: 'Request Details', defaultValue: 'For the gross-margin analytical review please provide: (1) revenue and cost of sales breakdowns by category for the current year and prior period(s); (2) the budget/forecast figures used by management for the current year; (3) any analysis or explanations already prepared for significant movements in gross margin. An Excel or CSV with one row per P&L category is ideal.' },
+      { code: 'comparison_periods', label: 'Comparison Periods', type: 'multiselect', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.comparison_periods', group: 'Scope', options: [
+        { value: 'prior_year', label: 'Prior year actual' },
+        { value: 'multiple_py', label: 'Multiple prior periods (trend)' },
+        { value: 'budget', label: 'Budget / forecast' },
+        { value: 'industry_benchmark', label: 'Industry benchmark' },
+      ]},
+      { code: 'tolerance_pct', label: 'Tolerance (% point)', type: 'number', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.tolerance_pct', group: 'Thresholds', description: 'Investigate any GM% movement greater than this number of percentage points.' },
+      { code: 'tolerance_pm_multiple', label: 'Tolerance (× PM)', type: 'number', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.tolerance_pm_multiple', group: 'Thresholds', description: 'Investigate variance whose £ impact exceeds this multiple of performance materiality.' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+    ],
+    outputSchema: [
+      { code: 'data_table', label: 'P&L Summary', type: 'data_table', description: 'Row per period: period_label, revenue, cost_of_sales, gross_profit, gm_pct, source (client | tb | benchmark).' },
+      { code: 'management_commentary', label: 'Management Commentary', type: 'text', description: 'Any explanation text the client supplied alongside the figures.' },
+      { code: 'tb_reconciled', label: 'CY Revenue / COS agrees to TB', type: 'pass_fail' },
+      { code: 'portal_request_id', label: 'Portal Request ID', type: 'text' },
+    ],
+  },
+
+  {
+    code: 'compute_gm_analysis',
+    name: 'Compute Gross Margin Analysis',
+    description: 'Server-side computation of the gross-margin analytical review: GM% per period; absolute and percentage movements; variance vs budget; variance vs the expectation derived from the selected model (consistency_py / consistency_avg / budget / reasonableness); and auto-flagging of variances that breach either the percentage-point tolerance or the PM-linked tolerance. Flagged variances are emitted with an initial Amber status for the user to investigate.',
+    category: 'analysis',
+    handlerName: 'computeGmAnalysis',
+    icon: 'Sparkles',
+    color: '#14b8a6',
+    isSystem: true,
+    inputSchema: [
+      { code: 'data_table', label: 'P&L Summary', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data' },
+      { code: 'expectation_model', label: 'Expectation Model', type: 'select', required: true, source: 'auto', autoMapFrom: '$ctx.execution.config.expectation_model', group: 'Expectation', options: [
+        { value: 'consistency_py', label: 'Consistency with prior year %' },
+        { value: 'consistency_avg', label: 'Consistency with average of prior periods' },
+        { value: 'budget', label: 'Comparison to budgeted margin %' },
+        { value: 'reasonableness', label: 'Reasonableness — PY margin applied to CY revenue + cost movements' },
+      ]},
+      { code: 'tolerance_pct', label: 'Tolerance (% point)', type: 'number', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.tolerance_pct', group: 'Thresholds', defaultValue: 2 },
+      { code: 'tolerance_pm_multiple', label: 'Tolerance (× PM)', type: 'number', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.tolerance_pm_multiple', group: 'Thresholds', defaultValue: 1 },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+    ],
+    outputSchema: [
+      { code: 'calculations', label: 'GM Calculations', type: 'data_table', description: 'Row per period with revenue, COS, GM, GM%.' },
+      { code: 'variances', label: 'Variance Table', type: 'data_table', description: 'Row per comparison: comparison_label, expected_gm_pct, actual_gm_pct, variance_pct, variance_amount, flagged, flag_reason.' },
+      { code: 'data_table', label: 'Variance Table (alias)', type: 'data_table' },
+      { code: 'expected_gm_pct', label: 'Expected GM %', type: 'number' },
+      { code: 'actual_gm_pct', label: 'Actual GM %', type: 'number' },
+      { code: 'flagged_count', label: 'Flagged Count', type: 'number' },
+      { code: 'performance_materiality', label: 'Performance Materiality Used', type: 'number' },
+    ],
+  },
+
+  {
+    code: 'request_gm_explanations',
+    name: 'Request Management Explanations',
+    description: 'For each flagged GM variance, asks the client via the portal for a business explanation (pricing, mix, volume, input costs, FX, one-off items) and any supporting evidence (management reports, pricing analyses, cost breakdowns). Responses are tracked on the Outstanding tab. When the auditor commits the reply, the explanation text and attachments are forwarded to the next step for AI plausibility assessment.',
+    category: 'evidence',
+    handlerName: 'requestGmExplanations',
+    icon: 'FileSearch',
+    color: '#14b8a6',
+    isSystem: true,
+    inputSchema: [
+      { code: 'variances', label: 'Flagged Variances', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.variances', group: 'Context' },
+      { code: 'message_to_client', label: 'Message to Client', type: 'textarea', required: false, source: 'user', group: 'Request Details', defaultValue: 'Our gross-margin analytical review has flagged the following variances for investigation. For each, please provide a business explanation (pricing, mix, volume, input cost changes, FX, one-off items) and any supporting evidence (management reports, pricing analyses, cost breakdowns).' },
+    ],
+    outputSchema: [
+      { code: 'portal_request_id', label: 'Portal Request ID', type: 'text' },
+      { code: 'explanations', label: 'Received Explanations', type: 'data_table', description: 'Row per flagged variance: variance_ref, explanation_text, attachments.' },
+    ],
+  },
+
+  {
+    code: 'assess_gm_explanations',
+    name: 'AI Plausibility Assessment (GM Variances)',
+    description: 'AI-driven plausibility check for each flagged GM variance. Checks whether the explanation is consistent with known business activities, budgets, and prior patterns; whether the quantitative impacts described reconcile to the identified GM movement; and whether any contradictory evidence exists in the financial data already extracted. Produces a Red / Orange / Green marker per flagged variance (persisted to sample_item_markers so the generic override + Error/In-TB resolution flow works identically to the accruals pipeline).',
+    category: 'verification',
+    handlerName: 'assessGmExplanations',
+    icon: 'CheckCircle',
+    color: '#14b8a6',
+    isSystem: true,
+    inputSchema: [
+      { code: 'variances', label: 'Flagged Variances', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$step.1.variances', group: 'Data' },
+      { code: 'explanations', label: 'Management Explanations', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.explanations', group: 'Data' },
+      { code: 'calculations', label: 'GM Calculations', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$step.1.calculations', group: 'Context' },
+      { code: 'analysis_type', label: 'Analysis Type', type: 'select', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.analysis_type', group: 'Context', description: 'Drives the wording of the final conclusion.', options: [
+        { value: 'trend', label: 'Trend analysis' },
+        { value: 'ratio', label: 'Ratio analysis (gross margin %)' },
+        { value: 'reasonableness', label: 'Reasonableness test' },
+        { value: 'combination', label: 'Combination' },
+      ]},
+    ],
+    outputSchema: [
+      { code: 'markers', label: 'R/O/G Markers', type: 'data_table' },
+      { code: 'data_table', label: 'Markers (alias)', type: 'data_table' },
+      { code: 'red_count', label: 'Red Count', type: 'number' },
+      { code: 'orange_count', label: 'Orange Count', type: 'number' },
+      { code: 'green_count', label: 'Green Count', type: 'number' },
+      { code: 'findings', label: 'Findings (Red)', type: 'data_table' },
+      { code: 'additional_procedures_prompt', label: 'Additional Procedures Prompt', type: 'text', description: 'Banner text warning that substantive test-of-details may be required.' },
+      { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
+    ],
+  },
+
   // ─── Reporting Actions ─────────────────────────────────────────────────────
 
   {

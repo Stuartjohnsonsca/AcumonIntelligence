@@ -5,6 +5,7 @@ import { CheckCircle2, XCircle, Clock, FileText, ChevronDown, ChevronUp, AlertTr
 import { BankCheckResultPanel } from './BankCheckResultPanel';
 import { AccrualsOutput } from './accruals/AccrualsOutput';
 import { UnrecordedLiabilitiesOutput } from './unrecorded-liabilities/UnrecordedLiabilitiesOutput';
+import { GrossMarginOutput } from './gross-margin/GrossMarginOutput';
 
 /**
  * TestResultsPanel — displays test results in the selected output format.
@@ -291,7 +292,17 @@ export function TestResultsPanel({
                 pauseReason={executionRecord?.pauseReason}
               />
             )}
-            {!effectiveOutput && outputFormat !== 'four_section_accruals' && outputFormat !== 'four_section_unrecorded_liabilities' && (
+            {outputFormat === 'four_section_gross_margin' && (
+              <GrossMarginOutput
+                engagementId={engagementId}
+                executionId={effectiveExecutionId}
+                executionStatus={executionStatus}
+                pipelineState={executionRecord?.pipelineState}
+                currentStepIndex={executionRecord?.currentStepIndex}
+                pauseReason={executionRecord?.pauseReason}
+              />
+            )}
+            {!effectiveOutput && outputFormat !== 'four_section_accruals' && outputFormat !== 'four_section_unrecorded_liabilities' && outputFormat !== 'four_section_gross_margin' && (
               <div className="text-xs text-slate-400 text-center py-4">
                 {effectiveExecutionId ? (
                   <span className="animate-pulse">Loading execution data...</span>

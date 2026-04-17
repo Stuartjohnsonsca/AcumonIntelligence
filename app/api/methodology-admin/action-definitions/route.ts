@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { SYSTEM_ACTIONS } from '@/lib/action-seed';
 import { seedAccrualsTest } from '@/lib/accruals-test-seed';
 import { seedUnrecordedLiabilitiesTest } from '@/lib/unrecorded-liabilities-test-seed';
+import { seedGrossMarginTest } from '@/lib/gross-margin-test-seed';
 
 /**
  * Idempotent upsert of SYSTEM_ACTIONS into action_definitions. Runs on
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
     // block the action-definition upsert the admin is actually asking for.
     let accrualsTestResult: { testId: string; created: boolean } | { error: string } | null = null;
     let unrecordedLiabilitiesTestResult: { testId: string; created: boolean } | { error: string } | null = null;
+    let grossMarginTestResult: { testId: string; created: boolean } | { error: string } | null = null;
     for (const def of SYSTEM_ACTIONS) {
       const existing = await prisma.actionDefinition.findFirst({
         where: { firmId: null, code: def.code, version: 1 },
@@ -171,12 +173,19 @@ export async function POST(req: NextRequest) {
       console.error('[seed] seedUnrecordedLiabilitiesTest failed:', err);
       unrecordedLiabilitiesTestResult = { error: err?.message || 'Unrecorded liabilities test seed failed' };
     }
+    try {
+      grossMarginTestResult = await seedGrossMarginTest(session.user.firmId);
+    } catch (err: any) {
+      console.error('[seed] seedGrossMarginTest failed:', err);
+      grossMarginTestResult = { error: err?.message || 'Gross margin test seed failed' };
+    }
     return NextResponse.json({
       ok: true,
       created,
       updated,
       accrualsTest: accrualsTestResult,
       unrecordedLiabilitiesTest: unrecordedLiabilitiesTestResult,
+      grossMarginTest: grossMarginTestResult,
     });
   }
 
