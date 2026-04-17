@@ -142,7 +142,6 @@ export function CompletionPanel({
             </button>
           );
         })}
-        {onClose && <button onClick={onClose} className="ml-auto text-xs text-slate-400 hover:text-slate-600 px-2">Close</button>}
       </div>
 
       {/* Tab content */}
