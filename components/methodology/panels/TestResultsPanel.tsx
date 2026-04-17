@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle2, XCircle, Clock, FileText, ChevronDown, ChevronUp, AlertTriangle, AlertOctagon, Download, Upload } from 'lucide-react';
 import { BankCheckResultPanel } from './BankCheckResultPanel';
 import { AccrualsOutput } from './accruals/AccrualsOutput';
+import { UnrecordedLiabilitiesOutput } from './unrecorded-liabilities/UnrecordedLiabilitiesOutput';
 
 /**
  * TestResultsPanel — displays test results in the selected output format.
@@ -280,7 +281,17 @@ export function TestResultsPanel({
                 pauseReason={executionRecord?.pauseReason}
               />
             )}
-            {!effectiveOutput && outputFormat !== 'four_section_accruals' && (
+            {outputFormat === 'four_section_unrecorded_liabilities' && (
+              <UnrecordedLiabilitiesOutput
+                engagementId={engagementId}
+                executionId={effectiveExecutionId}
+                executionStatus={executionStatus}
+                pipelineState={executionRecord?.pipelineState}
+                currentStepIndex={executionRecord?.currentStepIndex}
+                pauseReason={executionRecord?.pauseReason}
+              />
+            )}
+            {!effectiveOutput && outputFormat !== 'four_section_accruals' && outputFormat !== 'four_section_unrecorded_liabilities' && (
               <div className="text-xs text-slate-400 text-center py-4">
                 {effectiveExecutionId ? (
                   <span className="animate-pulse">Loading execution data...</span>

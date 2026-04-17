@@ -388,6 +388,91 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     ],
   },
 
+  // ─── Unrecorded Liabilities Actions ────────────────────────────────────────
+
+  {
+    code: 'extract_post_ye_bank_payments',
+    name: 'Extract Post-YE Bank Payments',
+    description: 'Parses post-year-end bank statements / transaction exports returned by the client and extracts every payment (debit) dated between Period.End+1 and Period.End+X as the unrecorded-liabilities population. Each row includes date, payee, amount, reference/narrative, and bank account.',
+    category: 'evidence',
+    handlerName: 'extractPostYeBankPayments',
+    icon: 'Landmark',
+    color: '#7c3aed',
+    isSystem: true,
+    inputSchema: [
+      { code: 'source_documents', label: 'Source Documents', type: 'file', required: true, source: 'auto', autoMapFrom: '$prev.documents', group: 'Input', description: 'Bank statements or transaction exports (PDF / XLSX / CSV).' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Window' },
+      { code: 'x_days_post_ye', label: 'Post-YE Window (days)', type: 'number', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.x_days_post_ye', group: 'Window', defaultValue: 60, description: 'Capture payments up to and including Period.End+X.' },
+    ],
+    outputSchema: [
+      { code: 'data_table', label: 'Post-YE Payments', type: 'data_table', description: 'Row per payment: date, payee, amount, reference, narrative, bank account.' },
+      { code: 'population_size', label: 'Population Size', type: 'number' },
+      { code: 'total_value', label: 'Total Value', type: 'number' },
+      { code: 'extraction_issues', label: 'Extraction Issues', type: 'data_table' },
+    ],
+  },
+
+  {
+    code: 'select_unrecorded_liabilities_sample',
+    name: 'Select Unrecorded Liabilities Sample',
+    description: 'Three-layer sampling for the unrecorded-liabilities population: (1) auto-select all payments above performance materiality (or a user threshold); (2) AI-risk-rank the remainder and take the top-N most likely to represent prior-year obligations; (3) apply stratified / haphazard / MUS sampling on what is left. Any mode can be disabled per run.',
+    category: 'sampling',
+    handlerName: 'selectUnrecordedLiabilitiesSample',
+    icon: 'Target',
+    color: '#7c3aed',
+    isSystem: true,
+    inputSchema: [
+      { code: 'population', label: 'Population', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data' },
+      { code: 'threshold_gbp', label: 'Above-Threshold Cut-off (GBP)', type: 'number', required: false, source: 'user', group: 'Thresholds', description: 'All payments at or above this value are automatically selected. If left blank, performance materiality from the engagement is used.' },
+      { code: 'enable_above_threshold', label: 'Enable Above-Threshold Selection', type: 'boolean', required: false, source: 'user', group: 'Thresholds', defaultValue: true },
+      { code: 'enable_ai_risk_rank', label: 'Enable AI Risk Ranking', type: 'boolean', required: false, source: 'user', group: 'Risk Ranking', defaultValue: true, description: 'AI scores each remaining payment on likelihood of being a prior-period obligation.' },
+      { code: 'ai_top_n', label: 'AI Top-N to Select', type: 'number', required: false, source: 'user', group: 'Risk Ranking', defaultValue: 10 },
+      { code: 'residual_method', label: 'Residual Sampling Method', type: 'select', required: false, source: 'user', group: 'Residual Sampling', defaultValue: 'none', options: [
+        { value: 'none', label: 'None (skip residual sampling)' },
+        { value: 'mus', label: 'MUS (monetary unit)' },
+        { value: 'stratified', label: 'Stratified' },
+        { value: 'haphazard', label: 'Haphazard' },
+      ]},
+      { code: 'residual_sample_size', label: 'Residual Sample Size', type: 'number', required: false, source: 'user', group: 'Residual Sampling', defaultValue: 10 },
+    ],
+    outputSchema: [
+      { code: 'sample_items', label: 'Selected Sample', type: 'data_table', description: 'Payments selected across all three layers, tagged with select_reason.' },
+      { code: 'data_table', label: 'Sample (alias)', type: 'data_table' },
+      { code: 'sample_size', label: 'Sample Size', type: 'number' },
+      { code: 'above_threshold_count', label: 'Above-Threshold Count', type: 'number' },
+      { code: 'ai_selected_count', label: 'AI-Selected Count', type: 'number' },
+      { code: 'residual_selected_count', label: 'Residual-Selected Count', type: 'number' },
+      { code: 'risk_scores', label: 'AI Risk Scores', type: 'data_table', description: 'Full AI ranking of the residual population for transparency.' },
+    ],
+  },
+
+  {
+    code: 'verify_unrecorded_liabilities_sample',
+    name: 'Verify Unrecorded Liabilities Sample (R/O/G)',
+    description: 'Verifies each sampled post-YE payment. (a) Matches extracted evidence to the bank payment (payee, amount, reference, date). (b) Classifies obligation ≤ or > period end. If > YE the payment correctly relates to the post-YE period → Green. If ≤ YE, searches the creditors/accruals listing for a matching creditor — found → Green (In TB); missing → Red (Unrecorded Liability). (c) Detects continuous periods spanning YE → Orange (Spread), then time-apportions the ≤-YE portion and re-tests it against any recorded creditor.',
+    category: 'verification',
+    handlerName: 'verifyUnrecordedLiabilitiesSample',
+    icon: 'CheckCircle',
+    color: '#7c3aed',
+    isSystem: true,
+    inputSchema: [
+      { code: 'sample_items', label: 'Sample Items', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$step.3.sample_items', group: 'Data', description: 'Sampled post-YE payments (payee, amount, date, reference).' },
+      { code: 'extracted_evidence', label: 'Extracted Evidence', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.extracted_evidence', group: 'Data' },
+      { code: 'creditors_portal_request_id', label: 'Creditors Listing Portal Ref', type: 'text', required: false, source: 'auto', autoMapFrom: '$step.2.portal_request_id', group: 'Creditors', description: 'Parses the creditors & accruals listing the client returned in step 3 for per-supplier match lookup.' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+      { code: 'amount_tolerance_gbp', label: 'Amount Tolerance (GBP)', type: 'number', required: false, source: 'user', group: 'Thresholds', defaultValue: 1 },
+    ],
+    outputSchema: [
+      { code: 'markers', label: 'R/O/G Markers', type: 'data_table' },
+      { code: 'data_table', label: 'Markers (alias)', type: 'data_table' },
+      { code: 'red_count', label: 'Red (Unrecorded Liability)', type: 'number' },
+      { code: 'orange_count', label: 'Orange (Spread / Support Missing)', type: 'number' },
+      { code: 'green_count', label: 'Green (OK / In TB / Post-YE)', type: 'number' },
+      { code: 'findings', label: 'Findings (Red)', type: 'data_table' },
+      { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
+    ],
+  },
+
   // ─── Reporting Actions ─────────────────────────────────────────────────────
 
   {

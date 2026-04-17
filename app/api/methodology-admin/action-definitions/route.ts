@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { SYSTEM_ACTIONS } from '@/lib/action-seed';
 import { seedAccrualsTest } from '@/lib/accruals-test-seed';
+import { seedUnrecordedLiabilitiesTest } from '@/lib/unrecorded-liabilities-test-seed';
 
 /**
  * Idempotent upsert of SYSTEM_ACTIONS into action_definitions. Runs on
@@ -116,6 +117,7 @@ export async function POST(req: NextRequest) {
     // definitions are in place. Runs in a try so a seed error doesn't
     // block the action-definition upsert the admin is actually asking for.
     let accrualsTestResult: { testId: string; created: boolean } | { error: string } | null = null;
+    let unrecordedLiabilitiesTestResult: { testId: string; created: boolean } | { error: string } | null = null;
     for (const def of SYSTEM_ACTIONS) {
       const existing = await prisma.actionDefinition.findFirst({
         where: { firmId: null, code: def.code, version: 1 },
@@ -163,7 +165,19 @@ export async function POST(req: NextRequest) {
       console.error('[seed] seedAccrualsTest failed:', err);
       accrualsTestResult = { error: err?.message || 'Accruals test seed failed' };
     }
-    return NextResponse.json({ ok: true, created, updated, accrualsTest: accrualsTestResult });
+    try {
+      unrecordedLiabilitiesTestResult = await seedUnrecordedLiabilitiesTest(session.user.firmId);
+    } catch (err: any) {
+      console.error('[seed] seedUnrecordedLiabilitiesTest failed:', err);
+      unrecordedLiabilitiesTestResult = { error: err?.message || 'Unrecorded liabilities test seed failed' };
+    }
+    return NextResponse.json({
+      ok: true,
+      created,
+      updated,
+      accrualsTest: accrualsTestResult,
+      unrecordedLiabilitiesTest: unrecordedLiabilitiesTestResult,
+    });
   }
 
   // Normal create: firm-specific action
