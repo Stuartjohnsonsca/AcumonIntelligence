@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch, Calculator } from 'lucide-react';
+import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { TestExecutionPanel } from './TestExecutionPanel';
 import { TestResultsPanel } from './TestResultsPanel';
 import { ExecutionFlowViewer } from './ExecutionFlowViewer';
@@ -330,6 +331,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [fsLinesList, setFsLinesList] = useState<FsLineEntry[]>([]);
   const [testTypes, setTestTypes] = useState<TestType[]>([]);
   const [loading, setLoading] = useState(true);
+  // Deep-scroll to audit-plan-<accountCode> or audit-plan-<fsLine> when
+  // navigated to from the Completion panel's AI Populate reference chips.
+  useScrollToAnchor([loading, tbRows.length], { enabled: !loading });
   const [activeStatement, setActiveStatement] = useState('');
   const [activeLevel, setActiveLevel] = useState('');
   const [activeNote, setActiveNote] = useState('');
@@ -1201,7 +1205,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         </td>
                       </tr>
                     )}
-                    <tr className={`border-b border-slate-100 hover:bg-slate-50 ${tests.length > 0 ? 'cursor-pointer' : ''} ${isSig ? 'bg-red-50/20' : isAoF ? 'bg-orange-50/20' : ''} ${isMerged ? 'bg-blue-50/20' : ''}`}
+                    <tr
+                      data-scroll-anchor={row.accountCode ? `audit-plan-${row.accountCode}` : undefined}
+                      className={`border-b border-slate-100 hover:bg-slate-50 ${tests.length > 0 ? 'cursor-pointer' : ''} ${isSig ? 'bg-red-50/20' : isAoF ? 'bg-orange-50/20' : ''} ${isMerged ? 'bg-blue-50/20' : ''}`}
                       onClick={() => tests.length > 0 && toggleRmmExpand(rowKey)}>
                       <td className="text-center px-0.5" onClick={e => { e.stopPropagation(); toggleMergeSelect(row.id); }}>
                         {!isMerged && (

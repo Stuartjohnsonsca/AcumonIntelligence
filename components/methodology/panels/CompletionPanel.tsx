@@ -474,12 +474,41 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     if (templateType === 'completion_checklist_questions') return 'procedure';
     return 'references';
   }
+  /** Returns true if the cell contains user-entered content that the AI
+   *  Populate flow must not silently overwrite. AI-populated cells carry
+   *  an entry in answerSources (cleared the moment the user manually
+   *  edits, by updateAnswer) so we use that as the signal: content +
+   *  no source ⇒ user-typed, protect. */
+  function isUserEnteredCell(cellKey: string): boolean {
+    const value = answers[cellKey];
+    if (typeof value !== 'string') return false;
+    if (value.trim().length === 0) return false;
+    return !answerSources[cellKey];
+  }
   /** Populate a single row+column via the AI Populate endpoint and commit
    *  the answer + source back into state. The first-column question text
-   *  is the AI's primary prompt; the section label gives scope. */
-  async function populateCell(questionId: string, columnKey: string, questionText: string, sectionLabel?: string, columnHeader?: string): Promise<boolean> {
+   *  is the AI's primary prompt; the section label gives scope.
+   *
+   *  `force` bypasses the user-content protection — we pass true when
+   *  the user has just confirmed an overwrite via the per-row button.
+   */
+  async function populateCell(
+    questionId: string,
+    columnKey: string,
+    questionText: string,
+    sectionLabel?: string,
+    columnHeader?: string,
+    force = false,
+  ): Promise<boolean> {
     const cellKey = `${questionId}_${columnKey}`;
     if (!questionText.trim()) return false;
+    // Protect manually-entered content — the user has to confirm before
+    // the AI is allowed to replace their text. AI-populated cells (which
+    // carry an answerSources entry) overwrite freely.
+    if (!force && isUserEnteredCell(cellKey)) {
+      const ok = typeof window !== 'undefined' && window.confirm('This cell already has text. Replace it with AI output?');
+      if (!ok) return false;
+    }
     setPopulatingCells(prev => { const n = new Set(prev); n.add(cellKey); return n; });
     try {
       const res = await fetch(`/api/engagements/${engagementId}/ai-populate-cell`, {
@@ -550,11 +579,13 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
           const colKey = 'col1';
           const colHeader = sec.headers[1] || sec.headers[0] || undefined;
           if (!q.questionText?.trim()) continue; // Can't ask the AI about a blank row.
-          // Skip rows that already have a meaningful answer — the user
-          // can always clear and re-run per row.
+          // Bulk never overwrites anything that is already filled in —
+          // whether that's user-typed text OR a previous AI answer. The
+          // user can clear a cell and re-run per row if they want a
+          // fresh AI suggestion.
           const existing = answers[`${q.id}_${colKey}`];
           if (typeof existing === 'string' && existing.trim().length > 0) continue;
-          await populateCell(q.id, colKey, q.questionText, sec.sectionLabel, colHeader);
+          await populateCell(q.id, colKey, q.questionText, sec.sectionLabel, colHeader, true);
         }
       }
     } finally {

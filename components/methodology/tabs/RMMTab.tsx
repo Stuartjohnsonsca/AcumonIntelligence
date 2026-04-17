@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { ASSERTION_TYPES, INHERENT_RISK_COMPONENTS } from '@/types/methodology';
 import { lookupInherentRisk, lookupOverallRisk, riskColor, inherentRiskDropdownColor } from '@/lib/risk-table-lookup';
+import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 
 interface Props {
   engagementId: string;
@@ -74,6 +75,11 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   const { data: session } = useSession();
   const [rows, setRows] = useState<RMMRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Scroll to the row referenced by any incoming ?scroll=rmm-<rowId>
+  // URL param (written by the AI Populate deep-link chips on the
+  // Completion panel). Re-runs when loading flips so it catches the
+  // anchor once rows have actually rendered.
+  useScrollToAnchor([loading, rows.length], { enabled: !loading });
   const [initialRows, setInitialRows] = useState<RMMRow[]>([]);
   const [viewMode, setViewMode] = useState<'fs_line' | 'tb_account'>('fs_line');
   const [showCategory, setShowCategory] = useState(false);
@@ -507,7 +513,10 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
 
               return (
                 <Fragment key={rowKey}>
-                  <tr className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.isMandatory ? 'bg-amber-50/20' : ''} ${outline}`}>
+                  <tr
+                    data-scroll-anchor={row.id ? `rmm-${row.id}` : undefined}
+                    className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.isMandatory ? 'bg-amber-50/20' : ''} ${outline}`}
+                  >
                     {/* Duplicate button */}
                     <td className="px-1 py-1 align-top text-center">
                       <button onClick={() => duplicateRow(i)} className="text-slate-300 hover:text-blue-500 text-[10px]" title="Duplicate row">⧉</button>

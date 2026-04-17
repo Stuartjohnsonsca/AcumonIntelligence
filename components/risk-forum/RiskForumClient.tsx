@@ -310,6 +310,13 @@ export default function RiskForumClient({ user }: Props) {
   const [debriefLoading, setDebriefLoading] = useState(false);
   const [editingPersonaId, setEditingPersonaId] = useState<string | null>(null);
 
+  // Running AI usage & cost across all calls in this session (simulate + debrief + orchestrate)
+  const [totalTokens, setTotalTokens] = useState(0);
+  const [apiCalls, setApiCalls] = useState(0);
+  // Llama 3.3 70B Turbo on Together AI is $0.88 per million tokens (input+output blended).
+  const COST_USD_PER_MILLION_TOKENS = 0.88;
+  const USD_TO_GBP = 0.79;
+
   // Real-time cap on run duration (minutes of wall-clock time).
   const [maxRuntimeMinutes, setMaxRuntimeMinutes] = useState(10);
   // Simulated minutes since T+0, driven by 100x clock compression.
@@ -403,6 +410,14 @@ export default function RiskForumClient({ user }: Props) {
     setOrchestratorEvents(prev => [...prev, e]);
   }, []);
 
+  // Record AI token usage reported by any API endpoint so we can show running cost.
+  const recordUsage = useCallback((usage: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number } | null | undefined) => {
+    if (!usage) { setApiCalls(c => c + 1); return; }
+    const t = usage.total_tokens ?? ((usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0));
+    setTotalTokens(prev => prev + t);
+    setApiCalls(c => c + 1);
+  }, []);
+
   const getTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   const activeScenario: Scenario | null = selectedScenarioId
@@ -463,6 +478,7 @@ export default function RiskForumClient({ user }: Props) {
         return `[${persona.name} is unavailable — API error ${res.status}]`;
       }
       const data = await res.json();
+      recordUsage(data.usage);
       const text = data.text?.trim();
       if (!text || text === '...' || text === '[No response]') {
         return `[${persona.name} didn't respond]`;
@@ -515,6 +531,7 @@ export default function RiskForumClient({ user }: Props) {
 
     if (res.ok) {
       const data = await res.json();
+      recordUsage(data.usage);
       setDebrief(data.debrief);
     }
     setDebriefLoading(false);
@@ -574,6 +591,7 @@ export default function RiskForumClient({ user }: Props) {
       clearTimeout(timeout);
       if (!res.ok) return { actions: [] };
       const data = await res.json();
+      recordUsage(data.usage);
       return data as { actions: Array<Record<string, string | string[] | undefined>> };
     } catch {
       return { actions: [] };
@@ -757,6 +775,8 @@ export default function RiskForumClient({ user }: Props) {
     setDebrief(null);
     setOrchestratorEvents([]);
     setUnreadThreads({});
+    setTotalTokens(0);
+    setApiCalls(0);
     setView('sim');
 
     // Initialise the main war room thread with all starting personas
@@ -1074,7 +1094,7 @@ export default function RiskForumClient({ user }: Props) {
         </span>
         <span className="text-xs" style={{ color: '#333' }}>{activeScenario?.icon} {activeScenario?.title}</span>
 
-        {/* Simulated clock (100x compression) */}
+        {/* Simulated clock (100x compression) + AI cost */}
         <div className="ml-4 flex items-center gap-3 px-3 py-1 rounded" style={{ background: '#0A0A0A', border: '1px solid #1E1E1E' }}>
           <div className="flex flex-col">
             <span className="text-[9px] font-mono tracking-widest" style={{ color: '#444' }}>SIM CLOCK</span>
@@ -1085,6 +1105,20 @@ export default function RiskForumClient({ user }: Props) {
             <span className="text-[9px] font-mono tracking-widest" style={{ color: '#444' }}>REAL LEFT</span>
             <span className="text-xs font-mono font-bold" style={{ color: realSecondsElapsed / 60 > maxRuntimeMinutes * 0.8 ? '#C84040' : '#6EC860' }}>
               {formatCountdown(realSecondsElapsed)}
+            </span>
+          </div>
+          <div className="h-6 w-px" style={{ background: '#1E1E1E' }} />
+          <div className="flex flex-col" title={`${totalTokens.toLocaleString()} tokens across ${apiCalls} AI calls · Llama 3.3 70B Turbo @ $${COST_USD_PER_MILLION_TOKENS}/M`}>
+            <span className="text-[9px] font-mono tracking-widest" style={{ color: '#444' }}>AI COST</span>
+            <span className="text-xs font-mono font-bold" style={{ color: '#6EC8E8' }}>
+              ${((totalTokens / 1_000_000) * COST_USD_PER_MILLION_TOKENS).toFixed(4)} · £{((totalTokens / 1_000_000) * COST_USD_PER_MILLION_TOKENS * USD_TO_GBP).toFixed(4)}
+            </span>
+          </div>
+          <div className="h-6 w-px" style={{ background: '#1E1E1E' }} />
+          <div className="flex flex-col" title="Total AI token usage">
+            <span className="text-[9px] font-mono tracking-widest" style={{ color: '#444' }}>TOKENS</span>
+            <span className="text-xs font-mono font-bold" style={{ color: '#8888A0' }}>
+              {totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : totalTokens} · {apiCalls}×
             </span>
           </div>
         </div>

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { expandZipFile } from '@/lib/client-unzip';
+import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 
 interface Props {
   engagementId: string;
@@ -36,6 +37,9 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
   const [linking, setLinking] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Scroll to prior-period-<docKey> on deep-link entry from the
+  // Completion panel's AI Populate chips.
+  useScrollToAnchor([loading], { enabled: !loading });
 
   // Opening Balances
   const [obRows, setObRows] = useState<OBRow[]>([]);

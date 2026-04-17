@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, Fragment, lazy, Suspense } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 
 const FixedAssetRegisterPopup = lazy(() => import('../FixedAssetRegisterPopup').then(m => ({ default: m.FixedAssetRegisterPopup })));
 
@@ -55,6 +56,9 @@ interface FsItem {
 export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCategory: initialShowCategory = true, onShowCategoryChange, periodEndDate, periodStartDate, userRole }: Props) {
   const [rows, setRows] = useState<TBRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Scroll to tbcyvpy-<accountCode> when arriving from the Completion
+  // panel's AI Populate reference chips.
+  useScrollToAnchor([loading, rows.length], { enabled: !loading });
   const [initialRows, setInitialRows] = useState<TBRow[]>([]);
   const [importing, setImporting] = useState(false);
   const [showCategory, setShowCategoryLocal] = useState(initialShowCategory);
@@ -979,7 +983,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             {filteredRows.map((row) => {
               const i = rows.indexOf(row);
               return (
-              <tr key={row.id || `new-${i}`} className="border-b border-slate-100 hover:bg-slate-50/50">
+              <tr
+                key={row.id || `new-${i}`}
+                data-scroll-anchor={row.accountCode ? `tbcyvpy-${row.accountCode}` : undefined}
+                className="border-b border-slate-100 hover:bg-slate-50/50"
+              >
                 <td className="px-2 py-0.5">
                   <input type="text" value={row.accountCode} onChange={e => updateRow(i, 'accountCode', e.target.value)} onPaste={e => handlePaste(e, i, 0)} className={txtCls} placeholder="Code" />
                 </td>

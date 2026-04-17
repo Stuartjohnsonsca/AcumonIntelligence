@@ -149,6 +149,7 @@ Read the transcript carefully. What structural action (if any) should happen NOW
 
     const data = await response.json();
     const raw = data.choices?.[0]?.message?.content || '{}';
+    const usage = data.usage ?? null;
 
     let parsed: { actions: OrchestratorAction[] };
     try {
@@ -158,7 +159,7 @@ Read the transcript carefully. What structural action (if any) should happen NOW
       parsed = { actions: [{ type: 'none', reason: 'unparseable orchestrator response' }] };
     }
 
-    return NextResponse.json(parsed);
+    return NextResponse.json({ ...parsed, usage });
   } catch (error) {
     console.error('Risk Forum orchestrate error:', error);
     return NextResponse.json({ actions: [{ type: 'none', reason: 'orchestrator error' }] });

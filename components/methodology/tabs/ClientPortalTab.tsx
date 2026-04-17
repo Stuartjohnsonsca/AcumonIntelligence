@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Loader2, CheckCircle2, Clock, Eye, Users, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
+import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 
 interface ChatMessage {
   from: 'firm' | 'client';
@@ -50,6 +51,10 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
   const [outstanding, setOutstanding] = useState<PortalRequest[]>([]);
   const [responded, setResponded] = useState<PortalRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  // Scroll to a specific portal request when arriving from the
+  // Completion panel's AI Populate reference chips (anchor format:
+  // "portal-<portalRequestId>").
+  useScrollToAnchor([loading, outstanding.length, responded.length], { enabled: !loading });
   const [activeView, setActiveView] = useState<'outstanding' | 'responded'>('outstanding');
   const [viewMode, setViewMode] = useState<Record<string, 'batched' | 'separated'>>({});
   const [contacts, setContacts] = useState<ClientContact[]>([]);
@@ -188,7 +193,7 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
               const { question, source } = cleanQuestion(item.question);
               const chatMsgs = (item.chatHistory || []).filter(m => m.name !== 'System');
               return (
-                <div key={item.id} className="bg-white rounded-lg border border-slate-200 p-3">
+                <div key={item.id} data-scroll-anchor={`portal-${item.id}`} className="bg-white rounded-lg border border-slate-200 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="text-xs text-slate-800 font-medium">{question}</p>
@@ -245,7 +250,7 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
               const chatMsgs = (item.chatHistory || []).filter(m => m.name !== 'System');
               const isSeparated = viewMode[item.id] === 'separated';
               return (
-                <div key={item.id} className="bg-white rounded-lg border border-slate-200 p-3">
+                <div key={item.id} data-scroll-anchor={`portal-${item.id}`} className="bg-white rounded-lg border border-slate-200 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="text-xs text-slate-800 font-medium">{question}</p>

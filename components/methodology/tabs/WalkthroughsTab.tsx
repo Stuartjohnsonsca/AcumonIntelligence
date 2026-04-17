@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X, AlertTriangle, Edit3 } from 'lucide-react';
+import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
 import { DocumentAnnotator } from '../panels/DocumentAnnotator';
 import { expandZipFile } from '@/lib/client-unzip';
@@ -45,6 +46,10 @@ const STAGE_COLORS: Record<string, string> = {
 interface Props { engagementId: string; userRole?: string; }
 
 export function WalkthroughsTab({ engagementId, userRole }: Props) {
+  // Deep-scroll to a section when navigated to from the AI Populate
+  // reference chips on the Completion panel. Anchor values are expected
+  // to look like "walkthrough-<processKey>" or similar.
+  useScrollToAnchor([], {});
   const [processes, setProcesses] = useState<ProcessTab[]>([
     { key: 'sales', label: 'Sales Process' },
     { key: 'purchases', label: 'Purchase Process' },

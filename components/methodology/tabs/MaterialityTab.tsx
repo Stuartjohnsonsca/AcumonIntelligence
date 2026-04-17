@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 
 interface Props { engagementId: string; currentUserId?: string; userRole?: string; }
 
@@ -43,6 +44,10 @@ function roundDown(v: number, negDecimals: number): number {
 }
 
 export function MaterialityTab({ engagementId, currentUserId, userRole }: Props) {
+  // Deep-scroll to named sections / benchmark rows via ?scroll=... param
+  // (written by the AI Populate references from the Completion panel).
+  // Target nodes below carry data-scroll-anchor attributes with keys like
+  // "materiality-benchmark", "materiality-pm", "materiality-clearly-trivial".
   const [data, setData] = useState<Record<string, any>>({});
   const [initialData, setInitialData] = useState<Record<string, any>>({});
   const [priorData, setPriorData] = useState<Record<string, any> | null>(null);
@@ -256,6 +261,9 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
 
   const basisChanged = get('basis_changed') === true || get('basis_changed') === 'Yes';
 
+  // Fire the scroll hook once data has loaded and rows have rendered.
+  useScrollToAnchor([loading], { enabled: !loading });
+
   if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading Materiality...</div>;
 
   const rc = 'text-right px-2 py-1.5 text-xs font-mono';
@@ -316,13 +324,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
               <td className={`${rc} font-semibold text-slate-800`}>{fmtCurrency(materiality)}</td>
               <td></td>
             </tr>
-            <tr className="border-b">
+            <tr className="border-b" data-scroll-anchor="materiality-pm">
               <td className={lc}>Performance Materiality</td>
               <td className={pyc}>{pyPM ? fmtCurrency(pyPM) : '—'}</td>
               <td className={`${rc} font-semibold text-slate-800`}>{fmtCurrency(performanceMateriality)}</td>
               <td></td>
             </tr>
-            <tr>
+            <tr data-scroll-anchor="materiality-clearly-trivial">
               <td className={lc}>Clearly Trivial</td>
               <td className={pyc}>{pyCT ? fmtCurrency(pyCT) : '—'}</td>
               <td className={`${rc} font-semibold text-slate-800`}>{fmtCurrency(clearlyTrivial)}</td>
@@ -358,7 +366,7 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
         <div className={`border border-t-0 rounded-b-lg divide-y ${isBreach && !techApproval ? 'border-red-200' : ''}`}>
           {/* Benchmark selector */}
           <div className="flex">
-            <div className={lc}>Materiality Benchmark</div>
+            <div className={lc} data-scroll-anchor="materiality-benchmark">Materiality Benchmark</div>
             <div className={pyc}>{getPy('materiality_benchmark') || '—'}</div>
             <div className={ic}>
               <select value={benchmark} onChange={e => set('materiality_benchmark', e.target.value)} className="w-full text-xs border rounded px-2 py-1.5">

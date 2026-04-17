@@ -95,8 +95,9 @@ ${useProtocol && protocol?.trim() ? 'Refer to the protocol naturally if your cha
 
     const data = await response.json();
     const text = data.choices?.[0]?.message?.content || '...';
+    const usage = data.usage ?? null;
 
-    return NextResponse.json({ text });
+    return NextResponse.json({ text, usage });
   } catch (error) {
     console.error('Risk Forum simulate error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -99,6 +99,7 @@ Return a JSON object with exactly this structure (produce 3-6 items in each arra
 
     const data = await response.json();
     const raw = data.choices?.[0]?.message?.content || '{}';
+    const usage = data.usage ?? null;
 
     let debrief;
     try {
@@ -117,7 +118,7 @@ Return a JSON object with exactly this structure (produce 3-6 items in each arra
       };
     }
 
-    return NextResponse.json({ debrief });
+    return NextResponse.json({ debrief, usage });
   } catch (error) {
     console.error('Risk Forum debrief error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
