@@ -30,10 +30,20 @@ function getPos(fw: string, stmt: string, name: string): number {
   return 9999;
 }
 
+/**
+ * Accounting-style number formatter.
+ * - Positive (debit):  "1,234\u00A0"  ← trailing figure space
+ * - Negative (credit): "(1,234)"
+ *
+ * The trailing non-breaking space on positives keeps the last digit in
+ * the same column as the pre-paren last digit of negatives when the
+ * container is right-aligned with tabular-nums. Containers must use
+ * `font-mono tabular-nums tabular-nums` for this to render cleanly.
+ */
 function f(n: number): string {
   const abs = Math.abs(n);
   const s = abs.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  return n < 0 ? `(${s})` : s;
+  return n < 0 ? `(${s})` : `${s}\u00A0`;
 }
 
 // ─── Types ───
@@ -62,15 +72,20 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
   const [framework, setFramework] = useState('FRS102');
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Period end dates for the current + prior period, used in the
+  // column heading. Resolved from the engagement's period record.
+  const [periodEndLabel, setPeriodEndLabel] = useState<string>('Period End');
+  const [priorPeriodEndLabel, setPriorPeriodEndLabel] = useState<string>('Prior End');
 
   useEffect(() => {
     (async () => {
       try {
-        const [tbRes, concRes, errRes, pfRes] = await Promise.all([
+        const [tbRes, concRes, errRes, pfRes, engRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/test-conclusions`),
           fetch(`/api/engagements/${engagementId}/error-schedule`),
           fetch(`/api/engagements/${engagementId}/permanent-file`),
+          fetch(`/api/engagements/${engagementId}`).catch(() => null),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (concRes.ok) setConclusions((await concRes.json()).conclusions || []);
@@ -78,6 +93,22 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
         if (pfRes.ok) {
           const d = await pfRes.json(); const ans = d.answers || d.data || {};
           for (const [k, v] of Object.entries(ans)) { if (typeof v === 'string' && k.toLowerCase().includes('applicable financial reporting')) { setFramework(v); break; } }
+        }
+        if (engRes && engRes.ok) {
+          try {
+            const eng = await engRes.json();
+            const fmt = (d: unknown): string | null => {
+              if (!d || typeof d !== 'string') return null;
+              try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); }
+              catch { return null; }
+            };
+            const pEnd = fmt(eng?.engagement?.period?.periodEnd || eng?.period?.periodEnd || eng?.periodEnd);
+            const priorEnd = fmt(eng?.engagement?.priorPeriodEngagement?.period?.periodEnd
+              || eng?.priorPeriodEngagement?.period?.periodEnd
+              || eng?.priorPeriodEnd);
+            if (pEnd) setPeriodEndLabel(pEnd);
+            if (priorEnd) setPriorPeriodEndLabel(priorEnd);
+          } catch { /* fall back to generic labels */ }
         }
       } catch {} finally { setLoading(false); }
     })();
@@ -208,9 +239,28 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
       </div>
 
       {viewMode === 'tb' ? (
-        <TBView tbRows={tbRows} />
+        <TBView tbRows={tbRows} periodEndLabel={periodEndLabel} priorPeriodEndLabel={priorPeriodEndLabel} />
       ) : (
         <div className="space-y-3">
+          {/*
+            Column heading row — sits outside the statement cards and uses
+            the same widths as each statement's right-edge columns (w-20 / w-18
+            / w-16 / w-14). Labels: FS Line / Period.End / Prior End /
+            Errors (Adj) / Errors (Unadj) / Rev / RI dots.
+          */}
+          <div className="flex items-center justify-between px-3 py-1 text-[9px] font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200">
+            <span>FS Line</span>
+            <div className="flex items-center gap-4">
+              <span className="w-20 text-right" title="Current period end">{periodEndLabel}</span>
+              <span className="w-20 text-right" title="Prior period end">{priorPeriodEndLabel}</span>
+              <span className="w-16 text-right" title="Errors booked (adjusted)">Err. Adj</span>
+              <span className="w-16 text-right" title="Errors unadjusted">Err. Unadj</span>
+              <span className="flex gap-1.5">
+                <span className="w-3.5 text-center" title="Reviewer sign-off count">Rev</span>
+                <span className="w-3.5 text-center" title="RI sign-off count">RI</span>
+              </span>
+            </div>
+          </div>
           {Array.from(hierarchy.entries()).map(([stmt, levels]) => {
             if (levels.size === 0) return null;
             const stmtKey = `s:${stmt}`;
@@ -233,10 +283,10 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                     <span className="text-xs font-bold text-slate-800">{stmt}</span>
                   </div>
                   <div className="flex items-center gap-4 text-[10px]">
-                    <span className="font-mono font-semibold text-slate-700 w-20 text-right">{f(cy)}</span>
-                    <span className="font-mono text-slate-400 w-20 text-right">{f(py)}</span>
-                    {allErrs.adj !== 0 && <span className="text-red-600 font-mono w-16 text-right">{f(allErrs.adj)}</span>}
-                    {allErrs.unadj !== 0 && <span className="text-amber-600 font-mono w-16 text-right">{f(allErrs.unadj)}</span>}
+                    <span className="font-mono tabular-nums font-semibold text-slate-700 w-20 text-right">{f(cy)}</span>
+                    <span className="font-mono tabular-nums text-slate-400 w-20 text-right">{f(py)}</span>
+                    {allErrs.adj !== 0 && <span className="text-red-600 font-mono tabular-nums w-16 text-right">{f(allErrs.adj)}</span>}
+                    {allErrs.unadj !== 0 && <span className="text-amber-600 font-mono tabular-nums w-16 text-right">{f(allErrs.unadj)}</span>}
                     {(allErrs.adj === 0 && allErrs.unadj === 0) && <span className="text-slate-300 w-16 text-right">—</span>}
                     <div className="flex gap-1.5"><SignDot count={so.rev} total={so.total} /><SignDot count={so.ri} total={so.total} /></div>
                   </div>
@@ -266,11 +316,11 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                               <span className="text-[9px] text-slate-400 ml-1">({ld.rows.length} a/c)</span>
                             </div>
                             <div className="flex items-center gap-3 text-[10px]">
-                              <span className="font-mono font-semibold w-18 text-right">{f(lCY)}</span>
-                              <span className="font-mono text-slate-400 w-18 text-right">{f(lPY)}</span>
-                              <span className={`font-mono w-18 text-right ${lV > 0 ? 'text-green-600' : lV < 0 ? 'text-red-600' : 'text-slate-400'}`}>{f(lV)}</span>
-                              <span className={`font-mono w-14 text-right ${lErr.adj !== 0 ? 'text-red-600' : 'text-slate-300'}`}>{lErr.adj !== 0 ? f(lErr.adj) : '—'}</span>
-                              <span className={`font-mono w-14 text-right ${lErr.unadj !== 0 ? 'text-amber-600' : 'text-slate-300'}`}>{lErr.unadj !== 0 ? f(lErr.unadj) : '—'}</span>
+                              <span className="font-mono tabular-nums font-semibold w-18 text-right">{f(lCY)}</span>
+                              <span className="font-mono tabular-nums text-slate-400 w-18 text-right">{f(lPY)}</span>
+                              <span className={`font-mono tabular-nums w-18 text-right ${lV > 0 ? 'text-green-600' : lV < 0 ? 'text-red-600' : 'text-slate-400'}`}>{f(lV)}</span>
+                              <span className={`font-mono tabular-nums w-14 text-right ${lErr.adj !== 0 ? 'text-red-600' : 'text-slate-300'}`}>{lErr.adj !== 0 ? f(lErr.adj) : '—'}</span>
+                              <span className={`font-mono tabular-nums w-14 text-right ${lErr.unadj !== 0 ? 'text-amber-600' : 'text-slate-300'}`}>{lErr.unadj !== 0 ? f(lErr.unadj) : '—'}</span>
                               <div className="flex gap-1"><SignDot count={lSo.rev} total={lSo.total} /><SignDot count={lSo.ri} total={lSo.total} /></div>
                             </div>
                           </button>
@@ -285,7 +335,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                                     <div key={c.id} className="flex items-center gap-2 text-[10px]">
                                       <Dot c={c.conclusion} />
                                       <span className="text-slate-700 flex-1 truncate">{c.testDescription}</span>
-                                      {c.totalErrors > 0 && <span className="text-red-600 font-mono text-[9px]">£{f(c.extrapolatedError)}</span>}
+                                      {c.totalErrors > 0 && <span className="text-red-600 font-mono tabular-nums text-[9px]">£{f(c.extrapolatedError)}</span>}
                                       {/* Reviewer chip cascades from RI */}
                                       {c.reviewedByName
                                         ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded">{c.reviewedByName}</span>
@@ -322,10 +372,10 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                                             <span className="text-[10px] font-medium text-slate-600">{note}</span>
                                           </div>
                                           <div className="flex items-center gap-3 text-[10px]">
-                                            <span className="font-mono w-16 text-right">{f(nCY)}</span>
-                                            <span className="font-mono text-slate-400 w-16 text-right">{f(nPY)}</span>
-                                            <span className={`font-mono w-12 text-right ${nErr.adj !== 0 ? 'text-red-600' : 'text-slate-300'}`}>{nErr.adj !== 0 ? f(nErr.adj) : '—'}</span>
-                                            <span className={`font-mono w-12 text-right ${nErr.unadj !== 0 ? 'text-amber-600' : 'text-slate-300'}`}>{nErr.unadj !== 0 ? f(nErr.unadj) : '—'}</span>
+                                            <span className="font-mono tabular-nums w-16 text-right">{f(nCY)}</span>
+                                            <span className="font-mono tabular-nums text-slate-400 w-16 text-right">{f(nPY)}</span>
+                                            <span className={`font-mono tabular-nums w-12 text-right ${nErr.adj !== 0 ? 'text-red-600' : 'text-slate-300'}`}>{nErr.adj !== 0 ? f(nErr.adj) : '—'}</span>
+                                            <span className={`font-mono tabular-nums w-12 text-right ${nErr.unadj !== 0 ? 'text-amber-600' : 'text-slate-300'}`}>{nErr.unadj !== 0 ? f(nErr.unadj) : '—'}</span>
                                             <div className="flex gap-1"><SignDot count={nSo.rev} total={nSo.total} /><SignDot count={nSo.ri} total={nSo.total} /></div>
                                           </div>
                                         </button>
@@ -399,12 +449,12 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
                 {isOpen ? <ChevronDown className="h-2.5 w-2.5 text-slate-400 inline" /> : <ChevronRight className="h-2.5 w-2.5 text-slate-400 inline" />}
               </div>
               {/* Code */}
-              <span className="font-mono text-slate-400 w-14 text-left flex-shrink-0">{r.accountCode}</span>
+              <span className="font-mono tabular-nums text-slate-400 w-14 text-left flex-shrink-0">{r.accountCode}</span>
               {/* Description */}
               <span className="text-slate-700 flex-1 text-left truncate">{r.description}</span>
               {/* CY / PY */}
-              <span className="font-mono w-16 text-right flex-shrink-0">{f(Number(r.currentYear) || 0)}</span>
-              <span className="font-mono text-slate-400 w-16 text-right flex-shrink-0">{f(Number(r.priorYear) || 0)}</span>
+              <span className="font-mono tabular-nums w-16 text-right flex-shrink-0">{f(Number(r.currentYear) || 0)}</span>
+              <span className="font-mono tabular-nums text-slate-400 w-16 text-right flex-shrink-0">{f(Number(r.priorYear) || 0)}</span>
               {/* Conclusion dots */}
               <div className="w-12 flex items-center justify-center gap-0.5 flex-shrink-0">
                 {hasConcs ? concs.map(c => <Dot key={c.id} c={c.conclusion} />) : <span className="text-slate-300">—</span>}
@@ -425,7 +475,7 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
                   <div key={c.id} className="flex items-center gap-2 py-0.5 text-[10px]">
                     <Dot c={c.conclusion} />
                     <span className="text-slate-700 flex-1 truncate">{c.testDescription}</span>
-                    {c.totalErrors > 0 && <span className="text-red-600 font-mono text-[9px]">£{f(c.extrapolatedError)}</span>}
+                    {c.totalErrors > 0 && <span className="text-red-600 font-mono tabular-nums text-[9px]">£{f(c.extrapolatedError)}</span>}
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {/* Reviewer chip cascades from RI */}
                       {c.reviewedByName ? (
@@ -453,7 +503,11 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
 }
 
 // ─── TB Format ───
-function TBView({ tbRows }: { tbRows: TBRow[] }) {
+function TBView({ tbRows, periodEndLabel, priorPeriodEndLabel }: {
+  tbRows: TBRow[];
+  periodEndLabel: string;
+  priorPeriodEndLabel: string;
+}) {
   const byStmt = new Map<string, TBRow[]>();
   for (const r of tbRows) { const s = r.fsStatement || 'Unclassified'; if (!byStmt.has(s)) byStmt.set(s, []); byStmt.get(s)!.push(r); }
   return (
@@ -462,9 +516,18 @@ function TBView({ tbRows }: { tbRows: TBRow[] }) {
         <div key={stmt} className="border rounded-lg overflow-hidden">
           <div className="bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">{stmt}</div>
           <table className="w-full text-[10px]">
-            <thead><tr className="bg-slate-50 border-b"><th className="text-left px-2 py-1 text-slate-600">Code</th><th className="text-left px-2 py-1 text-slate-600">Description</th><th className="text-left px-2 py-1 text-slate-600">FS Level</th><th className="text-right px-2 py-1 text-slate-600">CY</th><th className="text-right px-2 py-1 text-slate-600">PY</th><th className="text-right px-2 py-1 text-slate-600">Var</th></tr></thead>
+            <thead>
+              <tr className="bg-slate-50 border-b">
+                <th className="text-left px-2 py-1 text-slate-600">Code</th>
+                <th className="text-left px-2 py-1 text-slate-600">Description</th>
+                <th className="text-left px-2 py-1 text-slate-600">FS Level</th>
+                <th className="text-right px-2 py-1 text-slate-600">{periodEndLabel}</th>
+                <th className="text-right px-2 py-1 text-slate-600">{priorPeriodEndLabel}</th>
+                <th className="text-right px-2 py-1 text-slate-600">Variance</th>
+              </tr>
+            </thead>
             <tbody>{rows.map(r => { const cy = Number(r.currentYear)||0; const py = Number(r.priorYear)||0; const v = cy-py; return (
-              <tr key={r.id} className="border-b border-slate-50"><td className="px-2 py-0.5 font-mono text-slate-500">{r.accountCode}</td><td className="px-2 py-0.5 text-slate-700">{r.description}</td><td className="px-2 py-0.5 text-slate-400">{r.fsLevel||''}</td><td className="px-2 py-0.5 text-right font-mono">{f(cy)}</td><td className="px-2 py-0.5 text-right font-mono text-slate-500">{f(py)}</td><td className={`px-2 py-0.5 text-right font-mono ${v>0?'text-green-600':v<0?'text-red-600':'text-slate-400'}`}>{f(v)}</td></tr>
+              <tr key={r.id} className="border-b border-slate-50"><td className="px-2 py-0.5 font-mono tabular-nums text-slate-500">{r.accountCode}</td><td className="px-2 py-0.5 text-slate-700">{r.description}</td><td className="px-2 py-0.5 text-slate-400">{r.fsLevel||''}</td><td className="px-2 py-0.5 text-right font-mono tabular-nums">{f(cy)}</td><td className="px-2 py-0.5 text-right font-mono tabular-nums text-slate-500">{f(py)}</td><td className={`px-2 py-0.5 text-right font-mono tabular-nums ${v>0?'text-green-600':v<0?'text-red-600':'text-slate-400'}`}>{f(v)}</td></tr>
             ); })}</tbody>
           </table>
         </div>
