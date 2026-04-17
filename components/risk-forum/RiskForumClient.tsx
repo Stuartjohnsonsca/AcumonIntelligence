@@ -296,7 +296,7 @@ export default function RiskForumClient({ user }: Props) {
     // Use live history so each speaker sees what previous speakers said
     const conversationHistory = historyRef.current
       .filter(m => m.type === 'message')
-      .slice(-14)
+      .slice(-25)
       .map(m => {
         const p = personas.find(a => a.id === m.personaId);
         return { name: p?.name ?? '', role: p?.role ?? '', text: m.text };
@@ -394,9 +394,12 @@ export default function RiskForumClient({ user }: Props) {
         }
       }
 
-      // Pick speakers — more voices in first phase, varies after
-      const count = phaseIdx === 0 ? 5 : 3 + Math.floor(Math.random() * 2);
-      const speakers = [...personas].sort(() => Math.random() - 0.5).slice(0, count);
+      // Build a speaker list that allows some personas to speak twice per phase,
+      // creating genuine back-and-forth rather than single-round monologues.
+      const roundOne = [...personas].sort(() => Math.random() - 0.5);
+      const roundTwoCount = phaseIdx === 0 ? 3 : 2 + Math.floor(Math.random() * 2);
+      const roundTwo = [...personas].sort(() => Math.random() - 0.5).slice(0, roundTwoCount);
+      const speakers = [...roundOne, ...roundTwo];
 
       // Sequential: each speaker sees what all previous speakers said
       for (const persona of speakers) {
@@ -411,7 +414,7 @@ export default function RiskForumClient({ user }: Props) {
         setTypingPersonas([]);
 
         addMessage({
-          id: `${persona.id}-${Date.now()}`,
+          id: `${persona.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           type: 'message',
           personaId: persona.id,
           text: text ?? `[${persona.name} — no response]`,

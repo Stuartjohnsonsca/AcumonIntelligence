@@ -22,35 +22,55 @@ export async function POST(req: NextRequest) {
       ? `\nThe organisation had the following protocol in place:\n${protocol}`
       : '\nNo formal protocol was provided for this exercise.';
 
-    const systemPrompt = `You are a senior risk consultant producing a board-ready debrief. Respond ONLY with valid JSON — no markdown fences, no preamble, no explanation. Just the raw JSON object.`;
+    const systemPrompt = `You are a senior risk consultant with 25 years of experience writing frank board-level crisis debriefs for listed companies, regulators, and major professional services firms. Your reports are known for being specific, evidence-driven, uncomfortable when necessary, and actionable.
 
-    const userPrompt = `Scenario: ${scenario.description}
-Curveballs introduced: ${curveballs || 'None'}
+You do NOT produce generic advice. Every single point you make must reference SPECIFIC behaviour, words, or decisions observed in the transcript — quoting or paraphrasing. Abstract recommendations are unacceptable.
+
+Respond ONLY with valid JSON — no markdown fences, no preamble, no explanation. Just the raw JSON object.`;
+
+    const userPrompt = `SCENARIO: ${scenario.description}
+
+CURVEBALLS INJECTED DURING SIMULATION: ${curveballs || 'None'}
 ${protocolNote}
 
-Simulation transcript:
+FULL SIMULATION TRANSCRIPT:
 ${transcript}
 
-Analyse the HUMAN BEHAVIOUR shown — not theoretical best practice. Look at what people actually did, what they missed, where they helped, where they made things worse.
+YOUR TASK:
 
-Return a JSON object with exactly this structure:
+Produce a board-ready debrief that a chair or non-executive director would find genuinely useful. The participants in this simulation are senior leaders hand-picked for their ability to operate under pressure. Assess whether they actually demonstrated that ability, based on what they said and did.
+
+Your analysis must:
+- Cite specific quotes, decisions, or silences from the transcript — not generic commentary
+- Identify things that WORKED as well as things that didn't
+- Name specific individuals where relevant — not "the team" or "leadership"
+- Separate symptoms from root causes
+- Call out moments where the group got the right answer vs moments where groupthink, escalation avoidance, or information hoarding happened
+- Identify decisions that WEREN'T made but should have been
+- Assess whether information flowed or stalled — and who the bottlenecks were
+- Flag where protocol was followed, adapted, or ignored — with judgement on whether that was correct
+- Highlight exchanges where one leader challenged another effectively, and exchanges where challenge was missing
+- Produce training recommendations that are specific to the person and the observed behaviour, not generic "improve communication" advice
+
+Return a JSON object with exactly this structure (produce 3-6 items in each array where content justifies it):
+
 {
   "overallRating": "RED|AMBER|GREEN",
-  "ratingRationale": "one sentence explaining the rating",
-  "executiveSummary": "2-3 sentences for the board — frank, not reassuring",
+  "ratingRationale": "2-3 sentences — specific to what actually happened, not generic",
+  "executiveSummary": "4-6 sentences for the board. Frank, uncomfortable if warranted, evidence-based. Open with the headline finding, then the 2-3 decisions that shaped the outcome (good or bad), then the residual risk if this were a real event.",
   "planDeficiencies": [
-    {"title": "...", "whatHappened": "specific behaviour observed in transcript", "impact": "what this means in a real event"}
+    {"title": "short punchy title", "whatHappened": "cite specific moment/quote from the transcript", "impact": "what this means if it happened in reality — concrete not abstract"}
   ],
   "humanBehaviourInsights": [
-    {"person": "name + role", "behaviourObserved": "specific thing they did or said", "underPressurePattern": "what this reveals about how they behave in crisis", "trainingRecommendation": "specific, practical, not generic"}
+    {"person": "name and role", "behaviourObserved": "quote or paraphrase their specific contributions — when they spoke, when they didn't, what they prioritised, who they challenged", "underPressurePattern": "the leadership pattern this reveals — with evidence", "trainingRecommendation": "specific development action for THIS person based on what was observed — not generic"}
   ],
   "curveballResponses": [
-    {"curveball": "...", "howHandled": "...", "gap": "..."}
+    {"curveball": "the developing situation", "howHandled": "cite who addressed it and how, or note if it was missed", "gap": "what should have happened that didn't, or what was handled well"}
   ],
-  "protocolAdherence": "how well did people follow protocol, or note if none existed",
-  "boardReassurance": ["genuine positive finding 1", "genuine positive finding 2"],
+  "protocolAdherence": "3-4 sentences assessing whether protocol was followed, where it was adapted correctly, and where it was ignored at cost — or if no protocol existed, what the group defaulted to and whether that was coherent",
+  "boardReassurance": ["genuine positive finding with evidence from transcript", "second such finding", "third such finding if one exists"],
   "immediateActions": [
-    {"priority": "HIGH|MEDIUM", "action": "...", "owner": "role"}
+    {"priority": "HIGH|MEDIUM", "action": "specific, concrete action — not 'improve X'", "owner": "role that should own this"}
   ]
 }`;
 
@@ -62,12 +82,12 @@ Return a JSON object with exactly this structure:
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 2000,
+        max_tokens: 4000,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: 0.3,
+        temperature: 0.4,
       }),
     });
 
