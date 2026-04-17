@@ -61,10 +61,18 @@ interface Thread {
 interface OrchestratorEvent {
   id: string;
   atSimMin: number;
-  type: 'spawn_breakout' | 'summon_external' | 'conclude_breakout';
+  type: 'spawn_breakout' | 'summon_external' | 'conclude_breakout' | 'facilitator_inject' | 'facilitator_advance' | 'facilitator_summon' | 'facilitator_breakout';
   description: string;
   reason?: string;
 }
+
+// Actions a human facilitator can queue to steer the simulation in real time.
+// Processed at the start of the next loop iteration or between API calls.
+type FacilitatorAction =
+  | { kind: 'inject_event'; text: string }
+  | { kind: 'advance_time'; minutes: number }
+  | { kind: 'summon_external'; benchId: string }
+  | { kind: 'force_breakout'; participantIds: string[]; topic: string; threadName: string };
 
 interface DebriefData {
   overallRating: 'RED' | 'AMBER' | 'GREEN';
@@ -305,6 +313,12 @@ export default function RiskForumClient({ user }: Props) {
 
   const [typingPersonas, setTypingPersonas] = useState<{ persona: Persona; threadId: string }[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [showFacilitator, setShowFacilitator] = useState(false);
+  const [injectionText, setInjectionText] = useState('');
+  const [forceBreakoutParticipants, setForceBreakoutParticipants] = useState<string[]>([]);
+  const [forceBreakoutTopic, setForceBreakoutTopic] = useState('');
+  const [forceBreakoutName, setForceBreakoutName] = useState('');
   const [currentPhaseIdx, setCurrentPhaseIdx] = useState(0);
   const [debrief, setDebrief] = useState<DebriefData | null>(null);
   const [debriefLoading, setDebriefLoading] = useState(false);
@@ -326,6 +340,10 @@ export default function RiskForumClient({ user }: Props) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef(false);
+  const pausedRef = useRef(false);
+  const facilitatorQueueRef = useRef<FacilitatorAction[]>([]);
+  // Additional simulated-minute offset applied by facilitator time advances.
+  const simMinBoostRef = useRef(0);
   const threadsRef = useRef<Record<string, Thread>>({});
   const allPersonasRef = useRef<Persona[]>(DEFAULT_PERSONAS);
   const simMinutesRef = useRef(0);
@@ -338,7 +356,9 @@ export default function RiskForumClient({ user }: Props) {
   }, [threads, activeThreadId, typingPersonas]);
 
   // Clock ticker: updates every second while running, drives the compressed
-  // simulated clock and enforces the real-time cap.
+  // simulated clock and enforces the real-time cap. Paused state freezes the
+  // clock from advancing but does NOT pause the real-time cap — the cap is
+  // the session budget regardless of whether time is being consumed.
   useEffect(() => {
     if (!isRunning || runStartRef.current === null) return;
     const interval = setInterval(() => {
@@ -346,9 +366,11 @@ export default function RiskForumClient({ user }: Props) {
       if (start === null) return;
       const realSeconds = (Date.now() - start) / 1000;
       setRealSecondsElapsed(realSeconds);
-      const simMin = Math.floor((realSeconds * CLOCK_COMPRESSION) / 60);
-      simMinutesRef.current = simMin;
-      setSimulatedMinutes(simMin);
+      if (!pausedRef.current) {
+        const simMin = Math.floor((realSeconds * CLOCK_COMPRESSION) / 60) + simMinBoostRef.current;
+        simMinutesRef.current = simMin;
+        setSimulatedMinutes(simMin);
+      }
       if (realSeconds >= maxRuntimeMinutes * 60) {
         abortRef.current = true;
         setIsRunning(false);
@@ -417,6 +439,24 @@ export default function RiskForumClient({ user }: Props) {
     setTotalTokens(prev => prev + t);
     setApiCalls(c => c + 1);
   }, []);
+
+  // Facilitator controls ─────────────────────────────────────────────────────
+  const enqueueFacilitatorAction = useCallback((a: FacilitatorAction) => {
+    facilitatorQueueRef.current = [...facilitatorQueueRef.current, a];
+  }, []);
+
+  const togglePause = useCallback(() => {
+    const next = !pausedRef.current;
+    pausedRef.current = next;
+    setIsPaused(next);
+  }, []);
+
+  // Suspends the sim loop while paused.
+  const waitIfPaused = async () => {
+    while (pausedRef.current && !abortRef.current) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  };
 
   const getTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -598,6 +638,85 @@ export default function RiskForumClient({ user }: Props) {
     }
   };
 
+  // Drain facilitator queue and execute each queued action against live state.
+  // Called at safe points between API calls inside the main loop.
+  const processFacilitatorQueue = async () => {
+    if (facilitatorQueueRef.current.length === 0) return;
+    const queue = facilitatorQueueRef.current;
+    facilitatorQueueRef.current = [];
+    for (const action of queue) {
+      if (abortRef.current) break;
+      const simMin = simMinutesRef.current;
+      const clockLabel = formatSimClockForMsg();
+
+      if (action.kind === 'inject_event') {
+        addMessageToThread('main', {
+          id: `facilitator-inject-${Date.now()}`,
+          type: 'curveball',
+          text: action.text,
+          simClock: clockLabel,
+        });
+        addOrchestratorEvent({
+          id: `evt-${Date.now()}`,
+          atSimMin: simMin,
+          type: 'facilitator_inject',
+          description: `Facilitator injected event: "${action.text}"`,
+        });
+      }
+
+      if (action.kind === 'advance_time') {
+        simMinBoostRef.current += action.minutes;
+        simMinutesRef.current += action.minutes;
+        setSimulatedMinutes(m => m + action.minutes);
+        addMessageToThread('main', {
+          id: `facilitator-advance-${Date.now()}`,
+          type: 'system',
+          text: `[Time jump +${action.minutes} minutes] Facilitator advanced the simulated clock.`,
+          simClock: formatSimClockForMsg(),
+        });
+        addOrchestratorEvent({
+          id: `evt-${Date.now()}`,
+          atSimMin: simMin,
+          type: 'facilitator_advance',
+          description: `Facilitator advanced clock +${action.minutes}m`,
+        });
+      }
+
+      if (action.kind === 'summon_external') {
+        const bench = EXTERNAL_BENCH.find(b => b.id === action.benchId);
+        if (!bench || allPersonasRef.current.some(p => p.id === bench.id)) continue;
+        await executeOrchestratorAction({
+          type: 'summon_external',
+          benchId: bench.id,
+          reason: 'Facilitator summoned',
+        });
+        addOrchestratorEvent({
+          id: `evt-${Date.now()}`,
+          atSimMin: simMin,
+          type: 'facilitator_summon',
+          description: `Facilitator summoned ${bench.name} (${bench.role})`,
+        });
+      }
+
+      if (action.kind === 'force_breakout') {
+        if (action.participantIds.length < 2) continue;
+        await executeOrchestratorAction({
+          type: 'spawn_breakout',
+          participants: action.participantIds,
+          topic: action.topic,
+          threadName: action.threadName,
+          reason: 'Facilitator forced breakout',
+        });
+        addOrchestratorEvent({
+          id: `evt-${Date.now()}`,
+          atSimMin: simMin,
+          type: 'facilitator_breakout',
+          description: `Facilitator forced breakout "${action.threadName}" with ${action.participantIds.map(id => allPersonasRef.current.find(p => p.id === id)?.name ?? id).join(', ')}`,
+        });
+      }
+    }
+  };
+
   // Execute a single orchestrator action against live state
   const executeOrchestratorAction = async (action: Record<string, string | string[] | undefined>) => {
     const simMin = simMinutesRef.current;
@@ -744,10 +863,16 @@ export default function RiskForumClient({ user }: Props) {
       if (abortRef.current) break;
       if (threadsRef.current[threadId]?.status !== 'active') break;
 
+      await waitIfPaused();
+      if (abortRef.current) break;
+
       setTypingPersonas([{ persona, threadId }]);
       const text = await callPersonaAPI(persona, phaseText, curveball, threadId);
       if (abortRef.current) break;
       setTypingPersonas([]);
+
+      // Drain facilitator injections between speakers so events land promptly.
+      await processFacilitatorQueue();
 
       addMessageToThread(threadId, {
         id: `${persona.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -764,6 +889,10 @@ export default function RiskForumClient({ user }: Props) {
   const runSimulation = async () => {
     if (!activeScenario) return;
     abortRef.current = false;
+    pausedRef.current = false;
+    setIsPaused(false);
+    facilitatorQueueRef.current = [];
+    simMinBoostRef.current = 0;
     runStartRef.current = Date.now();
     simMinutesRef.current = 0;
     allPersonasRef.current = [...personas];
@@ -804,6 +933,10 @@ export default function RiskForumClient({ user }: Props) {
     // cap is hit (or Stop is pressed). Phases cycle and extend beyond the
     // scripted timeline so a longer cap produces a longer simulation.
     while (!abortRef.current) {
+      await waitIfPaused();
+      if (abortRef.current) break;
+      await processFacilitatorQueue();
+
       const phase = phases[globalPhaseIdx % phases.length] ?? phases[phases.length - 1];
       const isExtension = globalPhaseIdx >= phases.length;
       const phaseLabel = isExtension ? `Ongoing +${globalPhaseIdx - phases.length + 1}` : phase.label;
@@ -824,6 +957,8 @@ export default function RiskForumClient({ user }: Props) {
       }
 
       // Main room round — a few speakers respond to the phase/curveball
+      await waitIfPaused();
+      await processFacilitatorQueue();
       const mainCount = globalPhaseIdx === 0 ? 4 : 3;
       await speakRoundInThread('main', phaseText, curveball, mainCount);
       messagesSinceOrchestrator += mainCount;
@@ -833,6 +968,8 @@ export default function RiskForumClient({ user }: Props) {
         .filter(t => t.kind === 'breakout' && t.status === 'active');
       for (const bt of activeBreakouts) {
         if (abortRef.current) break;
+        await waitIfPaused();
+        await processFacilitatorQueue();
         const breakoutPhaseText = `You are in a sidebar${bt.topic ? ` on "${bt.topic}"` : ''} away from the main war room. The broader situation is still developing — keep focused on your sub-topic. Continue the sidebar conversation, work towards a conclusion or recommendation.`;
         await speakRoundInThread(bt.id, breakoutPhaseText, null, 3);
         messagesSinceOrchestrator += 3;
@@ -840,6 +977,8 @@ export default function RiskForumClient({ user }: Props) {
 
       // Orchestrator check — consult the supervisor after a handful of messages
       if (messagesSinceOrchestrator >= 5 && !abortRef.current) {
+        await waitIfPaused();
+        await processFacilitatorQueue();
         messagesSinceOrchestrator = 0;
         const result = await callOrchestrator(activeScenario.description);
         for (const action of result.actions ?? []) {
@@ -1139,16 +1278,36 @@ export default function RiskForumClient({ user }: Props) {
             >{p.initial}</div>
           ))}
           {isRunning && (
-            <button
-              onClick={() => { abortRef.current = true; setIsRunning(false); }}
-              className="ml-3 px-4 py-1.5 rounded text-xs font-bold font-mono tracking-widest uppercase transition-all hover:scale-105"
-              style={{
-                background: '#C84040',
-                border: '1px solid #E85050',
-                color: '#FFF',
-                boxShadow: '0 0 12px #C8404055',
-              }}
-            >■ STOP</button>
+            <>
+              <button
+                onClick={() => setShowFacilitator(s => !s)}
+                className="ml-2 px-3 py-1.5 rounded text-xs font-bold font-mono tracking-widest uppercase transition-all"
+                style={{
+                  background: showFacilitator ? '#2A1F0F' : 'transparent',
+                  border: `1px solid ${showFacilitator ? '#E8A040' : '#2E2E2E'}`,
+                  color: showFacilitator ? '#E8A040' : '#888',
+                }}
+              >◐ FACILITATOR</button>
+              <button
+                onClick={togglePause}
+                className="px-3 py-1.5 rounded text-xs font-bold font-mono tracking-widest uppercase transition-all"
+                style={{
+                  background: isPaused ? '#1F1A08' : 'transparent',
+                  border: `1px solid ${isPaused ? '#E8C547' : '#2E2E2E'}`,
+                  color: isPaused ? '#E8C547' : '#888',
+                }}
+              >{isPaused ? '▶ RESUME' : '❚❚ PAUSE'}</button>
+              <button
+                onClick={() => { abortRef.current = true; pausedRef.current = false; setIsPaused(false); setIsRunning(false); }}
+                className="ml-1 px-4 py-1.5 rounded text-xs font-bold font-mono tracking-widest uppercase transition-all hover:scale-105"
+                style={{
+                  background: '#C84040',
+                  border: '1px solid #E85050',
+                  color: '#FFF',
+                  boxShadow: '0 0 12px #C8404055',
+                }}
+              >■ STOP</button>
+            </>
           )}
           {!isRunning && !debriefLoading && (
             <button
@@ -1180,8 +1339,11 @@ export default function RiskForumClient({ user }: Props) {
         ))}
       </div>
 
-      {/* Threads layout: left-rail navigator + active thread pane */}
-      <div className="flex-1 min-h-0 grid" style={{ gridTemplateColumns: '240px 1fr' }}>
+      {/* Threads layout: left-rail navigator + active thread pane (+ facilitator right panel when open) */}
+      <div
+        className="flex-1 min-h-0 grid"
+        style={{ gridTemplateColumns: showFacilitator ? '240px 1fr 320px' : '240px 1fr' }}
+      >
 
         {/* Left rail: thread list */}
         <div className="border-r overflow-y-auto" style={{ borderColor: '#0F0F0F', background: '#060606' }}>
@@ -1307,6 +1469,183 @@ export default function RiskForumClient({ user }: Props) {
             )}
           </div>
         </div>
+
+        {/* Facilitator panel (right side, toggled) */}
+        {showFacilitator && (
+          <div className="border-l overflow-y-auto flex flex-col" style={{ borderColor: '#1A1A1A', background: '#060606' }}>
+            <div className="px-4 pt-4 pb-3 border-b" style={{ borderColor: '#1A1A1A' }}>
+              <div className="text-xs font-mono tracking-widest mb-1" style={{ color: '#E8A040' }}>FACILITATOR CONTROL</div>
+              <p className="text-xs leading-relaxed" style={{ color: '#555' }}>
+                Steer the scenario in real time. Actions queue and land at the next safe point.
+              </p>
+              {isPaused && (
+                <div className="mt-2 px-2 py-1 rounded text-xs font-mono tracking-wider" style={{ background: '#1F1A08', border: '1px solid #E8C547', color: '#E8C547' }}>
+                  ❚❚ SIMULATION PAUSED
+                </div>
+              )}
+            </div>
+
+            {/* Inject event */}
+            <div className="p-4 border-b" style={{ borderColor: '#0F0F0F' }}>
+              <div className="text-xs font-mono tracking-widest mb-2" style={{ color: '#555' }}>INJECT EVENT</div>
+              <textarea
+                value={injectionText}
+                onChange={e => setInjectionText(e.target.value)}
+                placeholder="e.g. 'A journalist is at reception asking for the CEO by name'"
+                className="w-full h-20 rounded p-2 text-xs resize-none leading-relaxed mb-2"
+                style={{ background: '#0A0A0A', border: '1px solid #E8A04033', color: '#C8C8C0', fontFamily: 'Georgia, serif' }}
+              />
+              <button
+                onClick={() => {
+                  if (!injectionText.trim()) return;
+                  enqueueFacilitatorAction({ kind: 'inject_event', text: injectionText.trim() });
+                  setInjectionText('');
+                }}
+                disabled={!injectionText.trim()}
+                className="w-full py-2 rounded text-xs font-mono tracking-widest uppercase transition-all"
+                style={{
+                  background: injectionText.trim() ? '#E8A040' : '#111',
+                  color: injectionText.trim() ? '#080808' : '#2E2E2E',
+                  border: 'none',
+                  fontWeight: 'bold',
+                }}
+              >Queue Injection</button>
+            </div>
+
+            {/* Advance time */}
+            <div className="p-4 border-b" style={{ borderColor: '#0F0F0F' }}>
+              <div className="text-xs font-mono tracking-widest mb-2" style={{ color: '#555' }}>ADVANCE SIMULATED CLOCK</div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[30, 60, 120, 240].map(m => (
+                  <button
+                    key={m}
+                    onClick={() => enqueueFacilitatorAction({ kind: 'advance_time', minutes: m })}
+                    className="py-1.5 rounded text-xs font-mono tracking-wider transition-all"
+                    style={{ background: '#0A0A0A', border: '1px solid #2A2A2A', color: '#888' }}
+                  >+{m >= 60 ? `${m / 60}h` : `${m}m`}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Summon external */}
+            <div className="p-4 border-b" style={{ borderColor: '#0F0F0F' }}>
+              <div className="text-xs font-mono tracking-widest mb-2" style={{ color: '#555' }}>SUMMON EXTERNAL</div>
+              <div className="flex flex-col gap-1.5">
+                {EXTERNAL_BENCH.map(bench => {
+                  const alreadyIn = allPersonas.some(p => p.id === bench.id);
+                  return (
+                    <button
+                      key={bench.id}
+                      onClick={() => enqueueFacilitatorAction({ kind: 'summon_external', benchId: bench.id })}
+                      disabled={alreadyIn}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all"
+                      style={{
+                        background: alreadyIn ? '#080808' : '#0A0A0A',
+                        border: `1px solid ${alreadyIn ? '#0F0F0F' : '#1A1A1A'}`,
+                        opacity: alreadyIn ? 0.4 : 1,
+                      }}
+                    >
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center font-mono font-bold flex-shrink-0"
+                        style={{ fontSize: '8px', background: '#080808', border: `1px solid ${bench.color}66`, color: bench.color }}>
+                        {bench.initial}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold truncate" style={{ color: alreadyIn ? '#444' : '#C8C8C0' }}>{bench.name}</div>
+                        <div className="text-[10px] font-mono truncate" style={{ color: bench.color, opacity: alreadyIn ? 0.3 : 0.6 }}>{bench.role}</div>
+                      </div>
+                      {alreadyIn && <span className="text-[9px] font-mono" style={{ color: '#6EC860' }}>IN</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Force breakout */}
+            <div className="p-4 border-b" style={{ borderColor: '#0F0F0F' }}>
+              <div className="text-xs font-mono tracking-widest mb-2" style={{ color: '#555' }}>FORCE BREAKOUT</div>
+              <input
+                value={forceBreakoutName}
+                onChange={e => setForceBreakoutName(e.target.value)}
+                placeholder="Breakout name"
+                className="w-full px-2 py-1.5 rounded text-xs mb-2"
+                style={{ background: '#0A0A0A', border: '1px solid #1A1A1A', color: '#C8C8C0' }}
+              />
+              <input
+                value={forceBreakoutTopic}
+                onChange={e => setForceBreakoutTopic(e.target.value)}
+                placeholder="Topic"
+                className="w-full px-2 py-1.5 rounded text-xs mb-2"
+                style={{ background: '#0A0A0A', border: '1px solid #1A1A1A', color: '#C8C8C0' }}
+              />
+              <div className="text-[10px] font-mono mb-1.5" style={{ color: '#444' }}>Select at least 2 participants:</div>
+              <div className="flex flex-wrap gap-1 mb-2 max-h-32 overflow-y-auto">
+                {allPersonas.map(p => {
+                  const selected = forceBreakoutParticipants.includes(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setForceBreakoutParticipants(prev =>
+                        prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id]
+                      )}
+                      className="px-2 py-1 rounded text-xs font-mono"
+                      style={{
+                        background: selected ? `${p.color}18` : '#0A0A0A',
+                        border: `1px solid ${selected ? p.color : '#1A1A1A'}`,
+                        color: selected ? p.color : '#666',
+                      }}
+                    >{p.initial}</button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => {
+                  if (forceBreakoutParticipants.length < 2 || !forceBreakoutName.trim() || !forceBreakoutTopic.trim()) return;
+                  enqueueFacilitatorAction({
+                    kind: 'force_breakout',
+                    participantIds: forceBreakoutParticipants,
+                    threadName: forceBreakoutName.trim(),
+                    topic: forceBreakoutTopic.trim(),
+                  });
+                  setForceBreakoutParticipants([]);
+                  setForceBreakoutName('');
+                  setForceBreakoutTopic('');
+                }}
+                disabled={forceBreakoutParticipants.length < 2 || !forceBreakoutName.trim() || !forceBreakoutTopic.trim()}
+                className="w-full py-2 rounded text-xs font-mono tracking-widest uppercase transition-all"
+                style={{
+                  background: (forceBreakoutParticipants.length >= 2 && forceBreakoutName.trim() && forceBreakoutTopic.trim()) ? '#C8A96E' : '#111',
+                  color: (forceBreakoutParticipants.length >= 2 && forceBreakoutName.trim() && forceBreakoutTopic.trim()) ? '#080808' : '#2E2E2E',
+                  border: 'none',
+                  fontWeight: 'bold',
+                }}
+              >Queue Breakout</button>
+            </div>
+
+            {/* Recent structural events */}
+            <div className="p-4 flex-1 overflow-y-auto">
+              <div className="text-xs font-mono tracking-widest mb-2" style={{ color: '#555' }}>STRUCTURAL EVENTS</div>
+              {orchestratorEvents.length === 0 ? (
+                <p className="text-xs italic" style={{ color: '#333' }}>No structural moves yet.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {orchestratorEvents.slice().reverse().map(e => {
+                    const isFacilitator = e.type.startsWith('facilitator_');
+                    return (
+                      <div key={e.id} className="text-xs leading-relaxed pl-2" style={{
+                        borderLeft: `2px solid ${isFacilitator ? '#E8A040' : '#6EC8E8'}`,
+                      }}>
+                        <div className="font-mono" style={{ fontSize: '9px', color: isFacilitator ? '#E8A040' : '#6EC8E8' }}>
+                          T+{e.atSimMin}m · {isFacilitator ? 'FACILITATOR' : 'ORCHESTRATOR'}
+                        </div>
+                        <div style={{ color: '#999' }}>{e.description}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1356,6 +1695,96 @@ export default function RiskForumClient({ user }: Props) {
         <div className="p-10 text-center text-xs font-mono tracking-widest" style={{ color: '#333' }}>GENERATING ANALYSIS...</div>
       ) : (
         <div className="p-8 flex flex-col gap-4">
+
+          {/* Conversation shape — threads, breakouts, structural events */}
+          <div className="p-5 rounded-lg" style={{ background: '#0D0D0D', border: '1px solid #1A1A1A' }}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-xs font-mono tracking-widest" style={{ color: '#444' }}>CONVERSATION SHAPE</div>
+              <div className="text-xs font-mono" style={{ color: '#333' }}>
+                {Object.keys(threads).length} threads · {orchestratorEvents.length} structural moves
+              </div>
+            </div>
+
+            {/* Threads summary table */}
+            <div className="mb-5">
+              <div className="text-[10px] font-mono tracking-widest mb-2" style={{ color: '#555' }}>THREADS</div>
+              <div className="flex flex-col gap-2">
+                {threadOrder.map(tid => {
+                  const t = threads[tid];
+                  if (!t) return null;
+                  const msgCount = t.messages.filter(m => m.type === 'message').length;
+                  const durationMin = (t.concludedAtSimMin ?? simulatedMinutes) - t.spawnedAtSimMin;
+                  return (
+                    <div
+                      key={tid}
+                      className="p-3 rounded"
+                      style={{
+                        background: '#0A0A0A',
+                        borderLeft: `3px solid ${t.kind === 'main' ? '#C84040' : t.status === 'concluded' ? '#3E6850' : '#E8A040'}`,
+                      }}
+                    >
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <div className="text-xs font-bold" style={{ color: '#E0E0D8' }}>{t.name}</div>
+                        <div className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{
+                          background: t.kind === 'main' ? '#1A0808' : '#0F0A08',
+                          color: t.kind === 'main' ? '#C84040' : '#E8A040',
+                        }}>{t.kind.toUpperCase()}</div>
+                        <div className="text-[10px] font-mono" style={{ color: '#555' }}>
+                          T+{t.spawnedAtSimMin}m → {t.concludedAtSimMin !== undefined ? `T+${t.concludedAtSimMin}m (${durationMin}m)` : 'still open'}
+                        </div>
+                        <div className="text-[10px] font-mono ml-auto" style={{ color: '#555' }}>{msgCount} msgs</div>
+                      </div>
+                      {t.topic && (
+                        <div className="mt-1 text-xs italic" style={{ color: '#888', fontFamily: 'Georgia, serif' }}>
+                          {t.topic}
+                        </div>
+                      )}
+                      <div className="mt-2 flex items-center gap-1 flex-wrap">
+                        {t.participantIds.map(pid => {
+                          const p = allPersonas.find(a => a.id === pid);
+                          if (!p) return null;
+                          return (
+                            <div key={pid} className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono"
+                              style={{ background: '#080808', border: `1px solid ${p.color}44`, color: p.color }}>
+                              {p.initial} {p.name.split(' ')[0]}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Structural events timeline */}
+            <div>
+              <div className="text-[10px] font-mono tracking-widest mb-2" style={{ color: '#555' }}>STRUCTURAL TIMELINE</div>
+              {orchestratorEvents.length === 0 ? (
+                <p className="text-xs italic" style={{ color: '#444' }}>
+                  No breakouts, summons, or facilitator injections occurred. Conversation ran in the main room only.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {orchestratorEvents.map(e => {
+                    const isFacilitator = e.type.startsWith('facilitator_');
+                    const color = isFacilitator ? '#E8A040' : '#6EC8E8';
+                    return (
+                      <div key={e.id} className="flex items-start gap-3 text-xs">
+                        <div className="font-mono flex-shrink-0" style={{ width: 70, color: '#555', fontSize: '10px' }}>
+                          T+{e.atSimMin}m
+                        </div>
+                        <div className="font-mono flex-shrink-0" style={{ width: 90, color, fontSize: '10px' }}>
+                          {isFacilitator ? '[FACILITATOR]' : '[ORCH]'}
+                        </div>
+                        <div className="flex-1" style={{ color: '#AAA' }}>{e.description}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* Summary */}
           <div className="p-5 rounded-lg" style={{ background: '#0D0D0D', border: '1px solid #1A1A1A' }}>
