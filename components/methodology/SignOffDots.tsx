@@ -18,6 +18,32 @@ interface SignOffRecord {
   timestamp?: string;
 }
 
+/**
+ * Cascade visual rule for sign-off dots: a higher authority's sign-off
+ * implies (and subsumes) the lower authorities'. Given the ordered roles
+ * being rendered, if any role *after* this one has a real sign-off, show
+ * this dot as signed too (inheriting the higher signer's identity).
+ *
+ * The rendering order is authoritative — callers pass roles left-to-right
+ * from lowest (Preparer) to highest (RI / Partner / EQR), which is the
+ * convention already used by every SignOffDots caller.
+ */
+function effectiveSignOffInCascade(
+  roleIndex: number,
+  roles: string[],
+  signOffs: Record<string, SignOffRecord | undefined>,
+): { signOff: SignOffRecord | undefined; viaRole: string | null } {
+  // First check this role itself.
+  const self = signOffs[roles[roleIndex]];
+  if (self?.timestamp) return { signOff: self, viaRole: roles[roleIndex] };
+  // Then walk upwards through higher roles and use the first one signed.
+  for (let i = roleIndex + 1; i < roles.length; i++) {
+    const higher = signOffs[roles[i]];
+    if (higher?.timestamp) return { signOff: higher, viaRole: roles[i] };
+  }
+  return { signOff: undefined, viaRole: null };
+}
+
 interface Props {
   signOffs: Record<string, SignOffRecord | undefined>;
   teamMembers: TeamMemberLite[] | undefined;
@@ -51,11 +77,20 @@ export function SignOffDots({
     <div className="flex flex-col items-center">
       {label && <span className="text-[9px] text-slate-400 mb-0.5 uppercase tracking-wide">{label}</span>}
       <div className={`flex items-center ${gap}`}>
-        {roles.map(role => {
-          const so = signOffs[role];
-          const isSigned = !!so?.timestamp;
+        {roles.map((role, idx) => {
+          // Cascade: if no sign-off on this role, check higher roles.
+          const { signOff: effective, viaRole } = effectiveSignOffInCascade(idx, roles, signOffs);
+          const isSigned = !!effective?.timestamp;
+          const isCascaded = isSigned && viaRole !== role;
           const canSign = canUserSign(role, currentUserId, teamMembers);
-          const dateStr = so?.timestamp ? new Date(so.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '';
+          const dateStr = effective?.timestamp ? new Date(effective.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '';
+          const title = isSigned
+            ? (isCascaded
+                ? `${effective?.userName || ''} — ${dateStr} (signed as ${roleLabel(viaRole || '')})`
+                : `${effective?.userName || ''} — ${dateStr}`)
+            : canSign
+              ? `Sign as ${roleLabel(role)}`
+              : roleNotAllowedTooltip(role);
           return (
             <div key={role} className="flex flex-col items-center gap-0.5">
               <button
@@ -68,18 +103,14 @@ export function SignOffDots({
                       ? 'border-green-400 hover:bg-green-50 cursor-pointer'
                       : 'border-slate-200 cursor-not-allowed opacity-50'
                 }`}
-                title={
-                  isSigned ? `${so?.userName || ''} — ${dateStr}` :
-                  canSign ? `Sign as ${roleLabel(role)}` :
-                  roleNotAllowedTooltip(role)
-                }
+                title={title}
               >
                 {isSigned && <CheckCircle2 className={`${checkSize} text-white`} />}
               </button>
               {!hideRoleLabels && (
                 <span className="text-[7px] text-slate-500 font-medium">{roleLabel(role)}</span>
               )}
-              {!hideRoleLabels && isSigned && <span className="text-[6px] text-green-600 max-w-[60px] truncate">{so?.userName}</span>}
+              {!hideRoleLabels && isSigned && <span className="text-[6px] text-green-600 max-w-[60px] truncate">{effective?.userName}</span>}
               {!hideRoleLabels && isSigned && dateStr && <span className="text-[6px] text-slate-400">{dateStr}</span>}
             </div>
           );

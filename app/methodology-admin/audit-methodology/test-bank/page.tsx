@@ -53,7 +53,7 @@ export default async function TestBankPage() {
     id: tt.id,
     name: tt.name,
     description: tt.codeSection || '',
-    actionType: (tt.actionType === 'client_action' ? 'client' : tt.actionType === 'ai_action' ? 'ai' : 'human') as 'client' | 'ai' | 'human' | 'review',
+    actionType: (tt.actionType === 'client_action' ? 'client' : tt.actionType === 'ai_action' ? 'ai' : 'team') as 'client' | 'ai' | 'team' | 'review',
     isReusable: true,
     executionDef: (tt as any).executionDef || undefined,
   }));

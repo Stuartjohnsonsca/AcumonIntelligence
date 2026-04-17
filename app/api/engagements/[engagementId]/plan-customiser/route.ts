@@ -26,7 +26,7 @@ import { prisma } from '@/lib/db';
  *       fsLineId: string,
  *       fsLineName: string,
  *       fsNote?: string,
- *       testTypeCode: string,      // default 'human_action'
+ *       testTypeCode: string,      // default 'team_action'
  *       assertions: string[],
  *       framework: string,
  *       createdBy: { id, name },
@@ -174,7 +174,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         fsLineId: customTest.fsLineId,
         fsLineName: customTest.fsLineName,
         fsNote: customTest.fsNote,
-        testTypeCode: customTest.testTypeCode || 'human_action',
+        testTypeCode: customTest.testTypeCode || 'team_action',
         assertions: Array.isArray(customTest.assertions) ? customTest.assertions : [],
         framework: customTest.framework || 'IFRS',
         createdBy: setBy,

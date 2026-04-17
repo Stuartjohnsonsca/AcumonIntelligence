@@ -216,8 +216,8 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
     }
     if (assistantResult.systemInstruction) patch.systemInstruction = assistantResult.systemInstruction;
     if (assistantResult.promptTemplate) patch.promptTemplate = assistantResult.promptTemplate;
-    // For client/human actions
-    if (assistantResult.systemInstruction && actionType === 'human_action') patch.instructions = assistantResult.systemInstruction;
+    // For client/team actions
+    if (assistantResult.systemInstruction && actionType === 'team_action') patch.instructions = assistantResult.systemInstruction;
     setDef((prev: any) => ({ ...prev, ...patch }));
     setDirty(true);
     setShowAssistant(false);
@@ -829,7 +829,7 @@ export function ExecutionDefEditor({ actionType, executionDef, onChange }: Props
           )}
 
           {/* ─── HUMAN ACTION ─── */}
-          {actionType === 'human_action' && (
+          {actionType === 'team_action' && (
             <>
               <div>
                 <label className="text-[10px] font-semibold text-slate-500 uppercase">Instructions for Team Member</label>

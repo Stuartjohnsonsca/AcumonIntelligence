@@ -20,7 +20,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Description is required' }, { status: 400 });
   }
 
-  const actionLabel = actionType === 'ai_action' ? 'AI' : actionType === 'client_action' ? 'Client' : 'Team/Human';
+  const actionLabel = actionType === 'ai_action' ? 'AI' : actionType === 'client_action' ? 'Client' : 'Team';
 
   const systemPrompt = `You are a UK statutory audit methodology expert helping configure test action execution definitions.
 
@@ -47,7 +47,7 @@ You can also use these template placeholders in prompts:
 IMPORTANT RULES:
 - For AI actions: suggest systemInstruction AND promptTemplate
 - For Client actions: suggest systemInstruction as the request message template
-- For Human actions: suggest systemInstruction as instructions for the team member
+- For Team actions: suggest systemInstruction as instructions for the team member
 - Always pick inputs from the KNOWN INPUTS list where possible
 - Use {{input.<key>}} in the prompt to reference inputs
 - Be specific to UK statutory audit (ISA UK standards)

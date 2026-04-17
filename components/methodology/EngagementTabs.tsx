@@ -249,16 +249,23 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           const so = json.signOffs || {};
           const meta: Record<string, { lastEditedAt?: string }> = json.fieldMeta || {};
 
-          function isStale(role: 'reviewer' | 'partner'): boolean {
-            const ts = so[role]?.timestamp;
+          function isStaleByTimestamp(ts: string | undefined): boolean {
             if (!ts) return false;
             const signTime = new Date(ts).getTime();
             return Object.values(meta).some(m => m.lastEditedAt && new Date(m.lastEditedAt).getTime() > signTime);
           }
 
+          // Cascade: Partner sign-off implies Reviewer is effectively
+          // signed too. The Reviewer tab-bar dot therefore shows green
+          // whenever EITHER the reviewer themselves signed OR the partner
+          // signed. Staleness is tested against the timestamp that drove
+          // the effective state (reviewer's own if signed, otherwise the
+          // partner's cascaded timestamp).
+          const reviewerTs = so.reviewer?.timestamp || so.partner?.timestamp;
+          const partnerTs = so.partner?.timestamp;
           statuses[tabKey] = {
-            reviewer: so.reviewer?.timestamp ? (isStale('reviewer') ? 'stale' : 'signed') : 'none',
-            partner: so.partner?.timestamp ? (isStale('partner') ? 'stale' : 'signed') : 'none',
+            reviewer: reviewerTs ? (isStaleByTimestamp(reviewerTs) ? 'stale' : 'signed') : 'none',
+            partner: partnerTs ? (isStaleByTimestamp(partnerTs) ? 'stale' : 'signed') : 'none',
           };
         } catch { /* ignore */ }
       })
@@ -283,11 +290,14 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
    * reviewer/partner as 'signed' (or 'none' after unsign) is correct.
    */
   const handleTabSignOffChange = useCallback((tabKey: string, signOffs: { reviewer?: { timestamp?: string } | null; partner?: { timestamp?: string } | null }) => {
+    // Cascade: Partner signed implies Reviewer is effectively signed.
+    const reviewerEffective = !!(signOffs.reviewer?.timestamp || signOffs.partner?.timestamp);
+    const partnerSigned = !!signOffs.partner?.timestamp;
     setTabSignOffs(prev => ({
       ...prev,
       [tabKey]: {
-        reviewer: signOffs.reviewer?.timestamp ? 'signed' : 'none',
-        partner: signOffs.partner?.timestamp ? 'signed' : 'none',
+        reviewer: reviewerEffective ? 'signed' : 'none',
+        partner: partnerSigned ? 'signed' : 'none',
       },
     }));
   }, []);

@@ -116,7 +116,7 @@ export function PlanCustomiserModal({
   const [newDesc, setNewDesc] = useState('');
   const [newAssertions, setNewAssertions] = useState<string[]>([]);
   const [newFramework, setNewFramework] = useState('IFRS');
-  const [newTestTypeCode, setNewTestTypeCode] = useState('human_action');
+  const [newTestTypeCode, setNewTestTypeCode] = useState('team_action');
 
   useEffect(() => {
     async function load() {
@@ -216,7 +216,7 @@ export function PlanCustomiserModal({
       setNewDesc('');
       setNewAssertions([]);
       setNewFramework('IFRS');
-      setNewTestTypeCode('human_action');
+      setNewTestTypeCode('team_action');
     }
   }
 
@@ -357,7 +357,7 @@ export function PlanCustomiserModal({
                         onChange={e => setNewTestTypeCode(e.target.value)}
                         className="text-xs border border-slate-300 rounded px-1.5 py-0.5"
                       >
-                        <option value="human_action">Human</option>
+                        <option value="team_action">Team</option>
                         <option value="ai_action">AI</option>
                         <option value="client_action">Client</option>
                       </select>

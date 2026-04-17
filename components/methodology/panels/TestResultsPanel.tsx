@@ -203,17 +203,18 @@ export function TestResultsPanel({
 
   const toggleSection = (key: keyof typeof sectionsOpen) => setSectionsOpen(prev => ({ ...prev, [key]: !prev[key] }));
 
-  // Stale detection: check if conclusion data changed after a sign-off
+  // Stale detection: check if conclusion data changed after the effective
+  // sign-off for this role. Cascade semantics match the dot render — if
+  // Reviewer hasn't signed directly but RI has, we test staleness against
+  // the RI's timestamp (the cascade source).
   function isSignOffStale(role: 'reviewer' | 'ri'): boolean {
     if (!conclusionData?.updatedAt) return false;
     const dataTime = new Date(conclusionData.updatedAt).getTime();
-    if (role === 'reviewer' && conclusionData.reviewedAt) {
-      return dataTime > new Date(conclusionData.reviewedAt).getTime();
-    }
-    if (role === 'ri' && conclusionData.riSignedAt) {
-      return dataTime > new Date(conclusionData.riSignedAt).getTime();
-    }
-    return false;
+    const effectiveTs = role === 'ri'
+      ? conclusionData.riSignedAt
+      : (conclusionData.reviewedAt || conclusionData.riSignedAt);
+    if (!effectiveTs) return false;
+    return dataTime > new Date(effectiveTs).getTime();
   }
 
   // Effective output — fetched from DB or passed via props
@@ -442,35 +443,59 @@ export function TestResultsPanel({
         </button>
         {sectionsOpen.signoff && conclusionData && (
           <div className="px-4 pb-4">
-            <div className="flex items-center gap-8 justify-center py-2">
-              {/* Preparer dot — auto-set when conclusion is saved */}
-              <SignOffDot
-                label="Preparer"
-                signedBy={conclusionData.status !== 'pending' ? 'System' : undefined}
-                signedAt={undefined}
-                canSign={false}
-                isStale={false}
-                onToggle={() => {}}
-              />
-              {/* Reviewer dot */}
-              <SignOffDot
-                label="Reviewer"
-                signedBy={conclusionData.reviewedByName}
-                signedAt={conclusionData.reviewedAt}
-                canSign={userRole === 'Manager' || userRole === 'RI'}
-                isStale={isSignOffStale('reviewer')}
-                onToggle={() => handleSignOff(conclusionData.reviewedByName ? 'unreview' : 'review')}
-              />
-              {/* RI dot */}
-              <SignOffDot
-                label="RI"
-                signedBy={conclusionData.riSignedByName}
-                signedAt={conclusionData.riSignedAt}
-                canSign={userRole === 'RI'}
-                isStale={isSignOffStale('ri')}
-                onToggle={() => handleSignOff(conclusionData.riSignedByName ? 'ri_unsignoff' : 'ri_signoff')}
-              />
-            </div>
+            {/*
+              Sign-off dots — cascade visual rule applies: an RI sign-off
+              implies Reviewer and Preparer are effectively signed too; a
+              Reviewer sign-off implies Preparer is effectively signed. The
+              stored records against each role are unchanged — only the
+              rendered dot / name / date cascade down, using the identity
+              of whoever signed the highest covered role.
+            */}
+            {(() => {
+              const reviewerSignedBy = conclusionData.reviewedByName || conclusionData.riSignedByName;
+              const reviewerSignedAt = conclusionData.reviewedAt || conclusionData.riSignedAt;
+              const preparerSignedBy =
+                // Preparer is still auto-set by the system when a conclusion
+                // is saved; only cascade if nothing else marks it signed.
+                (conclusionData.status !== 'pending' ? 'System' : undefined)
+                || conclusionData.reviewedByName
+                || conclusionData.riSignedByName;
+              const preparerSignedAt =
+                conclusionData.status !== 'pending'
+                  ? (conclusionData.reviewedAt || conclusionData.riSignedAt || undefined)
+                  : undefined;
+              return (
+                <div className="flex items-center gap-8 justify-center py-2">
+                  {/* Preparer dot — auto-set when conclusion is saved; cascades from Reviewer / RI */}
+                  <SignOffDot
+                    label="Preparer"
+                    signedBy={preparerSignedBy}
+                    signedAt={preparerSignedAt}
+                    canSign={false}
+                    isStale={false}
+                    onToggle={() => {}}
+                  />
+                  {/* Reviewer dot — cascades from RI */}
+                  <SignOffDot
+                    label="Reviewer"
+                    signedBy={reviewerSignedBy}
+                    signedAt={reviewerSignedAt}
+                    canSign={userRole === 'Manager' || userRole === 'RI'}
+                    isStale={isSignOffStale('reviewer')}
+                    onToggle={() => handleSignOff(conclusionData.reviewedByName ? 'unreview' : 'review')}
+                  />
+                  {/* RI dot */}
+                  <SignOffDot
+                    label="RI"
+                    signedBy={conclusionData.riSignedByName}
+                    signedAt={conclusionData.riSignedAt}
+                    canSign={userRole === 'RI'}
+                    isStale={isSignOffStale('ri')}
+                    onToggle={() => handleSignOff(conclusionData.riSignedByName ? 'ri_unsignoff' : 'ri_signoff')}
+                  />
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

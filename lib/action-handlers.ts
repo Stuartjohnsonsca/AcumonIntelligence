@@ -304,7 +304,7 @@ async function handleCompareBankToTB(ctx: ActionHandlerContext): Promise<ActionH
 }
 
 async function handleVerifyEvidence(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
-  // Evidence verification requires human review of documents
+  // Evidence verification requires team review of documents
   return {
     action: 'pause',
     outputs: {

@@ -73,7 +73,7 @@ interface TestType {
 const TEST_TYPE_COLORS: Record<string, string> = {
   client_action: 'bg-blue-100 text-blue-700 border-blue-200',
   ai_action: 'bg-purple-100 text-purple-700 border-purple-200',
-  human_action: 'bg-green-100 text-green-700 border-green-200',
+  team_action: 'bg-green-100 text-green-700 border-green-200',
 };
 
 interface Props {
@@ -347,9 +347,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [errorFooterOpen, setErrorFooterOpen] = useState(true);
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
-  const [showAuditLog, setShowAuditLog] = useState(false);
-  const [auditLog, setAuditLog] = useState<any[]>([]);
-  const [auditLogLoading, setAuditLogLoading] = useState(false);
   const [flowViewerExec, setFlowViewerExec] = useState<{ id: string; testDescription: string } | null>(null);
   const [showErrorSchedule, setShowErrorSchedule] = useState(false);
 
@@ -780,29 +777,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
   useEffect(() => { setActiveNote(''); }, [activeLevel]);
 
-  async function loadAuditLog() {
-    setAuditLogLoading(true);
-    try {
-      // Filter by active FS level sub-tab when set
-      const params = new URLSearchParams();
-      if (activeLevel) params.set('fsLine', activeLevel);
-      // Lite mode: audit log table only needs summary + aggregate counts
-      params.set('lite', 'true');
-      const qs = `?${params.toString()}`;
-      const res = await fetch(`/api/engagements/${engagementId}/test-execution${qs}`);
-      if (res.ok) {
-        const data = await res.json();
-        setAuditLog(data.executions || []);
-      }
-    } catch {} finally { setAuditLogLoading(false); }
-  }
-
-  function toggleAuditLog() {
-    const next = !showAuditLog;
-    setShowAuditLog(next);
-    if (next && auditLog.length === 0) loadAuditLog();
-  }
-
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 text-blue-500 animate-spin" /></div>;
 
   if (statements.length === 0) {
@@ -836,13 +810,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           <h2 className="text-sm font-semibold text-slate-800">Audit Plan</h2>
           {framework && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">{framework}</span>}
         </div>
-        <button onClick={toggleAuditLog}
-          className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
-            showAuditLog ? 'bg-blue-100 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-          }`}>
-          <ClipboardList className="h-3 w-3" />
-          Test Audit Log
-        </button>
         <button onClick={() => setShowErrorSchedule(!showErrorSchedule)}
           className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
             showErrorSchedule ? 'bg-red-100 border-red-300 text-red-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -1368,25 +1335,38 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                               {/* Review / RI checkboxes — clickable */}
                               {dbConc && (
                                 <div className="flex items-center gap-1 flex-shrink-0 ml-1" onClick={e => e.stopPropagation()}>
-                                  <button
-                                    onClick={async () => {
-                                      const action = dbConc.reviewedBy ? 'unreview' : 'review';
-                                      const res = await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
-                                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ id: dbConc.id, action }),
-                                      });
-                                      if (res.ok) {
-                                        const { conclusion: updated } = await res.json();
-                                        setDbConclusions(prev => prev.map(c => c.id === updated.id ? updated : c));
-                                      }
-                                    }}
-                                    className={`inline-flex items-center text-[7px] px-1 py-0.5 rounded cursor-pointer transition-colors ${
-                                      dbConc.reviewedBy ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                                    }`}
-                                    title={dbConc.reviewedBy ? `Reviewed by ${dbConc.reviewedByName} on ${new Date(dbConc.reviewedAt).toLocaleDateString('en-GB')} — click to unreview` : 'Click to review'}
-                                  >
-                                    R {dbConc.reviewedBy ? '✓' : ''}
-                                  </button>
+                                  {/* Reviewer chip — cascade: appears signed if Reviewer OR RI has signed. Clicking still toggles the reviewer-level record specifically. */}
+                                  {(() => {
+                                    const reviewerEffective = dbConc.reviewedBy || dbConc.riSignedBy;
+                                    const reviewerEffectiveName = dbConc.reviewedByName || dbConc.riSignedByName;
+                                    const reviewerEffectiveAt = dbConc.reviewedAt || dbConc.riSignedAt;
+                                    const viaRi = !dbConc.reviewedBy && !!dbConc.riSignedBy;
+                                    return (
+                                      <button
+                                        onClick={async () => {
+                                          const action = dbConc.reviewedBy ? 'unreview' : 'review';
+                                          const res = await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
+                                            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ id: dbConc.id, action }),
+                                          });
+                                          if (res.ok) {
+                                            const { conclusion: updated } = await res.json();
+                                            setDbConclusions(prev => prev.map(c => c.id === updated.id ? updated : c));
+                                          }
+                                        }}
+                                        className={`inline-flex items-center text-[7px] px-1 py-0.5 rounded cursor-pointer transition-colors ${
+                                          reviewerEffective ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                                        }`}
+                                        title={
+                                          reviewerEffective
+                                            ? `${viaRi ? 'Covered by RI ' : 'Reviewed by '}${reviewerEffectiveName} on ${new Date(reviewerEffectiveAt).toLocaleDateString('en-GB')}${dbConc.reviewedBy ? ' — click to unreview' : ''}`
+                                            : 'Click to review'
+                                        }
+                                      >
+                                        R {reviewerEffective ? '✓' : ''}
+                                      </button>
+                                    );
+                                  })()}
                                   <button
                                     onClick={async () => {
                                       const action = dbConc.riSignedBy ? 'ri_unsignoff' : 'ri_signoff';
@@ -1510,98 +1490,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           <div className="p-3">
             <ErrorSchedulePanel engagementId={engagementId} />
           </div>
-        </div>
-      )}
-
-      {/* ─── AUDIT LOG ─── */}
-      {showAuditLog && (
-        <div className="bg-white rounded border border-slate-200 overflow-hidden">
-          <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <ClipboardList className="h-3.5 w-3.5 text-slate-500" />
-              <span className="text-xs font-semibold text-slate-700">Test Execution Audit Log</span>
-            </div>
-            <button onClick={loadAuditLog} className="text-[10px] text-blue-600 hover:text-blue-800">Refresh</button>
-          </div>
-          {auditLogLoading ? (
-            <div className="p-4 text-center"><Loader2 className="h-4 w-4 animate-spin text-blue-500 mx-auto" /></div>
-          ) : auditLog.length === 0 ? (
-            <div className="p-4 text-center text-xs text-slate-400">No test executions recorded yet.</div>
-          ) : (
-            <table className="w-full text-[10px]">
-              <thead className="bg-slate-50 border-b">
-                <tr>
-                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Test</th>
-                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">FS Line</th>
-                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Status</th>
-                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Steps</th>
-                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Started</th>
-                  <th className="text-left px-2 py-1.5 font-semibold text-slate-600">Error</th>
-                  <th className="w-12 px-2 py-1.5"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {auditLog.map(exec => {
-                  // Prefer the aggregate counts from lite mode; fall back to counting
-                  // nodeRuns when the caller fetched the full shape.
-                  const completedSteps = typeof exec.nodeRunsCompleted === 'number'
-                    ? exec.nodeRunsCompleted
-                    : (exec.nodeRuns || []).filter((r: any) => r.status === 'completed').length;
-                  const failedSteps = typeof exec.nodeRunsFailed === 'number'
-                    ? exec.nodeRunsFailed
-                    : (exec.nodeRuns || []).filter((r: any) => r.status === 'failed').length;
-                  const totalSteps = typeof exec.nodeRunsTotal === 'number'
-                    ? exec.nodeRunsTotal
-                    : (exec.nodeRuns || []).length;
-                  // failedNode detail is only available in full-shape mode; audit log
-                  // doesn't render it anyway (only uses the count), so skip when lite.
-                  const failedNode = (exec.nodeRuns || []).find((r: any) => r.status === 'failed');
-                  return (
-                    <tr key={exec.id} className={`border-b border-slate-50 hover:bg-slate-50 ${exec.status === 'failed' ? 'bg-red-50/30' : ''}`}>
-                      <td className="px-2 py-1.5 text-slate-700 font-medium max-w-[200px] truncate">{exec.testDescription}</td>
-                      <td className="px-2 py-1.5 text-slate-500">{exec.fsLine}</td>
-                      <td className="px-2 py-1.5">
-                        <span className={`inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
-                          exec.status === 'completed' ? 'bg-green-100 text-green-700' :
-                          exec.status === 'failed' ? 'bg-red-100 text-red-700' :
-                          exec.status === 'running' ? 'bg-blue-100 text-blue-700' :
-                          exec.status === 'paused' ? 'bg-orange-100 text-orange-700' :
-                          exec.status === 'cancelled' ? 'bg-slate-100 text-slate-500' :
-                          'bg-slate-100 text-slate-500'
-                        }`}>
-                          {exec.status === 'completed' && <CheckCircle2 className="h-2.5 w-2.5" />}
-                          {exec.status === 'failed' && <XCircle className="h-2.5 w-2.5" />}
-                          {exec.status === 'running' && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
-                          {exec.status === 'paused' && <Clock className="h-2.5 w-2.5" />}
-                          {exec.status}
-                        </span>
-                      </td>
-                      <td className="px-2 py-1.5 text-slate-500">
-                        <span className="text-green-600">{completedSteps}</span>
-                        {failedSteps > 0 && <span className="text-red-500 ml-1">/ {failedSteps} failed</span>}
-                        <span className="text-slate-400"> / {totalSteps}</span>
-                      </td>
-                      <td className="px-2 py-1.5 text-slate-400">
-                        {exec.startedAt ? new Date(exec.startedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
-                      </td>
-                      <td className="px-2 py-1.5 text-red-500 max-w-[200px] truncate">
-                        {failedNode?.errorMessage || exec.errorMessage || ''}
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <button
-                          onClick={() => setFlowViewerExec({ id: exec.id, testDescription: exec.testDescription })}
-                          className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50"
-                          title="View execution flow"
-                        >
-                          <GitBranch className="h-2.5 w-2.5" /> Flow
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
         </div>
       )}
 

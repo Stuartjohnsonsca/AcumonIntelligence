@@ -54,6 +54,34 @@ const SIGN_OFF_ROLES = [
   { key: 'partner' as const, label: 'Partner' },
 ];
 
+/**
+ * Cascade sign-off visuals downwards: if Partner has signed, Reviewer and
+ * Preparer dots render as signed too (using the Partner's identity and
+ * timestamp). If Reviewer has signed, Preparer renders as signed. The
+ * cascade only affects the visual representation — the stored sign-off
+ * records for each role are unchanged. This reflects the real-world
+ * principle that a higher authority's sign-off implies (and subsumes)
+ * the lower authorities' review.
+ */
+function effectiveSignOff(
+  role: 'operator' | 'reviewer' | 'partner',
+  signOffs: SignOffs,
+): { signOff: SignOff | undefined; viaRole: 'operator' | 'reviewer' | 'partner' | null } {
+  if (role === 'partner') {
+    return { signOff: signOffs.partner, viaRole: signOffs.partner?.timestamp ? 'partner' : null };
+  }
+  if (role === 'reviewer') {
+    if (signOffs.reviewer?.timestamp) return { signOff: signOffs.reviewer, viaRole: 'reviewer' };
+    if (signOffs.partner?.timestamp) return { signOff: signOffs.partner, viaRole: 'partner' };
+    return { signOff: undefined, viaRole: null };
+  }
+  // operator — cascade from reviewer, then from partner
+  if (signOffs.operator?.timestamp) return { signOff: signOffs.operator, viaRole: 'operator' };
+  if (signOffs.reviewer?.timestamp) return { signOff: signOffs.reviewer, viaRole: 'reviewer' };
+  if (signOffs.partner?.timestamp) return { signOff: signOffs.partner, viaRole: 'partner' };
+  return { signOff: undefined, viaRole: null };
+}
+
 interface Props {
   engagementId: string;
   endpoint: string; // API endpoint for this tab's sign-offs
@@ -114,8 +142,11 @@ export function SignOffHeader({ engagementId, endpoint, title, teamMembers, chil
     return '';
   }
 
-  function isSignOffStale(role: 'reviewer' | 'partner'): boolean {
-    const signOff = signOffs[role];
+  function isSignOffStale(role: 'operator' | 'reviewer' | 'partner'): boolean {
+    // Use the effective sign-off (cascaded where applicable) so a cascaded
+    // dot can still show the stale ring when edits happened after the
+    // higher-authority sign-off that triggered the cascade.
+    const { signOff } = effectiveSignOff(role, signOffs);
     if (!signOff?.timestamp) return false;
     const signOffTime = new Date(signOff.timestamp).getTime();
     return Object.values(fieldMeta).some(meta => {
@@ -189,12 +220,26 @@ export function SignOffHeader({ engagementId, endpoint, title, teamMembers, chil
             {/* Sign-off dots */}
             <div className="flex items-center gap-5">
               {SIGN_OFF_ROLES.map(({ key, label }) => {
-                const so = signOffs[key];
-                const isStale = (key === 'reviewer' || key === 'partner') && isSignOffStale(key);
-                const hasSigned = !!so?.timestamp;
+                // Cascaded sign-off: Partner implies Reviewer + Preparer;
+                // Reviewer implies Preparer. `viaRole` tells us whether
+                // this role was signed directly or inherited from above.
+                const { signOff: effective, viaRole } = effectiveSignOff(key, signOffs);
+                const isStale = isSignOffStale(key);
+                const hasSigned = !!effective?.timestamp;
+                const isCascaded = hasSigned && viaRole !== key;
                 const showGreen = hasSigned && !isStale;
                 const currentUserId = session?.user?.id;
                 const canSign = currentUserId && teamMembers.some(m => ROLE_MAP[m.role] === key && m.userId === currentUserId);
+                // For cascaded dots we let the user still sign their own
+                // row if they hold the role — it's a no-op visually but
+                // records their actual sign-off against their own user.
+                const titleBase = hasSigned
+                  ? isCascaded
+                    ? `${effective!.userName} — ${new Date(effective!.timestamp).toLocaleString()} (signed as ${viaRole === 'partner' ? 'Partner' : viaRole === 'reviewer' ? 'Reviewer' : 'Preparer'})`
+                    : `${effective!.userName} — ${new Date(effective!.timestamp).toLocaleString()}`
+                  : canSign
+                    ? `Click to sign off as ${label}`
+                    : `Only ${label}s can sign off here`;
 
                 return (
                   <div key={key} className="flex flex-col items-center gap-1">
@@ -211,16 +256,12 @@ export function SignOffHeader({ engagementId, endpoint, title, teamMembers, chil
                               ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
                               : 'bg-white border-slate-200 cursor-not-allowed opacity-50'
                       }`}
-                      title={
-                        hasSigned ? `${so.userName} — ${new Date(so.timestamp).toLocaleString()}` :
-                        canSign ? `Click to sign off as ${label}` :
-                        `Only ${label}s can sign off here`
-                      }
+                      title={titleBase}
                     />
                     {hasSigned && (
                       <div className="text-center">
-                        <p className="text-[9px] text-slate-600 leading-tight">{so.userName}</p>
-                        <p className="text-[8px] text-slate-400">{new Date(so.timestamp).toLocaleDateString('en-GB')}</p>
+                        <p className="text-[9px] text-slate-600 leading-tight">{effective!.userName}</p>
+                        <p className="text-[8px] text-slate-400">{new Date(effective!.timestamp).toLocaleDateString('en-GB')}</p>
                       </div>
                     )}
                   </div>

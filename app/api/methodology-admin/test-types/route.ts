@@ -44,7 +44,7 @@ export async function POST(req: Request) {
       firmId,
       name: name.trim(),
       code: finalCode,
-      actionType: actionType || 'human_action',
+      actionType: actionType || 'team_action',
       codeSection: codeSection || null,
       executionDef: executionDef || null,
       isActive: true,

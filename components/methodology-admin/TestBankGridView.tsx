@@ -30,7 +30,7 @@ interface Props {
 const TYPE_COLORS: Record<string, string> = {
   client_action: 'bg-blue-100 text-blue-700',
   ai_action: 'bg-purple-100 text-purple-700',
-  human_action: 'bg-green-100 text-green-700',
+  team_action: 'bg-green-100 text-green-700',
 };
 
 export function TestBankGridView({ firmId, testBanks, testTypes, fsLines, onSave }: Props) {

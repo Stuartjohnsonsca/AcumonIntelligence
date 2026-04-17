@@ -8,7 +8,7 @@ interface TestAction {
   id: string;
   name: string;
   description: string;
-  actionType: 'client' | 'ai' | 'human' | 'review';
+  actionType: 'client' | 'ai' | 'team' | 'review';
   isReusable: boolean;
   isSystem?: boolean; // System-generated actions cannot be edited or deleted
 }
@@ -63,22 +63,22 @@ interface Props {
 
 const ACTION_TYPES = [
   { value: 'client', label: 'Client Action', color: 'bg-blue-100 text-blue-700' },
-  { value: 'human', label: 'Human Action', color: 'bg-green-100 text-green-700' },
+  { value: 'team', label: 'Team Action', color: 'bg-green-100 text-green-700' },
   { value: 'ai', label: 'AI Action', color: 'bg-purple-100 text-purple-700' },
   { value: 'review', label: 'Review/Conclude', color: 'bg-amber-100 text-amber-700' },
 ];
 
 const PRESET_ACTIONS: Omit<TestAction, 'id'>[] = [
   { name: 'Request Data', description: 'Ask client for breakdown of data or supporting schedules', actionType: 'client', isReusable: true },
-  { name: 'Select Sample', description: 'Select a representative sample from the population for testing', actionType: 'human', isReusable: true },
+  { name: 'Select Sample', description: 'Select a representative sample from the population for testing', actionType: 'team', isReusable: true },
   { name: 'Request Evidence', description: 'Ask client for supporting evidence (contracts, invoices, etc.)', actionType: 'client', isReusable: true },
-  { name: 'Inspect & Verify', description: 'Inspect documents and verify against the sample selection', actionType: 'human', isReusable: true },
+  { name: 'Inspect & Verify', description: 'Inspect documents and verify against the sample selection', actionType: 'team', isReusable: true },
   { name: 'AI Analysis', description: 'Use AI to analyse patterns, anomalies, or extract data', actionType: 'ai', isReusable: true },
   { name: 'Assess Error', description: 'Evaluate any errors or misstatements identified during testing', actionType: 'review', isReusable: true },
   { name: 'Conclude', description: 'Document the conclusion and whether the assertion is satisfied', actionType: 'review', isReusable: true },
-  { name: 'Recalculate', description: 'Independently recalculate amounts to verify accuracy', actionType: 'human', isReusable: true },
+  { name: 'Recalculate', description: 'Independently recalculate amounts to verify accuracy', actionType: 'team', isReusable: true },
   { name: 'Confirm Externally', description: 'Obtain independent confirmation from a third party', actionType: 'client', isReusable: true },
-  { name: 'Analytical Review', description: 'Perform analytical procedures to identify unusual items', actionType: 'human', isReusable: true },
+  { name: 'Analytical Review', description: 'Perform analytical procedures to identify unusual items', actionType: 'team', isReusable: true },
 ];
 
 let counter = 0;
@@ -98,7 +98,7 @@ export function TestActionsClient({ initialActions, isSuperAdmin, systemActionDe
   const [expandedPipelineCode, setExpandedPipelineCode] = useState<string | null>(null);
 
   function addAction() {
-    setActions([...actions, { id: uid(), name: '', description: '', actionType: 'human', isReusable: true }]);
+    setActions([...actions, { id: uid(), name: '', description: '', actionType: 'team', isReusable: true }]);
     setSaved(false);
   }
 
@@ -608,7 +608,7 @@ function SystemActionCard({ action, index, expandedSystemId, setExpandedSystemId
   action: any; index: number; expandedSystemId: string | null; setExpandedSystemId: (id: string | null) => void;
   systemActionDetails: Record<string, any>; getColor: (t: string) => string;
 }) {
-  const ACTION_TYPES_MAP: Record<string, string> = { client: 'Client Action', human: 'Human Action', ai: 'AI Action', review: 'Review/Conclude' };
+  const ACTION_TYPES_MAP: Record<string, string> = { client: 'Client Action', team: 'Team Action', ai: 'AI Action', review: 'Review/Conclude' };
   const codeMap: Record<string, string> = { sys_fetch_evidence: 'fetch_evidence_accounting', sys_large_unusual: 'large_unusual_items' };
   const details = systemActionDetails[codeMap[action.id] || ''];
   const execDef = details?.executionDef || {};

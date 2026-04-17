@@ -160,7 +160,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
         { value: 'data_table', label: 'Data Table' },
         { value: 'text', label: 'Free Text' },
       ]},
-      { code: 'requires_review', label: 'Requires Human Review', type: 'boolean', required: false, source: 'user', group: 'Output', defaultValue: true },
+      { code: 'requires_review', label: 'Requires Team Review', type: 'boolean', required: false, source: 'user', group: 'Output', defaultValue: true },
     ],
     outputSchema: [
       { code: 'result', label: 'AI Result', type: 'json' },

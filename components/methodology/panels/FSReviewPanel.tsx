@@ -180,7 +180,14 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
   function getAccConcs(code: string): Conc[] { return concsByAccount.get(code.toLowerCase()) || []; }
 
   function signCounts(concs: Conc[]) {
-    return { rev: concs.filter(c => c.reviewedByName).length, ri: concs.filter(c => c.riSignedByName).length, total: concs.length };
+    // Reviewer count cascades from RI: a conclusion with an RI sign-off
+    // but no direct reviewer sign-off still counts as reviewed for the
+    // quick "X/Y" rollups.
+    return {
+      rev: concs.filter(c => c.reviewedByName || c.riSignedByName).length,
+      ri: concs.filter(c => c.riSignedByName).length,
+      total: concs.length,
+    };
   }
 
   function toggle(key: string) { setExpanded(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; }); }
@@ -279,7 +286,12 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                                       <Dot c={c.conclusion} />
                                       <span className="text-slate-700 flex-1 truncate">{c.testDescription}</span>
                                       {c.totalErrors > 0 && <span className="text-red-600 font-mono text-[9px]">£{f(c.extrapolatedError)}</span>}
-                                      {c.reviewedByName ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded">{c.reviewedByName}</span> : <span className="text-[8px] text-slate-300">No rev</span>}
+                                      {/* Reviewer chip cascades from RI */}
+                                      {c.reviewedByName
+                                        ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded">{c.reviewedByName}</span>
+                                        : c.riSignedByName
+                                          ? <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded" title="Covered by RI sign-off">{c.riSignedByName}</span>
+                                          : <span className="text-[8px] text-slate-300">No rev</span>}
                                       {c.riSignedByName ? <span className="text-[8px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">RI: {c.riSignedByName}</span> : <span className="text-[8px] text-slate-300">No RI</span>}
                                     </div>
                                   ))}
@@ -366,7 +378,12 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
         const rowKey = `${prefix}:${r.accountCode}`;
         const isOpen = expanded.has(rowKey);
         const hasConcs = concs.length > 0;
-        const so = { rev: concs.filter(c => c.reviewedByName).length, ri: concs.filter(c => c.riSignedByName).length, total: concs.length };
+        // Reviewer count cascades from RI (same rule as signCounts above).
+        const so = {
+          rev: concs.filter(c => c.reviewedByName || c.riSignedByName).length,
+          ri: concs.filter(c => c.riSignedByName).length,
+          total: concs.length,
+        };
 
         return (
           <div key={r.id}>
@@ -410,8 +427,11 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
                     <span className="text-slate-700 flex-1 truncate">{c.testDescription}</span>
                     {c.totalErrors > 0 && <span className="text-red-600 font-mono text-[9px]">£{f(c.extrapolatedError)}</span>}
                     <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {/* Reviewer chip cascades from RI */}
                       {c.reviewedByName ? (
                         <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded">{c.reviewedByName}</span>
+                      ) : c.riSignedByName ? (
+                        <span className="text-[8px] bg-green-100 text-green-700 px-1 py-0.5 rounded" title="Covered by RI sign-off">{c.riSignedByName}</span>
                       ) : (
                         <span className="text-[8px] text-slate-300 px-1">No rev</span>
                       )}

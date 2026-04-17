@@ -27,7 +27,7 @@ export interface TestAction {
   id: string;
   name: string;
   description: string;
-  actionType: 'client' | 'ai' | 'human' | 'review';
+  actionType: 'client' | 'ai' | 'team' | 'review';
   isReusable: boolean;
   executionDef?: any;
 }
@@ -653,6 +653,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
   const [editEvidenceTag, setEditEvidenceTag] = useState('');
   const [editSubFlowId, setEditSubFlowId] = useState('');
   const [editSubFlowName, setEditSubFlowName] = useState('');
+  const [editCutOffDays, setEditCutOffDays] = useState<number>(7);
   const [availableFlows, setAvailableFlows] = useState<{ id: string; fsLine: string; description: string; hasFlow: boolean }[]>([]);
 
   // Clear stale validation when flow changes
@@ -707,6 +708,11 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
     setEditSubFlowId((node.data as any).subFlowId || '');
     setEditSubFlowName((node.data as any).subFlowName || '');
     setEditCustomVars((node.data as any).customVars || []);
+    {
+      const raw = (node.data as any).cutOffDays ?? (node.data as any).cut_off_days;
+      const parsed = Math.floor(Number(raw));
+      setEditCutOffDays(Number.isFinite(parsed) && parsed > 0 ? parsed : 7);
+    }
     // Load available flows for sub-flow picker
     if (node.type === 'subFlow') {
       fetch('/api/methodology-admin/test-bank')
@@ -759,11 +765,12 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
           inputType: editInputType,
           evidenceTag: editEvidenceTag || undefined,
           customVars: editCustomVars.filter(v => v.key.trim()),
+          cutOffDays: editInputType === 'analyse_cut_off' ? editCutOffDays : undefined,
         },
       };
     }));
     setEditingNode(null);
-  }, [editingNode, editLabel, editDescription, editAssignee, editInputType, editQuestion, editCollection, editCondition, editMaxIterations, editWaitFor, editSubFlowId, editSubFlowName, setNodes]);
+  }, [editingNode, editLabel, editDescription, editAssignee, editInputType, editQuestion, editCollection, editCondition, editMaxIterations, editWaitFor, editSubFlowId, editSubFlowName, editCutOffDays, setNodes]);
 
   const deleteSelected = useCallback(() => {
     setNodes((nds) => nds.filter((n) => !n.selected || n.type === 'start'));
@@ -786,7 +793,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
 
   // Group test actions by type for sidebar
   const groupedActions = useMemo(() => {
-    const groups: Record<string, TestAction[]> = { ai: [], client: [], human: [], review: [] };
+    const groups: Record<string, TestAction[]> = { ai: [], client: [], team: [], review: [] };
     testActions.forEach((a) => { if (groups[a.actionType]) groups[a.actionType].push(a); });
     return groups;
   }, [testActions]);
@@ -933,11 +940,11 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
             )}
             {Object.entries(groupedActions).map(([type, actions]) => {
               if (actions.length === 0) return null;
-              const colors = ASSIGNEE_COLORS[type === 'human' ? 'team' : type === 'review' ? 'ai' : type];
+              const colors = ASSIGNEE_COLORS[type === 'team' ? 'team' : type === 'review' ? 'ai' : type];
               return (
                 <div key={type} className="space-y-1.5">
                   <div className="text-[10px] font-semibold uppercase" style={{ color: colors?.text || '#475569' }}>
-                    {type === 'human' ? 'Team Actions' : type === 'review' ? 'Review Actions' : type === 'ai' ? 'AI Actions' : 'Client Actions'}
+                    {type === 'team' ? 'Team Actions' : type === 'review' ? 'Review Actions' : type === 'ai' ? 'AI Actions' : 'Client Actions'}
                   </div>
                   {actions.map((action) => (
                     <DraggableItem
@@ -951,7 +958,7 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                       data={{
                         label: action.name,
                         description: action.description,
-                        assignee: action.actionType === 'human' ? 'team' : action.actionType === 'review' ? 'ai' : action.actionType,
+                        assignee: action.actionType === 'team' ? 'team' : action.actionType === 'review' ? 'ai' : action.actionType,
                         inputType: 'none',
                         actionId: action.id,
                         executionDef: action.executionDef || undefined,
@@ -1151,6 +1158,27 @@ export function TestFlowEditor({ testDescription, initialFlow, testActions, onSa
                           value={editEvidenceTag}
                           onChange={e => setEditEvidenceTag(e.target.value)}
                           placeholder="e.g. bank_statements, invoices"
+                          className="w-full border rounded-md px-2.5 py-1.5 text-sm mt-0.5 bg-white"
+                        />
+                      </div>
+                    )}
+
+                    {/* Cut-off window — shown only for analyse_cut_off actions */}
+                    {editInputType === 'analyse_cut_off' && (
+                      <div>
+                        <label className="text-[10px] font-medium text-slate-500 uppercase">Days Either Side of Cut-Off</label>
+                        <p className="text-[9px] text-slate-400">
+                          Number of days before and after period end to draw the testing population from. The sampler&apos;s N is applied to each side, so a sample of 5 yields 5 before + 5 after.
+                        </p>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={editCutOffDays}
+                          onChange={e => {
+                            const v = Math.floor(Number(e.target.value));
+                            setEditCutOffDays(Number.isFinite(v) && v > 0 ? v : 7);
+                          }}
                           className="w-full border rounded-md px-2.5 py-1.5 text-sm mt-0.5 bg-white"
                         />
                       </div>

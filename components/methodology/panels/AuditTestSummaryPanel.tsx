@@ -65,10 +65,13 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
     return a.accountCode.localeCompare(b.accountCode);
   });
 
-  // Rollup sign-off status for an account code
+  // Rollup sign-off status for an account code.
+  // Cascade: an RI sign-off implies the Reviewer row is effectively signed
+  // too, so `allReviewed` is true when every test has either a direct
+  // reviewer sign-off or an RI sign-off that covers it.
   function getRollupStatus(tests: TestConclusion[]) {
     const allConcluded = tests.every(t => t.status !== 'pending');
-    const allReviewed = tests.every(t => t.reviewedByName);
+    const allReviewed = tests.every(t => t.reviewedByName || t.riSignedByName);
     const allRISigned = tests.every(t => t.riSignedByName);
     const hasErrors = tests.some(t => t.conclusion === 'orange' || t.conclusion === 'red' || t.conclusion === 'failed');
     const worstConclusion = tests.reduce((worst, t) => {

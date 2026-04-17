@@ -67,7 +67,7 @@ interface TestActionItem {
   id: string;
   name: string;
   description: string;
-  actionType: 'client' | 'ai' | 'human' | 'review';
+  actionType: 'client' | 'ai' | 'team' | 'review';
   isReusable: boolean;
 }
 
@@ -134,11 +134,11 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
 
   // Test Types state
   const [newTestTypeName, setNewTestTypeName] = useState('');
-  const [newActionType, setNewActionType] = useState('human_action');
+  const [newActionType, setNewActionType] = useState('team_action');
   const [newCodeSection, setNewCodeSection] = useState('');
   const [editingTestType, setEditingTestType] = useState<string | null>(null);
   const [editTestTypeName, setEditTestTypeName] = useState('');
-  const [editActionType, setEditActionType] = useState('human_action');
+  const [editActionType, setEditActionType] = useState('team_action');
   const [editCodeSection, setEditCodeSection] = useState('');
   const [expandedActionId, setExpandedActionId] = useState<string | null>(null);
   const [savingExecDef, setSavingExecDef] = useState(false);
@@ -338,9 +338,9 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
     const name = newTestTypeName.trim(); if (!name) return;
     const code = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
     const res = await fetch('/api/methodology-admin/test-types', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, code, actionType: newActionType, codeSection: newCodeSection.trim() || null }) });
-    if (res.ok) { const { testType } = await res.json(); setTestTypes(prev => [...prev, testType]); setNewTestTypeName(''); setNewActionType('human_action'); setNewCodeSection(''); }
+    if (res.ok) { const { testType } = await res.json(); setTestTypes(prev => [...prev, testType]); setNewTestTypeName(''); setNewActionType('team_action'); setNewCodeSection(''); }
   }
-  function startEditTestType(tt: TestType) { setEditingTestType(tt.id); setEditTestTypeName(tt.name); setEditActionType(tt.actionType || 'human_action'); setEditCodeSection(tt.codeSection || ''); }
+  function startEditTestType(tt: TestType) { setEditingTestType(tt.id); setEditTestTypeName(tt.name); setEditActionType(tt.actionType || 'team_action'); setEditCodeSection(tt.codeSection || ''); }
   async function saveEditTestType() {
     if (!editingTestType || !editTestTypeName.trim()) return;
     const res = await fetch('/api/methodology-admin/test-types', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editingTestType, name: editTestTypeName.trim(), actionType: editActionType, codeSection: editCodeSection.trim() || null }) });
@@ -627,13 +627,13 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                     <tr className="border-b border-slate-50 hover:bg-slate-50/50 group">
                       {editingTestType === tt.id ? (<>
                         <td className="px-2 py-1.5"><input value={editTestTypeName} onChange={e => setEditTestTypeName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveEditTestType(); if (e.key === 'Escape') setEditingTestType(null); }} className="w-full border border-slate-300 rounded px-2 py-1 text-sm" autoFocus /></td>
-                        <td className="px-2 py-1.5"><select value={editActionType} onChange={e => setEditActionType(e.target.value)} className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white"><option value="client_action">Client Action</option><option value="ai_action">AI Action</option><option value="human_action">Human Action</option></select></td>
+                        <td className="px-2 py-1.5"><select value={editActionType} onChange={e => setEditActionType(e.target.value)} className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white"><option value="client_action">Client Action</option><option value="ai_action">AI Action</option><option value="team_action">Team Action</option></select></td>
                         <td className="px-2 py-1.5"><input value={editCodeSection} onChange={e => setEditCodeSection(e.target.value)} className="w-full border border-slate-300 rounded px-2 py-1 text-sm" placeholder="Code section" /></td>
                         <td></td>
                         <td className="px-2 py-1.5 text-right"><div className="flex items-center gap-1 justify-end"><button onClick={saveEditTestType} className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button><button onClick={() => setEditingTestType(null)} className="text-xs px-2 py-1 border border-slate-300 rounded hover:bg-slate-100">Cancel</button></div></td>
                       </>) : (<>
                         <td className="px-3 py-2 text-slate-700 font-medium">{tt.name}</td>
-                        <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.actionType === 'client_action' ? 'Client Action' : tt.actionType === 'ai_action' ? 'AI Action' : 'Human Action'}</span></td>
+                        <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.actionType === 'client_action' ? 'Client Action' : tt.actionType === 'ai_action' ? 'AI Action' : 'Team Action'}</span></td>
                         <td className="px-3 py-2 text-slate-500 text-xs font-mono">{tt.codeSection || '\u2014'}</td>
                         <td className="px-3 py-2 text-center"><button onClick={() => setExpandedActionId(expandedActionId === tt.id ? null : tt.id)} className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${expandedActionId === tt.id ? 'bg-blue-100 border-blue-300 text-blue-700' : tt.executionDef ? 'bg-green-50 border-green-300 text-green-700 hover:bg-green-100' : 'bg-orange-50 border-orange-300 text-orange-700 hover:bg-orange-100'}`}><Settings2 className="h-3 w-3" />{expandedActionId === tt.id ? 'Close' : tt.executionDef ? 'Edit' : 'Configure'}</button></td>
                         <td className="px-3 py-2 text-right"><div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => duplicateTestType(tt)} className="p-1 hover:bg-blue-100 rounded" title="Duplicate"><Copy className="h-3.5 w-3.5 text-blue-500" /></button><button onClick={() => startEditTestType(tt)} className="p-1 hover:bg-slate-200 rounded" title="Edit"><Pencil className="h-3.5 w-3.5 text-slate-500" /></button><button onClick={() => deleteTestType(tt.id)} className="p-1 hover:bg-red-100 rounded" title="Delete"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button></div></td>
@@ -648,7 +648,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           <div className="mt-3 border border-dashed border-slate-300 rounded-lg p-3 bg-slate-50/50">
             <div className="grid grid-cols-12 gap-2 items-end">
               <div className="col-span-5"><label className="text-[10px] text-slate-500 block mb-0.5">Action</label><input value={newTestTypeName} onChange={e => setNewTestTypeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addTestType()} placeholder="e.g. Analytical Review..." className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm" /></div>
-              <div className="col-span-3"><label className="text-[10px] text-slate-500 block mb-0.5">Type</label><select value={newActionType} onChange={e => setNewActionType(e.target.value)} className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white"><option value="client_action">Client Action</option><option value="ai_action">AI Action</option><option value="human_action">Human Action</option></select></div>
+              <div className="col-span-3"><label className="text-[10px] text-slate-500 block mb-0.5">Type</label><select value={newActionType} onChange={e => setNewActionType(e.target.value)} className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white"><option value="client_action">Client Action</option><option value="ai_action">AI Action</option><option value="team_action">Team Action</option></select></div>
               <div className="col-span-3"><label className="text-[10px] text-slate-500 block mb-0.5">Code Section</label><input value={newCodeSection} onChange={e => setNewCodeSection(e.target.value)} placeholder="Optional" className="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm" /></div>
               <div className="col-span-1"><Button onClick={addTestType} size="sm" disabled={!newTestTypeName.trim()} className="w-full"><Plus className="h-4 w-4" /></Button></div>
             </div>

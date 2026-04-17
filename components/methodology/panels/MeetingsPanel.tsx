@@ -289,11 +289,16 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
                   meeting.minutesStatus === 'generated' ? 'bg-blue-100 text-blue-600' :
                   'bg-slate-100 text-slate-500'
                 }`}>{STATUS_LABELS[meeting.minutesStatus] || meeting.minutesStatus}</span>
-                {/* Sign-off dots */}
+                {/* Sign-off dots — cascade: a higher role's sign-off covers the lower roles visually. */}
                 <div className="flex items-center gap-1">
-                  {SIGN_OFF_ROLES.map(({ key }) => (
-                    <span key={key} className={`w-2 h-2 rounded-full ${meeting.signOffs[key] ? 'bg-green-500' : 'border border-slate-300'}`} />
-                  ))}
+                  {SIGN_OFF_ROLES.map(({ key }, idx) => {
+                    // Effective signed: this role itself OR any role after it in the ordered list.
+                    const effective = meeting.signOffs[key]
+                      || SIGN_OFF_ROLES.slice(idx + 1).find(r => meeting.signOffs[r.key]);
+                    return (
+                      <span key={key} className={`w-2 h-2 rounded-full ${effective ? 'bg-green-500' : 'border border-slate-300'}`} />
+                    );
+                  })}
                 </div>
               </div>
 
