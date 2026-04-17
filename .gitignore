@@ -19,3 +19,5 @@ expire-pending.mjs
 docs/*.docx
 scripts/generate-docs.mjs
 .env.vercel-check
+.env.prisma-deploy
+.env.prisma-deploy.tmp
