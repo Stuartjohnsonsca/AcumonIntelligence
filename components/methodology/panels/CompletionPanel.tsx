@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, CheckCircle2, Loader2, Sparkles, ShieldAlert, ShieldCheck, ExternalLink } from 'lucide-react';
+import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Loader2, Sparkles, ShieldAlert, ShieldCheck, ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { buildVisibilityChecker, type Trigger, type TriggerContext } from '@/lib/schedule-triggers';
 import { AuditTestSummaryPanel } from './AuditTestSummaryPanel';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
@@ -184,6 +184,32 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
   const [loading, setLoading] = useState(true);
   const [autoCompleting, setAutoCompleting] = useState(false);
   const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
+  // Section collapse state — keyed by sectionKey. Sections default to
+  // expanded; clicking the header toggles a single section. Persisted
+  // per-user per-tab in localStorage so the preference survives page
+  // reloads but not across different browsers.
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const raw = window.localStorage.getItem(`completion-collapsed:${templateType}`);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+  function toggleSection(sectionKey: string) {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(sectionKey)) next.delete(sectionKey); else next.add(sectionKey);
+      try { window.localStorage.setItem(`completion-collapsed:${templateType}`, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }
+  // User-added custom sections (persisted to templateType-scoped extra
+  // metadata on save; marked as userAdded=true so the RI can delete them
+  // and nobody else can). Custom sections also carry their own rows
+  // (customQuestions) because the template provides no questions for a
+  // section the user invented after the template was designed.
+  const [customSections, setCustomSections] = useState<Record<string, TemplateSectionMeta & { userAdded?: boolean; createdByUserId?: string }>>({});
+  const [customQuestions, setCustomQuestions] = useState<Record<string, TemplateQuestion[]>>({});
 
   // Load template + engagement answers
   useEffect(() => {
@@ -209,6 +235,9 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
             if (saved.answers) setAnswers(saved.answers);
             if (saved.answerSources) setAnswerSources(saved.answerSources);
             if (saved.signOffs) setSignOffs(saved.signOffs);
+            // User-added sections + their rows persist in the same payload.
+            if (saved.customSections) setCustomSections(saved.customSections);
+            if (saved.customQuestions) setCustomQuestions(saved.customQuestions);
           }
         } catch {}
       } catch {} finally { setLoading(false); }
@@ -229,7 +258,13 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     debounceSave({ ...answers, [key]: value }, undefined, nextSources);
   }
 
-  function debounceSave(data: Record<string, any>, so?: Record<string, any>, srcs?: Record<string, AnswerSource>) {
+  function debounceSave(
+    data: Record<string, any>,
+    so?: Record<string, any>,
+    srcs?: Record<string, AnswerSource>,
+    cs?: Record<string, TemplateSectionMeta & { userAdded?: boolean; createdByUserId?: string }>,
+    cq?: Record<string, TemplateQuestion[]>,
+  ) {
     if (saveTimeout) clearTimeout(saveTimeout);
     const t = setTimeout(async () => {
       try {
@@ -239,7 +274,13 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
           body: JSON.stringify({
             action: 'save_data',
             section: templateType,
-            data: { [templateType]: { answers: data || answers, signOffs: so || signOffs, answerSources: srcs || answerSources } },
+            data: { [templateType]: {
+              answers: data || answers,
+              signOffs: so || signOffs,
+              answerSources: srcs || answerSources,
+              customSections: cs || customSections,
+              customQuestions: cq || customQuestions,
+            } },
           }),
         });
       } catch {}
@@ -261,6 +302,120 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     }
     setSignOffs(updated);
     debounceSave(answers, updated);
+  }
+
+  // ─── User-added sections ──────────────────────────────────────────────
+  /** Generate a unique key for a new section so we never collide with a
+   *  template-provided sectionKey. Prefix is deliberate so the auto-load
+   *  code can tell template from custom at a glance. */
+  function newSectionKey(): string {
+    return `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  }
+  /** Find a reasonable default set of column headers for a new section —
+   *  reuses the template's own headers when the tab already has a table
+   *  layout, otherwise falls back to a two-column Question / Response. */
+  function defaultColumnHeaders(): string[] {
+    for (const meta of Object.values(sectionMeta)) {
+      if (meta.columnHeaders && meta.columnHeaders.length >= 2) return [...meta.columnHeaders];
+    }
+    return ['Procedure', 'Response'];
+  }
+  function addCustomSection() {
+    const label = (typeof window !== 'undefined' ? window.prompt('Section name?') : '')?.trim();
+    if (!label) return;
+    const key = newSectionKey();
+    const headers = defaultColumnHeaders();
+    const nextCs: typeof customSections = {
+      ...customSections,
+      [key]: {
+        key,
+        label,
+        layout: (headers.length > 1 ? 'table' : 'standard') as SectionLayout,
+        columnHeaders: headers,
+        signOff: true,
+        userAdded: true,
+        createdByUserId: userId,
+      },
+    };
+    // New sections start with one empty row so they render usably.
+    const firstRow: TemplateQuestion = {
+      id: `${key}_q_${Date.now()}`,
+      sectionKey: key,
+      questionText: '',
+      inputType: 'text',
+      isBold: false,
+    } as TemplateQuestion;
+    const nextCq = { ...customQuestions, [key]: [firstRow] };
+    setCustomSections(nextCs);
+    setCustomQuestions(nextCq);
+    // Auto-expand the new section so the user can start typing immediately.
+    setCollapsedSections(prev => { const next = new Set(prev); next.delete(key); return next; });
+    debounceSave(answers, undefined, undefined, nextCs, nextCq);
+  }
+  function deleteCustomSection(sectionKey: string) {
+    if (!customSections[sectionKey]?.userAdded) return; // Only user-added sections are deletable
+    if (!currentUserIsRi) return;
+    if (typeof window !== 'undefined' && !window.confirm(`Delete section "${customSections[sectionKey]?.label || sectionKey}"? Any answers entered will be lost.`)) return;
+    const nextCs = { ...customSections };
+    delete nextCs[sectionKey];
+    const nextCq = { ...customQuestions };
+    delete nextCq[sectionKey];
+    // Also strip any answers / sign-offs keyed to this section so we don't
+    // leave dangling data on the engagement record.
+    const nextAnswers = { ...answers };
+    const nextSources = { ...answerSources };
+    const nextSignOffs = { ...signOffs };
+    const deleteIds = (customQuestions[sectionKey] || []).map(q => q.id);
+    for (const qid of deleteIds) {
+      for (const k of Object.keys(nextAnswers)) if (k.startsWith(`${qid}_`)) delete nextAnswers[k];
+      for (const k of Object.keys(nextSources)) if (k.startsWith(`${qid}_`)) delete nextSources[k];
+    }
+    for (const k of Object.keys(nextSignOffs)) if (k.startsWith(`${sectionKey}_`)) delete nextSignOffs[k];
+    setCustomSections(nextCs);
+    setCustomQuestions(nextCq);
+    setAnswers(nextAnswers);
+    setAnswerSources(nextSources);
+    setSignOffs(nextSignOffs);
+    debounceSave(nextAnswers, nextSignOffs, nextSources, nextCs, nextCq);
+  }
+  function addCustomRow(sectionKey: string) {
+    if (!customSections[sectionKey]?.userAdded) return;
+    const newRow: TemplateQuestion = {
+      id: `${sectionKey}_q_${Date.now()}`,
+      sectionKey,
+      questionText: '',
+      inputType: 'text',
+      isBold: false,
+    } as TemplateQuestion;
+    const existing = customQuestions[sectionKey] || [];
+    const nextCq = { ...customQuestions, [sectionKey]: [...existing, newRow] };
+    setCustomQuestions(nextCq);
+    debounceSave(answers, undefined, undefined, undefined, nextCq);
+  }
+  /** Edit the first-column text on a user-added row. Template rows have
+   *  immutable question text so this only applies to customQuestions. */
+  function updateCustomRowText(sectionKey: string, questionId: string, text: string) {
+    if (!customSections[sectionKey]?.userAdded) return;
+    const rows = customQuestions[sectionKey] || [];
+    const nextRows = rows.map(r => r.id === questionId ? { ...r, questionText: text } : r);
+    const nextCq = { ...customQuestions, [sectionKey]: nextRows };
+    setCustomQuestions(nextCq);
+    debounceSave(answers, undefined, undefined, undefined, nextCq);
+  }
+  function deleteCustomRow(sectionKey: string, questionId: string) {
+    if (!customSections[sectionKey]?.userAdded) return;
+    const rows = customQuestions[sectionKey] || [];
+    const nextRows = rows.filter(r => r.id !== questionId);
+    const nextCq = { ...customQuestions, [sectionKey]: nextRows };
+    // Strip answers keyed to this row so nothing's orphaned.
+    const nextAnswers = { ...answers };
+    const nextSources = { ...answerSources };
+    for (const k of Object.keys(nextAnswers)) if (k.startsWith(`${questionId}_`)) delete nextAnswers[k];
+    for (const k of Object.keys(nextSources)) if (k.startsWith(`${questionId}_`)) delete nextSources[k];
+    setCustomQuestions(nextCq);
+    setAnswers(nextAnswers);
+    setAnswerSources(nextSources);
+    debounceSave(nextAnswers, undefined, nextSources, undefined, nextCq);
   }
 
   // Navigate to the origin of an auto-completed answer
@@ -404,6 +559,14 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     if (!sections.has(q.sectionKey)) sections.set(q.sectionKey, []);
     sections.get(q.sectionKey)!.push(q);
   }
+  // Merge in any user-added sections with their own rows (custom questions
+  // live alongside the sections map rather than in the template feed).
+  for (const [k] of Object.entries(customSections)) {
+    sections.set(k, customQuestions[k] || []);
+  }
+  // The current user is the RI if they hold that role on the engagement
+  // team — only RIs may delete user-added sections.
+  const currentUserIsRi = !!(userId && teamMembers?.some(m => m.role === 'RI' && m.userId === userId));
 
   return (
     <div className="space-y-4">
@@ -421,17 +584,47 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
 
       {/* Sections */}
       {Array.from(sections.entries()).map(([sectionKey, sectionQs]) => {
-        const meta = sectionMeta[sectionKey];
+        // Merged meta lookup — template sections come from sectionMeta;
+        // user-added sections come from customSections (and carry the
+        // userAdded flag that unlocks delete).
+        const meta = sectionMeta[sectionKey] || customSections[sectionKey];
+        const customMeta = customSections[sectionKey];
+        const isUserAdded = !!customMeta?.userAdded;
         const layout: SectionLayout = meta?.layout || 'standard';
         const headers = meta?.columnHeaders || [];
         const hasSignOff = meta?.signOff !== false; // Default to true
+        const isCollapsed = collapsedSections.has(sectionKey);
 
         return (
           <div key={sectionKey} className="border rounded-lg overflow-hidden">
-            {/* Section header */}
-            <div className="bg-blue-50 px-3 py-2 border-b border-blue-100">
-              <h4 className="text-xs font-bold text-blue-800 uppercase">{meta?.label || sectionKey}</h4>
+            {/* Section header — clickable to collapse/expand */}
+            <div className="bg-blue-50 border-b border-blue-100 flex items-center">
+              <button
+                onClick={() => toggleSection(sectionKey)}
+                className="flex-1 flex items-center gap-2 px-3 py-2 text-left hover:bg-blue-100/40 transition-colors"
+                title={isCollapsed ? 'Expand section' : 'Collapse section'}
+              >
+                {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 text-blue-700" /> : <ChevronDown className="h-3.5 w-3.5 text-blue-700" />}
+                <h4 className="text-xs font-bold text-blue-800 uppercase flex-1">{meta?.label || sectionKey}</h4>
+                {isUserAdded && (
+                  <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">Added</span>
+                )}
+                {!isCollapsed && sectionQs.length > 0 && (
+                  <span className="text-[9px] text-blue-600">{sectionQs.length} row{sectionQs.length === 1 ? '' : 's'}</span>
+                )}
+              </button>
+              {isUserAdded && currentUserIsRi && (
+                <button
+                  onClick={() => deleteCustomSection(sectionKey)}
+                  className="px-2 py-2 text-red-600 hover:bg-red-50 transition-colors"
+                  title="Delete this user-added section (RI only)"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
+
+            {!isCollapsed && (<>
 
             {/* Table layout */}
             {layout !== 'standard' && headers.length > 0 ? (
@@ -449,10 +642,29 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                     const firstColSource = answerSources[`${q.id}_col0`];
                     return (
                     <tr key={q.id} className={`border-b border-slate-50 ${q.isBold ? 'bg-slate-50' : ''} ${answers[`${q.id}_auto`] ? 'bg-yellow-50/50' : ''}`}>
-                      {/* Column 0: Question text (first column) */}
+                      {/* Column 0: Question text (first column) — editable
+                          for user-added rows so the team can write their
+                          own procedure description; read-only otherwise. */}
                       <td className={`px-2 py-1.5 ${q.isBold ? 'font-bold text-slate-700' : 'text-slate-600'}`}>
-                        <span className="inline-flex items-center gap-1">
-                          {q.questionText}
+                        <span className="inline-flex items-center gap-1 w-full">
+                          {isUserAdded ? (
+                            <>
+                              <textarea
+                                value={q.questionText || ''}
+                                onChange={e => updateCustomRowText(sectionKey, q.id, e.target.value)}
+                                placeholder="Describe the procedure / point..."
+                                rows={1}
+                                className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] focus:outline-none focus:border-blue-300 min-h-[28px] resize-y"
+                              />
+                              <button
+                                onClick={() => deleteCustomRow(sectionKey, q.id)}
+                                className="text-red-500 hover:text-red-700 flex-shrink-0"
+                                title="Delete row"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </>
+                          ) : q.questionText}
                           {firstColSource && (
                             <button
                               type="button"
@@ -522,7 +734,26 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                   const cellSource = answerSources[cellKey];
                   return (
                   <div key={q.id} className="p-3 space-y-1.5">
-                    <div className={`text-xs ${q.isBold ? 'font-bold text-slate-700' : 'text-slate-600'}`}>{q.questionText}</div>
+                    {isUserAdded ? (
+                      <div className="flex items-start gap-1">
+                        <textarea
+                          value={q.questionText || ''}
+                          onChange={e => updateCustomRowText(sectionKey, q.id, e.target.value)}
+                          placeholder="Describe the procedure / point..."
+                          rows={1}
+                          className="w-full border border-slate-200 rounded px-2 py-1 text-xs font-medium focus:outline-none focus:border-blue-300 min-h-[32px] resize-y"
+                        />
+                        <button
+                          onClick={() => deleteCustomRow(sectionKey, q.id)}
+                          className="mt-1.5 text-red-500 hover:text-red-700 flex-shrink-0"
+                          title="Delete row"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className={`text-xs ${q.isBold ? 'font-bold text-slate-700' : 'text-slate-600'}`}>{q.questionText}</div>
+                    )}
                     {!q.isBold && (
                       <div className="flex items-start gap-1">
                         <div className="flex-1 min-w-0">
@@ -562,6 +793,20 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
               </div>
             )}
 
+            {/* "+ Add row" control for user-added sections. Template sections
+                have a fixed question list so this only appears on sections
+                the user created themselves. */}
+            {isUserAdded && (
+              <div className="flex justify-start px-3 py-2 border-t border-slate-100 bg-white">
+                <button
+                  onClick={() => addCustomRow(sectionKey)}
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded"
+                >
+                  <Plus className="h-3 w-3" /> Add row
+                </button>
+              </div>
+            )}
+
             {/* Section sign-off — EQR dot only when an EQR is on the team */}
             {hasSignOff && (
               <div className="flex items-center gap-6 justify-center py-2 border-t border-slate-100 bg-slate-50/30">
@@ -580,7 +825,11 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                           isSigned
                             ? 'bg-green-500 border-green-500'
                             : canSign
-                              ? 'border-green-400 hover:bg-green-50 cursor-pointer'
+                              // Unsigned dots default to the blank (slate) look — matches
+                              // the main Preparer/Reviewer/Partner dots and stops the RI
+                              // dot appearing green just because the logged-in user holds
+                              // the role. Hover tint provides the click affordance.
+                              ? 'border-slate-300 hover:border-green-400 hover:bg-green-50 cursor-pointer'
                               : 'border-slate-200 cursor-not-allowed opacity-50'
                         }`}
                         title={
@@ -599,9 +848,24 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                 })}
               </div>
             )}
+            </>)}
           </div>
         );
       })}
+
+      {/* Add a new (user-defined) section — inserts below the template
+          sections. The user is prompted for a label; the section inherits
+          the same column headers as the tab's default layout and starts
+          with one empty row. Anyone on the engagement team can add;
+          delete is restricted to the RI (see deleteCustomSection). */}
+      <div className="flex justify-center pt-1">
+        <button
+          onClick={addCustomSection}
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded border border-blue-200 border-dashed"
+        >
+          <Plus className="h-3.5 w-3.5" /> Add section
+        </button>
+      </div>
     </div>
   );
 }
