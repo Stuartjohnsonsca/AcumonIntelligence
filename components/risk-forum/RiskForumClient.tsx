@@ -256,13 +256,58 @@ export default function RiskForumClient({ user }: Props) {
   const [debrief, setDebrief] = useState<DebriefData | null>(null);
   const [debriefLoading, setDebriefLoading] = useState(false);
   const [editingPersonaId, setEditingPersonaId] = useState<string | null>(null);
+
+  // Real-time cap on run duration (minutes of wall-clock time).
+  const [maxRuntimeMinutes, setMaxRuntimeMinutes] = useState(10);
+  // Simulated minutes since T+0, driven by 100x clock compression.
+  const [simulatedMinutes, setSimulatedMinutes] = useState(0);
+  // Real-world seconds elapsed since the run started.
+  const [realSecondsElapsed, setRealSecondsElapsed] = useState(0);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef(false);
   const historyRef = useRef<SimMessage[]>([]);
+  const runStartRef = useRef<number | null>(null);
+  // Time compression factor: 1 real second = CLOCK_COMPRESSION simulated seconds.
+  const CLOCK_COMPRESSION = 100;
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, typingPersonas]);
+
+  // Clock ticker: updates every second while running, drives the compressed
+  // simulated clock and enforces the real-time cap.
+  useEffect(() => {
+    if (!isRunning || runStartRef.current === null) return;
+    const interval = setInterval(() => {
+      const start = runStartRef.current;
+      if (start === null) return;
+      const realSeconds = (Date.now() - start) / 1000;
+      setRealSecondsElapsed(realSeconds);
+      setSimulatedMinutes(Math.floor((realSeconds * CLOCK_COMPRESSION) / 60));
+      if (realSeconds >= maxRuntimeMinutes * 60) {
+        abortRef.current = true;
+        setIsRunning(false);
+      }
+    }, 250);
+    return () => clearInterval(interval);
+  }, [isRunning, maxRuntimeMinutes]);
+
+  const formatSimulatedClock = (totalMin: number): string => {
+    const days = Math.floor(totalMin / (60 * 24));
+    const hours = Math.floor((totalMin % (60 * 24)) / 60);
+    const mins = totalMin % 60;
+    if (days > 0) return `T+${days}d ${hours}h ${mins}m`;
+    if (hours > 0) return `T+${hours}h ${mins}m`;
+    return `T+${mins}m`;
+  };
+
+  const formatCountdown = (realSec: number): string => {
+    const remaining = Math.max(0, maxRuntimeMinutes * 60 - realSec);
+    const m = Math.floor(remaining / 60);
+    const s = Math.floor(remaining % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
 
   const getTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -369,6 +414,9 @@ export default function RiskForumClient({ user }: Props) {
     if (!activeScenario) return;
     abortRef.current = false;
     historyRef.current = [];
+    runStartRef.current = Date.now();
+    setSimulatedMinutes(0);
+    setRealSecondsElapsed(0);
     setIsRunning(true);
     setMessages([]);
     setCurrentPhaseIdx(0);
@@ -378,26 +426,35 @@ export default function RiskForumClient({ user }: Props) {
     const phases = activeScenario.basePhases;
     const curveballs = [...activeScenario.curveballs].sort(() => Math.random() - 0.5);
     let curveballIdx = 0;
+    let globalPhaseIdx = 0;
 
-    for (let phaseIdx = 0; phaseIdx < phases.length; phaseIdx++) {
-      if (abortRef.current) break;
-      const phase = phases[phaseIdx];
+    // Outer loop: keeps generating conversation until the user-set real-time
+    // cap is hit (or Stop is pressed). Phases cycle through base phases and
+    // then continue beyond the original timeline with ongoing-response beats,
+    // so a longer cap produces a longer simulation rather than just ending.
+    while (!abortRef.current) {
+      const phase = phases[globalPhaseIdx % phases.length] ?? phases[phases.length - 1];
+      const isExtension = globalPhaseIdx >= phases.length;
+      const phaseLabel = isExtension ? `Ongoing +${globalPhaseIdx - phases.length + 1}` : phase.label;
+      const phaseText = isExtension
+        ? `${phase.text} Situation continues to develop — new information, decisions needed, people reacting.`
+        : phase.text;
 
-      addMessage({ id: `phase-${phaseIdx}`, type: 'phase', label: phase.label, text: phase.text });
-      setCurrentPhaseIdx(phaseIdx);
+      addMessage({ id: `phase-${globalPhaseIdx}`, type: 'phase', label: phaseLabel, text: phaseText });
+      setCurrentPhaseIdx(Math.min(globalPhaseIdx, phases.length - 1));
 
       let curveball: string | null = null;
-      if (phaseIdx > 0 && Math.random() > 0.3 && curveballIdx < curveballs.length) {
+      if ((globalPhaseIdx > 0 && Math.random() > 0.3) && curveballIdx < curveballs.length) {
         curveball = curveballs[curveballIdx++];
         if (!abortRef.current) {
-          addMessage({ id: `cb-${phaseIdx}`, type: 'curveball', text: curveball });
+          addMessage({ id: `cb-${globalPhaseIdx}`, type: 'curveball', text: curveball });
         }
       }
 
       // Build a speaker list that allows some personas to speak twice per phase,
       // creating genuine back-and-forth rather than single-round monologues.
       const roundOne = [...personas].sort(() => Math.random() - 0.5);
-      const roundTwoCount = phaseIdx === 0 ? 3 : 2 + Math.floor(Math.random() * 2);
+      const roundTwoCount = globalPhaseIdx === 0 ? 3 : 2 + Math.floor(Math.random() * 2);
       const roundTwo = [...personas].sort(() => Math.random() - 0.5).slice(0, roundTwoCount);
       const speakers = [...roundOne, ...roundTwo];
 
@@ -408,7 +465,7 @@ export default function RiskForumClient({ user }: Props) {
         // Show this person typing — the API response time IS the typing delay
         setTypingPersonas([persona]);
 
-        const text = await callPersonaAPI(persona, phase.text, curveball);
+        const text = await callPersonaAPI(persona, phaseText, curveball);
         if (abortRef.current) break;
 
         setTypingPersonas([]);
@@ -423,15 +480,18 @@ export default function RiskForumClient({ user }: Props) {
       }
 
       setTypingPersonas([]);
+      globalPhaseIdx++;
+
+      // Safety cap so a stuck session cannot run forever in memory.
+      if (globalPhaseIdx > 40) break;
     }
 
     setTypingPersonas([]);
     setIsRunning(false);
 
-    if (!abortRef.current) {
-      await runDebrief();
-      setView('debrief');
-    }
+    // Always offer debrief — even on Stop or cap cut-off. User can click
+    // DEBRIEF in the header once it's ready, or we jump to it for natural ends.
+    await runDebrief();
   };
 
   const editingPersona = personas.find(p => p.id === editingPersonaId);
@@ -531,6 +591,35 @@ export default function RiskForumClient({ user }: Props) {
             )}
           </div>
 
+          {/* Runtime cap */}
+          <div className="mb-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-mono tracking-widest" style={{ color: '#333' }}>REAL-TIME CAP</span>
+              <span className="text-xs font-mono" style={{ color: '#C8A96E' }}>
+                {maxRuntimeMinutes} min · covers ~{Math.round((maxRuntimeMinutes * CLOCK_COMPRESSION) / 60)}h simulated
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {[2, 5, 10, 20, 30].map(mins => (
+                <button
+                  key={mins}
+                  onClick={() => setMaxRuntimeMinutes(mins)}
+                  className="flex-1 py-2 rounded text-xs font-mono tracking-wider transition-all"
+                  style={{
+                    background: maxRuntimeMinutes === mins ? '#0F0A0A' : '#0A0A0A',
+                    border: `1px solid ${maxRuntimeMinutes === mins ? '#C8A96E' : '#1A1A1A'}`,
+                    color: maxRuntimeMinutes === mins ? '#C8A96E' : '#555',
+                  }}
+                >
+                  {mins}m
+                </button>
+              ))}
+            </div>
+            <p className="text-xs mt-2 leading-relaxed" style={{ color: '#333' }}>
+              Clock runs at {CLOCK_COMPRESSION}x — agents experience hours of crisis in minutes. Sim stops when cap hits, press Stop any time.
+            </p>
+          </div>
+
           <button
             onClick={runSimulation}
             disabled={!activeScenario}
@@ -627,7 +716,7 @@ export default function RiskForumClient({ user }: Props) {
       `}</style>
 
       {/* Top bar */}
-      <div className="flex items-center gap-3 px-5 py-2.5 border-b flex-shrink-0" style={{ borderColor: '#0E0E0E' }}>
+      <div className="flex items-center gap-3 px-5 py-3 border-b flex-shrink-0" style={{ borderColor: '#0E0E0E' }}>
         <div
           className="w-2 h-2 rounded-full"
           style={{
@@ -639,6 +728,22 @@ export default function RiskForumClient({ user }: Props) {
           {isRunning ? 'LIVE' : debriefLoading ? 'ANALYSING' : 'COMPLETE'}
         </span>
         <span className="text-xs" style={{ color: '#333' }}>{activeScenario?.icon} {activeScenario?.title}</span>
+
+        {/* Simulated clock (100x compression) */}
+        <div className="ml-4 flex items-center gap-3 px-3 py-1 rounded" style={{ background: '#0A0A0A', border: '1px solid #1E1E1E' }}>
+          <div className="flex flex-col">
+            <span className="text-[9px] font-mono tracking-widest" style={{ color: '#444' }}>SIM CLOCK</span>
+            <span className="text-xs font-mono font-bold" style={{ color: '#C8A96E' }}>{formatSimulatedClock(simulatedMinutes)}</span>
+          </div>
+          <div className="h-6 w-px" style={{ background: '#1E1E1E' }} />
+          <div className="flex flex-col">
+            <span className="text-[9px] font-mono tracking-widest" style={{ color: '#444' }}>REAL LEFT</span>
+            <span className="text-xs font-mono font-bold" style={{ color: realSecondsElapsed / 60 > maxRuntimeMinutes * 0.8 ? '#C84040' : '#6EC860' }}>
+              {formatCountdown(realSecondsElapsed)}
+            </span>
+          </div>
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
           {personas.map(p => (
             <div
@@ -656,9 +761,14 @@ export default function RiskForumClient({ user }: Props) {
           {isRunning && (
             <button
               onClick={() => { abortRef.current = true; setIsRunning(false); }}
-              className="ml-2 px-2.5 py-1 rounded text-xs font-mono tracking-wider"
-              style={{ background: 'transparent', border: '1px solid #C84040', color: '#C84040' }}
-            >STOP</button>
+              className="ml-3 px-4 py-1.5 rounded text-xs font-bold font-mono tracking-widest uppercase transition-all hover:scale-105"
+              style={{
+                background: '#C84040',
+                border: '1px solid #E85050',
+                color: '#FFF',
+                boxShadow: '0 0 12px #C8404055',
+              }}
+            >■ STOP</button>
           )}
           {!isRunning && !debriefLoading && (
             <button
