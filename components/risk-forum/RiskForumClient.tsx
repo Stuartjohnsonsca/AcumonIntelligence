@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { EXTERNAL_BENCH, type BenchPersona } from './externalBench';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,11 +32,38 @@ interface Scenario {
 
 interface SimMessage {
   id: string;
-  type: 'phase' | 'curveball' | 'message';
+  type: 'phase' | 'curveball' | 'message' | 'system';
   personaId?: string;
   text: string;
   label?: string;
   time?: string;
+  simClock?: string;
+}
+
+// A thread is either the main war room or a breakout sub-conversation.
+// Breakouts have a parent (the main room) and a defined set of participants.
+interface Thread {
+  id: string;
+  name: string;                  // display name ("War Room", "Technical Breakout")
+  kind: 'main' | 'breakout';
+  participantIds: string[];      // persona ids (includes summoned externals once joined)
+  parentThreadId?: string;       // for breakouts
+  spawnedAtSimMin: number;
+  topic?: string;                // what this breakout is about (for breakouts)
+  status: 'active' | 'concluded';
+  concludedAtSimMin?: number;
+  concludedReason?: string;      // audit note: was summary formally agreed?
+  messages: SimMessage[];
+}
+
+// Audit record of a structural action the orchestrator took during the run.
+// Used in the debrief to show the shape of the conversation, not just the content.
+interface OrchestratorEvent {
+  id: string;
+  atSimMin: number;
+  type: 'spawn_breakout' | 'summon_external' | 'conclude_breakout';
+  description: string;
+  reason?: string;
 }
 
 interface DebriefData {
@@ -215,6 +243,17 @@ function SimMessageRow({ msg, personas }: { msg: SimMessage; personas: Persona[]
     </div>
   );
 
+  if (msg.type === 'system') return (
+    <div className="flex items-center gap-3 py-2">
+      <div className="flex-1 h-px" style={{ background: '#0F0F0F' }} />
+      <div className="px-3 py-1 rounded text-xs font-mono tracking-wider" style={{ background: '#080A0D', border: '1px solid #2A3E50', color: '#6E8FA8' }}>
+        {msg.simClock && <span className="mr-2" style={{ color: '#3E5468' }}>{msg.simClock}</span>}
+        {msg.text}
+      </div>
+      <div className="flex-1 h-px" style={{ background: '#0F0F0F' }} />
+    </div>
+  );
+
   const persona = personas.find(p => p.id === msg.personaId);
   if (!persona) return null;
 
@@ -249,8 +288,22 @@ export default function RiskForumClient({ user }: Props) {
   const [customScenario, setCustomScenario] = useState('');
   const [protocol, setProtocol] = useState('');
   const [useProtocol, setUseProtocol] = useState(false);
-  const [messages, setMessages] = useState<SimMessage[]>([]);
-  const [typingPersonas, setTypingPersonas] = useState<Persona[]>([]);
+
+  // Threads replace the single messages[] array. The "main" thread always exists;
+  // breakouts are spawned by the orchestrator and concluded with a summary post.
+  const [threads, setThreads] = useState<Record<string, Thread>>({});
+  const [threadOrder, setThreadOrder] = useState<string[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string>('main');
+  const [unreadThreads, setUnreadThreads] = useState<Record<string, number>>({});
+
+  // Personas in play — includes summoned externals once they've joined the room.
+  // DEFAULT_PERSONAS seed at setup; new entries appear as the orchestrator summons.
+  const [allPersonas, setAllPersonas] = useState<Persona[]>(DEFAULT_PERSONAS);
+
+  // Orchestrator audit trail — what structural moves happened and when.
+  const [orchestratorEvents, setOrchestratorEvents] = useState<OrchestratorEvent[]>([]);
+
+  const [typingPersonas, setTypingPersonas] = useState<{ persona: Persona; threadId: string }[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [currentPhaseIdx, setCurrentPhaseIdx] = useState(0);
   const [debrief, setDebrief] = useState<DebriefData | null>(null);
@@ -266,14 +319,16 @@ export default function RiskForumClient({ user }: Props) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef(false);
-  const historyRef = useRef<SimMessage[]>([]);
+  const threadsRef = useRef<Record<string, Thread>>({});
+  const allPersonasRef = useRef<Persona[]>(DEFAULT_PERSONAS);
+  const simMinutesRef = useRef(0);
   const runStartRef = useRef<number | null>(null);
   // Time compression factor: 1 real second = CLOCK_COMPRESSION simulated seconds.
   const CLOCK_COMPRESSION = 100;
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, typingPersonas]);
+  }, [threads, activeThreadId, typingPersonas]);
 
   // Clock ticker: updates every second while running, drives the compressed
   // simulated clock and enforces the real-time cap.
@@ -284,7 +339,9 @@ export default function RiskForumClient({ user }: Props) {
       if (start === null) return;
       const realSeconds = (Date.now() - start) / 1000;
       setRealSecondsElapsed(realSeconds);
-      setSimulatedMinutes(Math.floor((realSeconds * CLOCK_COMPRESSION) / 60));
+      const simMin = Math.floor((realSeconds * CLOCK_COMPRESSION) / 60);
+      simMinutesRef.current = simMin;
+      setSimulatedMinutes(simMin);
       if (realSeconds >= maxRuntimeMinutes * 60) {
         abortRef.current = true;
         setIsRunning(false);
@@ -292,6 +349,13 @@ export default function RiskForumClient({ user }: Props) {
     }, 250);
     return () => clearInterval(interval);
   }, [isRunning, maxRuntimeMinutes]);
+
+  // Clear unread indicator when a thread is opened
+  useEffect(() => {
+    if (activeThreadId) {
+      setUnreadThreads(prev => ({ ...prev, [activeThreadId]: 0 }));
+    }
+  }, [activeThreadId]);
 
   const formatSimulatedClock = (totalMin: number): string => {
     const days = Math.floor(totalMin / (60 * 24));
@@ -308,6 +372,36 @@ export default function RiskForumClient({ user }: Props) {
     const s = Math.floor(remaining % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
+
+  // Helpers for thread state updates (write through ref AND state for sync access during loop)
+  const upsertThread = useCallback((thread: Thread) => {
+    threadsRef.current = { ...threadsRef.current, [thread.id]: thread };
+    setThreads(prev => ({ ...prev, [thread.id]: thread }));
+  }, []);
+
+  const addMessageToThread = useCallback((threadId: string, msg: SimMessage) => {
+    const existing = threadsRef.current[threadId];
+    if (!existing) return;
+    const updated: Thread = { ...existing, messages: [...existing.messages, msg] };
+    threadsRef.current = { ...threadsRef.current, [threadId]: updated };
+    setThreads(prev => ({ ...prev, [threadId]: updated }));
+    // Mark unread if the user is not viewing this thread right now
+    setActiveThreadId(current => {
+      if (current !== threadId) {
+        setUnreadThreads(prev => ({ ...prev, [threadId]: (prev[threadId] || 0) + 1 }));
+      }
+      return current;
+    });
+  }, []);
+
+  const addPersona = useCallback((p: Persona) => {
+    allPersonasRef.current = [...allPersonasRef.current, p];
+    setAllPersonas(prev => [...prev, p]);
+  }, []);
+
+  const addOrchestratorEvent = useCallback((e: OrchestratorEvent) => {
+    setOrchestratorEvents(prev => [...prev, e]);
+  }, []);
 
   const getTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -332,18 +426,15 @@ export default function RiskForumClient({ user }: Props) {
       }
     : null;
 
-  const addMessage = useCallback((msg: SimMessage) => {
-    historyRef.current = [...historyRef.current, msg];
-    setMessages(prev => [...prev, msg]);
-  }, []);
-
-  const callPersonaAPI = async (persona: Persona, phaseText: string, curveball: string | null) => {
-    // Use live history so each speaker sees what previous speakers said
-    const conversationHistory = historyRef.current
+  const callPersonaAPI = async (persona: Persona, phaseText: string, curveball: string | null, threadId: string) => {
+    // Use live history FROM THIS THREAD so each speaker sees what previous speakers
+    // said in the same conversation (main room or a breakout — never cross-contaminated).
+    const thread = threadsRef.current[threadId];
+    const conversationHistory = (thread?.messages ?? [])
       .filter(m => m.type === 'message')
       .slice(-25)
       .map(m => {
-        const p = personas.find(a => a.id === m.personaId);
+        const p = allPersonasRef.current.find(a => a.id === m.personaId);
         return { name: p?.name ?? '', role: p?.role ?? '', text: m.text };
       });
 
@@ -386,14 +477,33 @@ export default function RiskForumClient({ user }: Props) {
 
   const runDebrief = async () => {
     setDebriefLoading(true);
-    const transcript = historyRef.current
-      .filter(m => m.type === 'message')
-      .map(m => {
-        const p = personas.find(a => a.id === m.personaId);
-        return `${p?.name} (${p?.role}): ${m.text}`;
-      }).join('\n');
 
-    const curveballs = historyRef.current
+    // Build a transcript that preserves thread structure — the shape of the
+    // conversation (where breakouts happened, who joined) is itself assessable.
+    const transcriptParts: string[] = [];
+    for (const tid of Object.keys(threadsRef.current)) {
+      const t = threadsRef.current[tid];
+      if (!t.messages.some(m => m.type === 'message')) continue;
+      const threadHeader = t.kind === 'main'
+        ? '=== MAIN WAR ROOM ==='
+        : `=== BREAKOUT: "${t.name}" ${t.topic ? `(${t.topic})` : ''} spawned T+${t.spawnedAtSimMin}m${t.status === 'concluded' ? `, concluded T+${t.concludedAtSimMin}m` : ''} ===`;
+      transcriptParts.push(threadHeader);
+      for (const m of t.messages) {
+        if (m.type === 'message') {
+          const p = allPersonasRef.current.find(a => a.id === m.personaId);
+          transcriptParts.push(`${p?.name} (${p?.role})${m.simClock ? ` ${m.simClock}` : ''}: ${m.text}`);
+        } else if (m.type === 'curveball') {
+          transcriptParts.push(`[DEVELOPING: ${m.text}]`);
+        } else if (m.type === 'system') {
+          transcriptParts.push(`[${m.text}]`);
+        }
+      }
+      transcriptParts.push('');
+    }
+    const transcript = transcriptParts.join('\n');
+
+    const curveballs = Object.values(threadsRef.current)
+      .flatMap(t => t.messages)
       .filter(m => m.type === 'curveball')
       .map(m => m.text).join('\n');
 
@@ -410,28 +520,269 @@ export default function RiskForumClient({ user }: Props) {
     setDebriefLoading(false);
   };
 
+  // ── Orchestrator + thread-aware simulation loop ───────────────────────────────
+
+  const formatSimClockForMsg = () => {
+    const m = simMinutesRef.current;
+    const h = Math.floor(m / 60);
+    const rem = m % 60;
+    return h > 0 ? `T+${h}h${rem.toString().padStart(2, '0')}m` : `T+${rem}m`;
+  };
+
+  // Call the supervisory orchestrator — returns structural actions to execute.
+  const callOrchestrator = async (scenarioDescription: string) => {
+    // Build per-thread recent transcript snapshot
+    const threadsTranscript = Object.values(threadsRef.current).map(t => ({
+      threadId: t.id,
+      threadName: t.name,
+      status: t.status,
+      recentMessages: t.messages
+        .filter(m => m.type === 'message')
+        .slice(-8)
+        .map(m => {
+          const p = allPersonasRef.current.find(a => a.id === m.personaId);
+          return { name: p?.name ?? '', role: p?.role ?? '', text: m.text };
+        }),
+    }));
+
+    const availablePersonas = allPersonasRef.current.map(p => ({ id: p.id, name: p.name, role: p.role }));
+    const alreadySummonedIds = new Set(allPersonasRef.current.map(p => p.id));
+    const availableExternals = EXTERNAL_BENCH
+      .filter(e => !alreadySummonedIds.has(e.id))
+      .map(e => ({ id: e.id, name: e.name, role: e.role, summonTriggers: e.summonTriggers }));
+
+    const activeBreakoutIds = Object.values(threadsRef.current)
+      .filter(t => t.kind === 'breakout' && t.status === 'active')
+      .map(t => t.id);
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch('/api/risk-forum/orchestrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          threadsTranscript,
+          availablePersonas,
+          availableExternals,
+          activeBreakoutIds,
+          scenarioDescription,
+          simulatedClockLabel: formatSimClockForMsg(),
+        }),
+      });
+      clearTimeout(timeout);
+      if (!res.ok) return { actions: [] };
+      const data = await res.json();
+      return data as { actions: Array<Record<string, string | string[] | undefined>> };
+    } catch {
+      return { actions: [] };
+    }
+  };
+
+  // Execute a single orchestrator action against live state
+  const executeOrchestratorAction = async (action: Record<string, string | string[] | undefined>) => {
+    const simMin = simMinutesRef.current;
+    const clockLabel = formatSimClockForMsg();
+
+    if (action.type === 'summon_external') {
+      const bench = EXTERNAL_BENCH.find(b => b.id === action.benchId);
+      if (!bench || allPersonasRef.current.some(p => p.id === bench.id)) return;
+      const newPersona: Persona = {
+        id: bench.id, name: bench.name, role: bench.role, dept: bench.dept,
+        m365Summary: bench.m365Summary, color: bench.color, initial: bench.initial,
+      };
+      addPersona(newPersona);
+      // Add them as a participant in the main thread
+      const mainThread = threadsRef.current['main'];
+      if (mainThread) {
+        const updated: Thread = { ...mainThread, participantIds: [...mainThread.participantIds, bench.id] };
+        upsertThread(updated);
+      }
+      // System message announcing the join
+      addMessageToThread('main', {
+        id: `sys-summon-${Date.now()}`,
+        type: 'system',
+        text: `${bench.name} (${bench.role}) has joined the call.`,
+        simClock: clockLabel,
+      });
+      addOrchestratorEvent({
+        id: `evt-${Date.now()}`,
+        atSimMin: simMin,
+        type: 'summon_external',
+        description: `${bench.name} summoned into main room${action.calledBy ? ` by ${allPersonasRef.current.find(p => p.id === action.calledBy)?.name ?? action.calledBy}` : ''}`,
+        reason: action.reason as string | undefined,
+      });
+      // Their opening remark, using the context brief
+      const openingText = await callPersonaAPI(
+        newPersona,
+        `You have just been called into a live crisis. Context brief: ${bench.contextBrief}. The scenario is: ${activeScenario?.description}. You have joined the main room. Make your opening remark — ask your standard opening question or state your position per your behavioural profile.`,
+        null,
+        'main',
+      );
+      if (openingText) {
+        addMessageToThread('main', {
+          id: `${newPersona.id}-${Date.now()}`,
+          type: 'message',
+          personaId: newPersona.id,
+          text: openingText,
+          time: getTime(),
+          simClock: clockLabel,
+        });
+      }
+      return;
+    }
+
+    if (action.type === 'spawn_breakout') {
+      const participants = (action.participants as string[] | undefined) ?? [];
+      if (participants.length < 2) return;
+      const threadId = `thread-${Date.now()}`;
+      const newThread: Thread = {
+        id: threadId,
+        name: (action.threadName as string) ?? 'Breakout',
+        kind: 'breakout',
+        participantIds: participants,
+        parentThreadId: 'main',
+        spawnedAtSimMin: simMin,
+        topic: action.topic as string | undefined,
+        status: 'active',
+        messages: [],
+      };
+      upsertThread(newThread);
+      setThreadOrder(prev => [...prev, threadId]);
+      // System note in main room that breakout was spawned
+      const names = participants
+        .map(id => allPersonasRef.current.find(p => p.id === id)?.name ?? id)
+        .join(' and ');
+      addMessageToThread('main', {
+        id: `sys-breakout-${Date.now()}`,
+        type: 'system',
+        text: `${names} stepped out for a sidebar${action.topic ? `: "${action.topic}"` : ''}.`,
+        simClock: clockLabel,
+      });
+      addOrchestratorEvent({
+        id: `evt-${Date.now()}`,
+        atSimMin: simMin,
+        type: 'spawn_breakout',
+        description: `Breakout spawned: "${newThread.name}" with ${names}${action.topic ? ` on "${action.topic}"` : ''}`,
+        reason: action.reason as string | undefined,
+      });
+      return;
+    }
+
+    if (action.type === 'conclude_breakout') {
+      const threadId = action.threadId as string;
+      const thread = threadsRef.current[threadId];
+      if (!thread || thread.status !== 'active' || thread.kind !== 'breakout') return;
+      const summarizerId = (action.summarizer as string) ?? thread.participantIds[0];
+      const summarizer = allPersonasRef.current.find(p => p.id === summarizerId);
+      const summary = (action.summary as string) ?? 'Breakout concluded.';
+      const concluded: Thread = {
+        ...thread,
+        status: 'concluded',
+        concludedAtSimMin: simMin,
+        concludedReason: action.reason as string | undefined,
+      };
+      upsertThread(concluded);
+      // Summary post into main, spoken by the summariser in character
+      if (summarizer) {
+        addMessageToThread('main', {
+          id: `summary-${Date.now()}`,
+          type: 'message',
+          personaId: summarizerId,
+          text: `[Back from ${thread.name}] ${summary}`,
+          time: getTime(),
+          simClock: clockLabel,
+        });
+      } else {
+        addMessageToThread('main', {
+          id: `sys-conclude-${Date.now()}`,
+          type: 'system',
+          text: `${thread.name} concluded. ${summary}`,
+          simClock: clockLabel,
+        });
+      }
+      addOrchestratorEvent({
+        id: `evt-${Date.now()}`,
+        atSimMin: simMin,
+        type: 'conclude_breakout',
+        description: `Breakout "${thread.name}" concluded${summarizer ? `; ${summarizer.name} reported back` : ''}`,
+        reason: action.reason as string | undefined,
+      });
+    }
+  };
+
+  // Speak one round in a thread — picks participants from that thread and gets each to respond
+  const speakRoundInThread = async (threadId: string, phaseText: string, curveball: string | null, numSpeakers: number) => {
+    const thread = threadsRef.current[threadId];
+    if (!thread || thread.status !== 'active') return;
+    const threadPersonas = thread.participantIds
+      .map(id => allPersonasRef.current.find(p => p.id === id))
+      .filter((p): p is Persona => p !== undefined);
+    if (threadPersonas.length === 0) return;
+    const speakers = [...threadPersonas].sort(() => Math.random() - 0.5).slice(0, Math.min(numSpeakers, threadPersonas.length));
+
+    for (const persona of speakers) {
+      if (abortRef.current) break;
+      if (threadsRef.current[threadId]?.status !== 'active') break;
+
+      setTypingPersonas([{ persona, threadId }]);
+      const text = await callPersonaAPI(persona, phaseText, curveball, threadId);
+      if (abortRef.current) break;
+      setTypingPersonas([]);
+
+      addMessageToThread(threadId, {
+        id: `${persona.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        type: 'message',
+        personaId: persona.id,
+        text: text ?? `[${persona.name} — no response]`,
+        time: getTime(),
+        simClock: formatSimClockForMsg(),
+      });
+    }
+    setTypingPersonas([]);
+  };
+
   const runSimulation = async () => {
     if (!activeScenario) return;
     abortRef.current = false;
-    historyRef.current = [];
     runStartRef.current = Date.now();
+    simMinutesRef.current = 0;
+    allPersonasRef.current = [...personas];
+    setAllPersonas([...personas]);
     setSimulatedMinutes(0);
     setRealSecondsElapsed(0);
     setIsRunning(true);
-    setMessages([]);
     setCurrentPhaseIdx(0);
     setDebrief(null);
+    setOrchestratorEvents([]);
+    setUnreadThreads({});
     setView('sim');
+
+    // Initialise the main war room thread with all starting personas
+    const mainThread: Thread = {
+      id: 'main',
+      name: 'War Room',
+      kind: 'main',
+      participantIds: personas.map(p => p.id),
+      spawnedAtSimMin: 0,
+      status: 'active',
+      messages: [],
+    };
+    threadsRef.current = { main: mainThread };
+    setThreads({ main: mainThread });
+    setThreadOrder(['main']);
+    setActiveThreadId('main');
 
     const phases = activeScenario.basePhases;
     const curveballs = [...activeScenario.curveballs].sort(() => Math.random() - 0.5);
     let curveballIdx = 0;
     let globalPhaseIdx = 0;
+    let messagesSinceOrchestrator = 0;
 
     // Outer loop: keeps generating conversation until the user-set real-time
-    // cap is hit (or Stop is pressed). Phases cycle through base phases and
-    // then continue beyond the original timeline with ongoing-response beats,
-    // so a longer cap produces a longer simulation rather than just ending.
+    // cap is hit (or Stop is pressed). Phases cycle and extend beyond the
+    // scripted timeline so a longer cap produces a longer simulation.
     while (!abortRef.current) {
       const phase = phases[globalPhaseIdx % phases.length] ?? phases[phases.length - 1];
       const isExtension = globalPhaseIdx >= phases.length;
@@ -440,57 +791,51 @@ export default function RiskForumClient({ user }: Props) {
         ? `${phase.text} Situation continues to develop — new information, decisions needed, people reacting.`
         : phase.text;
 
-      addMessage({ id: `phase-${globalPhaseIdx}`, type: 'phase', label: phaseLabel, text: phaseText });
+      // Phase marker goes into main thread only
+      addMessageToThread('main', { id: `phase-${globalPhaseIdx}`, type: 'phase', label: phaseLabel, text: phaseText, simClock: formatSimClockForMsg() });
       setCurrentPhaseIdx(Math.min(globalPhaseIdx, phases.length - 1));
 
       let curveball: string | null = null;
       if ((globalPhaseIdx > 0 && Math.random() > 0.3) && curveballIdx < curveballs.length) {
         curveball = curveballs[curveballIdx++];
         if (!abortRef.current) {
-          addMessage({ id: `cb-${globalPhaseIdx}`, type: 'curveball', text: curveball });
+          addMessageToThread('main', { id: `cb-${globalPhaseIdx}`, type: 'curveball', text: curveball, simClock: formatSimClockForMsg() });
         }
       }
 
-      // Build a speaker list that allows some personas to speak twice per phase,
-      // creating genuine back-and-forth rather than single-round monologues.
-      const roundOne = [...personas].sort(() => Math.random() - 0.5);
-      const roundTwoCount = globalPhaseIdx === 0 ? 3 : 2 + Math.floor(Math.random() * 2);
-      const roundTwo = [...personas].sort(() => Math.random() - 0.5).slice(0, roundTwoCount);
-      const speakers = [...roundOne, ...roundTwo];
+      // Main room round — a few speakers respond to the phase/curveball
+      const mainCount = globalPhaseIdx === 0 ? 4 : 3;
+      await speakRoundInThread('main', phaseText, curveball, mainCount);
+      messagesSinceOrchestrator += mainCount;
 
-      // Sequential: each speaker sees what all previous speakers said
-      for (const persona of speakers) {
+      // Any active breakouts get a round too, using their own topic as the phase text
+      const activeBreakouts = Object.values(threadsRef.current)
+        .filter(t => t.kind === 'breakout' && t.status === 'active');
+      for (const bt of activeBreakouts) {
         if (abortRef.current) break;
-
-        // Show this person typing — the API response time IS the typing delay
-        setTypingPersonas([persona]);
-
-        const text = await callPersonaAPI(persona, phaseText, curveball);
-        if (abortRef.current) break;
-
-        setTypingPersonas([]);
-
-        addMessage({
-          id: `${persona.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          type: 'message',
-          personaId: persona.id,
-          text: text ?? `[${persona.name} — no response]`,
-          time: getTime(),
-        });
+        const breakoutPhaseText = `You are in a sidebar${bt.topic ? ` on "${bt.topic}"` : ''} away from the main war room. The broader situation is still developing — keep focused on your sub-topic. Continue the sidebar conversation, work towards a conclusion or recommendation.`;
+        await speakRoundInThread(bt.id, breakoutPhaseText, null, 3);
+        messagesSinceOrchestrator += 3;
       }
 
-      setTypingPersonas([]);
-      globalPhaseIdx++;
+      // Orchestrator check — consult the supervisor after a handful of messages
+      if (messagesSinceOrchestrator >= 5 && !abortRef.current) {
+        messagesSinceOrchestrator = 0;
+        const result = await callOrchestrator(activeScenario.description);
+        for (const action of result.actions ?? []) {
+          if (abortRef.current) break;
+          await executeOrchestratorAction(action);
+        }
+      }
 
-      // Safety cap so a stuck session cannot run forever in memory.
-      if (globalPhaseIdx > 40) break;
+      globalPhaseIdx++;
+      if (globalPhaseIdx > 40) break; // safety cap
     }
 
     setTypingPersonas([]);
     setIsRunning(false);
 
-    // Always offer debrief — even on Stop or cap cut-off. User can click
-    // DEBRIEF in the header once it's ready, or we jump to it for natural ends.
+    // Always offer debrief — even on Stop or cap cut-off.
     await runDebrief();
   };
 
@@ -745,16 +1090,17 @@ export default function RiskForumClient({ user }: Props) {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {personas.map(p => (
+          {allPersonas.map(p => (
             <div
               key={p.id}
               className="w-6 h-6 rounded-full flex items-center justify-center font-mono font-bold transition-all"
+              title={`${p.name} · ${p.role}`}
               style={{
                 fontSize: '8px',
                 background: '#0D0D0D',
-                border: `1.5px solid ${typingPersonas.some(t => t.id === p.id) ? p.color : '#181818'}`,
-                color: typingPersonas.some(t => t.id === p.id) ? p.color : '#2A2A2A',
-                boxShadow: typingPersonas.some(t => t.id === p.id) ? `0 0 8px ${p.color}55` : 'none',
+                border: `1.5px solid ${typingPersonas.some(t => t.persona.id === p.id) ? p.color : '#181818'}`,
+                color: typingPersonas.some(t => t.persona.id === p.id) ? p.color : '#2A2A2A',
+                boxShadow: typingPersonas.some(t => t.persona.id === p.id) ? `0 0 8px ${p.color}55` : 'none',
               }}
             >{p.initial}</div>
           ))}
@@ -800,15 +1146,133 @@ export default function RiskForumClient({ user }: Props) {
         ))}
       </div>
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
-        {messages.map(msg => <SimMessageRow key={msg.id} msg={msg} personas={personas} />)}
-        <TypingIndicators personas={typingPersonas} />
-        {debriefLoading && (
-          <div className="text-center py-6 text-xs font-mono tracking-widest" style={{ color: '#2E2E2E' }}>
-            SIMULATION COMPLETE · GENERATING REPORT
+      {/* Threads layout: left-rail navigator + active thread pane */}
+      <div className="flex-1 min-h-0 grid" style={{ gridTemplateColumns: '240px 1fr' }}>
+
+        {/* Left rail: thread list */}
+        <div className="border-r overflow-y-auto" style={{ borderColor: '#0F0F0F', background: '#060606' }}>
+          <div className="px-4 pt-4 pb-2">
+            <div className="text-xs font-mono tracking-widest" style={{ color: '#333' }}>THREADS</div>
           </div>
-        )}
+          <div className="flex flex-col">
+            {threadOrder.map(tid => {
+              const t = threads[tid];
+              if (!t) return null;
+              const isActive = tid === activeThreadId;
+              const unread = unreadThreads[tid] || 0;
+              const statusColor = t.status === 'concluded' ? '#3E6850' : (t.kind === 'main' ? '#C84040' : '#E8A040');
+              return (
+                <button
+                  key={tid}
+                  onClick={() => setActiveThreadId(tid)}
+                  className="flex items-start gap-2 px-4 py-3 text-left transition-all border-l-2"
+                  style={{
+                    background: isActive ? '#0C0C0C' : 'transparent',
+                    borderLeftColor: isActive ? statusColor : 'transparent',
+                    borderBottom: '1px solid #0C0C0C',
+                  }}
+                >
+                  <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{
+                    background: statusColor,
+                    animation: t.status === 'active' ? 'rfPulse 1.2s ease-in-out infinite' : 'none',
+                  }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold truncate" style={{ color: isActive ? '#E8E8E0' : '#999' }}>
+                        {t.name}
+                      </span>
+                      {unread > 0 && !isActive && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: '#C84040', color: '#FFF' }}>
+                          {unread}
+                        </span>
+                      )}
+                    </div>
+                    {t.kind === 'breakout' && t.topic && (
+                      <div className="text-[10px] italic mt-0.5 line-clamp-1" style={{ color: '#555', fontFamily: 'Georgia, serif' }}>
+                        {t.topic}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1 mt-1">
+                      {t.participantIds.slice(0, 5).map(pid => {
+                        const p = allPersonas.find(a => a.id === pid);
+                        if (!p) return null;
+                        return (
+                          <div key={pid} className="w-4 h-4 rounded-full flex items-center justify-center font-mono font-bold flex-shrink-0" style={{
+                            fontSize: '7px', background: '#0A0A0A', border: `1px solid ${p.color}66`, color: p.color,
+                          }}>{p.initial}</div>
+                        );
+                      })}
+                      {t.participantIds.length > 5 && (
+                        <span className="text-[9px] font-mono" style={{ color: '#444' }}>+{t.participantIds.length - 5}</span>
+                      )}
+                    </div>
+                    {t.status === 'concluded' && (
+                      <div className="text-[9px] font-mono mt-1" style={{ color: '#3E6850' }}>✓ concluded</div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Active thread pane */}
+        <div className="flex flex-col min-h-0">
+          {/* Phase progress — only relevant for main thread */}
+          {activeThreadId === 'main' && (
+            <div className="flex gap-2 px-5 py-2 border-b flex-shrink-0" style={{ borderColor: '#0F0F0F' }}>
+              {(activeScenario?.basePhases ?? []).map((ph, i) => (
+                <div
+                  key={i}
+                  className="flex-1 px-2 py-1.5 rounded text-xs"
+                  style={{
+                    background: i <= currentPhaseIdx ? '#0F0A0A' : '#080808',
+                    border: `1px solid ${i < currentPhaseIdx ? '#C8404044' : i === currentPhaseIdx ? '#C84040' : '#111'}`,
+                    color: i <= currentPhaseIdx ? '#C84040' : '#222',
+                  }}
+                >
+                  <div className="font-bold font-mono mb-0.5" style={{ fontSize: '9px' }}>{ph.label}</div>
+                  <div style={{ fontSize: '9px', color: i <= currentPhaseIdx ? '#664040' : '#1A1A1A' }}>
+                    {ph.text.split('—')[0].substring(0, 30)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Breakout context bar */}
+          {activeThreadId !== 'main' && threads[activeThreadId] && (
+            <div className="px-5 py-3 border-b flex items-center gap-3 flex-shrink-0" style={{ borderColor: '#0F0F0F', background: '#0A0A0A' }}>
+              <span className="text-xs font-mono tracking-widest" style={{ color: '#E8A040' }}>⊕ BREAKOUT</span>
+              {threads[activeThreadId].topic && (
+                <span className="text-xs" style={{ color: '#C8B090', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>
+                  {threads[activeThreadId].topic}
+                </span>
+              )}
+              <span className="ml-auto text-xs font-mono" style={{ color: '#444' }}>
+                spawned T+{threads[activeThreadId].spawnedAtSimMin}m
+              </span>
+              {threads[activeThreadId].status === 'concluded' && (
+                <span className="text-xs font-mono" style={{ color: '#6EC860' }}>✓ concluded</span>
+              )}
+            </div>
+          )}
+
+          {/* Messages for active thread */}
+          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-3">
+            {(threads[activeThreadId]?.messages ?? []).map(msg => (
+              <SimMessageRow key={msg.id} msg={msg} personas={allPersonas} />
+            ))}
+            {typingPersonas.filter(t => t.threadId === activeThreadId).length > 0 && (
+              <TypingIndicators personas={typingPersonas.filter(t => t.threadId === activeThreadId).map(t => t.persona)} />
+            )}
+            {debriefLoading && (
+              <div className="text-center py-6 text-xs font-mono tracking-widest" style={{ color: '#2E2E2E' }}>
+                SIMULATION COMPLETE · GENERATING REPORT
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -835,7 +1299,22 @@ export default function RiskForumClient({ user }: Props) {
             >● {debrief.overallRating}</div>
           )}
           <button onClick={() => setView('sim')} className="px-4 py-1.5 rounded text-xs font-mono" style={{ background: 'transparent', border: '1px solid #1E1E1E', color: '#444' }}>← Transcript</button>
-          <button onClick={() => { setView('setup'); setMessages([]); historyRef.current = []; setDebrief(null); }} className="px-4 py-1.5 rounded text-xs font-mono" style={{ background: 'transparent', border: '1px solid #1E1E1E', color: '#444' }}>New Simulation</button>
+          <button
+            onClick={() => {
+              setView('setup');
+              threadsRef.current = {};
+              setThreads({});
+              setThreadOrder([]);
+              setActiveThreadId('main');
+              setUnreadThreads({});
+              setOrchestratorEvents([]);
+              setDebrief(null);
+              allPersonasRef.current = DEFAULT_PERSONAS;
+              setAllPersonas(DEFAULT_PERSONAS);
+            }}
+            className="px-4 py-1.5 rounded text-xs font-mono"
+            style={{ background: 'transparent', border: '1px solid #1E1E1E', color: '#444' }}
+          >New Simulation</button>
         </div>
       </div>
 
