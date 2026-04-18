@@ -119,6 +119,38 @@ export function DocumentTemplateEditor({
     confidence: number; alternatives: Array<{ path: string; label: string; snippet: string }>;
   }>(null);
   const [suggestError, setSuggestError] = useState<string | null>(null);
+  // Selection range captured the moment the admin clicks "Ask AI" —
+  // contentEditable loses focus to the modal, so without this the
+  // eventual Insert would happen at the default caret position
+  // (start of document) rather than where the admin was typing.
+  const savedRangeRef = useRef<Range | null>(null);
+
+  /** Capture the current editor selection so we can restore it later
+   *  (e.g. after the user returns from the suggester modal). Returns
+   *  whether a usable range was captured. */
+  function captureSelection(): boolean {
+    if (!editorRef.current) return false;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return false;
+    const range = sel.getRangeAt(0);
+    // Only keep ranges that live inside the editor — if the user
+    // clicked a toolbar button, the selection may have jumped.
+    if (!editorRef.current.contains(range.commonAncestorContainer)) return false;
+    savedRangeRef.current = range.cloneRange();
+    return true;
+  }
+  /** Restore whatever we last captured via captureSelection(). No-op
+   *  if nothing was saved, so insertRawHtml keeps its existing
+   *  end-of-document fallback. */
+  function restoreSelection(): void {
+    const range = savedRangeRef.current;
+    if (!range || !editorRef.current) return;
+    editorRef.current.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
   // Dirty-tracking + reference to the contentEditable node. We don't
   // mirror the HTML into React state on every keystroke — that'd
   // confuse cursor position. Instead we read from the DOM on save.
@@ -250,7 +282,13 @@ export function DocumentTemplateEditor({
     }
   }
   function acceptSuggestion(snippet: string) {
+    // Put the caret back where it was when the admin opened the
+    // modal, THEN insert. Without this, execCommand('insertHTML')
+    // defaults to the document start because contentEditable has
+    // no active selection while the modal is showing.
+    restoreSelection();
     insertRawHtml(snippet);
+    savedRangeRef.current = null;
     setSuggestOpen(false);
     setSuggestDescription('');
     setSuggestResult(null);
@@ -433,6 +471,13 @@ export function DocumentTemplateEditor({
         <ToolbarDiv />
 
         <button
+          // onMouseDown fires BEFORE the editor loses focus to the
+          // button, which is the last moment we can grab a usable
+          // selection range. Using onClick would be too late —
+          // contentEditable has already dropped the selection by
+          // then and the eventual insert would land at the start of
+          // the document.
+          onMouseDown={e => { e.preventDefault(); captureSelection(); }}
           onClick={() => { setSuggestOpen(true); setSuggestError(null); setSuggestResult(null); }}
           title="Describe a placeholder in plain English and let AI find the right merge field"
           className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-gradient-to-r from-fuchsia-50 to-indigo-50 border border-fuchsia-200 text-fuchsia-700 rounded hover:from-fuchsia-100 hover:to-indigo-100"
