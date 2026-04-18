@@ -277,9 +277,21 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
       // Derived fields populated in the post-pass below. They let
       // dynamic-table filters express "include the explanation only
       // when the preceding Y/N question was Y" and similar chained
-      // conditions without any schema-level wiring.
+      // conditions without any schema-level wiring. "Next" fields are
+      // the mirror image — they let a row pull its successor's
+      // question/answer into a column (e.g. iterate Y/N questions and
+      // put the follow-up explanation in a neighbouring cell).
+      //
+      // `itemIndex` is the 0-based position in the sorted list, so a
+      // template can reach any other row via {{../asList.[N].answer}}
+      // when the trigger question and detail question aren't adjacent.
       previousKey?: string | null;
+      previousQuestion?: string | null;
       previousAnswer?: any;
+      nextKey?: string | null;
+      nextQuestion?: string | null;
+      nextAnswer?: any;
+      itemIndex?: number;
       isEmpty?: boolean;
     }
     const asList: ListItem[] = [];
@@ -305,14 +317,21 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
       });
     }
     asList.sort((a, b) => (a.sortOrder - b.sortOrder) || a.question.localeCompare(b.question));
-    // Post-pass: attach previousKey / previousAnswer / isEmpty to
-    // each entry now that the sort is stable. "Previous" is the
-    // immediately preceding item by sortOrder. First item in each
-    // section gets null so the admin can filter on that too.
+    // Post-pass: attach previous/next neighbour fields + isEmpty to
+    // each entry now that the sort is stable. "Previous" and "next"
+    // are the immediately adjacent items by sortOrder across the
+    // whole questionnaire — first item's previous* are null and the
+    // last item's next* are null so filters can target those edges.
     for (let i = 0; i < asList.length; i++) {
       const prev = i > 0 ? asList[i - 1] : null;
+      const next = i < asList.length - 1 ? asList[i + 1] : null;
+      asList[i].itemIndex = i;
       asList[i].previousKey = prev?.key ?? null;
+      asList[i].previousQuestion = prev?.question ?? null;
       asList[i].previousAnswer = prev?.answer ?? null;
+      asList[i].nextKey = next?.key ?? null;
+      asList[i].nextQuestion = next?.question ?? null;
+      asList[i].nextAnswer = next?.answer ?? null;
       const v = asList[i].answer;
       asList[i].isEmpty = v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
     }
