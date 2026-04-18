@@ -6,7 +6,7 @@ import {
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   List, ListOrdered, Table, FileDown, Minus,
-  SquareDashedBottom, Repeat, Variable,
+  SquareDashedBottom, Repeat, Variable, Sparkles, X, Check,
 } from 'lucide-react';
 import { mergeFieldsByGroup, type MergeField } from '@/lib/template-merge-fields';
 import type { Skeleton } from './FirmSkeletonManager';
@@ -107,6 +107,18 @@ export function DocumentTemplateEditor({
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<{ html: string; missing: string[]; error: string | null; usedLive: boolean } | null>(null);
   const [engagementId, setEngagementId] = useState<string>(engagements[0]?.id || '');
+  // AI placeholder-suggester state. The modal takes a plain-English
+  // description and asks the server (which in turn asks Llama 3.3)
+  // to pick the best snippet out of the merge-field catalog, add a
+  // formatter where useful, and wrap arrays in {{#each}} scaffolding.
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestDescription, setSuggestDescription] = useState('');
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestResult, setSuggestResult] = useState<null | {
+    snippet: string; path: string; label: string; rationale: string;
+    confidence: number; alternatives: Array<{ path: string; label: string; snippet: string }>;
+  }>(null);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
   // Dirty-tracking + reference to the contentEditable node. We don't
   // mirror the HTML into React state on every keystroke — that'd
   // confuse cursor position. Instead we read from the DOM on save.
@@ -199,6 +211,51 @@ export function DocumentTemplateEditor({
   function insertConditional() { insertRawHtml('{{#if condition}}<br>&nbsp;&nbsp;<br>{{else}}<br>&nbsp;&nbsp;<br>{{/if}}'); }
   function insertLoop() { insertRawHtml('{{#each errorSchedule}}<br>&nbsp;&nbsp;{{fsLine}} — {{formatCurrency amount}}: {{description}}<br>{{/each}}'); }
   function insertErrorTable() { insertRawHtml('{{{errorScheduleTable errorSchedule}}}'); }
+
+  // ── AI placeholder suggester ──────────────────────────────────────────────
+  /** Run the description through the server-side suggester and stash
+   *  the result on state. The modal stays open so the admin can see
+   *  the rationale + alternatives before hitting Insert. */
+  async function runSuggest() {
+    const description = suggestDescription.trim();
+    if (!description) return;
+    setSuggestLoading(true);
+    setSuggestError(null);
+    setSuggestResult(null);
+    try {
+      // Grab a little of the surrounding text from the editor so the
+      // AI can pick a wrapper that fits (prose vs list vs table).
+      let surroundingContext = '';
+      try {
+        const text = editorRef.current?.innerText || '';
+        surroundingContext = text.slice(-400); // last 400 chars
+      } catch { /* ignore */ }
+      const res = await fetch('/api/methodology-admin/template-documents/suggest-placeholder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, context: surroundingContext }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSuggestError(data.error || 'Suggest failed');
+      } else if (!data.snippet) {
+        setSuggestError(data.rationale || 'No match in catalog.');
+      } else {
+        setSuggestResult(data);
+      }
+    } catch (err: any) {
+      setSuggestError(err?.message || 'Suggest failed');
+    } finally {
+      setSuggestLoading(false);
+    }
+  }
+  function acceptSuggestion(snippet: string) {
+    insertRawHtml(snippet);
+    setSuggestOpen(false);
+    setSuggestDescription('');
+    setSuggestResult(null);
+    setSuggestError(null);
+  }
 
   // ── Paste handler — strips Word / pasted HTML to plain text ──────────────
   function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
@@ -372,7 +429,114 @@ export function DocumentTemplateEditor({
         <button onClick={insertErrorTable} title="Insert error-schedule table helper" className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-slate-100 border border-slate-200 text-slate-700 rounded hover:bg-slate-200">
           <Variable className="h-3 w-3" /> error table
         </button>
+
+        <ToolbarDiv />
+
+        <button
+          onClick={() => { setSuggestOpen(true); setSuggestError(null); setSuggestResult(null); }}
+          title="Describe a placeholder in plain English and let AI find the right merge field"
+          className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-gradient-to-r from-fuchsia-50 to-indigo-50 border border-fuchsia-200 text-fuchsia-700 rounded hover:from-fuchsia-100 hover:to-indigo-100"
+        >
+          <Sparkles className="h-3 w-3" /> Ask AI for a placeholder
+        </button>
       </div>
+
+      {/* ── AI placeholder-suggester modal ─────────────────────────────── */}
+      {suggestOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
+          onClick={() => { if (!suggestLoading) setSuggestOpen(false); }}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b flex items-start justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-fuchsia-500" /> Ask AI for a placeholder</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">Describe what you want to appear in the template and AI will pick the matching merge field from the catalog.</p>
+              </div>
+              <button onClick={() => setSuggestOpen(false)} className="text-slate-400 hover:text-slate-600" disabled={suggestLoading}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-4 pt-3 space-y-2">
+              <textarea
+                value={suggestDescription}
+                onChange={e => setSuggestDescription(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !suggestLoading) { e.preventDefault(); void runSuggest(); } }}
+                placeholder="e.g. the date the engagement letter was signed; client's registered address formatted as a paragraph; bullet each error on the schedule with its amount"
+                className="w-full border border-slate-200 rounded px-3 py-2 text-xs min-h-[70px] focus:outline-none focus:border-fuchsia-400"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setSuggestOpen(false)}
+                  disabled={suggestLoading}
+                  className="text-[11px] px-3 py-1 text-slate-600 hover:text-slate-800"
+                >Cancel</button>
+                <button
+                  onClick={() => void runSuggest()}
+                  disabled={suggestLoading || !suggestDescription.trim()}
+                  className="inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-fuchsia-600 text-white rounded disabled:opacity-50"
+                >
+                  {suggestLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} Suggest
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+              {suggestError && (
+                <div className="border border-red-200 bg-red-50 rounded p-3 text-[11px] text-red-700 flex items-start gap-2">
+                  <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold mb-0.5">No match</div>
+                    <div>{suggestError}</div>
+                    <div className="text-[10px] text-red-600 mt-1">If the field you need isn&rsquo;t in the catalog, ask Stuart to add it — or type any Handlebars path manually (Preview will tell you if it resolves against a live engagement).</div>
+                  </div>
+                </div>
+              )}
+              {suggestResult && (
+                <div className="space-y-3">
+                  <div className="border border-fuchsia-200 bg-fuchsia-50/40 rounded p-3 text-[11px]">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="font-semibold text-fuchsia-800">{suggestResult.label}</div>
+                      <div className="text-[10px] text-fuchsia-600">confidence {Math.round((suggestResult.confidence || 0) * 100)}%</div>
+                    </div>
+                    <div className="text-slate-700 mb-2">{suggestResult.rationale}</div>
+                    <pre className="bg-white border border-fuchsia-100 rounded p-2 text-[11px] font-mono whitespace-pre-wrap text-fuchsia-900">{suggestResult.snippet}</pre>
+                    <button
+                      onClick={() => acceptSuggestion(suggestResult.snippet)}
+                      className="mt-2 inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-fuchsia-600 text-white rounded hover:bg-fuchsia-700"
+                    ><Check className="h-3 w-3" /> Insert at cursor</button>
+                  </div>
+                  {Array.isArray(suggestResult.alternatives) && suggestResult.alternatives.length > 0 && (
+                    <div className="border border-slate-200 rounded p-3 text-[11px] bg-slate-50/60">
+                      <div className="font-semibold text-slate-600 mb-1">Other possibilities</div>
+                      <div className="space-y-1.5">
+                        {suggestResult.alternatives.map(alt => (
+                          <div key={alt.path} className="flex items-start gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="text-slate-700 font-medium truncate">{alt.label || alt.path}</div>
+                              <pre className="bg-white border border-slate-200 rounded p-1.5 text-[10px] font-mono whitespace-pre-wrap text-slate-600 mt-0.5">{alt.snippet}</pre>
+                            </div>
+                            <button
+                              onClick={() => acceptSuggestion(alt.snippet)}
+                              className="text-[10px] px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded flex-shrink-0"
+                            >Insert</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!suggestResult && !suggestError && !suggestLoading && (
+                <div className="text-[11px] text-slate-400 italic">Type a description above and hit Suggest (or Enter).</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Two-column work area ───────────────────────────────────────── */}
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200 min-h-0">
