@@ -8,7 +8,7 @@ import {
   List, ListOrdered, Table, FileDown, Minus,
   SquareDashedBottom, Repeat, Variable, Sparkles, X, Check,
   ArrowUpToLine, ArrowDownToLine, ArrowLeftToLine, ArrowRightToLine,
-  Trash2,
+  Trash2, Merge, Split,
 } from 'lucide-react';
 import { mergeFieldsByGroup, MERGE_FIELDS, type MergeField } from '@/lib/template-merge-fields';
 import type { Skeleton } from './FirmSkeletonManager';
@@ -414,6 +414,71 @@ export function DocumentTemplateEditor({
     touched();
   }
 
+  /** Merge the current cell with its right-hand neighbour — grows the
+   *  current cell's colspan and removes the next cell. No-op at the
+   *  end of a row. Cell contents of the absorbed neighbour aren't
+   *  kept (common Word behaviour). */
+  function mergeRight() {
+    const cell = (findAncestor('TD') as HTMLTableCellElement | null) || (findAncestor('TH') as HTMLTableCellElement | null);
+    if (!cell) { alert('Click inside a table cell first.'); return; }
+    const next = cell.nextElementSibling as HTMLTableCellElement | null;
+    if (!next || (next.tagName !== 'TD' && next.tagName !== 'TH')) { alert('No cell to the right to merge with.'); return; }
+    cell.colSpan = (cell.colSpan || 1) + (next.colSpan || 1);
+    next.remove();
+    touched();
+  }
+  /** Merge the current cell with the cell directly below it. Simple
+   *  model: walks to the next <tr> and takes its first cell as the
+   *  merge target, which only matches the intuitive "down" direction
+   *  when there are no prior rowspans shifting the grid. Good enough
+   *  for the common case; advanced admins can hand-tidy HTML after. */
+  function mergeDown() {
+    const cell = (findAncestor('TD') as HTMLTableCellElement | null) || (findAncestor('TH') as HTMLTableCellElement | null);
+    if (!cell) { alert('Click inside a table cell first.'); return; }
+    const row = cell.parentElement as HTMLTableRowElement | null;
+    if (!row) return;
+    const nextRow = row.nextElementSibling as HTMLTableRowElement | null;
+    if (!nextRow) { alert('No row below to merge with.'); return; }
+    // Take the cell in the next row at the same column index. Ignores
+    // prior rowspans (known limitation — see comment above).
+    const colIdx = cell.cellIndex;
+    const target = (nextRow.cells[colIdx] as HTMLTableCellElement | undefined);
+    if (!target) { alert('No cell below to merge with.'); return; }
+    cell.rowSpan = (cell.rowSpan || 1) + (target.rowSpan || 1);
+    target.remove();
+    // If the next row is now empty, remove it too.
+    if (nextRow.cells.length === 0) nextRow.remove();
+    touched();
+  }
+  /** Reset the cell to a single-column / single-row slot and insert
+   *  empty cells to restore the grid. Mirror of merge. */
+  function splitCell() {
+    const cell = (findAncestor('TD') as HTMLTableCellElement | null) || (findAncestor('TH') as HTMLTableCellElement | null);
+    if (!cell) { alert('Click inside a table cell first.'); return; }
+    const row = cell.parentElement as HTMLTableRowElement | null;
+    if (!row) return;
+    const extraCols = (cell.colSpan || 1) - 1;
+    const extraRows = (cell.rowSpan || 1) - 1;
+    if (extraCols === 0 && extraRows === 0) { alert('Cell is already a single slot.'); return; }
+    // Restore the extra columns in the current row.
+    for (let i = 0; i < extraCols; i++) {
+      const blank = makeEmptyCell(cell);
+      row.insertBefore(blank, cell.nextSibling);
+    }
+    cell.colSpan = 1;
+    cell.rowSpan = 1;
+    // Add blank cells to each row the original cell's rowspan covered.
+    // This is a best-effort restore; it appends to the row rather than
+    // trying to find the exact original column index (which is lost
+    // once the rowspan is applied).
+    let r: Element | null = row.nextElementSibling;
+    for (let i = 0; i < extraRows && r; i++, r = r.nextElementSibling) {
+      const totalCols = (extraCols || 0) + 1;
+      for (let c = 0; c < totalCols; c++) r.appendChild(makeEmptyCell(cell));
+    }
+    touched();
+  }
+
   // ── AI placeholder suggester ──────────────────────────────────────────────
   /** Run the description through the server-side suggester and stash
    *  the result on state. The modal stays open so the admin can see
@@ -754,6 +819,9 @@ export function DocumentTemplateEditor({
         <ToolbarBtn title="Add column left (cursor must be in a table cell)" onClick={() => addColumn('left')}><ArrowLeftToLine className="h-3.5 w-3.5" /></ToolbarBtn>
         <ToolbarBtn title="Add column right (cursor must be in a table cell)" onClick={() => addColumn('right')}><ArrowRightToLine className="h-3.5 w-3.5" /></ToolbarBtn>
         <ToolbarBtn title="Delete current row" onClick={deleteRow}><Trash2 className="h-3.5 w-3.5 text-red-500" /></ToolbarBtn>
+        <ToolbarBtn title="Merge cell with cell to the right" onClick={mergeRight}><Merge className="h-3.5 w-3.5" style={{ transform: 'rotate(90deg)' }} /></ToolbarBtn>
+        <ToolbarBtn title="Merge cell with cell below" onClick={mergeDown}><Merge className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Split merged cell back into single slots" onClick={splitCell}><Split className="h-3.5 w-3.5" /></ToolbarBtn>
         <ToolbarBtn title="Insert horizontal rule" onClick={insertHorizontalRule}><Minus className="h-3.5 w-3.5" /></ToolbarBtn>
         <ToolbarBtn title="Insert page break" onClick={insertPageBreak}><FileDown className="h-3.5 w-3.5" /></ToolbarBtn>
 
