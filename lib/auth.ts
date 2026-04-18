@@ -254,6 +254,72 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.twoFactorPending = (user as any).twoFactorPending ?? false;
         token.twoFactorVerified = (user as any).twoFactorVerified ?? false;
       }
+
+      // Live flag refresh with a short window cache. The `jwt`
+      // callback runs on every request that touches `auth()`, which
+      // would be 5–15 ms of Prisma round-trip on every page and API
+      // hit if we re-fetched unconditionally. Instead we cache the
+      // last refresh timestamp on the token itself (carried along
+      // via the JWT cookie) and skip the lookup when it's less than
+      // REFRESH_WINDOW_MS old.
+      //
+      // Effect for users:
+      //   • Admin grants a flag (e.g. isMethodologyAdmin) → takes
+      //     effect for the user within REFRESH_WINDOW_MS, no
+      //     sign-out required.
+      //   • User deleted or deactivated → same latency before their
+      //     next page redirects to /login.
+      //   • Typical page-to-page navigation → zero extra DB load
+      //     inside the window.
+      //
+      // Wrapped in try/catch because a transient DB error MUST NOT
+      // break auth — we keep the existing token flags on failure
+      // and intentionally DON'T bump `lastFreshAt` so the next
+      // request retries.
+      const REFRESH_WINDOW_MS = 60_000; // 1 minute — flag changes show up within a minute, no more than one lookup per minute per active tab.
+      const isNotSignIn = !account && !user;
+      const lastFreshAt = Number((token as any).lastFreshAt) || 0;
+      const needsRefresh = isNotSignIn && token.id && (Date.now() - lastFreshAt > REFRESH_WINDOW_MS);
+      if (needsRefresh) {
+        try {
+          const fresh = await prisma.user.findUnique({
+            where: { id: token.id as string },
+            select: {
+              isSuperAdmin: true, isFirmAdmin: true, isPortfolioOwner: true,
+              isMethodologyAdmin: true, isResourceAdmin: true, isTestBuilder: true,
+              isActive: true, firmId: true, displayId: true, firm: { select: { name: true } },
+            },
+          });
+          if (fresh) {
+            if (!fresh.isActive) {
+              token.error = 'AccountDisabled';
+            } else if (token.error === 'AccountDisabled') {
+              delete (token as any).error; // re-enabled since last snapshot
+            }
+            token.isSuperAdmin = fresh.isSuperAdmin;
+            token.isFirmAdmin = fresh.isFirmAdmin;
+            token.isPortfolioOwner = fresh.isPortfolioOwner;
+            token.isMethodologyAdmin = fresh.isMethodologyAdmin;
+            token.isResourceAdmin = fresh.isResourceAdmin;
+            token.isTestBuilder = fresh.isTestBuilder;
+            token.firmId = fresh.firmId;
+            token.firmName = fresh.firm?.name ?? token.firmName;
+            token.displayId = fresh.displayId;
+          } else {
+            // Row deleted since the JWT was issued.
+            token.error = 'AccountDisabled';
+          }
+          (token as any).lastFreshAt = Date.now();
+        } catch {
+          /* transient DB issue — retry on next request (don't bump lastFreshAt) */
+        }
+      }
+      // On fresh sign-in, set the timestamp so we don't immediately
+      // re-query on the next request.
+      if (!isNotSignIn && token.id && !(token as any).lastFreshAt) {
+        (token as any).lastFreshAt = Date.now();
+      }
+
       return token;
     },
     async session({ session, token }) {
