@@ -133,22 +133,62 @@ export function DocumentTemplateEditor({
   // conclusions, engagement team, TB rows, etc.
   const [dynTableOpen, setDynTableOpen] = useState(false);
   const [dynTableSource, setDynTableSource] = useState<string>('');
-  const [dynTableColumns, setDynTableColumns] = useState<string[]>([]);
+  // Columns are now richer than "a picked itemField key" — each row
+  // carries its own header text AND a content expression. Two modes:
+  //   • kind='field' — pick one of the source's itemFields from a
+  //     dropdown; the generator emits `{{fieldKey}}` (auto-wrapped
+  //     in formatDate/formatCurrency when the type calls for it).
+  //   • kind='custom' — the admin types a raw Handlebars expression
+  //     (e.g. `{{formatDate this.answer "dd MMMM yyyy"}}` or
+  //     `{{../benchmark_pct}}%` to reach a sibling question).
+  // Back-compat isn't needed because the modal is insert-only today
+  // (no edit-in-place), so templates that were already inserted
+  // simply keep their saved HTML.
+  interface DynColumn {
+    id: string;              // stable React key + reorder target
+    header: string;          // free-text; blank → fall back to label
+    kind: 'field' | 'custom';
+    fieldKey: string;        // kind='field': itemField.key
+    customExpr: string;      // kind='custom': raw Handlebars (verbatim)
+  }
+  const [dynTableColumns, setDynTableColumns] = useState<DynColumn[]>([]);
   const [dynTableIncludeHeader, setDynTableIncludeHeader] = useState(true);
-  // Per-column header override (keyed by itemField.key). Empty string
-  // means "use the field's catalog label".
-  const [dynTableHeaders, setDynTableHeaders] = useState<Record<string, string>>({});
-  // Optional filter clause wrapped around each rendered row. `field`
-  // is an itemField key; `op` one of eq/ne/gt/lt/gte/lte/contains;
-  // `value` is compared to the item's value at that field.
+  // Filter wraps each rendered row. `field` is still an itemField
+  // key (filters operate on the underlying item, independent of
+  // which columns are displayed). `op` includes the unary variants
+  // `isEmpty`/`isNotEmpty` (no RHS value needed).
   const [dynTableFilter, setDynTableFilter] = useState<{ field: string; op: string; value: string }>({ field: '', op: 'gt', value: '' });
   const [dynTableFilterEnabled, setDynTableFilterEnabled] = useState(false);
-  // Optional total row. `columnKey` points at the itemField to sum;
-  // `labelText` is what goes in the non-numeric cells of the total
-  // row (default "Total").
+  // Total row. `columnId` refers to a DynColumn id (not an itemField
+  // key) so the same field rendered twice can have one totalled and
+  // one not. Only field-kind columns with numeric types are eligible.
   const [dynTableTotalEnabled, setDynTableTotalEnabled] = useState(false);
-  const [dynTableTotalColumn, setDynTableTotalColumn] = useState<string>('');
+  const [dynTableTotalColumnId, setDynTableTotalColumnId] = useState<string>('');
   const [dynTableTotalLabel, setDynTableTotalLabel] = useState<string>('Total');
+
+  // ── DynColumn helpers ────────────────────────────────────────────
+  function newDynColumn(fieldKey = ''): DynColumn {
+    return { id: Math.random().toString(36).slice(2, 10), header: '', kind: 'field', fieldKey, customExpr: '' };
+  }
+  function addDynColumn() { setDynTableColumns(cols => [...cols, newDynColumn()]); }
+  function removeDynColumn(id: string) {
+    setDynTableColumns(cols => cols.filter(c => c.id !== id));
+    if (dynTableTotalColumnId === id) setDynTableTotalColumnId('');
+  }
+  function moveDynColumn(id: string, dir: -1 | 1) {
+    setDynTableColumns(cols => {
+      const idx = cols.findIndex(c => c.id === id);
+      if (idx < 0) return cols;
+      const next = idx + dir;
+      if (next < 0 || next >= cols.length) return cols;
+      const copy = cols.slice();
+      [copy[idx], copy[next]] = [copy[next], copy[idx]];
+      return copy;
+    });
+  }
+  function updateDynColumn(id: string, patch: Partial<DynColumn>) {
+    setDynTableColumns(cols => cols.map(c => c.id === id ? { ...c, ...patch } : c));
+  }
   // Cache the array-typed catalog entries so the picker doesn't
   // recompute on every keystroke.
   const arrayFields = useMemo(
@@ -329,25 +369,34 @@ export function DocumentTemplateEditor({
     const totalCellStyle = 'border:1px solid #94a3b8;padding:6px;font-weight:bold;background:#f8fafc';
     const itemFields = selectedArrayField.itemFields || [];
 
-    function labelFor(colKey: string): string {
-      const override = (dynTableHeaders[colKey] || '').trim();
+    // Per-column header: use the override if present, otherwise fall
+    // back to the itemField label (field columns) or blank (custom).
+    function headerFor(col: DynColumn): string {
+      const override = col.header.trim();
       if (override) return override;
-      return itemFields.find(f => f.key === colKey)?.label || colKey;
+      if (col.kind === 'field') {
+        return itemFields.find(f => f.key === col.fieldKey)?.label || col.fieldKey || '';
+      }
+      return '';
+    }
+    // Per-column cell body — same logic as before for fields (auto-
+    // formatted by type), plus a verbatim passthrough for custom.
+    function contentFor(col: DynColumn): string {
+      if (col.kind === 'custom') return col.customExpr; // verbatim Handlebars
+      if (!col.fieldKey) return '';
+      const itf = itemFields.find(f => f.key === col.fieldKey);
+      if (itf?.type === 'currency') return `{{formatCurrency ${col.fieldKey}}}`;
+      if (itf?.type === 'date') return `{{formatDate ${col.fieldKey} "dd MMMM yyyy"}}`;
+      return `{{${col.fieldKey}}}`;
     }
 
     // Header row — either a <thead><tr>…</tr></thead> or nothing.
     const headerHtml = dynTableIncludeHeader
-      ? '<thead><tr>' + dynTableColumns.map(c => `<th style="${headStyle}">${escapeHtml(labelFor(c))}</th>`).join('') + '</tr></thead>'
+      ? '<thead><tr>' + dynTableColumns.map(col => `<th style="${headStyle}">${escapeHtml(headerFor(col))}</th>`).join('') + '</tr></thead>'
       : '';
 
-    // Body cells — dates and currencies get auto-formatted.
-    const bodyCells = dynTableColumns.map(colKey => {
-      const itemField = itemFields.find(f => f.key === colKey);
-      const inner = itemField?.type === 'currency' ? `{{formatCurrency ${colKey}}}`
-        : itemField?.type === 'date' ? `{{formatDate ${colKey} "dd MMMM yyyy"}}`
-        : `{{${colKey}}}`;
-      return `<td style="${cellStyle}">${inner}</td>`;
-    }).join('');
+    // Body cells.
+    const bodyCells = dynTableColumns.map(col => `<td style="${cellStyle}">${contentFor(col)}</td>`).join('');
 
     // Optional per-row filter. Handlebars subexpression form (the
     // helpers — eq/gt/lt/etc — were registered earlier in
@@ -375,32 +424,31 @@ export function DocumentTemplateEditor({
       ? `{{#each ${selectedArrayField.key}}}${filterClause.open}<tr>${bodyCells}</tr>${filterClause.close}{{/each}}`
       : `{{#each ${selectedArrayField.key}}}<tr>${bodyCells}</tr>{{/each}}`;
 
-    // Optional total row. Sums the chosen column across the array
-    // (filter-aware when a filter is active via sumFieldWhere).
+    // Optional total row. Sums the chosen *column* (by DynColumn.id)
+    // across the array (filter-aware via sumFieldWhere). Only
+    // field-kind columns whose itemField is numeric are eligible —
+    // the picker already enforces this, but we re-check here.
     let totalRow = '';
-    if (dynTableTotalEnabled && dynTableTotalColumn && dynTableColumns.includes(dynTableTotalColumn)) {
-      const totalItemField = itemFields.find(f => f.key === dynTableTotalColumn);
+    const totalCol = dynTableColumns.find(c => c.id === dynTableTotalColumnId && c.kind === 'field' && !!c.fieldKey);
+    const totalItemField = totalCol ? itemFields.find(f => f.key === totalCol.fieldKey) : undefined;
+    if (dynTableTotalEnabled && totalCol && totalItemField && (totalItemField.type === 'currency' || totalItemField.type === 'scalar')) {
       const sumExpr = activeFilter
         ? (() => {
-            // For unary ops (isEmpty/isNotEmpty) the sumFieldWhere
-            // helper ignores the 5th arg — we pass an empty string
-            // so the Handlebars signature stays stable.
             if (isUnaryOp(activeFilter.op)) {
-              return `(sumFieldWhere ${selectedArrayField.key} "${dynTableTotalColumn}" "${activeFilter.field}" "${activeFilter.op}" "")`;
+              return `(sumFieldWhere ${selectedArrayField.key} "${totalCol.fieldKey}" "${activeFilter.field}" "${activeFilter.op}" "")`;
             }
             const raw = activeFilter.value;
             const asNumber = Number(raw);
             const valExpr = raw !== '' && Number.isFinite(asNumber) && /^-?\d+(\.\d+)?$/.test(raw.trim())
               ? String(asNumber)
               : `"${raw.replace(/"/g, '\\"')}"`;
-            return `(sumFieldWhere ${selectedArrayField.key} "${dynTableTotalColumn}" "${activeFilter.field}" "${activeFilter.op}" ${valExpr})`;
+            return `(sumFieldWhere ${selectedArrayField.key} "${totalCol.fieldKey}" "${activeFilter.field}" "${activeFilter.op}" ${valExpr})`;
           })()
-        : `(sumField ${selectedArrayField.key} "${dynTableTotalColumn}")`;
-      const totalInner = totalItemField?.type === 'currency' ? `{{formatCurrency ${sumExpr}}}` : `{{formatNumber ${sumExpr}}}`;
-      const cells = dynTableColumns.map((colKey, i) => {
-        if (colKey === dynTableTotalColumn) return `<td style="${totalCellStyle};text-align:right">${totalInner}</td>`;
-        // First non-total column carries the label; others are blank.
-        const isFirstNonTotal = i === dynTableColumns.findIndex(c => c !== dynTableTotalColumn);
+        : `(sumField ${selectedArrayField.key} "${totalCol.fieldKey}")`;
+      const totalInner = totalItemField.type === 'currency' ? `{{formatCurrency ${sumExpr}}}` : `{{formatNumber ${sumExpr}}}`;
+      const cells = dynTableColumns.map((col, i) => {
+        if (col.id === dynTableTotalColumnId) return `<td style="${totalCellStyle};text-align:right">${totalInner}</td>`;
+        const isFirstNonTotal = i === dynTableColumns.findIndex(c => c.id !== dynTableTotalColumnId);
         return `<td style="${totalCellStyle}">${isFirstNonTotal ? escapeHtml(dynTableTotalLabel || 'Total') : ''}</td>`;
       }).join('');
       totalRow = `<tr>${cells}</tr>`;
@@ -419,11 +467,10 @@ export function DocumentTemplateEditor({
     setDynTableSource('');
     setDynTableColumns([]);
     setDynTableIncludeHeader(true);
-    setDynTableHeaders({});
     setDynTableFilter({ field: '', op: 'gt', value: '' });
     setDynTableFilterEnabled(false);
     setDynTableTotalEnabled(false);
-    setDynTableTotalColumn('');
+    setDynTableTotalColumnId('');
     setDynTableTotalLabel('Total');
   }
 
@@ -683,42 +730,98 @@ export function DocumentTemplateEditor({
               </div>
               {selectedArrayField && (
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">Columns (tick in the order you want them)</label>
-                  <div className="space-y-1">
-                    {(selectedArrayField.itemFields || []).map(itf => {
-                      const checked = dynTableColumns.includes(itf.key);
-                      const order = checked ? dynTableColumns.indexOf(itf.key) + 1 : 0;
-                      const customLabel = dynTableHeaders[itf.key] || '';
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-semibold text-slate-600">Columns</label>
+                    <button
+                      type="button"
+                      onClick={addDynColumn}
+                      className="text-[10px] px-2 py-0.5 bg-teal-600 text-white rounded hover:bg-teal-700"
+                    >+ Add column</button>
+                  </div>
+                  {dynTableColumns.length === 0 && (
+                    <div className="text-[10px] text-slate-400 italic px-1 py-2 border border-dashed border-slate-200 rounded text-center">
+                      No columns yet — click &ldquo;+ Add column&rdquo; to start. Each column gets its own header and content.
+                    </div>
+                  )}
+                  {/* Quick-add: one click per itemField creates a
+                      standard column pre-filled. Saves typing when
+                      the admin just wants "all the obvious columns". */}
+                  {dynTableColumns.length === 0 && (selectedArrayField.itemFields || []).length > 0 && (
+                    <div className="mt-2">
+                      <div className="text-[9px] text-slate-400 mb-1">Or quick-pick a field to add:</div>
+                      <div className="flex flex-wrap gap-1">
+                        {(selectedArrayField.itemFields || []).map(itf => (
+                          <button
+                            key={itf.key}
+                            type="button"
+                            onClick={() => setDynTableColumns(cols => [...cols, { ...newDynColumn(itf.key) }])}
+                            className="text-[10px] px-1.5 py-0.5 bg-teal-50 border border-teal-200 text-teal-700 rounded hover:bg-teal-100"
+                            title={itf.label}
+                          >+ {itf.label}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="space-y-1.5 mt-1">
+                    {dynTableColumns.map((col, idx) => {
+                      const itf = col.kind === 'field' ? (selectedArrayField.itemFields || []).find(f => f.key === col.fieldKey) : undefined;
                       return (
-                        <div key={itf.key} className="hover:bg-slate-50 px-1 py-0.5 rounded">
-                          <label className="flex items-center gap-2 text-[11px] cursor-pointer">
+                        <div key={col.id} className="border border-slate-200 rounded p-2 bg-slate-50/50">
+                          <div className="flex items-center gap-1 mb-1">
+                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-teal-600 text-white text-[9px] font-bold flex-shrink-0">{idx + 1}</span>
                             <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={e => {
-                                if (e.target.checked) setDynTableColumns(cols => [...cols, itf.key]);
-                                else {
-                                  setDynTableColumns(cols => cols.filter(c => c !== itf.key));
-                                  // If this column was the totals column, clear that too.
-                                  if (dynTableTotalColumn === itf.key) setDynTableTotalColumn('');
-                                }
-                              }}
+                              type="text"
+                              value={col.header}
+                              onChange={e => updateDynColumn(col.id, { header: e.target.value })}
+                              placeholder={dynTableIncludeHeader ? (itf?.label || 'Header (optional)') : 'Header (hidden)'}
+                              disabled={!dynTableIncludeHeader}
+                              className="flex-1 text-[11px] border border-slate-200 rounded px-1.5 py-1 disabled:bg-slate-100 disabled:text-slate-400"
                             />
-                            {checked && <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-teal-600 text-white text-[9px] font-bold">{order}</span>}
-                            <span className="font-medium text-slate-700">{itf.label}</span>
-                            <code className="text-[10px] text-slate-400">{itf.key}</code>
-                            <span className="text-[10px] text-slate-400 italic ml-auto">{itf.type}</span>
-                          </label>
-                          {checked && dynTableIncludeHeader && (
-                            <div className="mt-0.5 ml-6 flex items-center gap-1">
-                              <span className="text-[9px] text-slate-400">Column header:</span>
-                              <input
-                                type="text"
-                                value={customLabel}
-                                placeholder={itf.label}
-                                onChange={e => setDynTableHeaders(h => ({ ...h, [itf.key]: e.target.value }))}
-                                className="flex-1 text-[11px] border border-slate-200 rounded px-1.5 py-0.5"
-                              />
+                            <button type="button" onClick={() => moveDynColumn(col.id, -1)} disabled={idx === 0} className="px-1 text-slate-500 hover:text-slate-800 disabled:opacity-30" title="Move left">↑</button>
+                            <button type="button" onClick={() => moveDynColumn(col.id, 1)} disabled={idx === dynTableColumns.length - 1} className="px-1 text-slate-500 hover:text-slate-800 disabled:opacity-30" title="Move right">↓</button>
+                            <button type="button" onClick={() => removeDynColumn(col.id)} className="px-1 text-red-500 hover:text-red-700" title="Remove column">×</button>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-slate-500 w-14 flex-shrink-0">Content:</span>
+                            {col.kind === 'field' ? (
+                              <select
+                                value={col.fieldKey}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (v === '__custom__') updateDynColumn(col.id, { kind: 'custom', customExpr: col.fieldKey ? `{{${col.fieldKey}}}` : '' });
+                                  else updateDynColumn(col.id, { fieldKey: v });
+                                }}
+                                className="flex-1 text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                              >
+                                <option value="">— pick field —</option>
+                                {(selectedArrayField.itemFields || []).map(f => (
+                                  <option key={f.key} value={f.key}>{f.label} &nbsp;({f.type})</option>
+                                ))}
+                                <option value="__custom__">Custom Handlebars expression…</option>
+                              </select>
+                            ) : (
+                              <>
+                                <input
+                                  type="text"
+                                  value={col.customExpr}
+                                  onChange={e => updateDynColumn(col.id, { customExpr: e.target.value })}
+                                  placeholder='{{formatDate this.answer "dd MMMM yyyy"}}'
+                                  className="flex-1 text-[11px] border border-slate-200 rounded px-1.5 py-1 font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => updateDynColumn(col.id, { kind: 'field', customExpr: '' })}
+                                  className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
+                                  title="Switch back to a field picker"
+                                >field</button>
+                              </>
+                            )}
+                          </div>
+                          {col.kind === 'custom' && (
+                            <div className="mt-1 text-[9px] text-slate-500 ml-14">
+                              Inside the loop: <code className="font-mono">this.answer</code>, <code className="font-mono">this.previousAnswer</code>, etc. &nbsp;·&nbsp;
+                              Parent questionnaire: <code className="font-mono">../some_key</code> &nbsp;·&nbsp;
+                              Helpers: <code className="font-mono">formatDate</code>, <code className="font-mono">formatCurrency</code>
                             </div>
                           )}
                         </div>
@@ -799,7 +902,7 @@ export function DocumentTemplateEditor({
                     <input
                       type="checkbox"
                       checked={dynTableTotalEnabled}
-                      onChange={e => { setDynTableTotalEnabled(e.target.checked); if (!e.target.checked) setDynTableTotalColumn(''); }}
+                      onChange={e => { setDynTableTotalEnabled(e.target.checked); if (!e.target.checked) setDynTableTotalColumnId(''); }}
                     />
                     Append a total row
                   </label>
@@ -808,16 +911,20 @@ export function DocumentTemplateEditor({
                       <div>
                         <span className="text-[10px] text-slate-500 block mb-0.5">Column to sum</span>
                         <select
-                          value={dynTableTotalColumn}
-                          onChange={e => setDynTableTotalColumn(e.target.value)}
+                          value={dynTableTotalColumnId}
+                          onChange={e => setDynTableTotalColumnId(e.target.value)}
                           className="w-full text-[11px] border border-slate-200 rounded px-1.5 py-1"
                         >
                           <option value="">— pick a column —</option>
                           {dynTableColumns
-                            .map(c => selectedArrayField.itemFields?.find(f => f.key === c))
-                            .filter((f): f is NonNullable<typeof f> => !!f)
-                            .filter(f => f.type === 'currency' || f.type === 'scalar')
-                            .map(f => <option key={f.key} value={f.key}>{(dynTableHeaders[f.key] || '').trim() || f.label}</option>)}
+                            .map(col => {
+                              if (col.kind !== 'field' || !col.fieldKey) return null;
+                              const itf = selectedArrayField.itemFields?.find(f => f.key === col.fieldKey);
+                              if (!itf || (itf.type !== 'currency' && itf.type !== 'scalar')) return null;
+                              const header = col.header.trim() || itf.label;
+                              return <option key={col.id} value={col.id}>{header}</option>;
+                            })
+                            .filter(Boolean)}
                         </select>
                       </div>
                       <div>
@@ -841,12 +948,12 @@ export function DocumentTemplateEditor({
                     <table className="w-full text-[10px] border-collapse">
                       {dynTableIncludeHeader && (
                         <thead><tr>
-                          {dynTableColumns.map(c => {
-                            const custom = (dynTableHeaders[c] || '').trim();
-                            const fallback = selectedArrayField.itemFields?.find(f => f.key === c)?.label || c;
+                          {dynTableColumns.map(col => {
+                            const itf = col.kind === 'field' ? selectedArrayField.itemFields?.find(f => f.key === col.fieldKey) : undefined;
+                            const header = col.header.trim() || (itf?.label || col.fieldKey || '');
                             return (
-                              <th key={c} className="border border-slate-300 px-1.5 py-1 bg-slate-100 text-left">
-                                {custom || fallback}
+                              <th key={col.id} className="border border-slate-300 px-1.5 py-1 bg-slate-100 text-left">
+                                {header || <em className="text-slate-400 font-normal">(blank)</em>}
                               </th>
                             );
                           })}
@@ -854,9 +961,25 @@ export function DocumentTemplateEditor({
                       )}
                       <tbody>
                         <tr>
-                          {dynTableColumns.map(c => (
-                            <td key={c} className="border border-slate-300 px-1.5 py-1 font-mono text-teal-700">{`{{${c}}}`}</td>
-                          ))}
+                          {dynTableColumns.map(col => {
+                            // Mirror the acceptDynamicTable contentFor() so the admin
+                            // sees roughly what will be inserted.
+                            let preview = '';
+                            if (col.kind === 'custom') {
+                              preview = col.customExpr || '—';
+                            } else if (col.fieldKey) {
+                              const itf = selectedArrayField.itemFields?.find(f => f.key === col.fieldKey);
+                              preview = itf?.type === 'currency' ? `{{formatCurrency ${col.fieldKey}}}`
+                                : itf?.type === 'date' ? `{{formatDate ${col.fieldKey} "dd MMMM yyyy"}}`
+                                : `{{${col.fieldKey}}}`;
+                            } else {
+                              preview = '—';
+                            }
+                            const trimmed = preview.length > 40 ? preview.slice(0, 37) + '…' : preview;
+                            return (
+                              <td key={col.id} className="border border-slate-300 px-1.5 py-1 font-mono text-teal-700" title={preview}>{trimmed}</td>
+                            );
+                          })}
                         </tr>
                         <tr>
                           <td colSpan={dynTableColumns.length} className="text-center text-[9px] text-slate-400 italic py-1">
@@ -872,17 +995,21 @@ export function DocumentTemplateEditor({
                             })()}
                           </td>
                         </tr>
-                        {dynTableTotalEnabled && dynTableTotalColumn && dynTableColumns.includes(dynTableTotalColumn) && (
-                          <tr>
-                            {dynTableColumns.map((c, i) => {
-                              if (c === dynTableTotalColumn) {
-                                return <td key={c} className="border border-slate-300 px-1.5 py-1 font-bold bg-slate-50 text-right font-mono text-teal-700">∑ {c}</td>;
-                              }
-                              const isFirstNonTotal = i === dynTableColumns.findIndex(col => col !== dynTableTotalColumn);
-                              return <td key={c} className="border border-slate-300 px-1.5 py-1 font-bold bg-slate-50">{isFirstNonTotal ? (dynTableTotalLabel || 'Total') : ''}</td>;
-                            })}
-                          </tr>
-                        )}
+                        {dynTableTotalEnabled && (() => {
+                          const totalCol = dynTableColumns.find(c => c.id === dynTableTotalColumnId);
+                          if (!totalCol || totalCol.kind !== 'field' || !totalCol.fieldKey) return null;
+                          return (
+                            <tr>
+                              {dynTableColumns.map((col, i) => {
+                                if (col.id === dynTableTotalColumnId) {
+                                  return <td key={col.id} className="border border-slate-300 px-1.5 py-1 font-bold bg-slate-50 text-right font-mono text-teal-700">∑ {totalCol.fieldKey}</td>;
+                                }
+                                const isFirstNonTotal = i === dynTableColumns.findIndex(c => c.id !== dynTableTotalColumnId);
+                                return <td key={col.id} className="border border-slate-300 px-1.5 py-1 font-bold bg-slate-50">{isFirstNonTotal ? (dynTableTotalLabel || 'Total') : ''}</td>;
+                              })}
+                            </tr>
+                          );
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -893,7 +1020,16 @@ export function DocumentTemplateEditor({
               <button onClick={() => setDynTableOpen(false)} className="text-[11px] px-3 py-1 text-slate-600 hover:text-slate-800">Cancel</button>
               <button
                 onClick={acceptDynamicTable}
-                disabled={!selectedArrayField || dynTableColumns.length === 0}
+                disabled={!selectedArrayField
+                  || dynTableColumns.length === 0
+                  || dynTableColumns.some(c => (c.kind === 'field' && !c.fieldKey) || (c.kind === 'custom' && !c.customExpr.trim()))}
+                title={
+                  !selectedArrayField ? 'Pick an array source'
+                  : dynTableColumns.length === 0 ? 'Add at least one column'
+                  : dynTableColumns.some(c => c.kind === 'field' && !c.fieldKey) ? 'Every column needs a field or a custom expression'
+                  : dynTableColumns.some(c => c.kind === 'custom' && !c.customExpr.trim()) ? 'Fill in the custom expression (or switch back to a field)'
+                  : 'Insert table at cursor'
+                }
                 className="inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-teal-600 text-white rounded disabled:opacity-50"
               ><Check className="h-3 w-3" /> Insert table at cursor</button>
             </div>
