@@ -118,12 +118,16 @@ export function AuditEngagementPage({ auditType }: Props) {
       } finally {
         setPeriodsLoading(false);
       }
-      // Clean URL params
+      // Tidy transient OAuth-callback flags from the URL, but KEEP
+      // clientId + periodId so a browser refresh can re-hydrate the
+      // engagement. Previously this line deleted clientId/periodId
+      // too, which meant F5 on any engagement page dropped the user
+      // back to the client/period chooser.
       const url = new URL(window.location.href);
-      url.searchParams.delete('clientId');
-      url.searchParams.delete('periodId');
       url.searchParams.delete('xeroConnected');
-      window.history.replaceState({}, '', url.pathname + (urlTab ? `?tab=${urlTab}` : ''));
+      // Preserve the current tab query if any was present on entry.
+      if (urlTab && !url.searchParams.get('tab')) url.searchParams.set('tab', urlTab);
+      window.history.replaceState({}, '', url.pathname + (url.search || ''));
     })();
   }, [clientsLoading, clients, searchParams, auditType]);
 
@@ -200,6 +204,16 @@ export function AuditEngagementPage({ auditType }: Props) {
     setEngagement(null);
     setPeriodLabel('');
     setError('');
+    // Clear the identity params so a refresh at this point lands on
+    // the chooser rather than re-opening the engagement the user
+    // just closed.
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('clientId');
+      url.searchParams.delete('periodId');
+      url.searchParams.delete('tab');
+      window.history.replaceState({}, '', url.pathname + (url.search || ''));
+    } catch { /* non-critical */ }
   }
 
   // "Open Audit File" — creates engagement if needed
@@ -255,6 +269,16 @@ export function AuditEngagementPage({ auditType }: Props) {
       }
 
       setEngagement(eng);
+
+      // Push clientId + periodId into the URL so a subsequent browser
+      // refresh re-enters the auto-open path rather than dumping the
+      // user back on the chooser.
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('clientId', clientId);
+        url.searchParams.set('periodId', pId);
+        window.history.replaceState({}, '', url.pathname + url.search);
+      } catch { /* non-critical — engagement is already loaded */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Failed to open audit file';
       setError(msg);
