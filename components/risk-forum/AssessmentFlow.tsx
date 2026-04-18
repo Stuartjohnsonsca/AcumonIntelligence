@@ -16,6 +16,10 @@ import {
   type LikertQuestion,
   type ForcedChoiceQuestion,
 } from '@/lib/riskForumAssessment';
+import VideoRecorder from '@/components/video-recorder/VideoRecorder';
+import type { RecorderResult, RecorderMode } from '@/components/video-recorder/types';
+
+type AnswerMode = 'text' | 'video' | 'audio';
 
 type Stage = 'subject' | 'survey' | 'interview' | 'synthesising' | 'review';
 
@@ -43,6 +47,12 @@ export default function AssessmentFlow() {
   const [currentSubjectReply, setCurrentSubjectReply] = useState('');
   const [interviewLoading, setInterviewLoading] = useState(false);
   const [interviewComplete, setInterviewComplete] = useState(false);
+  // Answer input mode — text (default), video (camera + mic), or audio only.
+  // Video/audio record via the reusable VideoRecorder, auto-transcribe, and
+  // the transcript populates the textarea for review + edit before submit.
+  const [answerMode, setAnswerMode] = useState<AnswerMode>('text');
+  const [showRecorder, setShowRecorder] = useState(false);
+  const [lastTranscriptError, setLastTranscriptError] = useState<string | null>(null);
 
   // Synthesis
   const [synthesis, setSynthesis] = useState<SynthesisResult | null>(null);
@@ -429,6 +439,72 @@ export default function AssessmentFlow() {
             <div className="px-6 py-4 border-t" style={{ borderColor: '#1A1A1A', background: '#080808' }}>
               {!interviewComplete ? (
                 <>
+                  {/* Answer mode toggle */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xs font-mono tracking-widest" style={{ color: '#444' }}>ANSWER MODE:</span>
+                    {(['text', 'video', 'audio'] as AnswerMode[]).map(m => (
+                      <button
+                        key={m}
+                        onClick={() => { setAnswerMode(m); setShowRecorder(false); setLastTranscriptError(null); }}
+                        className="px-3 py-1 rounded text-xs font-mono tracking-wider uppercase"
+                        style={{
+                          background: answerMode === m ? '#0F1A22' : 'transparent',
+                          border: `1px solid ${answerMode === m ? '#6EC8E8' : '#1E1E1E'}`,
+                          color: answerMode === m ? '#6EC8E8' : '#666',
+                        }}
+                      >
+                        {m === 'text' ? '⌨ Type' : m === 'video' ? '◉ Video' : '◎ Audio'}
+                      </button>
+                    ))}
+                    {answerMode !== 'text' && (
+                      <span className="text-[10px] font-mono italic ml-auto" style={{ color: '#666' }}>
+                        Recording auto-transcribed — you review and edit before submitting.
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Recorder panel (shown on demand) */}
+                  {answerMode !== 'text' && showRecorder && (
+                    <div className="mb-3">
+                      <VideoRecorder
+                        mode={answerMode as RecorderMode}
+                        theme="dark"
+                        maxDurationSec={240}
+                        prompt="Answer the interviewer&#39;s last question in your own words. Speak naturally — pauses are fine."
+                        transcribe={true}
+                        allowDownload={true}
+                        downloadFilename={`${subjectName.replace(/\s+/g, '_').toLowerCase() || 'subject'}-interview-q${interviewTurns.filter(t => t.role === 'interviewer').length}`}
+                        onCancel={() => setShowRecorder(false)}
+                        onComplete={(result: RecorderResult) => {
+                          setShowRecorder(false);
+                          if (result.transcript) {
+                            setCurrentSubjectReply(prev => (prev ? prev + '\n\n' : '') + result.transcript);
+                            setLastTranscriptError(null);
+                          } else if (result.transcriptError) {
+                            setLastTranscriptError(result.transcriptError);
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Show Record button when in video/audio mode and recorder not open */}
+                  {answerMode !== 'text' && !showRecorder && (
+                    <button
+                      onClick={() => { setShowRecorder(true); setLastTranscriptError(null); }}
+                      className="w-full py-3 rounded text-xs font-bold tracking-widest uppercase transition-all mb-3"
+                      style={{ background: '#6EC8E8', color: '#080808', border: 'none' }}
+                    >
+                      {answerMode === 'video' ? '◉ Record Video Answer' : '◎ Record Audio Answer'}
+                    </button>
+                  )}
+
+                  {lastTranscriptError && (
+                    <div className="mb-2 px-3 py-2 rounded text-xs" style={{ background: '#1A0808', border: '1px solid #C8404044', color: '#E89090' }}>
+                      Transcription failed: {lastTranscriptError}. You can still type the answer manually below.
+                    </div>
+                  )}
+
                   <textarea
                     value={currentSubjectReply}
                     onChange={e => setCurrentSubjectReply(e.target.value)}
@@ -438,7 +514,9 @@ export default function AssessmentFlow() {
                         submitSubjectReply();
                       }
                     }}
-                    placeholder="Answer in your own words — specific past events are more useful than generalities. ⌘+Enter to submit."
+                    placeholder={answerMode === 'text'
+                      ? 'Answer in your own words — specific past events are more useful than generalities. ⌘+Enter to submit.'
+                      : 'Transcript will appear here once recording is processed. You can edit before submitting.'}
                     className="w-full h-24 rounded p-3 text-sm resize-none leading-relaxed mb-2"
                     style={{ background: '#0A0A0A', border: '1px solid #1A1A1A', color: '#C8C8C0', fontFamily: 'Georgia, serif' }}
                   />
