@@ -180,10 +180,47 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
 
         const email = profile.email as string;
-        let dbUser = await prisma.user.findUnique({
-          where: { email },
-          include: { firm: true },
-        });
+        // Three-strategy lookup, each isolated in its own try/catch
+        // so one failed query can't take down the whole sign-in.
+        //
+        //   1. By entraObjectId — most stable. Survives email renames.
+        //   2. By email, case-insensitive — catches mixed-case admin
+        //      pre-registrations where Entra sends lowercase.
+        //   3. By email, exact match — the original behaviour; final
+        //      fallback in case the case-insensitive query hits an
+        //      edge-case we haven't seen.
+        //
+        // The first strategy to return a non-null result wins.
+        const entraObjId: string | null = (account as any)?.providerAccountId
+          || (profile as any)?.sub
+          || (profile as any)?.oid
+          || null;
+        type DbUser = Awaited<ReturnType<typeof prisma.user.findFirst>> & { firm?: any };
+        let dbUser: DbUser | null = null;
+        if (entraObjId) {
+          try {
+            dbUser = await prisma.user.findUnique({
+              where: { entraObjectId: entraObjId },
+              include: { firm: true },
+            }) as DbUser | null;
+          } catch { /* strategy 1 failed — try the next */ }
+        }
+        if (!dbUser) {
+          try {
+            dbUser = await prisma.user.findFirst({
+              where: { email: { equals: email, mode: 'insensitive' } },
+              include: { firm: true },
+            }) as DbUser | null;
+          } catch { /* strategy 2 failed — try the next */ }
+        }
+        if (!dbUser) {
+          try {
+            dbUser = await prisma.user.findUnique({
+              where: { email },
+              include: { firm: true },
+            }) as DbUser | null;
+          } catch { /* strategy 3 failed — fall through to pending-setup */ }
+        }
 
         // Auto-create user if they exist in Azure AD but not yet in our DB
         // (Super Admin can pre-register them, or we create a pending account)
@@ -212,8 +249,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return token;
         }
 
-        // Store Azure AD object ID if not already set
-        const entraObjId = (account as any)?.providerAccountId || (profile as any)?.sub || (profile as any)?.oid;
+        // Store Azure AD object ID if not already set. `entraObjId`
+        // was resolved at the top of the block — reuse it.
         if (entraObjId && !dbUser.entraObjectId) {
           await prisma.user.update({
             where: { id: dbUser.id },
