@@ -141,20 +141,31 @@ export const MERGE_FIELDS: MergeField[] = [
     ]},
 
   // ─── Questionnaires ──────────────────────────────────────────────────────
-  // The raw JSON data of each questionnaire is exposed as an object so
-  // admins can address any answered cell by path, e.g.
-  // `{{questionnaires.ethics.independenceConfirmed}}`. Exact paths
-  // depend on the firm's questionnaire schema — so these entries
-  // describe the ROOT object and the admin is expected to drill down.
+  // Each questionnaire's answers are exposed in three complementary
+  // shapes so admins can pick whichever is most readable:
+  //   1. `questionnaires.<type>.<key>` — by the human-readable `key`
+  //      from the firm's questionnaire schema (e.g. `engagement_letter_date`).
+  //      Works for any answered question; this is the recommended form.
+  //   2. `questionnaires.<type>.bySection.<section>.<key>` — same
+  //      answers grouped by the section the question belongs to
+  //      (section names are slugified to lowercase_with_underscores).
+  //   3. `questionnaires.<type>.<uuid>` — the original raw UUID key,
+  //      preserved for back-compat. Rarely used — keys are clearer.
   { group: 'Questionnaires', key: 'questionnaires.permanentFile', label: 'Permanent file answers (object)', type: 'object',
-    description: 'Object keyed by section — drill in with {{questionnaires.permanentFile.<section>.<key>}}.',
-    sampleValue: { understandingEntity: { activities: 'Professional services (accountancy and advisory).', keyCustomers: 'Mixed SME portfolio in the North West.' } } },
+    description: 'Drill in by question key, e.g. {{questionnaires.permanentFile.entity_activities}}.',
+    sampleValue: { entity_activities: 'Professional services (accountancy and advisory).', key_customers: 'Mixed SME portfolio in the North West.' } },
   { group: 'Questionnaires', key: 'questionnaires.ethics', label: 'Ethics answers (object)', type: 'object',
-    sampleValue: { independenceConfirmed: true, feeDependency: false, nonAuditServices: 'None provided in the year.' } },
+    description: 'Drill in by question key, e.g. {{questionnaires.ethics.independence_confirmed}}.',
+    sampleValue: { independence_confirmed: true, fee_dependency: false, non_audit_services: 'None provided in the year.' } },
   { group: 'Questionnaires', key: 'questionnaires.continuance', label: 'Continuance answers (object)', type: 'object',
-    sampleValue: { continuanceDecision: 'continue', riskAssessment: 'Low to moderate.' } },
+    description: 'Drill in by question key, e.g. {{questionnaires.continuance.engagement_letter_date}}.',
+    sampleValue: { engagement_letter_date: '2025-01-01', entity_type: 'Limited Company', py_mgmt_letter: 'First Year of Audit' } },
+  { group: 'Questionnaires', key: 'questionnaires.continuance.engagement_letter_date', label: 'Engagement letter date (Continuance Q)', type: 'date',
+    description: 'Date captured in the Continuance questionnaire. Wrap in {{formatDate … "dd MMMM yyyy"}} for a formatted string.',
+    sampleValue: '2025-01-01' },
   { group: 'Questionnaires', key: 'questionnaires.materiality', label: 'Materiality questionnaire answers (object)', type: 'object',
-    sampleValue: { benchmarkRationale: 'PBT is the most appropriate given continuing profitable trading.' } },
+    description: 'Drill in by question key.',
+    sampleValue: { benchmark_rationale: 'PBT is the most appropriate given continuing profitable trading.' } },
 
   // ─── TB ──────────────────────────────────────────────────────────────────
   { group: 'Trial Balance', key: 'tb.revenue', label: 'Revenue (CY)', type: 'currency', sampleValue: 2500000 },

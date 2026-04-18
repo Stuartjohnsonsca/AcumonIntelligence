@@ -207,17 +207,86 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
       .map((r: any) => ({ fsLine: r.lineItem || r.fsLine || '', reason: r.description || '' }));
   } catch { /* model may not be wired on this env — tolerant */ }
 
-  // Questionnaires — each stored as `{ data: {...} }` on its own row.
+  // Questionnaires are stored as `{ data: { <uuid>: value, ... } }`
+  // where the UUID is the `id` of the question in the firm's
+  // MethodologyTemplate (one per questionnaire type). UUIDs are
+  // impossible to use directly in Handlebars templates, so we enrich
+  // the context: expose each answer under BOTH the original UUID
+  // (for back-compat) AND the human-readable `key` declared in the
+  // questionnaire schema, plus a `bySection` grouping keyed by
+  // slugified section name.
+  //
+  // Example — a Continuance answer for "Engagement letter date" can
+  // now be addressed as:
+  //   {{formatDate questionnaires.continuance.engagement_letter_date "dd MMMM yyyy"}}
+  //   {{formatDate questionnaires.continuance.bySection.continuity.engagement_letter_date "dd MMMM yyyy"}}
+  //   {{formatDate questionnaires.continuance.<uuid> "dd MMMM yyyy"}}  ← still works
   async function loadQ(table: 'auditPermanentFile' | 'auditEthics' | 'auditContinuance' | 'auditMateriality'): Promise<Record<string, any>> {
     try {
       const row = await (prisma as any)[table].findUnique({ where: { engagementId } });
       return (row?.data && typeof row.data === 'object') ? row.data as Record<string, any> : {};
     } catch { return {}; }
   }
-  const [pfData, ethicsData, continuanceData, matData] = await Promise.all([
+  const [pfRaw, ethicsRaw, continuanceRaw, matRaw] = await Promise.all([
     loadQ('auditPermanentFile'), loadQ('auditEthics'),
     loadQ('auditContinuance'), loadQ('auditMateriality'),
   ]);
+
+  // Load the firm's questionnaire schemas (one MethodologyTemplate
+  // row per type). `templateType` naming convention in the DB is
+  // `<name>_questions` (permanent_file_questions, ethics_questions,
+  // continuance_questions, materiality_questions).
+  const qSchemas = await prisma.methodologyTemplate.findMany({
+    where: {
+      firmId: engagement.firm.id,
+      templateType: { in: ['permanent_file_questions', 'ethics_questions', 'continuance_questions', 'materiality_questions'] },
+    },
+  });
+  const schemaByType = new Map<string, any[]>();
+  for (const s of qSchemas) {
+    const items = Array.isArray(s.items) ? s.items as any[] : [];
+    schemaByType.set(s.templateType, items);
+  }
+
+  /**
+   * Slug a free-text section name into something Handlebars-safe
+   * (lowercase, `_` separators, no punctuation).
+   */
+  function slugify(s: string): string {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'section';
+  }
+
+  /**
+   * Enrich a raw UUID-keyed answer map with human-readable keys from
+   * the corresponding questionnaire schema. Preserves the original
+   * UUID keys so older templates still work.
+   */
+  function enrichQuestionnaire(raw: Record<string, any>, schemaTemplateType: string): Record<string, any> {
+    const schema = schemaByType.get(schemaTemplateType) || [];
+    const out: Record<string, any> = { ...raw };
+    const bySection: Record<string, Record<string, any>> = {};
+    for (const item of schema) {
+      if (!item?.id || !item?.key) continue;
+      const value = raw[item.id];
+      // Skip entries the user hasn't answered — keeps the context
+      // compact and makes missing-placeholder checks meaningful.
+      if (value === undefined) continue;
+      // Human-readable key at the top level of the questionnaire.
+      out[item.key] = value;
+      if (item.sectionKey) {
+        const sec = slugify(item.sectionKey);
+        if (!bySection[sec]) bySection[sec] = {};
+        bySection[sec][item.key] = value;
+      }
+    }
+    if (Object.keys(bySection).length > 0) out.bySection = bySection;
+    return out;
+  }
+
+  const pfData = enrichQuestionnaire(pfRaw, 'permanent_file_questions');
+  const ethicsData = enrichQuestionnaire(ethicsRaw, 'ethics_questions');
+  const continuanceData = enrichQuestionnaire(continuanceRaw, 'continuance_questions');
+  const matData = enrichQuestionnaire(matRaw, 'materiality_questions');
 
   // Trial balance — rows + some precomputed totals so the admin can
   // address {{tb.revenue}} etc. without a dedicated helper. We pull
