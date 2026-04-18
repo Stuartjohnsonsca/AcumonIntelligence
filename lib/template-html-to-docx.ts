@@ -7,12 +7,14 @@
  * this fragment becomes the body flow.
  *
  * Scope: handles the subset of HTML the contentEditable editor in
- * `TemplateDocumentsClient` actually produces:
- *   <p>, <br>, <strong>/<b>, <em>/<i>, <u>, <s>
- *   <ul>/<ol>/<li>, <a href>, <table>/<tr>/<td>/<th>
- *   text nodes (with entity decoding and XML escaping)
+ * `DocumentTemplateEditor` can produce:
+ *   Inline:  <strong>/<b>, <em>/<i>, <u>, <s>, <br>, <span>, <a>
+ *   Block:   <p>, <div>, <h1>/<h2>/<h3>/<h4>, <hr>, page-break
+ *   Lists:   <ul>, <ol>, <li>
+ *   Tables:  <table>, <tr>, <th>, <td>
+ *   Alignment via `style="text-align:..."` or `align="..."` attribute
  *
- * Everything else is rendered as plain text inside a paragraph —
+ * Everything else falls through as plain text inside a paragraph —
  * safer than silently dropping content.
  */
 
@@ -81,6 +83,37 @@ function tokenise(html: string): Token[] {
 
 const VOID_ELEMENTS = new Set(['br','hr','img','meta','link','input']);
 
+/**
+ * Parse alignment from either a CSS `text-align:` style or the legacy
+ * HTML `align=""` attribute. Returns the docx `w:jc` value or null.
+ */
+function parseAlignment(attrs: Record<string, string> | undefined): 'left' | 'center' | 'right' | 'both' | null {
+  if (!attrs) return null;
+  const style = (attrs.style || '').toLowerCase();
+  const m = style.match(/text-align\s*:\s*([a-z]+)/);
+  const v = m ? m[1] : (attrs.align || '').toLowerCase();
+  if (v === 'center') return 'center';
+  if (v === 'right') return 'right';
+  if (v === 'justify') return 'both';
+  if (v === 'left') return 'left';
+  return null;
+}
+
+/**
+ * Sniff a page-break signal — we render either a literal `<div
+ * class="page-break">` (what the editor inserts), a standards-y
+ * `<div style="page-break-before:always">`, or an explicit
+ * `<hr class="page-break">`. Returns true if the element should
+ * emit a Word page-break character.
+ */
+function isPageBreakAttrs(attrs: Record<string, string> | undefined): boolean {
+  if (!attrs) return false;
+  const cls = (attrs.class || '').toLowerCase();
+  const style = (attrs.style || '').toLowerCase();
+  return cls.includes('page-break')
+    || /page-break-(before|after)\s*:\s*always/.test(style);
+}
+
 // ─── Inline run state ──────────────────────────────────────────────────────
 interface InlineState { bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; hyperlink?: string | null; }
 
@@ -120,6 +153,10 @@ export function htmlToDocxBody(html: string): string {
   const inline: InlineState = {};
   let paragraphRuns: string[] = [];
   let paragraphPending = false; // true when we're inside an open <p>
+  // The paragraph style / justification we'll emit on the NEXT flush
+  // — set when we open a <h1>/<h2>/<h3> or a <p align="center"> etc.
+  let pendingParaStyle: string | null = null;
+  let pendingParaJc: 'left' | 'center' | 'right' | 'both' | null = null;
   const listStack: ListState[] = [];
   // Table state — only one level of table is supported in v1.
   let tableRows: string[] | null = null;
@@ -128,14 +165,24 @@ export function htmlToDocxBody(html: string): string {
   let inTableHeader = false;
 
   function flushParagraph(extraPpr?: string) {
+    // Compose <w:pPr> from both the caller-supplied fragment (list
+    // styles, etc.) and the pending-style state (heading, alignment).
+    // Order inside <w:pPr> matters: pStyle must come first, jc later.
+    const pprParts: string[] = [];
+    if (pendingParaStyle) pprParts.push(`<w:pStyle w:val="${pendingParaStyle}"/>`);
+    if (extraPpr) pprParts.push(extraPpr);
+    if (pendingParaJc) pprParts.push(`<w:jc w:val="${pendingParaJc}"/>`);
+    const ppr = pprParts.length > 0 ? `<w:pPr>${pprParts.join('')}</w:pPr>` : '';
+
     if (paragraphRuns.length === 0) {
-      if (paragraphPending) out.push(`<w:p/>`); // empty paragraph
+      if (paragraphPending || pprParts.length > 0) out.push(`<w:p>${ppr}</w:p>`);
     } else {
-      const ppr = extraPpr ? `<w:pPr>${extraPpr}</w:pPr>` : '';
       out.push(`<w:p>${ppr}${paragraphRuns.join('')}</w:p>`);
     }
     paragraphRuns = [];
     paragraphPending = false;
+    pendingParaStyle = null;
+    pendingParaJc = null;
   }
 
   function appendText(text: string) {
@@ -160,10 +207,33 @@ export function htmlToDocxBody(html: string): string {
     if (tok.type === 'open') {
       switch (tag) {
         case 'p':
-        case 'div':
+        case 'div': {
+          // If this div is a page-break marker, emit a break character
+          // in a fresh paragraph rather than treating it as a normal
+          // block container.
+          if (isPageBreakAttrs(tok.attrs)) {
+            flushParagraph();
+            out.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>');
+            break;
+          }
           if (paragraphPending || paragraphRuns.length) flushParagraph();
           paragraphPending = true;
+          const jc = parseAlignment(tok.attrs);
+          if (jc) pendingParaJc = jc;
           break;
+        }
+        // Heading paragraphs — map to Word's built-in Heading N styles.
+        // Word ships Heading 1..9 in every default template, so these
+        // render correctly against any firm skeleton out of the box.
+        case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6': {
+          if (paragraphPending || paragraphRuns.length) flushParagraph();
+          paragraphPending = true;
+          const level = Number(tag[1]);
+          pendingParaStyle = `Heading${level}`;
+          const jc = parseAlignment(tok.attrs);
+          if (jc) pendingParaJc = jc;
+          break;
+        }
         case 'strong': case 'b': inline.bold = true; break;
         case 'em': case 'i': inline.italic = true; break;
         case 'u': inline.underline = true; break;
@@ -191,18 +261,27 @@ export function htmlToDocxBody(html: string): string {
             inTableHeader = tag === 'th';
           }
           break;
+        // <span> is a transparent inline wrapper — the editor uses it
+        // to render merge-field pills. We don't need special handling
+        // since the children carry the text; just let it pass.
+        case 'span':
+          break;
         default: /* unknown open tag — ignore */ break;
       }
     } else if (tok.type === 'close') {
       switch (tag) {
         case 'p':
         case 'div': flushParagraph(); break;
+        case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6':
+          flushParagraph();
+          break;
         case 'strong': case 'b': inline.bold = false; break;
         case 'em': case 'i': inline.italic = false; break;
         case 'u': inline.underline = false; break;
         case 's': case 'strike': case 'del': inline.strike = false; break;
         case 'a': inline.hyperlink = null; break;
         case 'ul': case 'ol': listStack.pop(); break;
+        case 'span': break;
         case 'li': {
           const list = listStack[listStack.length - 1];
           // Minimal list rendering: use `ListBullet` / `ListNumber`
@@ -249,7 +328,22 @@ export function htmlToDocxBody(html: string): string {
       if (tag === 'br') {
         if (currentCellRuns) currentCellRuns.push('<w:r><w:br/></w:r>');
         else { paragraphPending = true; paragraphRuns.push('<w:r><w:br/></w:r>'); }
+      } else if (tag === 'hr') {
+        // Horizontal rule — render as a paragraph with a thin bottom
+        // border. Flush any open paragraph first so it doesn't pick up
+        // the border too.
+        flushParagraph();
+        out.push(`<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr></w:pPr></w:p>`);
+      } else if (tag === 'img') {
+        // v1 images: rendered as a placeholder text. Proper image
+        // embedding requires relationship plumbing we haven't wired.
+        const alt = tok.attrs?.alt || '[image]';
+        paragraphPending = true;
+        paragraphRuns.push(runXml(inline, alt));
       }
+      // Explicit void page-break marker e.g. `<div class="page-break"/>`
+      // is already handled in the 'open' case above because Word editors
+      // usually emit it as an open div rather than a self-closing tag.
     }
   }
   // Flush any trailing paragraph.

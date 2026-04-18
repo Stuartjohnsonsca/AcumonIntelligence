@@ -1,31 +1,42 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, Save, Eye, Download, AlertTriangle, Variable, SquareDashedBottom, Repeat } from 'lucide-react';
-import { MERGE_FIELDS, mergeFieldsByGroup, type MergeField } from '@/lib/template-merge-fields';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Loader2, Save, Eye, Download, AlertTriangle,
+  Bold, Italic, Underline, Strikethrough,
+  AlignLeft, AlignCenter, AlignRight, AlignJustify,
+  List, ListOrdered, Table, FileDown, Minus,
+  SquareDashedBottom, Repeat, Variable,
+} from 'lucide-react';
+import { mergeFieldsByGroup, type MergeField } from '@/lib/template-merge-fields';
 import type { Skeleton } from './FirmSkeletonManager';
 
 /**
- * Editor for a single document template.
+ * Document-template editor.
  *
- * Layout:
- *   ┌──────────────────────────────┬──────────────────────────┐
- *   │  Left — body editor          │  Right — preview         │
- *   │  [textarea with Handlebars]  │  [rendered HTML]         │
- *   │                              │  [missing placeholders]  │
- *   ├──────────────────────────────┤                          │
- *   │  Merge-field pill palette    │                          │
- *   │  (grouped; click to insert)  │                          │
- *   └──────────────────────────────┴──────────────────────────┘
+ * What the admin sees:
+ *   • A formatting toolbar (paragraph style / bold / italic / lists /
+ *     alignment / insert table / insert page break / Handlebars scaffolds).
+ *   • A contentEditable surface that renders HTML as it's typed —
+ *     what they see is close to what the Word file will look like.
+ *   • A merge-field palette grouped by category; click a pill to
+ *     insert the matching `{{path}}` at the cursor.
+ *   • A preview pane that renders the body against a real engagement
+ *     (or canned sample data) and flags any placeholder that didn't
+ *     resolve.
+ *   • Save + Generate-Word buttons at the top.
  *
- * Body text uses Handlebars: `{{path}}`, `{{formatDate x 'dd MMM yyyy'}}`,
- * `{{#if cond}}...{{/if}}`, `{{#each arr}}...{{/each}}`. Triple-brace for
- * HTML-returning helpers like `{{{errorScheduleTable errorSchedule}}}`.
- *
- * Preview runs server-side against a live engagement (picker) or a
- * canned sample context. The "missing placeholders" list shows any
- * path in the body that isn't in the catalog — useful for catching
- * typos like `{{clinet.name}}`.
+ * Implementation notes:
+ *   • We use `document.execCommand` for formatting. It's deprecated
+ *     in the spec but remains universally supported and is vastly
+ *     simpler than rolling our own selection / DOM manipulation. The
+ *     few cases it can't handle (page-break, custom blocks) we
+ *     implement by splicing into the editable ourselves.
+ *   • On save we read `innerHTML` verbatim. The HTML→docx converter
+ *     (`lib/template-html-to-docx.ts`) handles the editor's output
+ *     directly — no intermediate cleanup layer.
+ *   • Pasted content is sanitised (plain text only by default) to
+ *     stop Word inline-styles / MSO junk bloating the template.
  */
 
 export interface DocumentTemplate {
@@ -63,6 +74,16 @@ const AUDIT_TYPES = [
   { value: 'PIE_CONTROLS', label: 'PIE + Controls' },
 ];
 
+// Paragraph styles the dropdown offers. The `execCommand` formatBlock
+// values match the browser API (must be lowercase).
+const BLOCK_STYLES: Array<{ value: string; label: string }> = [
+  { value: 'p', label: 'Paragraph' },
+  { value: 'h1', label: 'Heading 1' },
+  { value: 'h2', label: 'Heading 2' },
+  { value: 'h3', label: 'Heading 3' },
+  { value: 'h4', label: 'Heading 4' },
+];
+
 export function DocumentTemplateEditor({
   template,
   skeletons,
@@ -81,21 +102,95 @@ export function DocumentTemplateEditor({
   const [category, setCategory] = useState(template.category || 'general');
   const [auditType, setAuditType] = useState(template.auditType || 'ALL');
   const [skeletonId, setSkeletonId] = useState<string | null>(template.skeletonId);
-  const [content, setContent] = useState(template.content || '');
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [preview, setPreview] = useState<{ html: string; missing: string[]; error: string | null; usedLive: boolean } | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<{ html: string; missing: string[]; error: string | null; usedLive: boolean } | null>(null);
   const [engagementId, setEngagementId] = useState<string>(engagements[0]?.id || '');
+  // Dirty-tracking + reference to the contentEditable node. We don't
+  // mirror the HTML into React state on every keystroke — that'd
+  // confuse cursor position. Instead we read from the DOM on save.
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const [dirtyTick, setDirtyTick] = useState(0); // forces re-render of toolbar indicators
 
   const grouped = useMemo(() => mergeFieldsByGroup(), []);
 
-  // Re-run preview when content / engagement / template changes —
-  // debounced so typing doesn't spam the server.
-  const runPreview = useCallback(async () => {
-    // Persist content first so the server sees the latest body.
+  // Seed the editor once on mount with the stored content.
+  useEffect(() => {
+    if (editorRef.current && typeof template.content === 'string') {
+      editorRef.current.innerHTML = template.content || defaultBody();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template.id]);
+
+  /** Read the current body from the contentEditable and normalise it
+   *  before persisting. Normalisation:
+   *   • Strip `&nbsp;` inside `{{...}}` — some browsers insert these
+   *     when the admin types braces after whitespace, breaking the
+   *     Handlebars parser.
+   *   • Trim trailing `<br>` that contentEditable loves to insert. */
+  function readBody(): string {
+    const raw = editorRef.current?.innerHTML ?? '';
+    let html = raw.replace(/\{\{[^}]*\}\}/g, (m) => m.replace(/&nbsp;/g, ' '));
+    html = html.replace(/(<br\s*\/?>\s*)+$/i, '');
+    return html;
+  }
+
+  // ── Toolbar actions ──────────────────────────────────────────────────────
+  function exec(cmd: string, value?: string) {
+    editorRef.current?.focus();
+    try { document.execCommand(cmd, false, value); } catch { /* ignore — older browsers */ }
+    setDirtyTick(t => t + 1);
+  }
+  function insertRawHtml(html: string) {
+    editorRef.current?.focus();
+    try { document.execCommand('insertHTML', false, html); }
+    catch {
+      // Fallback: append at end.
+      if (editorRef.current) editorRef.current.innerHTML += html;
+    }
+    setDirtyTick(t => t + 1);
+  }
+  function insertMergeField(field: MergeField) {
+    const snippet = field.type === 'array'
+      ? `{{#each ${field.key}}}<br>&nbsp;&nbsp;${field.itemFields?.[0]?.key ? `{{${field.itemFields[0].key}}}` : ''}<br>{{/each}}`
+      : field.type === 'object'
+        ? `{{${field.key}.fieldName}}`
+        : `{{${field.key}}}`;
+    insertRawHtml(snippet);
+  }
+  function insertTable(rows: number, cols: number) {
+    const cell = '<td style="border:1px solid #94a3b8;padding:6px;min-width:60px">&nbsp;</td>';
+    const row = `<tr>${cell.repeat(cols)}</tr>`;
+    const tbl = `<table style="border-collapse:collapse;width:100%;margin:8px 0">${row.repeat(rows)}</table><p></p>`;
+    insertRawHtml(tbl);
+  }
+  function insertPageBreak() {
+    insertRawHtml('<div class="page-break" style="page-break-before:always;border-top:2px dashed #cbd5e1;color:#94a3b8;font-size:10px;text-align:center;margin:12px 0;padding:2px">— page break —</div><p></p>');
+  }
+  function insertHorizontalRule() { exec('insertHorizontalRule'); }
+  function insertConditional() { insertRawHtml('{{#if condition}}<br>&nbsp;&nbsp;<br>{{else}}<br>&nbsp;&nbsp;<br>{{/if}}'); }
+  function insertLoop() { insertRawHtml('{{#each errorSchedule}}<br>&nbsp;&nbsp;{{fsLine}} — {{formatCurrency amount}}: {{description}}<br>{{/each}}'); }
+  function insertErrorTable() { insertRawHtml('{{{errorScheduleTable errorSchedule}}}'); }
+
+  // ── Paste handler — strips Word / pasted HTML to plain text ──────────────
+  function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    if (!text) return;
+    // Preserve double-newlines as paragraph breaks, single newlines
+    // as soft breaks — matches how most letter drafts are structured.
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const paragraphs = text.split(/\n{2,}/).map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+    insertRawHtml(paragraphs);
+  }
+
+  // ── API calls ────────────────────────────────────────────────────────────
+  const runPreview = useCallback(async (forceContent?: string) => {
     setPreviewing(true);
     try {
+      // Save before previewing so the server sees the latest body.
+      await save(forceContent);
       const res = await fetch('/api/methodology-admin/template-documents/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -110,22 +205,21 @@ export function DocumentTemplateEditor({
     } finally {
       setPreviewing(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template.id, engagementId]);
 
-  async function save(nextContent?: string) {
+  async function save(overrideContent?: string) {
     setSaving(true);
     try {
+      const content = overrideContent ?? readBody();
       const res = await fetch(`/api/methodology-admin/template-documents/${template.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim() || null,
-          category,
-          auditType,
-          skeletonId,
+          name: name.trim(), description: description.trim() || null,
+          category, auditType, skeletonId,
           kind: 'document',
-          content: nextContent ?? content,
+          content,
         }),
       });
       if (res.ok) {
@@ -137,16 +231,10 @@ export function DocumentTemplateEditor({
     }
   }
 
-  async function saveAndPreview() {
-    await save();
-    await runPreview();
-  }
-
   async function generate() {
     if (!engagementId) { alert('Pick an engagement to generate the Word document.'); return; }
     setGenerating(true);
     try {
-      // Persist latest edits first so the render sees them.
       await save();
       const res = await fetch(`/api/engagements/${engagementId}/render-template`, {
         method: 'POST',
@@ -164,54 +252,23 @@ export function DocumentTemplateEditor({
       const fileName = matched?.[1] || `${template.name || 'document'}.docx`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      a.href = url; a.download = fileName;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } finally {
       setGenerating(false);
     }
   }
 
-  function insertAtCursor(text: string) {
-    const ta = document.getElementById('doc-template-body') as HTMLTextAreaElement | null;
-    if (!ta) return;
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    const next = content.slice(0, start) + text + content.slice(end);
-    setContent(next);
-    // Move the cursor to just after the inserted text on the next tick.
-    requestAnimationFrame(() => {
-      ta.focus();
-      ta.selectionStart = ta.selectionEnd = start + text.length;
-    });
-  }
-
   return (
     <div className="flex flex-col h-full">
-      {/* Top metadata bar */}
+      {/* ── Metadata bar ───────────────────────────────────────────────── */}
       <div className="border-b border-slate-200 px-4 py-3 flex flex-wrap items-center gap-3 bg-white">
         <button onClick={onClose} className="text-xs text-blue-600 hover:text-blue-800">← Back</button>
-        <input
-          type="text"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          className="text-sm font-semibold border border-slate-200 rounded px-2 py-1 min-w-[240px]"
-        />
-        <select value={category} onChange={e => setCategory(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1">
-          {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-        </select>
-        <select value={auditType} onChange={e => setAuditType(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1">
-          {AUDIT_TYPES.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
-        </select>
-        <select
-          value={skeletonId || ''}
-          onChange={e => setSkeletonId(e.target.value || null)}
-          className="text-[11px] border border-slate-200 rounded px-2 py-1"
-          title="Firm skeleton to render into"
-        >
+        <input type="text" value={name} onChange={e => setName(e.target.value)} className="text-sm font-semibold border border-slate-200 rounded px-2 py-1 min-w-[240px]" />
+        <select value={category} onChange={e => setCategory(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1">{CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</select>
+        <select value={auditType} onChange={e => setAuditType(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1">{AUDIT_TYPES.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}</select>
+        <select value={skeletonId || ''} onChange={e => setSkeletonId(e.target.value || null)} className="text-[11px] border border-slate-200 rounded px-2 py-1" title="Firm skeleton to render into">
           <option value="">— Use firm default skeleton —</option>
           {skeletons.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
@@ -220,7 +277,7 @@ export function DocumentTemplateEditor({
         <button onClick={() => save()} disabled={saving} className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-slate-100 border border-slate-200 rounded hover:bg-slate-200">
           {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Save
         </button>
-        <button onClick={saveAndPreview} disabled={previewing} className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100">
+        <button onClick={() => runPreview()} disabled={previewing} className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100">
           {previewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Eye className="h-3 w-3" />} Preview
         </button>
         <select value={engagementId} onChange={e => setEngagementId(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1 max-w-[180px]" title="Engagement to preview/generate against">
@@ -232,43 +289,76 @@ export function DocumentTemplateEditor({
         </button>
       </div>
 
-      {/* Two-column work area */}
+      {/* ── Description ────────────────────────────────────────────────── */}
+      <div className="border-b border-slate-200 px-4 py-2 bg-white">
+        <input type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="Description (what this template is used for)…" className="w-full text-[11px] border border-slate-200 rounded px-2 py-1" />
+      </div>
+
+      {/* ── Formatting toolbar ─────────────────────────────────────────── */}
+      <div className="border-b border-slate-200 bg-slate-50 px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+        {/* Block style dropdown */}
+        <label className="flex items-center gap-1">
+          <span className="text-slate-500 text-[10px] uppercase">Style</span>
+          <select
+            onChange={e => { exec('formatBlock', e.target.value); e.target.value = ''; }}
+            className="border border-slate-200 rounded px-1 py-0.5 text-[11px] bg-white"
+            defaultValue=""
+          >
+            <option value="" disabled>Paragraph style…</option>
+            {BLOCK_STYLES.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+          </select>
+        </label>
+
+        <ToolbarDiv />
+
+        <ToolbarBtn title="Bold" onClick={() => exec('bold')}><Bold className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Italic" onClick={() => exec('italic')}><Italic className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Underline" onClick={() => exec('underline')}><Underline className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Strikethrough" onClick={() => exec('strikeThrough')}><Strikethrough className="h-3.5 w-3.5" /></ToolbarBtn>
+
+        <ToolbarDiv />
+
+        <ToolbarBtn title="Bulleted list" onClick={() => exec('insertUnorderedList')}><List className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Numbered list" onClick={() => exec('insertOrderedList')}><ListOrdered className="h-3.5 w-3.5" /></ToolbarBtn>
+
+        <ToolbarDiv />
+
+        <ToolbarBtn title="Align left" onClick={() => exec('justifyLeft')}><AlignLeft className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Align centre" onClick={() => exec('justifyCenter')}><AlignCenter className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Align right" onClick={() => exec('justifyRight')}><AlignRight className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Justify" onClick={() => exec('justifyFull')}><AlignJustify className="h-3.5 w-3.5" /></ToolbarBtn>
+
+        <ToolbarDiv />
+
+        <ToolbarBtn title="Insert table (3 × 3)" onClick={() => insertTable(3, 3)}><Table className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Insert horizontal rule" onClick={insertHorizontalRule}><Minus className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Insert page break" onClick={insertPageBreak}><FileDown className="h-3.5 w-3.5" /></ToolbarBtn>
+
+        <ToolbarDiv />
+
+        <button onClick={insertConditional} title="Insert {{#if}} / else block" className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-amber-50 border border-amber-200 text-amber-700 rounded hover:bg-amber-100">
+          <SquareDashedBottom className="h-3 w-3" /> if/else
+        </button>
+        <button onClick={insertLoop} title="Insert {{#each}} loop" className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-amber-50 border border-amber-200 text-amber-700 rounded hover:bg-amber-100">
+          <Repeat className="h-3 w-3" /> each
+        </button>
+        <button onClick={insertErrorTable} title="Insert error-schedule table helper" className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-slate-100 border border-slate-200 text-slate-700 rounded hover:bg-slate-200">
+          <Variable className="h-3 w-3" /> error table
+        </button>
+      </div>
+
+      {/* ── Two-column work area ───────────────────────────────────────── */}
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200 min-h-0">
-        {/* Left: body editor + description + palette */}
+        {/* Left: editor + merge-field palette */}
         <div className="flex flex-col min-h-0">
-          <div className="px-4 py-2">
-            <input
-              type="text"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="Description (what this template is used for)…"
-              className="w-full text-[11px] border border-slate-200 rounded px-2 py-1"
-            />
-          </div>
-          <div className="px-4 flex gap-1 pb-2 flex-wrap">
-            <button
-              onClick={() => insertAtCursor('{{#if condition}}\n\n{{else}}\n\n{{/if}}')}
-              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 bg-amber-50 border border-amber-200 text-amber-700 rounded hover:bg-amber-100"
-              title="Insert {{#if}} block"
-            ><SquareDashedBottom className="h-3 w-3" /> if/else</button>
-            <button
-              onClick={() => insertAtCursor('{{#each errorSchedule}}\n  {{fsLine}} — {{formatCurrency amount}}: {{description}}\n{{/each}}')}
-              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 bg-amber-50 border border-amber-200 text-amber-700 rounded hover:bg-amber-100"
-              title="Insert {{#each}} loop"
-            ><Repeat className="h-3 w-3" /> each</button>
-            <button
-              onClick={() => insertAtCursor('{{{errorScheduleTable errorSchedule}}}')}
-              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 bg-slate-50 border border-slate-200 text-slate-700 rounded hover:bg-slate-100"
-              title="Insert error-schedule table helper"
-            ><Variable className="h-3 w-3" /> error table</button>
-          </div>
-          <textarea
-            id="doc-template-body"
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            placeholder={'<p>Dear {{client.name}},</p>\n<p>The audit for the year ended {{formatDate period.periodEnd "dd MMMM yyyy"}} is now complete.</p>\n{{#if errorSchedule.length}}\n  {{{errorScheduleTable errorSchedule}}}\n{{else}}\n  <p>No material adjustments identified.</p>\n{{/if}}'}
-            className="flex-1 min-h-[300px] font-mono text-[12px] leading-[1.4] border-y border-slate-200 px-4 py-3 outline-none focus:bg-slate-50/30"
-            spellCheck={false}
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onPaste={onPaste}
+            onInput={() => setDirtyTick(t => t + 1)}
+            className="flex-1 min-h-[320px] overflow-auto outline-none px-6 py-4 bg-white prose prose-sm max-w-none focus:bg-slate-50/20"
+            spellCheck={true}
           />
           {/* Merge-field palette */}
           <div className="border-t border-slate-200 bg-slate-50/60 max-h-64 overflow-y-auto">
@@ -277,22 +367,18 @@ export function DocumentTemplateEditor({
               <div key={group} className="px-4 py-2 border-b border-slate-100 last:border-0">
                 <div className="text-[10px] font-bold text-slate-600 mb-1">{group}</div>
                 <div className="flex flex-wrap gap-1">
-                  {fields.map(f => (
-                    <Pill key={f.key} field={f} onInsert={insertAtCursor} />
-                  ))}
+                  {fields.map(f => <Pill key={f.key} field={f} onInsert={insertMergeField} />)}
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Right: preview pane */}
+        {/* Right: preview */}
         <div className="flex flex-col min-h-0 overflow-hidden">
           <div className="px-4 py-2 flex items-center justify-between border-b border-slate-200 bg-slate-50/60">
             <span className="text-[11px] font-semibold text-slate-600">Preview</span>
-            {preview && (
-              <span className="text-[10px] text-slate-500">{preview.usedLive ? 'live engagement data' : 'sample data'}</span>
-            )}
+            {preview && <span className="text-[10px] text-slate-500">{preview.usedLive ? 'live engagement data' : 'sample data'}</span>}
           </div>
           <div className="flex-1 overflow-y-auto">
             {!preview && (
@@ -308,7 +394,7 @@ export function DocumentTemplateEditor({
               </div>
             )}
             {preview && !preview.error && (
-              <div className="p-4 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: preview.html }} />
+              <div className="p-6 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: preview.html }} />
             )}
             {preview && preview.missing.length > 0 && (
               <div className="m-4 border border-amber-200 bg-amber-50 rounded p-3 text-[11px]">
@@ -326,26 +412,35 @@ export function DocumentTemplateEditor({
   );
 }
 
-function Pill({ field, onInsert }: { field: MergeField; onInsert: (s: string) => void }) {
+function ToolbarBtn({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button" title={title} onClick={onClick}
+      className="inline-flex items-center justify-center w-7 h-7 rounded hover:bg-slate-200 text-slate-600"
+    >{children}</button>
+  );
+}
+function ToolbarDiv() { return <div className="w-px h-5 bg-slate-300 mx-0.5" />; }
+
+function Pill({ field, onInsert }: { field: MergeField; onInsert: (f: MergeField) => void }) {
   const isArray = field.type === 'array';
   const isObject = field.type === 'object';
-  const snippet = isArray
-    ? `{{#each ${field.key}}}\n  \n{{/each}}`
-    : isObject
-      ? `{{${field.key}.<fieldName>}}`
-      : `{{${field.key}}}`;
   return (
     <button
       type="button"
-      onClick={() => onInsert(snippet)}
+      onClick={() => onInsert(field)}
       title={`${field.label}${field.description ? ' — ' + field.description : ''}`}
       className={`text-[10px] px-1.5 py-0.5 rounded border ${
         isArray ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
-          : isObject ? 'bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100'
-          : 'bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100'
+        : isObject ? 'bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100'
+        : 'bg-teal-50 border-teal-200 text-teal-700 hover:bg-teal-100'
       }`}
-    >
-      {field.label}
-    </button>
+    >{field.label}</button>
   );
+}
+
+function defaultBody(): string {
+  // A small starter so a brand-new template immediately shows
+  // something in the editor rather than a blank white box.
+  return '<p>Dear {{client.name}},</p><p>This document relates to the audit for the year ended {{formatDate period.periodEnd "dd MMMM yyyy"}}.</p>';
 }
