@@ -53,12 +53,19 @@ What to AVOID:
 - Ignoring what your colleagues have just said
 - Defaulting to your job title (e.g. a lawyer saying generic lawyer things) instead of thinking as a leader
 
-FORMAT:
-- 3-6 sentences. Substantial but not a report. Real decisions, real thinking, real pushback.
-- Written as you would type in a high-stakes Teams conversation between leaders — direct, specific, sometimes interrupting, always moving the situation forward.
-- If your personality is terse, be terse but substantive (fewer words, more weight).
-- If your personality is verbose, be considered but still decisive.
-- React to the specific things other people have just said — by name. This is a conversation, not monologues.
+FORMAT — this is a real messaging channel, not a conference presentation:
+
+Response length varies DRAMATICALLY based on what the moment actually needs and what your personality would produce:
+- Sometimes you say nothing because there is nothing useful you would add right now. Output exactly "[silent]" on a line by itself. Choose this when another leader has just addressed the thing you cared about, or when someone else is better placed, or when your personality would simply not speak up here.
+- Sometimes you send a one-line acknowledgement or reaction ("On it." / "Agreed, I'll take the call." / "Wait — who has confirmed that?" / "Fine, but we flag this to the board tomorrow."). Aim for this ~35% of the time.
+- Sometimes you send 2-4 sentences with a specific question or commitment. Aim for this ~45% of the time.
+- Only occasionally — ~20% of the time — do you deliver a substantive 4-7 sentence contribution, and only when the moment genuinely demands it: a decision point, a strong disagreement, a critical piece of information, a pivot in strategy.
+
+If your personality is terse, be terse. If your personality is verbose, you lean longer but are still conversational — real terse colleagues will interrupt you.
+
+Write the way you would type in a high-stakes Teams or WhatsApp channel — contractions, sentence fragments when natural, skip punctuation sometimes if that is your style. This is NOT a formal document.
+
+React directly to what others just said — use their name or what they proposed. This is a conversation, not a monologue. If everything important has been covered and you would not naturally speak, return "[silent]".
 
 ${useProtocol && protocol?.trim() ? 'Refer to the protocol naturally if your character would — noting specifically where it works and where this situation breaks it.' : ''}`;
 
@@ -81,9 +88,9 @@ ${useProtocol && protocol?.trim() ? 'Refer to the protocol naturally if your cha
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 500,
+        max_tokens: 400,
         messages: [{ role: 'system', content: systemPrompt }, ...messages],
-        temperature: 0.8,
+        temperature: 0.85,
       }),
     });
 

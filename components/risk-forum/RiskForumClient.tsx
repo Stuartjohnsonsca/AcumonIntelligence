@@ -344,6 +344,8 @@ export default function RiskForumClient({ user }: Props) {
   const [realSecondsElapsed, setRealSecondsElapsed] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const threadStripRef = useRef<HTMLDivElement>(null);
+  const columnScrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const abortRef = useRef(false);
   const pausedRef = useRef(false);
   const facilitatorQueueRef = useRef<FacilitatorAction[]>([]);
@@ -356,9 +358,19 @@ export default function RiskForumClient({ user }: Props) {
   // Time compression factor: 1 real second = CLOCK_COMPRESSION simulated seconds.
   const CLOCK_COMPRESSION = 100;
 
+  // Auto-scroll each thread column to its own bottom when new content lands.
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [threads, activeThreadId, typingPersonas]);
+    for (const el of Object.values(columnScrollRefs.current)) {
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }, [threads, typingPersonas]);
+
+  // When a new thread spawns, horizontally scroll the strip to reveal it.
+  useEffect(() => {
+    if (threadStripRef.current) {
+      threadStripRef.current.scrollTo({ left: threadStripRef.current.scrollWidth, behavior: 'smooth' });
+    }
+  }, [threadOrder.length]);
 
   // Load saved assessment profiles from localStorage on mount so they can be
   // swapped into the simulation as authentic behavioural agents.
@@ -446,13 +458,6 @@ export default function RiskForumClient({ user }: Props) {
     const updated: Thread = { ...existing, messages: [...existing.messages, msg] };
     threadsRef.current = { ...threadsRef.current, [threadId]: updated };
     setThreads(prev => ({ ...prev, [threadId]: updated }));
-    // Mark unread if the user is not viewing this thread right now
-    setActiveThreadId(current => {
-      if (current !== threadId) {
-        setUnreadThreads(prev => ({ ...prev, [threadId]: (prev[threadId] || 0) + 1 }));
-      }
-      return current;
-    });
   }, []);
 
   const addPersona = useCallback((p: Persona) => {
@@ -553,9 +558,13 @@ export default function RiskForumClient({ user }: Props) {
       recordUsage(data.usage);
       const text = data.text?.trim();
       if (!text || text === '...' || text === '[No response]') {
-        return `[${persona.name} didn't respond]`;
+        return null;  // treat as silent rather than error
       }
-      return text;
+      // Model explicitly opted out of speaking this round — suppress the turn.
+      const lowered = text.toLowerCase();
+      if (lowered === '[silent]' || lowered === '(silent)' || lowered === 'silent') return null;
+      // Strip any leading [silent] marker if model prefaced it (rare but possible)
+      return text.replace(/^\s*\[silent\]\s*/i, '').trim() || null;
     } catch (err) {
       clearTimeout(timeout);
       console.error(`Risk Forum fetch error for ${persona.name}:`, err);
@@ -906,11 +915,16 @@ export default function RiskForumClient({ user }: Props) {
       // Drain facilitator injections between speakers so events land promptly.
       await processFacilitatorQueue();
 
+      // If the persona opted to stay silent, skip adding a turn — this is
+      // deliberate behaviour, not an error. In a real chat, not everyone
+      // speaks in every round. Silences are realistic.
+      if (text === null) continue;
+
       addMessageToThread(threadId, {
         id: `${persona.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         type: 'message',
         personaId: persona.id,
-        text: text ?? `[${persona.name} — no response]`,
+        text,
         time: getTime(),
         simClock: formatSimClockForMsg(),
       });
@@ -988,14 +1002,21 @@ export default function RiskForumClient({ user }: Props) {
         }
       }
 
-      // Main room round — a few speakers respond to the phase/curveball
+      // Main room round — a SUBSET of participants speaks, not all of them.
+      // Real crisis chats have silent observers and selective contributors.
+      // First phase pulls slightly more voices to set the tone; later phases
+      // use 2-3 speakers per round with rotation so over time everyone
+      // contributes, but no single round is a full-roster monologue fest.
       await waitIfPaused();
       await processFacilitatorQueue();
-      const mainCount = globalPhaseIdx === 0 ? 4 : 3;
+      const mainCount = globalPhaseIdx === 0 ? 3 + Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 2);
       await speakRoundInThread('main', phaseText, curveball, mainCount);
       messagesSinceOrchestrator += mainCount;
 
-      // Any active breakouts get a round too, using their own topic as the phase text
+      // Any active breakouts get their own short round. Breakouts are typically
+      // 2-4 people total, so 2 speakers per round with variance is right —
+      // it creates genuine back-and-forth without both participants always
+      // speaking every cycle.
       const activeBreakouts = Object.values(threadsRef.current)
         .filter(t => t.kind === 'breakout' && t.status === 'active');
       for (const bt of activeBreakouts) {
@@ -1003,8 +1024,9 @@ export default function RiskForumClient({ user }: Props) {
         await waitIfPaused();
         await processFacilitatorQueue();
         const breakoutPhaseText = `You are in a sidebar${bt.topic ? ` on "${bt.topic}"` : ''} away from the main war room. The broader situation is still developing — keep focused on your sub-topic. Continue the sidebar conversation, work towards a conclusion or recommendation.`;
-        await speakRoundInThread(bt.id, breakoutPhaseText, null, 3);
-        messagesSinceOrchestrator += 3;
+        const breakoutCount = 1 + Math.floor(Math.random() * 2);
+        await speakRoundInThread(bt.id, breakoutPhaseText, null, breakoutCount);
+        messagesSinceOrchestrator += breakoutCount;
       }
 
       // Orchestrator check — consult the supervisor after a handful of messages
@@ -1447,133 +1469,146 @@ export default function RiskForumClient({ user }: Props) {
         ))}
       </div>
 
-      {/* Threads layout: left-rail navigator + active thread pane (+ facilitator right panel when open) */}
+      {/* Threads layout: horizontal column strip (main + each breakout side-by-side) + facilitator right panel when open */}
       <div
-        className="flex-1 min-h-0 grid"
-        style={{ gridTemplateColumns: showFacilitator ? '240px 1fr 320px' : '240px 1fr' }}
+        className="flex-1 min-h-0 grid relative"
+        style={{ gridTemplateColumns: showFacilitator ? '1fr 320px' : '1fr' }}
       >
 
-        {/* Left rail: thread list */}
-        <div className="border-r overflow-y-auto" style={{ borderColor: '#0F0F0F', background: '#060606' }}>
-          <div className="px-4 pt-4 pb-2">
-            <div className="text-xs font-mono tracking-widest" style={{ color: '#333' }}>THREADS</div>
-          </div>
-          <div className="flex flex-col">
-            {threadOrder.map(tid => {
-              const t = threads[tid];
-              if (!t) return null;
-              const isActive = tid === activeThreadId;
-              const unread = unreadThreads[tid] || 0;
-              const statusColor = t.status === 'concluded' ? '#3E6850' : (t.kind === 'main' ? '#C84040' : '#E8A040');
-              return (
-                <button
-                  key={tid}
-                  onClick={() => setActiveThreadId(tid)}
-                  className="flex items-start gap-2 px-4 py-3 text-left transition-all border-l-2"
-                  style={{
-                    background: isActive ? '#0C0C0C' : 'transparent',
-                    borderLeftColor: isActive ? statusColor : 'transparent',
-                    borderBottom: '1px solid #0C0C0C',
-                  }}
-                >
-                  <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{
-                    background: statusColor,
-                    animation: t.status === 'active' ? 'rfPulse 1.2s ease-in-out infinite' : 'none',
-                  }} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold truncate" style={{ color: isActive ? '#E8E8E0' : '#999' }}>
-                        {t.name}
-                      </span>
-                      {unread > 0 && !isActive && (
-                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ background: '#C84040', color: '#FFF' }}>
-                          {unread}
-                        </span>
-                      )}
-                    </div>
-                    {t.kind === 'breakout' && t.topic && (
-                      <div className="text-[10px] italic mt-0.5 line-clamp-1" style={{ color: '#555', fontFamily: 'Georgia, serif' }}>
-                        {t.topic}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-1 mt-1">
-                      {t.participantIds.slice(0, 5).map(pid => {
-                        const p = allPersonas.find(a => a.id === pid);
-                        if (!p) return null;
-                        return (
-                          <div key={pid} className="w-4 h-4 rounded-full flex items-center justify-center font-mono font-bold flex-shrink-0" style={{
-                            fontSize: '7px', background: '#0A0A0A', border: `1px solid ${p.color}66`, color: p.color,
-                          }}>{p.initial}</div>
-                        );
-                      })}
-                      {t.participantIds.length > 5 && (
-                        <span className="text-[9px] font-mono" style={{ color: '#444' }}>+{t.participantIds.length - 5}</span>
-                      )}
-                    </div>
-                    {t.status === 'concluded' && (
-                      <div className="text-[9px] font-mono mt-1" style={{ color: '#3E6850' }}>✓ concluded</div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        {/* Main content: phase progress + horizontal scrolling column strip */}
+        <div className="flex flex-col min-h-0 relative">
 
-        {/* Active thread pane */}
-        <div className="flex flex-col min-h-0">
-          {/* Phase progress — only relevant for main thread */}
-          {activeThreadId === 'main' && (
-            <div className="flex gap-2 px-5 py-2 border-b flex-shrink-0" style={{ borderColor: '#0F0F0F' }}>
-              {(activeScenario?.basePhases ?? []).map((ph, i) => (
-                <div
-                  key={i}
-                  className="flex-1 px-2 py-1.5 rounded text-xs"
-                  style={{
-                    background: i <= currentPhaseIdx ? '#0F0A0A' : '#080808',
-                    border: `1px solid ${i < currentPhaseIdx ? '#C8404044' : i === currentPhaseIdx ? '#C84040' : '#111'}`,
-                    color: i <= currentPhaseIdx ? '#C84040' : '#222',
-                  }}
-                >
-                  <div className="font-bold font-mono mb-0.5" style={{ fontSize: '9px' }}>{ph.label}</div>
-                  <div style={{ fontSize: '9px', color: i <= currentPhaseIdx ? '#664040' : '#1A1A1A' }}>
-                    {ph.text.split('—')[0].substring(0, 30)}
-                  </div>
+          {/* Phase progress row — always visible for main-room context */}
+          <div className="flex gap-2 px-5 py-2 border-b flex-shrink-0" style={{ borderColor: '#0F0F0F' }}>
+            {(activeScenario?.basePhases ?? []).map((ph, i) => (
+              <div
+                key={i}
+                className="flex-1 px-2 py-1.5 rounded text-xs"
+                style={{
+                  background: i <= currentPhaseIdx ? '#0F0A0A' : '#080808',
+                  border: `1px solid ${i < currentPhaseIdx ? '#C8404044' : i === currentPhaseIdx ? '#C84040' : '#111'}`,
+                  color: i <= currentPhaseIdx ? '#C84040' : '#222',
+                }}
+              >
+                <div className="font-bold font-mono mb-0.5" style={{ fontSize: '9px' }}>{ph.label}</div>
+                <div style={{ fontSize: '9px', color: i <= currentPhaseIdx ? '#664040' : '#1A1A1A' }}>
+                  {ph.text.split('—')[0].substring(0, 30)}
                 </div>
-              ))}
-            </div>
-          )}
-
-          {/* Breakout context bar */}
-          {activeThreadId !== 'main' && threads[activeThreadId] && (
-            <div className="px-5 py-3 border-b flex items-center gap-3 flex-shrink-0" style={{ borderColor: '#0F0F0F', background: '#0A0A0A' }}>
-              <span className="text-xs font-mono tracking-widest" style={{ color: '#E8A040' }}>⊕ BREAKOUT</span>
-              {threads[activeThreadId].topic && (
-                <span className="text-xs" style={{ color: '#C8B090', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>
-                  {threads[activeThreadId].topic}
-                </span>
-              )}
-              <span className="ml-auto text-xs font-mono" style={{ color: '#444' }}>
-                spawned T+{threads[activeThreadId].spawnedAtSimMin}m
-              </span>
-              {threads[activeThreadId].status === 'concluded' && (
-                <span className="text-xs font-mono" style={{ color: '#6EC860' }}>✓ concluded</span>
-              )}
-            </div>
-          )}
-
-          {/* Messages for active thread */}
-          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-5 py-4 flex flex-col gap-3">
-            {(threads[activeThreadId]?.messages ?? []).map(msg => (
-              <SimMessageRow key={msg.id} msg={msg} personas={allPersonas} />
-            ))}
-            {typingPersonas.filter(t => t.threadId === activeThreadId).length > 0 && (
-              <TypingIndicators personas={typingPersonas.filter(t => t.threadId === activeThreadId).map(t => t.persona)} />
-            )}
-            {debriefLoading && (
-              <div className="text-center py-6 text-xs font-mono tracking-widest" style={{ color: '#2E2E2E' }}>
-                SIMULATION COMPLETE · GENERATING REPORT
               </div>
+            ))}
+          </div>
+
+          {/* Horizontal thread column strip.
+              Main room always first; every breakout (active or concluded) appears
+              as its own vertical column to the right. User scrolls horizontally to
+              see more; arrow buttons appear when overflow exists. */}
+          <div className="relative flex-1 min-h-0">
+            <div
+              ref={threadStripRef}
+              className="absolute inset-0 flex overflow-x-auto overflow-y-hidden"
+              style={{ scrollBehavior: 'smooth', scrollSnapType: 'x proximity' }}
+            >
+              {threadOrder.map(tid => {
+                const t = threads[tid];
+                if (!t) return null;
+                const isMain = t.kind === 'main';
+                const isConcluded = t.status === 'concluded';
+                const accent = isMain ? '#C84040' : isConcluded ? '#3E6850' : '#E8A040';
+
+                return (
+                  <div
+                    key={tid}
+                    className="flex flex-col flex-shrink-0 border-r"
+                    style={{
+                      width: 460,
+                      borderColor: '#0E0E0E',
+                      background: isConcluded ? '#050807' : '#070707',
+                      scrollSnapAlign: 'start',
+                      opacity: isConcluded ? 0.78 : 1,
+                    }}
+                  >
+                    {/* Column header */}
+                    <div className="px-4 py-3 border-b flex-shrink-0" style={{ borderColor: '#0F0F0F', background: isMain ? '#0A0707' : '#0A0907' }}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{
+                          background: accent,
+                          animation: t.status === 'active' ? 'rfPulse 1.2s ease-in-out infinite' : 'none',
+                        }} />
+                        <span className="text-xs font-bold truncate" style={{ color: '#E8E8E0' }}>{t.name}</span>
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded flex-shrink-0" style={{
+                          background: isMain ? '#1A0808' : '#0F0A08',
+                          color: accent,
+                          border: `1px solid ${accent}66`,
+                        }}>
+                          {isMain ? 'MAIN' : isConcluded ? 'CONCLUDED' : 'BREAKOUT'}
+                        </span>
+                        {!isMain && (
+                          <span className="text-[9px] font-mono ml-auto flex-shrink-0" style={{ color: '#555' }}>
+                            T+{t.spawnedAtSimMin}m{isConcluded && t.concludedAtSimMin !== undefined ? ` → T+${t.concludedAtSimMin}m` : ''}
+                          </span>
+                        )}
+                      </div>
+                      {t.kind === 'breakout' && t.topic && (
+                        <div className="text-[11px] italic mb-1.5" style={{ color: '#C8B090', fontFamily: 'Georgia, serif' }}>
+                          {t.topic}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {t.participantIds.slice(0, 8).map(pid => {
+                          const p = allPersonas.find(a => a.id === pid);
+                          if (!p) return null;
+                          return (
+                            <div key={pid} className="w-5 h-5 rounded-full flex items-center justify-center font-mono font-bold flex-shrink-0"
+                              title={`${p.name} · ${p.role}`}
+                              style={{ fontSize: '8px', background: '#0A0A0A', border: `1px solid ${p.color}88`, color: p.color }}>
+                              {p.initial}
+                            </div>
+                          );
+                        })}
+                        {t.participantIds.length > 8 && (
+                          <span className="text-[9px] font-mono" style={{ color: '#555' }}>+{t.participantIds.length - 8}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Messages */}
+                    <div
+                      ref={el => { columnScrollRefs.current[tid] = el; }}
+                      className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-3"
+                    >
+                      {t.messages.map(msg => (
+                        <SimMessageRow key={msg.id} msg={msg} personas={allPersonas} />
+                      ))}
+                      {typingPersonas.filter(tp => tp.threadId === tid).length > 0 && (
+                        <TypingIndicators personas={typingPersonas.filter(tp => tp.threadId === tid).map(tp => tp.persona)} />
+                      )}
+                      {isMain && debriefLoading && (
+                        <div className="text-center py-6 text-xs font-mono tracking-widest" style={{ color: '#2E2E2E' }}>
+                          SIMULATION COMPLETE · GENERATING REPORT
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Horizontal nav arrows — shown when there are more threads than fit */}
+            {threadOrder.length > 2 && (
+              <>
+                <button
+                  onClick={() => threadStripRef.current?.scrollBy({ left: -480, behavior: 'smooth' })}
+                  className="absolute top-1/2 -translate-y-1/2 left-2 w-8 h-16 rounded flex items-center justify-center z-10 transition-all"
+                  style={{ background: '#0A0A0ADD', border: '1px solid #2A2A2A', color: '#C8C8C0' }}
+                  aria-label="Scroll threads left"
+                >◀</button>
+                <button
+                  onClick={() => threadStripRef.current?.scrollBy({ left: 480, behavior: 'smooth' })}
+                  className="absolute top-1/2 -translate-y-1/2 right-2 w-8 h-16 rounded flex items-center justify-center z-10 transition-all"
+                  style={{ background: '#0A0A0ADD', border: '1px solid #2A2A2A', color: '#C8C8C0' }}
+                  aria-label="Scroll threads right"
+                >▶</button>
+              </>
             )}
           </div>
         </div>
