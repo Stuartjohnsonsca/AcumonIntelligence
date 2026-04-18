@@ -135,6 +135,20 @@ export function DocumentTemplateEditor({
   const [dynTableSource, setDynTableSource] = useState<string>('');
   const [dynTableColumns, setDynTableColumns] = useState<string[]>([]);
   const [dynTableIncludeHeader, setDynTableIncludeHeader] = useState(true);
+  // Per-column header override (keyed by itemField.key). Empty string
+  // means "use the field's catalog label".
+  const [dynTableHeaders, setDynTableHeaders] = useState<Record<string, string>>({});
+  // Optional filter clause wrapped around each rendered row. `field`
+  // is an itemField key; `op` one of eq/ne/gt/lt/gte/lte/contains;
+  // `value` is compared to the item's value at that field.
+  const [dynTableFilter, setDynTableFilter] = useState<{ field: string; op: string; value: string }>({ field: '', op: 'gt', value: '' });
+  const [dynTableFilterEnabled, setDynTableFilterEnabled] = useState(false);
+  // Optional total row. `columnKey` points at the itemField to sum;
+  // `labelText` is what goes in the non-numeric cells of the total
+  // row (default "Total").
+  const [dynTableTotalEnabled, setDynTableTotalEnabled] = useState(false);
+  const [dynTableTotalColumn, setDynTableTotalColumn] = useState<string>('');
+  const [dynTableTotalLabel, setDynTableTotalLabel] = useState<string>('Total');
   // Cache the array-typed catalog entries so the picker doesn't
   // recompute on every keystroke.
   const arrayFields = useMemo(
@@ -301,7 +315,10 @@ export function DocumentTemplateEditor({
   }
   /** Build the Handlebars-wrapped <table> for the dynamic-table
    *  modal and insert it at the saved caret position. Expects at
-   *  least one column selected. */
+   *  least one column selected. Handles three optional extras:
+   *   • per-column custom header text
+   *   • a filter wrapping each row (only rows matching render)
+   *   • a trailing total row that sums a chosen numeric column. */
   function acceptDynamicTable() {
     if (!selectedArrayField || dynTableColumns.length === 0) return;
     // Produce a clean, minimally-styled table. The HTML-to-docx
@@ -309,34 +326,92 @@ export function DocumentTemplateEditor({
     // skeleton's default font/colour.
     const cellStyle = 'border:1px solid #94a3b8;padding:6px;vertical-align:top';
     const headStyle = 'border:1px solid #94a3b8;padding:6px;text-align:left;background:#f1f5f9';
+    const totalCellStyle = 'border:1px solid #94a3b8;padding:6px;font-weight:bold;background:#f8fafc';
     const itemFields = selectedArrayField.itemFields || [];
-    const headerCells = dynTableIncludeHeader
-      ? '<tr>' + dynTableColumns.map(colKey => {
-          const label = itemFields.find(f => f.key === colKey)?.label || colKey;
-          return `<th style="${headStyle}">${escapeHtml(label)}</th>`;
-        }).join('') + '</tr>'
+
+    function labelFor(colKey: string): string {
+      const override = (dynTableHeaders[colKey] || '').trim();
+      if (override) return override;
+      return itemFields.find(f => f.key === colKey)?.label || colKey;
+    }
+
+    // Header row — either a <thead><tr>…</tr></thead> or nothing.
+    const headerHtml = dynTableIncludeHeader
+      ? '<thead><tr>' + dynTableColumns.map(c => `<th style="${headStyle}">${escapeHtml(labelFor(c))}</th>`).join('') + '</tr></thead>'
       : '';
+
+    // Body cells — dates and currencies get auto-formatted.
     const bodyCells = dynTableColumns.map(colKey => {
-      // Currency/date item fields get wrapped in the appropriate
-      // formatter so the output looks right in Word without the
-      // admin having to remember. Dates default to a long format.
       const itemField = itemFields.find(f => f.key === colKey);
       const inner = itemField?.type === 'currency' ? `{{formatCurrency ${colKey}}}`
         : itemField?.type === 'date' ? `{{formatDate ${colKey} "dd MMMM yyyy"}}`
         : `{{${colKey}}}`;
       return `<td style="${cellStyle}">${inner}</td>`;
     }).join('');
+
+    // Optional per-row filter. Handlebars subexpression form (the
+    // helpers — eq/gt/lt/etc — were registered earlier in
+    // lib/template-handlebars.ts, so they work as subexpressions).
+    // String values get quoted; numeric values pass through bare.
+    const activeFilter = dynTableFilterEnabled && dynTableFilter.field && dynTableFilter.op ? dynTableFilter : null;
+    const filterClause = (() => {
+      if (!activeFilter) return null;
+      const raw = activeFilter.value;
+      const asNumber = Number(raw);
+      const valExpr = raw !== '' && Number.isFinite(asNumber) && /^-?\d+(\.\d+)?$/.test(raw.trim())
+        ? String(asNumber)
+        : `"${raw.replace(/"/g, '\\"')}"`;
+      return { open: `{{#if (${activeFilter.op} this.${activeFilter.field} ${valExpr})}}`, close: '{{/if}}' };
+    })();
+
+    const eachBody = filterClause
+      ? `{{#each ${selectedArrayField.key}}}${filterClause.open}<tr>${bodyCells}</tr>${filterClause.close}{{/each}}`
+      : `{{#each ${selectedArrayField.key}}}<tr>${bodyCells}</tr>{{/each}}`;
+
+    // Optional total row. Sums the chosen column across the array
+    // (filter-aware when a filter is active via sumFieldWhere).
+    let totalRow = '';
+    if (dynTableTotalEnabled && dynTableTotalColumn && dynTableColumns.includes(dynTableTotalColumn)) {
+      const totalItemField = itemFields.find(f => f.key === dynTableTotalColumn);
+      const sumExpr = activeFilter
+        ? (() => {
+            const raw = activeFilter.value;
+            const asNumber = Number(raw);
+            const valExpr = raw !== '' && Number.isFinite(asNumber) && /^-?\d+(\.\d+)?$/.test(raw.trim())
+              ? String(asNumber)
+              : `"${raw.replace(/"/g, '\\"')}"`;
+            return `(sumFieldWhere ${selectedArrayField.key} "${dynTableTotalColumn}" "${activeFilter.field}" "${activeFilter.op}" ${valExpr})`;
+          })()
+        : `(sumField ${selectedArrayField.key} "${dynTableTotalColumn}")`;
+      const totalInner = totalItemField?.type === 'currency' ? `{{formatCurrency ${sumExpr}}}` : `{{formatNumber ${sumExpr}}}`;
+      const cells = dynTableColumns.map((colKey, i) => {
+        if (colKey === dynTableTotalColumn) return `<td style="${totalCellStyle};text-align:right">${totalInner}</td>`;
+        // First non-total column carries the label; others are blank.
+        const isFirstNonTotal = i === dynTableColumns.findIndex(c => c !== dynTableTotalColumn);
+        return `<td style="${totalCellStyle}">${isFirstNonTotal ? escapeHtml(dynTableTotalLabel || 'Total') : ''}</td>`;
+      }).join('');
+      totalRow = `<tr>${cells}</tr>`;
+    }
+
     const tableHtml = `<table style="border-collapse:collapse;width:100%;margin:8px 0">`
-      + (headerCells ? `<thead>${headerCells}</thead>` : '')
-      + `<tbody>{{#each ${selectedArrayField.key}}}<tr>${bodyCells}</tr>{{/each}}</tbody>`
+      + headerHtml
+      + `<tbody>${eachBody}${totalRow}</tbody>`
       + `</table><p></p>`;
+
     restoreSelection();
     insertRawHtml(tableHtml);
     savedRangeRef.current = null;
+    // Reset modal state for next time.
     setDynTableOpen(false);
     setDynTableSource('');
     setDynTableColumns([]);
     setDynTableIncludeHeader(true);
+    setDynTableHeaders({});
+    setDynTableFilter({ field: '', op: 'gt', value: '' });
+    setDynTableFilterEnabled(false);
+    setDynTableTotalEnabled(false);
+    setDynTableTotalColumn('');
+    setDynTableTotalLabel('Total');
   }
 
   function acceptSuggestion(snippet: string) {
@@ -600,28 +675,139 @@ export function DocumentTemplateEditor({
                     {(selectedArrayField.itemFields || []).map(itf => {
                       const checked = dynTableColumns.includes(itf.key);
                       const order = checked ? dynTableColumns.indexOf(itf.key) + 1 : 0;
+                      const customLabel = dynTableHeaders[itf.key] || '';
                       return (
-                        <label key={itf.key} className="flex items-center gap-2 text-[11px] cursor-pointer hover:bg-slate-50 px-1 py-0.5 rounded">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={e => {
-                              if (e.target.checked) setDynTableColumns(cols => [...cols, itf.key]);
-                              else setDynTableColumns(cols => cols.filter(c => c !== itf.key));
-                            }}
-                          />
-                          {checked && <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-teal-600 text-white text-[9px] font-bold">{order}</span>}
-                          <span className="font-medium text-slate-700">{itf.label}</span>
-                          <code className="text-[10px] text-slate-400">{itf.key}</code>
-                          <span className="text-[10px] text-slate-400 italic ml-auto">{itf.type}</span>
-                        </label>
+                        <div key={itf.key} className="hover:bg-slate-50 px-1 py-0.5 rounded">
+                          <label className="flex items-center gap-2 text-[11px] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={e => {
+                                if (e.target.checked) setDynTableColumns(cols => [...cols, itf.key]);
+                                else {
+                                  setDynTableColumns(cols => cols.filter(c => c !== itf.key));
+                                  // If this column was the totals column, clear that too.
+                                  if (dynTableTotalColumn === itf.key) setDynTableTotalColumn('');
+                                }
+                              }}
+                            />
+                            {checked && <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-teal-600 text-white text-[9px] font-bold">{order}</span>}
+                            <span className="font-medium text-slate-700">{itf.label}</span>
+                            <code className="text-[10px] text-slate-400">{itf.key}</code>
+                            <span className="text-[10px] text-slate-400 italic ml-auto">{itf.type}</span>
+                          </label>
+                          {checked && dynTableIncludeHeader && (
+                            <div className="mt-0.5 ml-6 flex items-center gap-1">
+                              <span className="text-[9px] text-slate-400">Column header:</span>
+                              <input
+                                type="text"
+                                value={customLabel}
+                                placeholder={itf.label}
+                                onChange={e => setDynTableHeaders(h => ({ ...h, [itf.key]: e.target.value }))}
+                                className="flex-1 text-[11px] border border-slate-200 rounded px-1.5 py-0.5"
+                              />
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
                   <label className="flex items-center gap-2 text-[11px] mt-2 cursor-pointer">
                     <input type="checkbox" checked={dynTableIncludeHeader} onChange={e => setDynTableIncludeHeader(e.target.checked)} />
-                    Include header row (uses the field labels)
+                    Include header row
                   </label>
+                </div>
+              )}
+
+              {/* Filter — only shown once columns are chosen so the
+                  field picker has itemFields to offer. */}
+              {selectedArrayField && dynTableColumns.length > 0 && (
+                <div>
+                  <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-600 mb-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dynTableFilterEnabled}
+                      onChange={e => setDynTableFilterEnabled(e.target.checked)}
+                    />
+                    Only include rows where&hellip;
+                  </label>
+                  {dynTableFilterEnabled && (
+                    <div className="grid grid-cols-[1fr_100px_1fr] gap-1 ml-6">
+                      <select
+                        value={dynTableFilter.field}
+                        onChange={e => setDynTableFilter(f => ({ ...f, field: e.target.value }))}
+                        className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                      >
+                        <option value="">— field —</option>
+                        {(selectedArrayField.itemFields || []).map(itf => (
+                          <option key={itf.key} value={itf.key}>{itf.label} ({itf.type})</option>
+                        ))}
+                      </select>
+                      <select
+                        value={dynTableFilter.op}
+                        onChange={e => setDynTableFilter(f => ({ ...f, op: e.target.value }))}
+                        className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                      >
+                        <option value="eq">equals</option>
+                        <option value="ne">does not equal</option>
+                        <option value="gt">greater than</option>
+                        <option value="lt">less than</option>
+                        <option value="gte">≥</option>
+                        <option value="lte">≤</option>
+                        <option value="contains">contains</option>
+                      </select>
+                      <input
+                        type="text"
+                        value={dynTableFilter.value}
+                        onChange={e => setDynTableFilter(f => ({ ...f, value: e.target.value }))}
+                        placeholder="value"
+                        className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Total row — restricted to currency / numeric columns. */}
+              {selectedArrayField && dynTableColumns.length > 0 && (
+                <div>
+                  <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-600 mb-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dynTableTotalEnabled}
+                      onChange={e => { setDynTableTotalEnabled(e.target.checked); if (!e.target.checked) setDynTableTotalColumn(''); }}
+                    />
+                    Append a total row
+                  </label>
+                  {dynTableTotalEnabled && (
+                    <div className="grid grid-cols-[1fr_1fr] gap-1 ml-6">
+                      <div>
+                        <span className="text-[10px] text-slate-500 block mb-0.5">Column to sum</span>
+                        <select
+                          value={dynTableTotalColumn}
+                          onChange={e => setDynTableTotalColumn(e.target.value)}
+                          className="w-full text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                        >
+                          <option value="">— pick a column —</option>
+                          {dynTableColumns
+                            .map(c => selectedArrayField.itemFields?.find(f => f.key === c))
+                            .filter((f): f is NonNullable<typeof f> => !!f)
+                            .filter(f => f.type === 'currency' || f.type === 'scalar')
+                            .map(f => <option key={f.key} value={f.key}>{(dynTableHeaders[f.key] || '').trim() || f.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 block mb-0.5">Total row label</span>
+                        <input
+                          type="text"
+                          value={dynTableTotalLabel}
+                          onChange={e => setDynTableTotalLabel(e.target.value)}
+                          placeholder="Total"
+                          className="w-full text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {selectedArrayField && dynTableColumns.length > 0 && (
@@ -631,11 +817,15 @@ export function DocumentTemplateEditor({
                     <table className="w-full text-[10px] border-collapse">
                       {dynTableIncludeHeader && (
                         <thead><tr>
-                          {dynTableColumns.map(c => (
-                            <th key={c} className="border border-slate-300 px-1.5 py-1 bg-slate-100 text-left">
-                              {selectedArrayField.itemFields?.find(f => f.key === c)?.label || c}
-                            </th>
-                          ))}
+                          {dynTableColumns.map(c => {
+                            const custom = (dynTableHeaders[c] || '').trim();
+                            const fallback = selectedArrayField.itemFields?.find(f => f.key === c)?.label || c;
+                            return (
+                              <th key={c} className="border border-slate-300 px-1.5 py-1 bg-slate-100 text-left">
+                                {custom || fallback}
+                              </th>
+                            );
+                          })}
                         </tr></thead>
                       )}
                       <tbody>
@@ -644,7 +834,25 @@ export function DocumentTemplateEditor({
                             <td key={c} className="border border-slate-300 px-1.5 py-1 font-mono text-teal-700">{`{{${c}}}`}</td>
                           ))}
                         </tr>
-                        <tr><td colSpan={dynTableColumns.length} className="text-center text-[9px] text-slate-400 italic py-1">… row repeats for every item in {selectedArrayField.key}</td></tr>
+                        <tr>
+                          <td colSpan={dynTableColumns.length} className="text-center text-[9px] text-slate-400 italic py-1">
+                            … row repeats for every item in {selectedArrayField.key}
+                            {dynTableFilterEnabled && dynTableFilter.field && dynTableFilter.op && dynTableFilter.value !== '' && (
+                              <> — only when <code className="text-[9px] text-amber-700">{dynTableFilter.field} {dynTableFilter.op} {JSON.stringify(dynTableFilter.value)}</code></>
+                            )}
+                          </td>
+                        </tr>
+                        {dynTableTotalEnabled && dynTableTotalColumn && dynTableColumns.includes(dynTableTotalColumn) && (
+                          <tr>
+                            {dynTableColumns.map((c, i) => {
+                              if (c === dynTableTotalColumn) {
+                                return <td key={c} className="border border-slate-300 px-1.5 py-1 font-bold bg-slate-50 text-right font-mono text-teal-700">∑ {c}</td>;
+                              }
+                              const isFirstNonTotal = i === dynTableColumns.findIndex(col => col !== dynTableTotalColumn);
+                              return <td key={c} className="border border-slate-300 px-1.5 py-1 font-bold bg-slate-50">{isFirstNonTotal ? (dynTableTotalLabel || 'Total') : ''}</td>;
+                            })}
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -829,7 +1037,15 @@ export function DocumentTemplateEditor({
 function ToolbarBtn({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
-      type="button" title={title} onClick={onClick}
+      type="button"
+      title={title}
+      // Stop the <button> stealing focus from the contentEditable
+      // before execCommand runs. Without this preventDefault, the
+      // editor's selection collapses when the button takes focus,
+      // so insertUnorderedList / insertOrderedList / bold / italic
+      // all silently no-op on the most recently-clicked button.
+      onMouseDown={e => e.preventDefault()}
+      onClick={onClick}
       className="inline-flex items-center justify-center w-7 h-7 rounded hover:bg-slate-200 text-slate-600"
     >{children}</button>
   );

@@ -108,6 +108,63 @@ hb.registerHelper('formatPercent', (value: any, decimals?: any) => {
   return `${num.toFixed(d)}%`;
 });
 
+// ─── Aggregation helpers ───────────────────────────────────────────────────
+/**
+ * {{sumField arr "fieldName"}} → numeric sum of that field across
+ * every item in the array. Non-numeric values are treated as 0.
+ * Returns 0 when the array is missing or empty so it's safe inside
+ * {{formatCurrency}} etc.
+ */
+hb.registerHelper('sumField', (arr: any, fieldName: any) => {
+  if (!Array.isArray(arr)) return 0;
+  const field = String(fieldName);
+  let total = 0;
+  for (const item of arr) {
+    if (item && typeof item === 'object') {
+      const v = Number(item[field]);
+      if (Number.isFinite(v)) total += v;
+    }
+  }
+  return Math.round(total * 100) / 100;
+});
+
+/**
+ * {{sumFieldWhere arr "sumField" "filterField" "op" "value"}}
+ * Filter-then-sum in one call — used when a dynamic-table's total
+ * row should respect the same filter that drove the visible rows.
+ * `op` is one of 'eq' | 'ne' | 'gt' | 'lt' | 'gte' | 'lte' | 'contains'.
+ */
+hb.registerHelper('sumFieldWhere', (arr: any, sumField: any, filterField: any, op: any, filterValue: any) => {
+  if (!Array.isArray(arr)) return 0;
+  const sumKey = String(sumField);
+  const filtKey = String(filterField);
+  const operator = String(op);
+  const target = filterValue;
+  function passes(itemVal: any): boolean {
+    switch (operator) {
+      case 'eq': return itemVal == target;
+      case 'ne': return itemVal != target;
+      case 'gt': return Number(itemVal) > Number(target);
+      case 'lt': return Number(itemVal) < Number(target);
+      case 'gte': return Number(itemVal) >= Number(target);
+      case 'lte': return Number(itemVal) <= Number(target);
+      case 'contains': return String(itemVal ?? '').toLowerCase().includes(String(target ?? '').toLowerCase());
+      default: return true;
+    }
+  }
+  let total = 0;
+  for (const item of arr) {
+    if (item && typeof item === 'object' && passes(item[filtKey])) {
+      const v = Number(item[sumKey]);
+      if (Number.isFinite(v)) total += v;
+    }
+  }
+  return Math.round(total * 100) / 100;
+});
+
+/** {{countItems arr}} → length of the array (0 if not an array). */
+hb.registerHelper('countItems', (arr: any) => Array.isArray(arr) ? arr.length : 0);
+
 // ─── String helpers ────────────────────────────────────────────────────────
 hb.registerHelper('upper', (v: any) => String(v ?? '').toUpperCase());
 hb.registerHelper('lower', (v: any) => String(v ?? '').toLowerCase());
@@ -304,6 +361,7 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
     'formatDate','formatCurrency','formatNumber','formatPercent',
     'upper','lower','titleCase','default',
     'errorScheduleTable','testConclusionsTable',
+    'sumField','sumFieldWhere','countItems',
     'else',
   ]);
   let m: RegExpExecArray | null;
