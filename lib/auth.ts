@@ -180,32 +180,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
 
         const email = profile.email as string;
-        // Entra is the authoritative identity provider for this user.
-        // Its `oid` / `sub` is stable across tokens and doesn't change
-        // when the user renames / rewrites their email, so we match on
-        // that first. Only if we've never seen the oid before do we
-        // fall back to email — and that lookup is case-insensitive
-        // because Microsoft normalises `profile.email` to lowercase
-        // while some of our legacy rows were created with mixed case
-        // (which previously caused us to double-create ghost accounts
-        // whenever an admin pre-registered a user by email and then
-        // Entra signed them in with a different casing).
-        const entraObjId: string | null = (account as any)?.providerAccountId
-          || (profile as any)?.sub
-          || (profile as any)?.oid
-          || null;
-        // Let TypeScript infer from the first Prisma call so the
-        // `firm` relation is on the inferred type. We always include
-        // `firm` so the shape is identical whichever branch hits.
-        let dbUser = entraObjId
-          ? await prisma.user.findUnique({ where: { entraObjectId: entraObjId }, include: { firm: true } })
-          : null;
-        if (!dbUser) {
-          dbUser = await prisma.user.findFirst({
-            where: { email: { equals: email, mode: 'insensitive' } },
-            include: { firm: true },
-          });
-        }
+        let dbUser = await prisma.user.findUnique({
+          where: { email },
+          include: { firm: true },
+        });
 
         // Auto-create user if they exist in Azure AD but not yet in our DB
         // (Super Admin can pre-register them, or we create a pending account)
@@ -234,15 +212,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return token;
         }
 
-        // Store Azure AD object ID if not already set. `entraObjId`
-        // is the one we resolved at the top of this block; no need
-        // to redo the extraction. Non-critical write — don't fail
-        // login if the update errors.
+        // Store Azure AD object ID if not already set
+        const entraObjId = (account as any)?.providerAccountId || (profile as any)?.sub || (profile as any)?.oid;
         if (entraObjId && !dbUser.entraObjectId) {
           await prisma.user.update({
             where: { id: dbUser.id },
             data: { entraObjectId: entraObjId },
-          }).catch(() => {});
+          }).catch(() => {}); // Non-critical — don't fail login
         }
 
         token.id = dbUser.id;
