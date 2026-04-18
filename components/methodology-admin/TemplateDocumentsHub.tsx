@@ -16,7 +16,7 @@ const options = [
   },
   {
     title: 'Template Documents',
-    description: 'Upload and manage document templates that can be populated from system data',
+    description: 'Upload firm-branded Word skeletons (header / footer / page setup) and build a library of body templates with merge placeholders and Handlebars conditionals that render into them per engagement.',
     href: '/methodology-admin/template-documents/documents',
     icon: FileText,
     color: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300',

@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
-import { DocumentManagerClient } from '@/components/methodology-admin/DocumentManagerClient';
+import { DocumentTemplateManagerClient } from '@/components/methodology-admin/DocumentTemplateManagerClient';
 
-export default async function DocumentManagerPage() {
+export default async function DocumentTemplateManagerPage() {
   const session = await auth();
   if (!session?.user || !session.user.twoFactorVerified) {
     redirect('/login?callbackUrl=/methodology-admin/template-documents/documents');
@@ -11,13 +11,9 @@ export default async function DocumentManagerPage() {
     redirect('/access-denied');
   }
 
-  // Documents will be loaded from API — start empty for now
-  // Future: fetch from prisma.uploadedDocument.findMany(...)
-  const initialDocuments: any[] = [];
-
   return (
     <div className="container mx-auto px-4 py-10 max-w-7xl">
-      <DocumentManagerClient initialDocuments={initialDocuments} />
+      <DocumentTemplateManagerClient />
     </div>
   );
 }

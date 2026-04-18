@@ -80,6 +80,7 @@ model Firm {
   resourceClientSettings    ResourceClientSetting[]
   resourceOptimizerSettings ResourceOptimizerSettings?
   documentTemplates         DocumentTemplate[]
+  firmDocumentSkeletons     FirmDocumentSkeleton[]
   actionDefinitions         ActionDefinition[]
 
   @@map("firms")
@@ -2485,11 +2486,60 @@ model DocumentTemplate {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  firm Firm @relation(fields: [firmId], references: [id])
+  // Document templates (as opposed to email templates) — a document
+  // template is a body of Handlebars-enabled HTML that renders into a
+  // Word skeleton (header/footer) at generation time. `kind` flips
+  // the UI between the two modes; `skeletonId` picks which firm
+  // skeleton to stitch the body into.
+  kind          String  @default("email") // email | document
+  skeletonId    String? @map("skeleton_id")
+  // Optional hand-picked sample context for admin preview — lets an
+  // admin freeze a preview against a known dataset rather than always
+  // running against live engagement data.
+  sampleContext Json?   @map("sample_context")
+
+  firm     Firm                  @relation(fields: [firmId], references: [id])
+  skeleton FirmDocumentSkeleton? @relation(fields: [skeletonId], references: [id], onDelete: SetNull)
 
   @@index([firmId])
   @@index([category])
+  @@index([kind])
+  @@index([skeletonId])
   @@map("document_templates")
+}
+
+/// Firm-branded Word document skeleton. Uploaded once per firm (per
+/// audit type if desired) and reused by many DocumentTemplates. The
+/// uploaded .docx must contain the raw-XML marker `{@body}` in its
+/// body flow — the render pipeline injects the rendered template
+/// content at that point while preserving the skeleton's header,
+/// footer, page setup, fonts, and any fixed preamble/closing text.
+model FirmDocumentSkeleton {
+  id               String   @id @default(uuid())
+  firmId           String   @map("firm_id")
+  name             String // e.g. "Johnsons LLP letterhead"
+  description      String?
+  auditType        String   @default("ALL") @map("audit_type") // ALL | SME | PIE | SME_CONTROLS | PIE_CONTROLS
+  storagePath      String   @map("storage_path")
+  containerName    String   @default("firm-skeletons") @map("container_name")
+  originalFileName String   @map("original_file_name")
+  mimeType         String?  @map("mime_type")
+  fileSize         Int?     @map("file_size")
+  // One default skeleton per firm per audit type — picked automatically
+  // when a document template doesn't specify a skeleton explicitly.
+  isDefault        Boolean  @default(false) @map("is_default")
+  isActive         Boolean  @default(true) @map("is_active")
+  uploadedById     String?  @map("uploaded_by_id")
+  uploadedByName   String?  @map("uploaded_by_name")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  firm      Firm               @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  templates DocumentTemplate[]
+
+  @@index([firmId])
+  @@index([firmId, auditType, isDefault])
+  @@map("firm_document_skeletons")
 }
 
 // One lock record per firm — tracks who holds the resource planning edit session

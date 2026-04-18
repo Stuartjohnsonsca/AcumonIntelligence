@@ -29,7 +29,7 @@ export async function PUT(
 
   const { id } = await params;
   const body = await req.json();
-  const { name, description, category, auditType, subject, content, mergeFields, recipients, isActive } = body;
+  const { name, description, category, auditType, subject, content, mergeFields, recipients, isActive, kind, skeletonId, sampleContext } = body;
 
   const existing = await prisma.documentTemplate.findFirst({
     where: { id, firmId: session.user.firmId },
@@ -48,6 +48,9 @@ export async function PUT(
       ...(mergeFields !== undefined && { mergeFields }),
       ...(recipients !== undefined && { recipients }),
       ...(isActive !== undefined && { isActive }),
+      ...(kind !== undefined && { kind: kind === 'document' ? 'document' : 'email' }),
+      ...(skeletonId !== undefined && { skeletonId: skeletonId || null }),
+      ...(sampleContext !== undefined && { sampleContext }),
     },
   });
 
