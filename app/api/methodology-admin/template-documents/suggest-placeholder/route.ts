@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { MERGE_FIELDS } from '@/lib/template-merge-fields';
+import { prisma } from '@/lib/db';
 
 /**
  * AI placeholder-lookup for the document-template editor.
@@ -39,19 +40,105 @@ export async function POST(req: NextRequest) {
   const surroundingContext = typeof body?.context === 'string' ? body.context.trim().slice(0, 600) : '';
   if (!description) return NextResponse.json({ error: 'description is required' }, { status: 400 });
 
+  // ── Static catalog ─────────────────────────────────────────────────
   // Render the catalog as a compact "menu" so the AI can pick from it.
   // Arrays expose their itemFields so the model knows what to put
   // inside a `{{#each}}` block.
-  const menu = MERGE_FIELDS.map(f => {
+  const staticMenu = MERGE_FIELDS.map(f => {
     const itemFields = Array.isArray(f.itemFields) && f.itemFields.length > 0
       ? ` [loop fields: ${f.itemFields.map(i => i.key).join(', ')}]`
       : '';
     return `- ${f.key} (${f.type}${f.group ? ', group=' + f.group : ''})${itemFields}${f.description ? ' — ' + f.description : ''}`;
   }).join('\n');
 
+  // ── Dynamic questionnaire questions ────────────────────────────────
+  // Every question the firm has defined in their Permanent File,
+  // Ethics, Continuance, or Materiality questionnaires is addressable
+  // as `questionnaires.<type>.<question.key>`. These keys vary per
+  // firm and aren't in the static catalog, so we load them live on
+  // each request and surface them to the AI as additional menu items.
+  // This is what the admin means when they say "it needs to be data
+  // in the system" — the suggester now sees their actual questions.
+  type QuestionnaireMenuEntry = {
+    path: string;
+    label: string;            // the question text
+    group: string;            // e.g. "Materiality Questionnaire · Justification"
+    type: 'scalar' | 'date' | 'currency';
+    description?: string;
+  };
+  const dynamicEntries: QuestionnaireMenuEntry[] = [];
+  const typeMap: Record<string, { key: string; label: string }> = {
+    permanent_file_questions: { key: 'permanentFile', label: 'Permanent File' },
+    ethics_questions:         { key: 'ethics',        label: 'Ethics' },
+    continuance_questions:    { key: 'continuance',   label: 'Continuance' },
+    materiality_questions:    { key: 'materiality',   label: 'Materiality Questionnaire' },
+  };
+  try {
+    const schemas = await prisma.methodologyTemplate.findMany({
+      where: {
+        firmId: session.user.firmId,
+        templateType: { in: Object.keys(typeMap) },
+      },
+    });
+    for (const schema of schemas) {
+      const meta = typeMap[schema.templateType];
+      if (!meta) continue;
+      const items = Array.isArray(schema.items) ? schema.items as any[] : [];
+      for (const item of items) {
+        // Newer questionnaire schemas nest questions inside groups:
+        // items = [{ id, title, questions: [{ id, key?, text, answerType }] }]
+        // Older schemas store questions flat. Handle both shapes.
+        const questions: any[] = Array.isArray(item?.questions) ? item.questions : [item];
+        const groupTitle: string = item?.title || '';
+        for (const q of questions) {
+          if (!q) continue;
+          // Prefer an explicit `key`; fall back to slugified text for
+          // legacy schemas that only stored question text.
+          let key: string = q.key || q.questionKey || '';
+          if (!key && typeof q.text === 'string') {
+            key = q.text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+          }
+          if (!key) continue;
+          const questionText: string = q.text || q.questionText || q.label || key;
+          // Map answerType → scalar/date/currency so the AI can pick
+          // the right formatter helper (formatDate for dates, etc.).
+          const answerType: string = q.answerType || '';
+          const kind: 'scalar' | 'date' | 'currency' =
+            /date/i.test(answerType) ? 'date'
+            : /currency|amount|money/i.test(answerType) ? 'currency'
+            : 'scalar';
+          dynamicEntries.push({
+            path: `questionnaires.${meta.key}.${key}`,
+            label: questionText,
+            group: `${meta.label}${groupTitle ? ' · ' + groupTitle : ''}`,
+            type: kind,
+            description: answerType ? `answer type: ${answerType}` : undefined,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    // Tolerant: if the schemas table is unavailable or malformed we
+    // still answer with the static catalog — worse suggestions, not
+    // a hard failure.
+    console.error('[suggest-placeholder] failed loading questionnaire schemas', err);
+  }
+
+  const dynamicMenu = dynamicEntries.length === 0
+    ? '  (no firm-specific questionnaire questions found)'
+    : dynamicEntries.map(e => `- ${e.path} (${e.type}, group=${e.group})${e.description ? ' — ' + e.description : ''} — QUESTION: "${e.label.replace(/"/g, '\\"').slice(0, 200)}"`).join('\n');
+
+  const menu = `Static catalog (fixed paths):\n${staticMenu}\n\nFirm-specific questionnaire questions (match on QUESTION text — these are LIVE questions in this firm's questionnaire schemas, always prefer one of these when the admin describes a specific question):\n${dynamicMenu}`;
+
   const systemPrompt = `You are a merge-field matcher for a UK audit platform's document template editor. The admin types a natural-language description of what they want to appear in the template. Your job is to pick the best Handlebars placeholder snippet from the catalog below (or say NO_MATCH if the catalog doesn't cover it).
 
-Catalog (dotted path, type, description):
+The catalog has TWO parts:
+  1. A STATIC catalog of known paths that always exist (engagement metadata, TB figures, error schedule, etc.).
+  2. A DYNAMIC list of the firm's actual questionnaire questions — these have a QUESTION text to match the admin's description against. PREFER a dynamic entry when the admin describes a specific question (e.g. "key judgements in setting materiality" should match a question labelled along those lines).
+
+When matching a questionnaire question, use semantic similarity on the QUESTION text, not just keyword overlap.
+
+Catalog:
 ${menu}
 
 Formatter helpers you can wrap scalars in:
