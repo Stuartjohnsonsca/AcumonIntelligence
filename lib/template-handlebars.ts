@@ -76,6 +76,52 @@ hb.registerHelper('formatDate', (value: any, pattern?: any) => {
     .replace(/\bd\b/g, String(day));
 });
 
+// ─── Date arithmetic ───────────────────────────────────────────────────────
+/**
+ * {{dateAdd value amount "unit"}}
+ *
+ * Returns an ISO-yyyy-mm-dd string offset from `value` by `amount`
+ * units. Positive `amount` moves forward, negative moves back.
+ * `unit` is one of: years | months | weeks | days. Defaults to days.
+ *
+ * Designed to compose with {{formatDate}} as a subexpression, e.g.
+ *   {{formatDate (dateAdd period.periodStart -1 "years") "dd/MM/yy"}}
+ *
+ * Returns '' on a falsy value, mirroring formatDate's behaviour.
+ */
+function parseDate(value: any): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function toIso(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+hb.registerHelper('dateAdd', (value: any, amount: any, unit?: any) => {
+  const d = parseDate(value);
+  if (!d) return '';
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return toIso(d);
+  const u = typeof unit === 'string' ? unit.toLowerCase() : 'days';
+  if (u === 'years' || u === 'year' || u === 'y') d.setFullYear(d.getFullYear() + n);
+  else if (u === 'months' || u === 'month' || u === 'mo') d.setMonth(d.getMonth() + n);
+  else if (u === 'weeks' || u === 'week' || u === 'w') d.setDate(d.getDate() + n * 7);
+  else d.setDate(d.getDate() + n);
+  return toIso(d);
+});
+
+/** Sugar for the common cases. `addYears x 1` reads more naturally
+ *  than `dateAdd x 1 "years"` in templates. */
+hb.registerHelper('addYears',      (v: any, n: any) => { const d = parseDate(v); if (!d) return ''; d.setFullYear(d.getFullYear() + (Number(n) || 0)); return toIso(d); });
+hb.registerHelper('subtractYears', (v: any, n: any) => { const d = parseDate(v); if (!d) return ''; d.setFullYear(d.getFullYear() - (Number(n) || 0)); return toIso(d); });
+hb.registerHelper('addMonths',     (v: any, n: any) => { const d = parseDate(v); if (!d) return ''; d.setMonth(d.getMonth() + (Number(n) || 0)); return toIso(d); });
+hb.registerHelper('subtractMonths',(v: any, n: any) => { const d = parseDate(v); if (!d) return ''; d.setMonth(d.getMonth() - (Number(n) || 0)); return toIso(d); });
+hb.registerHelper('addDays',       (v: any, n: any) => { const d = parseDate(v); if (!d) return ''; d.setDate(d.getDate() + (Number(n) || 0)); return toIso(d); });
+hb.registerHelper('subtractDays',  (v: any, n: any) => { const d = parseDate(v); if (!d) return ''; d.setDate(d.getDate() - (Number(n) || 0)); return toIso(d); });
+
 // ─── Currency formatting ───────────────────────────────────────────────────
 /**
  * {{formatCurrency value "GBP"}}
@@ -378,6 +424,7 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
     'eq','ne','gt','lt','gte','lte','and','or','not',
     'isEmpty','length','join',
     'formatDate','formatCurrency','formatNumber','formatPercent',
+    'dateAdd','addYears','subtractYears','addMonths','subtractMonths','addDays','subtractDays',
     'upper','lower','titleCase','default',
     'errorScheduleTable','testConclusionsTable',
     'sumField','sumFieldWhere','countItems',
