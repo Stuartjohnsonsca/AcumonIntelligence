@@ -8,7 +8,7 @@ import {
   List, ListOrdered, Table, FileDown, Minus,
   SquareDashedBottom, Repeat, Variable, Sparkles, X, Check,
 } from 'lucide-react';
-import { mergeFieldsByGroup, type MergeField } from '@/lib/template-merge-fields';
+import { mergeFieldsByGroup, MERGE_FIELDS, type MergeField } from '@/lib/template-merge-fields';
 import type { Skeleton } from './FirmSkeletonManager';
 
 /**
@@ -124,6 +124,24 @@ export function DocumentTemplateEditor({
   // eventual Insert would happen at the default caret position
   // (start of document) rather than where the admin was typing.
   const savedRangeRef = useRef<Range | null>(null);
+  // Dynamic-table modal state. The admin picks an array source (any
+  // `type: 'array'` field in the catalog), ticks which of the array's
+  // itemFields should become columns, and the modal generates a
+  // Handlebars-wrapped <table> whose {{#each}} body loops over the
+  // array. Row count at render time matches the array length — a
+  // perfect fit for questionnaire Q&A, error schedules, test
+  // conclusions, engagement team, TB rows, etc.
+  const [dynTableOpen, setDynTableOpen] = useState(false);
+  const [dynTableSource, setDynTableSource] = useState<string>('');
+  const [dynTableColumns, setDynTableColumns] = useState<string[]>([]);
+  const [dynTableIncludeHeader, setDynTableIncludeHeader] = useState(true);
+  // Cache the array-typed catalog entries so the picker doesn't
+  // recompute on every keystroke.
+  const arrayFields = useMemo(
+    () => MERGE_FIELDS.filter(f => f.type === 'array' && Array.isArray(f.itemFields) && f.itemFields.length > 0),
+    [],
+  );
+  const selectedArrayField = arrayFields.find(f => f.key === dynTableSource) || null;
 
   /** Capture the current editor selection so we can restore it later
    *  (e.g. after the user returns from the suggester modal). Returns
@@ -281,6 +299,46 @@ export function DocumentTemplateEditor({
       setSuggestLoading(false);
     }
   }
+  /** Build the Handlebars-wrapped <table> for the dynamic-table
+   *  modal and insert it at the saved caret position. Expects at
+   *  least one column selected. */
+  function acceptDynamicTable() {
+    if (!selectedArrayField || dynTableColumns.length === 0) return;
+    // Produce a clean, minimally-styled table. The HTML-to-docx
+    // converter preserves borders/alignment and Word inherits the
+    // skeleton's default font/colour.
+    const cellStyle = 'border:1px solid #94a3b8;padding:6px;vertical-align:top';
+    const headStyle = 'border:1px solid #94a3b8;padding:6px;text-align:left;background:#f1f5f9';
+    const itemFields = selectedArrayField.itemFields || [];
+    const headerCells = dynTableIncludeHeader
+      ? '<tr>' + dynTableColumns.map(colKey => {
+          const label = itemFields.find(f => f.key === colKey)?.label || colKey;
+          return `<th style="${headStyle}">${escapeHtml(label)}</th>`;
+        }).join('') + '</tr>'
+      : '';
+    const bodyCells = dynTableColumns.map(colKey => {
+      // Currency/date item fields get wrapped in the appropriate
+      // formatter so the output looks right in Word without the
+      // admin having to remember. Dates default to a long format.
+      const itemField = itemFields.find(f => f.key === colKey);
+      const inner = itemField?.type === 'currency' ? `{{formatCurrency ${colKey}}}`
+        : itemField?.type === 'date' ? `{{formatDate ${colKey} "dd MMMM yyyy"}}`
+        : `{{${colKey}}}`;
+      return `<td style="${cellStyle}">${inner}</td>`;
+    }).join('');
+    const tableHtml = `<table style="border-collapse:collapse;width:100%;margin:8px 0">`
+      + (headerCells ? `<thead>${headerCells}</thead>` : '')
+      + `<tbody>{{#each ${selectedArrayField.key}}}<tr>${bodyCells}</tr>{{/each}}</tbody>`
+      + `</table><p></p>`;
+    restoreSelection();
+    insertRawHtml(tableHtml);
+    savedRangeRef.current = null;
+    setDynTableOpen(false);
+    setDynTableSource('');
+    setDynTableColumns([]);
+    setDynTableIncludeHeader(true);
+  }
+
   function acceptSuggestion(snippet: string) {
     // Put the caret back where it was when the admin opened the
     // modal, THEN insert. Without this, execCommand('insertHTML')
@@ -295,6 +353,12 @@ export function DocumentTemplateEditor({
     setSuggestError(null);
   }
 
+  /** XML/HTML-safe escape for user-supplied label text that's being
+   *  injected into raw HTML strings (e.g. table header cells). */
+  function escapeHtml(s: string): string {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   // ── Paste handler — strips Word / pasted HTML to plain text ──────────────
   function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
     e.preventDefault();
@@ -302,8 +366,7 @@ export function DocumentTemplateEditor({
     if (!text) return;
     // Preserve double-newlines as paragraph breaks, single newlines
     // as soft breaks — matches how most letter drafts are structured.
-    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const paragraphs = text.split(/\n{2,}/).map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+    const paragraphs = text.split(/\n{2,}/).map(p => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('');
     insertRawHtml(paragraphs);
   }
 
@@ -467,6 +530,14 @@ export function DocumentTemplateEditor({
         <button onClick={insertErrorTable} title="Insert error-schedule table helper" className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-slate-100 border border-slate-200 text-slate-700 rounded hover:bg-slate-200">
           <Variable className="h-3 w-3" /> error table
         </button>
+        <button
+          onMouseDown={e => { e.preventDefault(); captureSelection(); }}
+          onClick={() => { setDynTableOpen(true); setDynTableSource(''); setDynTableColumns([]); setDynTableIncludeHeader(true); }}
+          title="Insert a table whose rows loop over a questionnaire or other array source"
+          className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-teal-50 border border-teal-200 text-teal-700 rounded hover:bg-teal-100"
+        >
+          <Table className="h-3 w-3" /> dynamic table
+        </button>
 
         <ToolbarDiv />
 
@@ -485,6 +556,112 @@ export function DocumentTemplateEditor({
           <Sparkles className="h-3 w-3" /> Ask AI for a placeholder
         </button>
       </div>
+
+      {/* ── Dynamic-table modal ─────────────────────────────────────────── */}
+      {dynTableOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
+          onClick={() => setDynTableOpen(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[85vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b flex items-start justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Table className="h-4 w-4 text-teal-600" /> Insert dynamic table</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">Pick an array source (e.g. a questionnaire&rsquo;s Q&amp;A, the error schedule). The table grows to match the array&rsquo;s length at render time.</p>
+              </div>
+              <button onClick={() => setDynTableOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 block mb-1">Source (array)</label>
+                <select
+                  value={dynTableSource}
+                  onChange={e => { setDynTableSource(e.target.value); setDynTableColumns([]); }}
+                  className="w-full border border-slate-200 rounded px-2 py-1.5 text-[12px]"
+                >
+                  <option value="">— pick an array —</option>
+                  {arrayFields.map(f => (
+                    <option key={f.key} value={f.key}>{f.label} &nbsp;—&nbsp; {f.key}</option>
+                  ))}
+                </select>
+                {selectedArrayField?.description && (
+                  <p className="text-[10px] text-slate-500 mt-1">{selectedArrayField.description}</p>
+                )}
+              </div>
+              {selectedArrayField && (
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">Columns (tick in the order you want them)</label>
+                  <div className="space-y-1">
+                    {(selectedArrayField.itemFields || []).map(itf => {
+                      const checked = dynTableColumns.includes(itf.key);
+                      const order = checked ? dynTableColumns.indexOf(itf.key) + 1 : 0;
+                      return (
+                        <label key={itf.key} className="flex items-center gap-2 text-[11px] cursor-pointer hover:bg-slate-50 px-1 py-0.5 rounded">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={e => {
+                              if (e.target.checked) setDynTableColumns(cols => [...cols, itf.key]);
+                              else setDynTableColumns(cols => cols.filter(c => c !== itf.key));
+                            }}
+                          />
+                          {checked && <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-teal-600 text-white text-[9px] font-bold">{order}</span>}
+                          <span className="font-medium text-slate-700">{itf.label}</span>
+                          <code className="text-[10px] text-slate-400">{itf.key}</code>
+                          <span className="text-[10px] text-slate-400 italic ml-auto">{itf.type}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <label className="flex items-center gap-2 text-[11px] mt-2 cursor-pointer">
+                    <input type="checkbox" checked={dynTableIncludeHeader} onChange={e => setDynTableIncludeHeader(e.target.checked)} />
+                    Include header row (uses the field labels)
+                  </label>
+                </div>
+              )}
+              {selectedArrayField && dynTableColumns.length > 0 && (
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">Preview structure</label>
+                  <div className="border rounded bg-slate-50 p-2 overflow-x-auto">
+                    <table className="w-full text-[10px] border-collapse">
+                      {dynTableIncludeHeader && (
+                        <thead><tr>
+                          {dynTableColumns.map(c => (
+                            <th key={c} className="border border-slate-300 px-1.5 py-1 bg-slate-100 text-left">
+                              {selectedArrayField.itemFields?.find(f => f.key === c)?.label || c}
+                            </th>
+                          ))}
+                        </tr></thead>
+                      )}
+                      <tbody>
+                        <tr>
+                          {dynTableColumns.map(c => (
+                            <td key={c} className="border border-slate-300 px-1.5 py-1 font-mono text-teal-700">{`{{${c}}}`}</td>
+                          ))}
+                        </tr>
+                        <tr><td colSpan={dynTableColumns.length} className="text-center text-[9px] text-slate-400 italic py-1">… row repeats for every item in {selectedArrayField.key}</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="px-4 py-2 border-t flex justify-end gap-2">
+              <button onClick={() => setDynTableOpen(false)} className="text-[11px] px-3 py-1 text-slate-600 hover:text-slate-800">Cancel</button>
+              <button
+                onClick={acceptDynamicTable}
+                disabled={!selectedArrayField || dynTableColumns.length === 0}
+                className="inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-teal-600 text-white rounded disabled:opacity-50"
+              ><Check className="h-3 w-3" /> Insert table at cursor</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── AI placeholder-suggester modal ─────────────────────────────── */}
       {suggestOpen && (

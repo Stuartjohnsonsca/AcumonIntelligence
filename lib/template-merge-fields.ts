@@ -167,6 +167,53 @@ export const MERGE_FIELDS: MergeField[] = [
     description: 'Drill in by question key.',
     sampleValue: { benchmark_rationale: 'PBT is the most appropriate given continuing profitable trading.' } },
 
+  // ─── Questionnaires as arrays (for dynamic tables) ──────────────────────
+  // Each questionnaire also exposes an `asList` array keyed to the
+  // firm's questionnaire schema. Use with {{#each}} to render the
+  // whole Q&A as a table whose row count matches the number of
+  // answered questions.
+  { group: 'Questionnaires', key: 'questionnaires.permanentFile.asList', label: 'Permanent File Q&A (array)', type: 'array',
+    description: 'Use with {{#each}} to render every answered permanent-file question.',
+    sampleValue: [
+      { question: 'What are the entity\u2019s principal activities?', key: 'entity_activities', answer: 'Professional services.', section: 'Understanding the Entity', sortOrder: 1 },
+    ], itemFields: [
+      { key: 'question', label: 'Question text', type: 'scalar', sampleValue: 'What are the entity\u2019s principal activities?' },
+      { key: 'answer', label: 'Answer', type: 'scalar', sampleValue: 'Professional services.' },
+      { key: 'section', label: 'Section', type: 'scalar', sampleValue: 'Understanding the Entity' },
+      { key: 'key', label: 'Question key', type: 'scalar', sampleValue: 'entity_activities' },
+    ]},
+  { group: 'Questionnaires', key: 'questionnaires.ethics.asList', label: 'Ethics Q&A (array)', type: 'array',
+    description: 'Use with {{#each}} to render every answered ethics question.',
+    sampleValue: [
+      { question: 'Is independence confirmed?', key: 'independence_confirmed', answer: 'Yes', section: 'Independence', sortOrder: 1 },
+    ], itemFields: [
+      { key: 'question', label: 'Question text', type: 'scalar', sampleValue: 'Is independence confirmed?' },
+      { key: 'answer', label: 'Answer', type: 'scalar', sampleValue: 'Yes' },
+      { key: 'section', label: 'Section', type: 'scalar', sampleValue: 'Independence' },
+      { key: 'key', label: 'Question key', type: 'scalar', sampleValue: 'independence_confirmed' },
+    ]},
+  { group: 'Questionnaires', key: 'questionnaires.continuance.asList', label: 'Continuance Q&A (array)', type: 'array',
+    description: 'Use with {{#each}} to render every answered continuance question.',
+    sampleValue: [
+      { question: 'What is the date of the engagement letter?', key: 'engagement_letter_date', answer: '2025-01-01', section: 'Continuity', sortOrder: 8 },
+      { question: 'What type of entity is this?', key: 'entity_type', answer: 'Limited Company', section: 'Entity Details', sortOrder: 1 },
+    ], itemFields: [
+      { key: 'question', label: 'Question text', type: 'scalar', sampleValue: 'What type of entity is this?' },
+      { key: 'answer', label: 'Answer', type: 'scalar', sampleValue: 'Limited Company' },
+      { key: 'section', label: 'Section', type: 'scalar', sampleValue: 'Entity Details' },
+      { key: 'key', label: 'Question key', type: 'scalar', sampleValue: 'entity_type' },
+    ]},
+  { group: 'Questionnaires', key: 'questionnaires.materiality.asList', label: 'Materiality questionnaire Q&A (array)', type: 'array',
+    description: 'Use with {{#each}} to render every answered materiality question.',
+    sampleValue: [
+      { question: 'What benchmark is most appropriate and why?', key: 'benchmark_rationale', answer: 'PBT — continuing profitable trading.', section: 'Benchmark', sortOrder: 1 },
+    ], itemFields: [
+      { key: 'question', label: 'Question text', type: 'scalar', sampleValue: 'What benchmark is most appropriate and why?' },
+      { key: 'answer', label: 'Answer', type: 'scalar', sampleValue: 'PBT \u2014 continuing profitable trading.' },
+      { key: 'section', label: 'Section', type: 'scalar', sampleValue: 'Benchmark' },
+      { key: 'key', label: 'Question key', type: 'scalar', sampleValue: 'benchmark_rationale' },
+    ]},
+
   // ─── TB ──────────────────────────────────────────────────────────────────
   { group: 'Trial Balance', key: 'tb.revenue', label: 'Revenue (CY)', type: 'currency', sampleValue: 2500000 },
   { group: 'Trial Balance', key: 'tb.costOfSales', label: 'Cost of sales (CY)', type: 'currency', sampleValue: 1625000 },

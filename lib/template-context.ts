@@ -260,11 +260,18 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
    * Enrich a raw UUID-keyed answer map with human-readable keys from
    * the corresponding questionnaire schema. Preserves the original
    * UUID keys so older templates still work.
+   *
+   * Also emits an `asList` array — one entry per answered question —
+   * so templates can render a whole questionnaire as a dynamic
+   * table via `{{#each questionnaires.<type>.asList}}`. Each entry
+   * has `{ question, key, answer, section, sortOrder }` so the
+   * template can choose which fields become columns.
    */
   function enrichQuestionnaire(raw: Record<string, any>, schemaTemplateType: string): Record<string, any> {
     const schema = schemaByType.get(schemaTemplateType) || [];
     const out: Record<string, any> = { ...raw };
     const bySection: Record<string, Record<string, any>> = {};
+    const asList: Array<{ question: string; key: string; answer: any; section: string | null; sortOrder: number }> = [];
     for (const item of schema) {
       if (!item?.id || !item?.key) continue;
       const value = raw[item.id];
@@ -278,8 +285,17 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
         if (!bySection[sec]) bySection[sec] = {};
         bySection[sec][item.key] = value;
       }
+      asList.push({
+        question: String(item.questionText ?? item.label ?? item.key),
+        key: String(item.key),
+        answer: value,
+        section: item.sectionKey ? String(item.sectionKey) : null,
+        sortOrder: Number(item.sortOrder) || 0,
+      });
     }
+    asList.sort((a, b) => (a.sortOrder - b.sortOrder) || a.question.localeCompare(b.question));
     if (Object.keys(bySection).length > 0) out.bySection = bySection;
+    out.asList = asList;
     return out;
   }
 
