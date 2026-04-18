@@ -52,13 +52,15 @@ export async function POST(req: NextRequest) {
   }).join('\n');
 
   // ── Dynamic questionnaire questions ────────────────────────────────
-  // Every question the firm has defined in their Permanent File,
-  // Ethics, Continuance, or Materiality questionnaires is addressable
-  // as `questionnaires.<type>.<question.key>`. These keys vary per
-  // firm and aren't in the static catalog, so we load them live on
-  // each request and surface them to the AI as additional menu items.
-  // This is what the admin means when they say "it needs to be data
-  // in the system" — the suggester now sees their actual questions.
+  // Every question the firm has defined in ANY of its questionnaire
+  // schemas is addressable as `questionnaires.<type>.<question.key>`.
+  // The catalog of types is open-ended — firms can add new ones
+  // (audit summary memo, new client take-on, subsequent events, etc.)
+  // so we discover them dynamically: any MethodologyTemplate row with
+  // `templateType` ending in `_questions` is treated as a
+  // questionnaire schema. This is what the admin means when they say
+  // "don't limit to 4" — the suggester now surfaces every question
+  // the firm has defined, not just the hardcoded core four.
   type QuestionnaireMenuEntry = {
     path: string;
     label: string;            // the question text
@@ -67,22 +69,42 @@ export async function POST(req: NextRequest) {
     description?: string;
   };
   const dynamicEntries: QuestionnaireMenuEntry[] = [];
-  const typeMap: Record<string, { key: string; label: string }> = {
-    permanent_file_questions: { key: 'permanentFile', label: 'Permanent File' },
-    ethics_questions:         { key: 'ethics',        label: 'Ethics' },
-    continuance_questions:    { key: 'continuance',   label: 'Continuance' },
-    materiality_questions:    { key: 'materiality',   label: 'Materiality Questionnaire' },
-  };
+
+  /** Convert a `*_questions` templateType to the key used in the
+   *  template context (`questionnaires.<key>`). The four canonical
+   *  ones have well-known camelCase forms; everything else is
+   *  derived by stripping `_questions` and camelCasing the rest. */
+  function contextKeyFor(templateType: string): string {
+    const canonical: Record<string, string> = {
+      permanent_file_questions:   'permanentFile',
+      ethics_questions:           'ethics',
+      continuance_questions:      'continuance',
+      materiality_questions:      'materiality',
+      new_client_takeon_questions:'newClientTakeOn',
+      subsequent_events_questions:'subsequentEvents',
+      audit_summary_memo_questions:'auditSummaryMemo',
+    };
+    if (canonical[templateType]) return canonical[templateType];
+    const stem = templateType.replace(/_questions$/, '');
+    // snake_case → camelCase
+    return stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+  }
+  /** Best-effort human label for the group header. */
+  function labelFor(templateType: string): string {
+    const stem = templateType.replace(/_questions$/, '').replace(/_/g, ' ');
+    return stem.replace(/\b\w/g, c => c.toUpperCase()) + ' Questionnaire';
+  }
+
   try {
     const schemas = await prisma.methodologyTemplate.findMany({
       where: {
         firmId: session.user.firmId,
-        templateType: { in: Object.keys(typeMap) },
+        templateType: { endsWith: '_questions' },
       },
     });
     for (const schema of schemas) {
-      const meta = typeMap[schema.templateType];
-      if (!meta) continue;
+      const ctxKey = contextKeyFor(schema.templateType);
+      const typeLabel = labelFor(schema.templateType);
       const items = Array.isArray(schema.items) ? schema.items as any[] : [];
       for (const item of items) {
         // Newer questionnaire schemas nest questions inside groups:
@@ -108,9 +130,9 @@ export async function POST(req: NextRequest) {
             : /currency|amount|money/i.test(answerType) ? 'currency'
             : 'scalar';
           dynamicEntries.push({
-            path: `questionnaires.${meta.key}.${key}`,
+            path: `questionnaires.${ctxKey}.${key}`,
             label: questionText,
-            group: `${meta.label}${groupTitle ? ' · ' + groupTitle : ''}`,
+            group: `${typeLabel}${groupTitle ? ' · ' + groupTitle : ''}`,
             type: kind,
             description: answerType ? `answer type: ${answerType}` : undefined,
           });

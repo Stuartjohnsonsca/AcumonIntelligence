@@ -80,10 +80,17 @@ export interface TemplateContext {
     areasOfFocus: Array<{ fsLine: string; reason: string }>;
   };
   questionnaires: {
+    // Core four are always present (even if empty) so legacy
+    // templates keep resolving `questionnaires.ethics.x` paths.
     permanentFile: Record<string, any>;
     ethics: Record<string, any>;
     continuance: Record<string, any>;
     materiality: Record<string, any>;
+    // Any additional `*_questions` schemas the firm has defined are
+    // exposed under their camelCase type key (e.g. newClientTakeOn,
+    // subsequentEvents, auditSummaryMemo). The schema catalog is
+    // open-ended, hence the index signature.
+    [extraType: string]: Record<string, any>;
   };
   tb: {
     rows: Array<{
@@ -221,25 +228,23 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
   //   {{formatDate questionnaires.continuance.engagement_letter_date "dd MMMM yyyy"}}
   //   {{formatDate questionnaires.continuance.bySection.continuity.engagement_letter_date "dd MMMM yyyy"}}
   //   {{formatDate questionnaires.continuance.<uuid> "dd MMMM yyyy"}}  ← still works
-  async function loadQ(table: 'auditPermanentFile' | 'auditEthics' | 'auditContinuance' | 'auditMateriality'): Promise<Record<string, any>> {
+  async function loadQ(table: string): Promise<Record<string, any>> {
     try {
-      const row = await (prisma as any)[table].findUnique({ where: { engagementId } });
+      const model = (prisma as any)[table];
+      if (!model || typeof model.findUnique !== 'function') return {};
+      const row = await model.findUnique({ where: { engagementId } });
       return (row?.data && typeof row.data === 'object') ? row.data as Record<string, any> : {};
     } catch { return {}; }
   }
-  const [pfRaw, ethicsRaw, continuanceRaw, matRaw] = await Promise.all([
-    loadQ('auditPermanentFile'), loadQ('auditEthics'),
-    loadQ('auditContinuance'), loadQ('auditMateriality'),
-  ]);
 
-  // Load the firm's questionnaire schemas (one MethodologyTemplate
-  // row per type). `templateType` naming convention in the DB is
-  // `<name>_questions` (permanent_file_questions, ethics_questions,
-  // continuance_questions, materiality_questions).
+  // Load the firm's questionnaire schemas dynamically — any
+  // MethodologyTemplate row whose `templateType` ends in `_questions`
+  // is a questionnaire. Firms can add new ones (new client take-on,
+  // subsequent events, audit summary memo, etc.) without code changes.
   const qSchemas = await prisma.methodologyTemplate.findMany({
     where: {
       firmId: engagement.firm.id,
-      templateType: { in: ['permanent_file_questions', 'ethics_questions', 'continuance_questions', 'materiality_questions'] },
+      templateType: { endsWith: '_questions' },
     },
   });
   const schemaByType = new Map<string, any[]>();
@@ -247,6 +252,45 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     const items = Array.isArray(s.items) ? s.items as any[] : [];
     schemaByType.set(s.templateType, items);
   }
+
+  /** Map a `*_questions` templateType to both its Prisma model name
+   *  (to load answers) and the camelCase key used in the context
+   *  (`questionnaires.<key>`). Known canonical mappings take priority;
+   *  anything else is derived by stripping `_questions` and
+   *  camelCasing. Missing Prisma tables are tolerated — the schema
+   *  (questions + keys) is still surfaced even if there are no
+   *  stored answers yet. */
+  function prismaAndCtxKeysFor(templateType: string): { prismaModel: string; ctxKey: string } {
+    const canonical: Record<string, { prismaModel: string; ctxKey: string }> = {
+      permanent_file_questions:    { prismaModel: 'auditPermanentFile',    ctxKey: 'permanentFile' },
+      ethics_questions:            { prismaModel: 'auditEthics',           ctxKey: 'ethics' },
+      continuance_questions:       { prismaModel: 'auditContinuance',      ctxKey: 'continuance' },
+      materiality_questions:       { prismaModel: 'auditMateriality',      ctxKey: 'materiality' },
+      new_client_takeon_questions: { prismaModel: 'auditNewClientTakeOn',  ctxKey: 'newClientTakeOn' },
+      subsequent_events_questions: { prismaModel: 'auditSubsequentEvents', ctxKey: 'subsequentEvents' },
+    };
+    if (canonical[templateType]) return canonical[templateType];
+    const stem = templateType.replace(/_questions$/, '');
+    const ctxKey = stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+    const prismaModel = 'audit' + ctxKey.charAt(0).toUpperCase() + ctxKey.slice(1);
+    return { prismaModel, ctxKey };
+  }
+
+  // Load answers for every discovered questionnaire type in parallel.
+  // Types without a matching Prisma table return {} (tolerant).
+  const questionnaireTypes = Array.from(schemaByType.keys());
+  const loadedAnswers = await Promise.all(questionnaireTypes.map(async (tt) => {
+    const { prismaModel, ctxKey } = prismaAndCtxKeysFor(tt);
+    const raw = await loadQ(prismaModel);
+    return { templateType: tt, ctxKey, raw };
+  }));
+  // Always ensure the core 4 keys exist on the context object (even
+  // if the firm hasn't defined their schema) so older templates keep
+  // resolving `questionnaires.ethics.x` style paths safely.
+  const coreKeys = ['permanentFile', 'ethics', 'continuance', 'materiality'];
+  const answersByCtxKey = new Map<string, Record<string, any>>();
+  for (const { ctxKey, raw } of loadedAnswers) answersByCtxKey.set(ctxKey, raw);
+  for (const core of coreKeys) if (!answersByCtxKey.has(core)) answersByCtxKey.set(core, {});
 
   /**
    * Slug a free-text section name into something Handlebars-safe
@@ -340,10 +384,27 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     return out;
   }
 
-  const pfData = enrichQuestionnaire(pfRaw, 'permanent_file_questions');
-  const ethicsData = enrichQuestionnaire(ethicsRaw, 'ethics_questions');
-  const continuanceData = enrichQuestionnaire(continuanceRaw, 'continuance_questions');
-  const matData = enrichQuestionnaire(matRaw, 'materiality_questions');
+  // Enrich every loaded questionnaire using its own schema. The
+  // `questionnaires` object ends up with one key per discovered type
+  // (core four always present; additional types exposed by camelCase
+  // name). Also keeps back-compat shortcuts for pfData / ethicsData /
+  // continuanceData / matData, used by `engagement.framework` below.
+  const questionnairesOut: Record<string, Record<string, any>> = {};
+  for (const core of coreKeys) questionnairesOut[core] = {}; // ensure present
+  // Look up templateType by ctxKey so we can pass the right schema.
+  const ttByCtxKey = new Map<string, string>();
+  for (const tt of questionnaireTypes) {
+    const { ctxKey } = prismaAndCtxKeysFor(tt);
+    ttByCtxKey.set(ctxKey, tt);
+  }
+  for (const [ctxKey, raw] of answersByCtxKey.entries()) {
+    const tt = ttByCtxKey.get(ctxKey) || '';
+    questionnairesOut[ctxKey] = enrichQuestionnaire(raw, tt);
+  }
+  const pfData = questionnairesOut.permanentFile;
+  const ethicsData = questionnairesOut.ethics;
+  const continuanceData = questionnairesOut.continuance;
+  const matData = questionnairesOut.materiality;
 
   // Trial balance — rows + some precomputed totals so the admin can
   // address {{tb.revenue}} etc. without a dedicated helper. We pull
@@ -407,12 +468,12 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     errorScheduleTotals,
     testConclusions,
     auditPlan: { significantRisks, areasOfFocus },
-    questionnaires: {
-      permanentFile: pfData,
-      ethics: ethicsData,
-      continuance: continuanceData,
-      materiality: matData,
-    },
+    // Spread every discovered questionnaire under its camelCase key.
+    // Casting through `as any` because the index signature doesn't
+    // narrow well alongside the four named core properties in the
+    // TypeScript interface — at runtime it's just an object with
+    // one key per questionnaire type.
+    questionnaires: { ...questionnairesOut } as any,
     tb: {
       rows: tbRows.map(r => ({
         fsStatement: r.fsStatement,
