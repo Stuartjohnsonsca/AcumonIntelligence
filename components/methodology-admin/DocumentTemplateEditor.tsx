@@ -7,6 +7,8 @@ import {
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   List, ListOrdered, Table, FileDown, Minus,
   SquareDashedBottom, Repeat, Variable, Sparkles, X, Check,
+  ArrowUpToLine, ArrowDownToLine, ArrowLeftToLine, ArrowRightToLine,
+  Trash2,
 } from 'lucide-react';
 import { mergeFieldsByGroup, MERGE_FIELDS, type MergeField } from '@/lib/template-merge-fields';
 import type { Skeleton } from './FirmSkeletonManager';
@@ -315,6 +317,102 @@ export function DocumentTemplateEditor({
   function insertConditional() { insertRawHtml('{{#if condition}}<br>&nbsp;&nbsp;<br>{{else}}<br>&nbsp;&nbsp;<br>{{/if}}'); }
   function insertLoop() { insertRawHtml('{{#each errorSchedule}}<br>&nbsp;&nbsp;{{fsLine}} — {{formatCurrency amount}}: {{description}}<br>{{/each}}'); }
   function insertErrorTable() { insertRawHtml('{{{errorScheduleTable errorSchedule}}}'); }
+
+  // ── Static-table editing ─────────────────────────────────────────────────
+  /** Walk up from the current selection's anchor to find a particular
+   *  table-related ancestor. Returns null if the caret isn't inside
+   *  a table (or inside a different element altogether). Used by the
+   *  add/remove-row/column handlers so the toolbar buttons operate
+   *  on whatever the admin is currently clicked into. */
+  function findAncestor(tagName: string): HTMLElement | null {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    let node: Node | null = sel.getRangeAt(0).startContainer;
+    while (node && node !== editorRef.current) {
+      if (node.nodeType === 1 && (node as HTMLElement).tagName === tagName) return node as HTMLElement;
+      node = node.parentNode;
+    }
+    return null;
+  }
+  /** React doesn't manage the contentEditable's HTML — we mutate the
+   *  DOM directly, then bump dirtyTick so the React tree re-renders
+   *  any dependent UI (toolbar disabled states etc.). */
+  function touched() { setDirtyTick(t => t + 1); }
+
+  /** Build a fresh empty cell that matches the styling of existing
+   *  cells in the table (so added rows/columns don't look different). */
+  function makeEmptyCell(template?: HTMLTableCellElement): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.innerHTML = '&nbsp;';
+    if (template?.style.cssText) td.style.cssText = template.style.cssText;
+    else td.style.cssText = 'border:1px solid #94a3b8;padding:6px;min-width:60px';
+    return td;
+  }
+
+  function addRow(where: 'above' | 'below') {
+    const row = findAncestor('TR') as HTMLTableRowElement | null;
+    if (!row) { alert('Click inside a table row first.'); return; }
+    const table = row.closest('table');
+    if (!table) return;
+    const cols = row.cells.length;
+    const newRow = document.createElement('tr');
+    for (let i = 0; i < cols; i++) newRow.appendChild(makeEmptyCell(row.cells[i] as HTMLTableCellElement));
+    if (where === 'above') row.parentNode?.insertBefore(newRow, row);
+    else row.parentNode?.insertBefore(newRow, row.nextSibling);
+    touched();
+  }
+  function deleteRow() {
+    const row = findAncestor('TR') as HTMLTableRowElement | null;
+    if (!row) { alert('Click inside a table row first.'); return; }
+    const table = row.closest('table');
+    if (!table) return;
+    // Don't leave a table with zero body rows — remove the whole
+    // table instead so the admin doesn't end up with an empty shell.
+    if (table.querySelectorAll('tr').length <= 1) { table.remove(); touched(); return; }
+    row.remove();
+    touched();
+  }
+  function addColumn(where: 'left' | 'right') {
+    const cell = findAncestor('TD') as HTMLTableCellElement | null || findAncestor('TH') as HTMLTableCellElement | null;
+    if (!cell) { alert('Click inside a table cell first.'); return; }
+    const row = cell.parentElement as HTMLTableRowElement | null;
+    if (!row) return;
+    const table = row.closest('table');
+    if (!table) return;
+    const colIdx = cell.cellIndex;
+    // Every row in the table (including header) gets a cell inserted
+    // at the same column index so the grid stays rectangular.
+    for (const r of Array.from(table.querySelectorAll('tr'))) {
+      const target = (r as HTMLTableRowElement).cells[colIdx] as HTMLTableCellElement | undefined;
+      const newCell = makeEmptyCell(target);
+      if (where === 'left') r.insertBefore(newCell, target ?? null);
+      else r.insertBefore(newCell, target?.nextSibling ?? null);
+    }
+    touched();
+  }
+  function deleteColumn() {
+    const cell = findAncestor('TD') as HTMLTableCellElement | null || findAncestor('TH') as HTMLTableCellElement | null;
+    if (!cell) { alert('Click inside a table cell first.'); return; }
+    const row = cell.parentElement as HTMLTableRowElement | null;
+    if (!row) return;
+    const table = row.closest('table');
+    if (!table) return;
+    const colIdx = cell.cellIndex;
+    // If this is the only column, drop the whole table.
+    if ((row as HTMLTableRowElement).cells.length <= 1) { table.remove(); touched(); return; }
+    for (const r of Array.from(table.querySelectorAll('tr'))) {
+      const target = (r as HTMLTableRowElement).cells[colIdx] as HTMLTableCellElement | undefined;
+      target?.remove();
+    }
+    touched();
+  }
+  function deleteTable() {
+    const table = findAncestor('TABLE') as HTMLTableElement | null;
+    if (!table) { alert('Click inside a table first.'); return; }
+    if (!confirm('Delete this whole table?')) return;
+    table.remove();
+    touched();
+  }
 
   // ── AI placeholder suggester ──────────────────────────────────────────────
   /** Run the description through the server-side suggester and stash
@@ -651,6 +749,11 @@ export function DocumentTemplateEditor({
         <ToolbarDiv />
 
         <ToolbarBtn title="Insert table (3 × 3)" onClick={() => insertTable(3, 3)}><Table className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Add row above (cursor must be in a table)" onClick={() => addRow('above')}><ArrowUpToLine className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Add row below (cursor must be in a table)" onClick={() => addRow('below')}><ArrowDownToLine className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Add column left (cursor must be in a table cell)" onClick={() => addColumn('left')}><ArrowLeftToLine className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Add column right (cursor must be in a table cell)" onClick={() => addColumn('right')}><ArrowRightToLine className="h-3.5 w-3.5" /></ToolbarBtn>
+        <ToolbarBtn title="Delete current row" onClick={deleteRow}><Trash2 className="h-3.5 w-3.5 text-red-500" /></ToolbarBtn>
         <ToolbarBtn title="Insert horizontal rule" onClick={insertHorizontalRule}><Minus className="h-3.5 w-3.5" /></ToolbarBtn>
         <ToolbarBtn title="Insert page break" onClick={insertPageBreak}><FileDown className="h-3.5 w-3.5" /></ToolbarBtn>
 
