@@ -10,6 +10,16 @@ export default async function MyAccountPage() {
     redirect('/login?callbackUrl=/my-account');
   }
 
+  // Defensive guard. The NextAuth JWT callback's `msalPendingSetup`
+  // branch (hit when Entra returns an email we can't match to a
+  // user row) leaves `token.id` undefined while keeping
+  // `twoFactorVerified: true`. Without this check the `findUnique`
+  // below is called with `where: { id: undefined }` which Prisma
+  // throws on, turning a recoverable auth edge-case into an SSR 500.
+  if (!session.user.id) {
+    redirect('/login?callbackUrl=/my-account&error=no_user');
+  }
+
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
     include: { firm: true },
