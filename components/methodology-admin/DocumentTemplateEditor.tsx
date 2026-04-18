@@ -124,16 +124,43 @@ export function DocumentTemplateEditor({
   }, [template.id]);
 
   /** Read the current body from the contentEditable and normalise it
-   *  before persisting. Normalisation:
-   *   • Strip `&nbsp;` inside `{{...}}` — some browsers insert these
-   *     when the admin types braces after whitespace, breaking the
-   *     Handlebars parser.
-   *   • Trim trailing `<br>` that contentEditable loves to insert. */
+   *  before persisting. Core problem we're defending against: the
+   *  browser splits text across `<span>` runs when inline styling
+   *  changes (e.g. typing inside a coloured region), which mangles
+   *  `{{...}}` tokens so Handlebars can't parse them. We run the same
+   *  sanitiser the server uses to strip `<tag>` fragments and decode
+   *  HTML entities inside every `{{...}}` token. Also drops the
+   *  trailing `<br>` contentEditable loves to leave at the end. */
   function readBody(): string {
     const raw = editorRef.current?.innerHTML ?? '';
-    let html = raw.replace(/\{\{[^}]*\}\}/g, (m) => m.replace(/&nbsp;/g, ' '));
+    let html = sanitiseHandlebarsInEditorHtml(raw);
     html = html.replace(/(<br\s*\/?>\s*)+$/i, '');
     return html;
+  }
+
+  /** Rewrite the editor's innerHTML to the sanitised version. Called
+   *  on blur / before preview / before save so the admin sees any
+   *  recovered tokens re-render as clean text in their own edit view,
+   *  not just when the server renders. Preserves the caret position
+   *  approximately by re-setting it to the end of the content. */
+  function normaliseEditorInPlace() {
+    const el = editorRef.current;
+    if (!el) return;
+    const before = el.innerHTML;
+    const after = sanitiseHandlebarsInEditorHtml(before);
+    if (before !== after) {
+      el.innerHTML = after;
+      // Best-effort caret restore — place it at the end of the
+      // content so the admin can continue typing.
+      const sel = window.getSelection();
+      if (sel) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
   }
 
   // ── Toolbar actions ──────────────────────────────────────────────────────
@@ -357,6 +384,7 @@ export function DocumentTemplateEditor({
             suppressContentEditableWarning
             onPaste={onPaste}
             onInput={() => setDirtyTick(t => t + 1)}
+            onBlur={normaliseEditorInPlace}
             className="flex-1 min-h-[320px] overflow-auto outline-none px-6 py-4 bg-white prose prose-sm max-w-none focus:bg-slate-50/20"
             spellCheck={true}
           />
@@ -443,4 +471,69 @@ function defaultBody(): string {
   // A small starter so a brand-new template immediately shows
   // something in the editor rather than a blank white box.
   return '<p>Dear {{client.name}},</p><p>This document relates to the audit for the year ended {{formatDate period.periodEnd "dd MMMM yyyy"}}.</p>';
+}
+
+/**
+ * Client-side duplicate of `sanitiseHandlebarsInHtml` from
+ * `lib/template-handlebars.ts`. Inlined (rather than imported) to
+ * keep Handlebars itself out of the client bundle — the sanitiser
+ * is pure string manipulation with no library dependency.
+ *
+ * Fixes two corruption modes the contentEditable editor introduces:
+ *   (a) tokens split across `<span>` runs with inline styles,
+ *   (b) nested `{{…}}` braces (e.g. clicking a pill inside an
+ *       existing token).
+ *
+ * Keep this function in sync with its server twin — tests live in
+ * the server module.
+ */
+const CLIENT_ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'", '&#39;': "'",
+};
+function decodeEntitiesInTokenClient(s: string): string {
+  let out = s;
+  for (const [ent, ch] of Object.entries(CLIENT_ENTITIES)) out = out.split(ent).join(ch);
+  out = out.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+           .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
+  return out;
+}
+function sanitiseHandlebarsInEditorHtml(html: string): string {
+  if (typeof html !== 'string' || html.length === 0) return html;
+  let out = '';
+  let i = 0;
+  const n = html.length;
+  while (i < n) {
+    if (html[i] === '{' && html[i + 1] === '{') {
+      let cursor = i + 2;
+      let cleanInner = '';
+      let closed = false;
+      let depth = 0;
+      while (cursor < n) {
+        if (html[cursor] === '}' && html[cursor + 1] === '}') {
+          if (depth === 0) { cursor += 2; closed = true; break; }
+          depth--; cursor += 2; continue;
+        }
+        if (html[cursor] === '{' && html[cursor + 1] === '{') {
+          depth++; cursor += 2; continue;
+        }
+        if (html[cursor] === '<') {
+          const end = html.indexOf('>', cursor);
+          if (end < 0) break;
+          cursor = end + 1;
+        } else {
+          cleanInner += html[cursor];
+          cursor++;
+        }
+      }
+      if (closed) {
+        const collapsed = decodeEntitiesInTokenClient(cleanInner).replace(/\s+/g, ' ').trim();
+        out += '{{' + collapsed + '}}';
+        i = cursor;
+        continue;
+      }
+    }
+    out += html[i];
+    i++;
+  }
+  return out;
 }

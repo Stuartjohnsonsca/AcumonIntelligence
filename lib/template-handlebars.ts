@@ -161,6 +161,106 @@ hb.registerHelper('testConclusionsTable', (rows: any) => {
   </table>`);
 });
 
+// ─── Handlebars-safe sanitiser ─────────────────────────────────────────────
+/**
+ * contentEditable editors (ours included) routinely split text across
+ * `<span>` runs whenever inline styling changes — e.g. typing inside
+ * a span that inherits `color: rgb(...)` from the surrounding element.
+ * The result is that a token the admin sees as a single `{{formatDate
+ * x "dd MMM yyyy"}}` ends up stored as:
+ *
+ *     {{formatDate</span><span style="color: rgb(2,8,23);"> x "dd MMM yyyy"}}
+ *
+ * Handlebars can't parse that. This helper walks the HTML and, inside
+ * every `{{ ... }}` pair, strips any `<...>` tag fragments and decodes
+ * HTML entities, leaving clean Handlebars tokens. The surrounding HTML
+ * outside of `{{ ... }}` is left untouched.
+ *
+ * Applied at BOTH save-time (in the editor) and render-time (here)
+ * so pre-existing corrupted templates still render while new saves
+ * are kept clean going forward.
+ */
+const ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'", '&#39;': "'",
+};
+function decodeEntitiesInToken(s: string): string {
+  let out = s;
+  for (const [ent, ch] of Object.entries(ENTITIES)) out = out.split(ent).join(ch);
+  out = out.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+           .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
+  return out;
+}
+
+export function sanitiseHandlebarsInHtml(html: string): string {
+  if (typeof html !== 'string' || html.length === 0) return html;
+  let out = '';
+  let i = 0;
+  const n = html.length;
+  while (i < n) {
+    // Found the start of a Handlebars token? Scan forward for the
+    // (outermost) matching `}}`, stripping any `<tag>` sequences and
+    // any NESTED `{{…}}` braces along the way.
+    //
+    // Two corruption modes this defends against:
+    //   (a) contentEditable split the token across `<span>` runs —
+    //       typical when the admin types inside an inherited colour
+    //       or a merge-field pill gets inserted into a styled range.
+    //   (b) the admin accidentally nested braces, e.g. clicking a
+    //       pill inside an existing `{{...}}` produces
+    //       `{{formatDate{{period.periodEnd}} "dd MMM yyyy"}}`.
+    //       Handlebars helpers take space-separated arguments, so
+    //       the inner `{{...}}` wrapping is a syntax error — we just
+    //       collapse it to the bare path.
+    if (html[i] === '{' && html[i + 1] === '{') {
+      let cursor = i + 2;
+      let cleanInner = '';
+      let closed = false;
+      // Depth tracks nested `{{`s so we match the OUTERMOST `}}` only
+      // when we're back at depth 0. The nested inner braces get
+      // discarded (they'd be invalid Handlebars anyway) while their
+      // contained text is preserved.
+      let depth = 0;
+      while (cursor < n) {
+        // Closing `}}`?
+        if (html[cursor] === '}' && html[cursor + 1] === '}') {
+          if (depth === 0) { cursor += 2; closed = true; break; }
+          depth--;
+          cursor += 2;
+          continue; // skip the nested close braces entirely
+        }
+        // Opening `{{`?
+        if (html[cursor] === '{' && html[cursor + 1] === '{') {
+          depth++;
+          cursor += 2;
+          continue; // skip the nested open braces entirely
+        }
+        if (html[cursor] === '<') {
+          // Skip the whole tag. A stray `<` with no `>` terminates
+          // the scan — treat the `{{` as non-Handlebars text.
+          const end = html.indexOf('>', cursor);
+          if (end < 0) break;
+          cursor = end + 1;
+        } else {
+          cleanInner += html[cursor];
+          cursor++;
+        }
+      }
+      if (closed) {
+        // Collapse runs of whitespace the nested-brace skip may have
+        // left behind, then re-emit the cleaned token.
+        const collapsed = decodeEntitiesInToken(cleanInner).replace(/\s+/g, ' ').trim();
+        out += '{{' + collapsed + '}}';
+        i = cursor;
+        continue;
+      }
+      // Fall through to the single-char emit below if we never closed.
+    }
+    out += html[i];
+    i++;
+  }
+  return out;
+}
+
 // ─── Compile + render wrapper ──────────────────────────────────────────────
 export interface RenderResult {
   html: string;
@@ -168,14 +268,15 @@ export interface RenderResult {
 }
 
 /**
- * Compile + run a body template against a context. Returns the
- * rendered HTML (or empty string on compile error, with `error` set).
- * Uses `noEscape: false` so admin-escaped content stays safe; triple
- * braces are still needed for intentional HTML (like helper output).
+ * Compile + run a body template against a context. Sanitises any
+ * contentEditable-split Handlebars tokens first so legacy saves
+ * still render. Returns the rendered HTML (or empty string on
+ * compile error, with `error` set).
  */
 export function renderBody(bodyTemplate: string, context: any): RenderResult {
   try {
-    const tpl = hb.compile(bodyTemplate, { strict: false, noEscape: false });
+    const clean = sanitiseHandlebarsInHtml(bodyTemplate);
+    const tpl = hb.compile(clean, { strict: false, noEscape: false });
     return { html: tpl(context), error: null };
   } catch (err: any) {
     return { html: '', error: err?.message || 'Template compile / render failed' };
@@ -190,6 +291,10 @@ export function renderBody(bodyTemplate: string, context: any): RenderResult {
  * `period.periodEnd`, not the helper name.
  */
 export function extractReferencedPaths(bodyTemplate: string): string[] {
+  // Run the same sanitiser that the compile step uses so paths we
+  // extract reflect what the Handlebars compiler will actually see —
+  // otherwise span-split tokens produce spurious "missing" entries.
+  const clean = sanitiseHandlebarsInHtml(bodyTemplate);
   const re = /\{\{\s*([#/]?)([~]?)([^}]+?)([~]?)\s*\}\}/g;
   const paths = new Set<string>();
   const KNOWN_HELPERS = new Set([
@@ -202,7 +307,7 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
     'else',
   ]);
   let m: RegExpExecArray | null;
-  while ((m = re.exec(bodyTemplate)) !== null) {
+  while ((m = re.exec(clean)) !== null) {
     const inner = (m[3] || '').trim();
     if (!inner) continue;
     const tokens = inner.split(/\s+/).filter(Boolean);
