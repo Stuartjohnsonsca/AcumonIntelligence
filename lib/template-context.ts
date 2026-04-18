@@ -271,7 +271,18 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     const schema = schemaByType.get(schemaTemplateType) || [];
     const out: Record<string, any> = { ...raw };
     const bySection: Record<string, Record<string, any>> = {};
-    const asList: Array<{ question: string; key: string; answer: any; section: string | null; sortOrder: number }> = [];
+    interface ListItem {
+      question: string; key: string; answer: any;
+      section: string | null; sortOrder: number;
+      // Derived fields populated in the post-pass below. They let
+      // dynamic-table filters express "include the explanation only
+      // when the preceding Y/N question was Y" and similar chained
+      // conditions without any schema-level wiring.
+      previousKey?: string | null;
+      previousAnswer?: any;
+      isEmpty?: boolean;
+    }
+    const asList: ListItem[] = [];
     for (const item of schema) {
       if (!item?.id || !item?.key) continue;
       const value = raw[item.id];
@@ -294,6 +305,17 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
       });
     }
     asList.sort((a, b) => (a.sortOrder - b.sortOrder) || a.question.localeCompare(b.question));
+    // Post-pass: attach previousKey / previousAnswer / isEmpty to
+    // each entry now that the sort is stable. "Previous" is the
+    // immediately preceding item by sortOrder. First item in each
+    // section gets null so the admin can filter on that too.
+    for (let i = 0; i < asList.length; i++) {
+      const prev = i > 0 ? asList[i - 1] : null;
+      asList[i].previousKey = prev?.key ?? null;
+      asList[i].previousAnswer = prev?.answer ?? null;
+      const v = asList[i].answer;
+      asList[i].isEmpty = v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
+    }
     if (Object.keys(bySection).length > 0) out.bySection = bySection;
     out.asList = asList;
     return out;

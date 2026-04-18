@@ -354,8 +354,15 @@ export function DocumentTemplateEditor({
     // lib/template-handlebars.ts, so they work as subexpressions).
     // String values get quoted; numeric values pass through bare.
     const activeFilter = dynTableFilterEnabled && dynTableFilter.field && dynTableFilter.op ? dynTableFilter : null;
+    // Operators that don't need a value on the right-hand side.
+    // `isEmpty` / `isNotEmpty` are unary — they only examine the
+    // item field itself, so the snippet drops the value argument.
+    const isUnaryOp = (op: string) => op === 'isEmpty' || op === 'isNotEmpty';
     const filterClause = (() => {
       if (!activeFilter) return null;
+      if (isUnaryOp(activeFilter.op)) {
+        return { open: `{{#if (${activeFilter.op} this.${activeFilter.field})}}`, close: '{{/if}}' };
+      }
       const raw = activeFilter.value;
       const asNumber = Number(raw);
       const valExpr = raw !== '' && Number.isFinite(asNumber) && /^-?\d+(\.\d+)?$/.test(raw.trim())
@@ -375,6 +382,12 @@ export function DocumentTemplateEditor({
       const totalItemField = itemFields.find(f => f.key === dynTableTotalColumn);
       const sumExpr = activeFilter
         ? (() => {
+            // For unary ops (isEmpty/isNotEmpty) the sumFieldWhere
+            // helper ignores the 5th arg — we pass an empty string
+            // so the Handlebars signature stays stable.
+            if (isUnaryOp(activeFilter.op)) {
+              return `(sumFieldWhere ${selectedArrayField.key} "${dynTableTotalColumn}" "${activeFilter.field}" "${activeFilter.op}" "")`;
+            }
             const raw = activeFilter.value;
             const asNumber = Number(raw);
             const valExpr = raw !== '' && Number.isFinite(asNumber) && /^-?\d+(\.\d+)?$/.test(raw.trim())
@@ -731,40 +744,51 @@ export function DocumentTemplateEditor({
                     />
                     Only include rows where&hellip;
                   </label>
-                  {dynTableFilterEnabled && (
-                    <div className="grid grid-cols-[1fr_100px_1fr] gap-1 ml-6">
-                      <select
-                        value={dynTableFilter.field}
-                        onChange={e => setDynTableFilter(f => ({ ...f, field: e.target.value }))}
-                        className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
-                      >
-                        <option value="">— field —</option>
-                        {(selectedArrayField.itemFields || []).map(itf => (
-                          <option key={itf.key} value={itf.key}>{itf.label} ({itf.type})</option>
-                        ))}
-                      </select>
-                      <select
-                        value={dynTableFilter.op}
-                        onChange={e => setDynTableFilter(f => ({ ...f, op: e.target.value }))}
-                        className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
-                      >
-                        <option value="eq">equals</option>
-                        <option value="ne">does not equal</option>
-                        <option value="gt">greater than</option>
-                        <option value="lt">less than</option>
-                        <option value="gte">≥</option>
-                        <option value="lte">≤</option>
-                        <option value="contains">contains</option>
-                      </select>
-                      <input
-                        type="text"
-                        value={dynTableFilter.value}
-                        onChange={e => setDynTableFilter(f => ({ ...f, value: e.target.value }))}
-                        placeholder="value"
-                        className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
-                      />
-                    </div>
-                  )}
+                  {dynTableFilterEnabled && (() => {
+                    // Unary ops (isEmpty/isNotEmpty) don't compare
+                    // against a value — e.g. "only include rows
+                    // where `previousAnswer` is not empty" picks up
+                    // the Y/N follow-up explanation pattern.
+                    const filterIsUnary = dynTableFilter.op === 'isEmpty' || dynTableFilter.op === 'isNotEmpty';
+                    return (
+                      <div className={`grid ${filterIsUnary ? 'grid-cols-[1fr_140px]' : 'grid-cols-[1fr_100px_1fr]'} gap-1 ml-6`}>
+                        <select
+                          value={dynTableFilter.field}
+                          onChange={e => setDynTableFilter(f => ({ ...f, field: e.target.value }))}
+                          className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                        >
+                          <option value="">— field —</option>
+                          {(selectedArrayField.itemFields || []).map(itf => (
+                            <option key={itf.key} value={itf.key}>{itf.label} ({itf.type})</option>
+                          ))}
+                        </select>
+                        <select
+                          value={dynTableFilter.op}
+                          onChange={e => setDynTableFilter(f => ({ ...f, op: e.target.value }))}
+                          className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                        >
+                          <option value="eq">equals</option>
+                          <option value="ne">does not equal</option>
+                          <option value="gt">greater than</option>
+                          <option value="lt">less than</option>
+                          <option value="gte">≥</option>
+                          <option value="lte">≤</option>
+                          <option value="contains">contains</option>
+                          <option value="isEmpty">is empty</option>
+                          <option value="isNotEmpty">is not empty</option>
+                        </select>
+                        {!filterIsUnary && (
+                          <input
+                            type="text"
+                            value={dynTableFilter.value}
+                            onChange={e => setDynTableFilter(f => ({ ...f, value: e.target.value }))}
+                            placeholder="value"
+                            className="text-[11px] border border-slate-200 rounded px-1.5 py-1"
+                          />
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -837,9 +861,15 @@ export function DocumentTemplateEditor({
                         <tr>
                           <td colSpan={dynTableColumns.length} className="text-center text-[9px] text-slate-400 italic py-1">
                             … row repeats for every item in {selectedArrayField.key}
-                            {dynTableFilterEnabled && dynTableFilter.field && dynTableFilter.op && dynTableFilter.value !== '' && (
-                              <> — only when <code className="text-[9px] text-amber-700">{dynTableFilter.field} {dynTableFilter.op} {JSON.stringify(dynTableFilter.value)}</code></>
-                            )}
+                            {dynTableFilterEnabled && dynTableFilter.field && dynTableFilter.op && (() => {
+                              const unary = dynTableFilter.op === 'isEmpty' || dynTableFilter.op === 'isNotEmpty';
+                              if (!unary && dynTableFilter.value === '') return null;
+                              return (
+                                <> — only when <code className="text-[9px] text-amber-700">
+                                  {dynTableFilter.field} {dynTableFilter.op}{unary ? '' : ` ${JSON.stringify(dynTableFilter.value)}`}
+                                </code></>
+                              );
+                            })()}
                           </td>
                         </tr>
                         {dynTableTotalEnabled && dynTableTotalColumn && dynTableColumns.includes(dynTableTotalColumn) && (
