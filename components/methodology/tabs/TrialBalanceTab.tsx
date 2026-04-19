@@ -1188,8 +1188,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         </div>
       )}
 
-      {/* Differences panel */}
-      {showDifferences && (() => {
+      {/* Differences panel — only meaningful when a Xero/QBO import has run */}
+      {showDifferences && xeroSummary && (() => {
         const xPnlCats = new Set(['Revenue', 'Cost of Sales', 'Expenses', 'Administrative Expenses', 'Other Income', 'Depreciation']);
         const xRevCats = new Set(['Revenue', 'Other Income']);
 
@@ -1265,8 +1265,59 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         );
       })()}
 
-      {/* Summary comparison table */}
-      {(() => {
+      {/* Summary comparison table — full Xero-vs-FS only when an accounting import has been run.
+          Otherwise show a slimmer FS-only summary so we don't display misleading £0.00 Xero columns. */}
+      {!xeroSummary && (() => {
+        const sum = (filter: (r: TBRow) => boolean, field: 'currentYear' | 'priorYear') =>
+          rows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
+        const fCyRev = sum(r => r.fsLevel === 'Revenue', 'currentYear');
+        const fPyRev = sum(r => r.fsLevel === 'Revenue', 'priorYear');
+        const fCyCosts = sum(r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue', 'currentYear');
+        const fPyCosts = sum(r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue', 'priorYear');
+        const fCyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'currentYear');
+        const fPyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'priorYear');
+        const fCyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0, 'currentYear');
+        const fPyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.priorYear || 0) > 0, 'priorYear');
+        const fCyBS = sum(r => r.fsStatement === 'Balance Sheet', 'currentYear');
+        const fPyBS = sum(r => r.fsStatement === 'Balance Sheet', 'priorYear');
+        const cyTotal = rows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
+        const pyTotal = rows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
+        const cyBal = Math.abs(cyTotal) < 0.01;
+        const pyBal = Math.abs(pyTotal) < 0.01;
+        const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
+        const fc = 'text-right px-2 py-px text-[10px] text-blue-600';
+        const lc = 'text-right pr-2 py-px text-[10px] text-slate-400';
+        const cyDateLabel = formatDateDDMMYYYY(periodEndDate) || 'CY';
+        const pyDateLabel = dayBefore(periodStartDate) || 'PY';
+        return (
+          <div className="border border-slate-200 rounded-lg mb-2 overflow-hidden">
+            <table className="text-xs">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  <th className="w-28"></th>
+                  <th className="text-right px-2 py-px text-[9px] text-blue-500 font-medium w-24">{cyDateLabel}</th>
+                  <th className="text-right px-2 py-px text-[9px] text-blue-500 font-medium w-24">{pyDateLabel}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td className={lc}>Revenue</td><td className={fc}>{f(fCyRev)}</td><td className={fc}>{f(fPyRev)}</td></tr>
+                <tr><td className={lc}>Costs</td><td className={fc}>{f(fCyCosts)}</td><td className={fc}>{f(fPyCosts)}</td></tr>
+                <tr><td className={`${lc} font-semibold text-slate-500`}>Profit</td><td className={`${fc} font-semibold`}>{f(fCyPnL)}</td><td className={`${fc} font-semibold`}>{f(fPyPnL)}</td></tr>
+                <tr><td className={lc}>Gross Assets</td><td className={fc}>{f(fCyGross)}</td><td className={fc}>{f(fPyGross)}</td></tr>
+                <tr><td className={`${lc} font-semibold text-slate-500`}>Net Assets</td><td className={`${fc} font-semibold`}>{f(fCyBS)}</td><td className={`${fc} font-semibold`}>{f(fPyBS)}</td></tr>
+                <tr className="border-t border-slate-200">
+                  <td className="text-right pr-2 py-px text-[10px] font-bold text-slate-500">Total</td>
+                  <td className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(cyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${cyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></td>
+                  <td className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(pyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${pyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
+      {/* Full Xero-vs-FS summary — only when there's an accounting connection + import */}
+      {xeroSummary && (() => {
         const sum = (filter: (r: TBRow) => boolean, field: 'currentYear' | 'priorYear') =>
           rows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
 
