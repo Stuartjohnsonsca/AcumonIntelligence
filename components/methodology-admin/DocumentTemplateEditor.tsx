@@ -98,15 +98,22 @@ export function DocumentTemplateEditor({
   template,
   skeletons,
   engagements,
+  categories,
   onSaved,
   onClose,
 }: {
   template: DocumentTemplate;
   skeletons: Skeleton[];
   engagements: EngagementOption[];
+  // Optional — when provided (from the DocumentTemplateManagerClient),
+  // the editor's category dropdown shows the firm's admin-managed
+  // list instead of the hardcoded CATEGORIES fallback. Keeps the
+  // editor usable in standalone contexts (tests, previews).
+  categories?: Array<{ value: string; label: string }>;
   onSaved: (t: DocumentTemplate) => void;
   onClose: () => void;
 }) {
+  const categoryOptions = categories && categories.length > 0 ? categories : CATEGORIES;
   const [name, setName] = useState(template.name);
   const [description, setDescription] = useState(template.description || '');
   const [category, setCategory] = useState(template.category || 'general');
@@ -757,7 +764,7 @@ export function DocumentTemplateEditor({
       <div className="border-b border-slate-200 px-4 py-3 flex flex-wrap items-center gap-3 bg-white">
         <button onClick={onClose} className="text-xs text-blue-600 hover:text-blue-800">← Back</button>
         <input type="text" value={name} onChange={e => setName(e.target.value)} className="text-sm font-semibold border border-slate-200 rounded px-2 py-1 min-w-[240px]" />
-        <select value={category} onChange={e => setCategory(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1">{CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</select>
+        <select value={category} onChange={e => setCategory(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1">{categoryOptions.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</select>
         <select value={auditType} onChange={e => setAuditType(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1">{AUDIT_TYPES.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}</select>
         <select value={skeletonId || ''} onChange={e => setSkeletonId(e.target.value || null)} className="text-[11px] border border-slate-200 rounded px-2 py-1" title="Firm skeleton to render into">
           <option value="">— Use firm default skeleton —</option>

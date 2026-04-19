@@ -2,20 +2,31 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
-const TEMPLATE_TYPE = 'email_template_categories';
 const AUDIT_TYPE = 'ALL';
 
-// GET — return the firm's email template categories
-export async function GET() {
+/** The `methodologyTemplate.templateType` row that stores each kind's
+ *  category list. Emails and documents keep separate rows so admins
+ *  can curate each list independently. Default to 'email' on
+ *  unrecognised input so older callers (without the ?kind= query)
+ *  keep working. */
+function templateTypeFor(kind: string | null | undefined): string {
+  return kind === 'document' ? 'document_template_categories' : 'email_template_categories';
+}
+
+// GET — return the firm's template categories for the given kind
+//   ?kind=email     → email template categories (default)
+//   ?kind=document  → document template categories
+export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const firmId = session.user.firmId;
+  const templateType = templateTypeFor(req.nextUrl.searchParams.get('kind'));
   try {
     const record = await prisma.methodologyTemplate.findUnique({
-      where: { firmId_templateType_auditType: { firmId, templateType: TEMPLATE_TYPE, auditType: AUDIT_TYPE } },
+      where: { firmId_templateType_auditType: { firmId, templateType, auditType: AUDIT_TYPE } },
     });
     if (record) {
       return NextResponse.json({ categories: record.items });
@@ -26,7 +37,7 @@ export async function GET() {
   }
 }
 
-// PUT — save the firm's email template categories
+// PUT — save the firm's template categories for the given kind
 export async function PUT(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
@@ -37,6 +48,7 @@ export async function PUT(req: NextRequest) {
   }
 
   const firmId = session.user.firmId;
+  const templateType = templateTypeFor(req.nextUrl.searchParams.get('kind'));
   const body = await req.json();
   const { categories } = body;
 
@@ -46,10 +58,10 @@ export async function PUT(req: NextRequest) {
 
   try {
     await prisma.methodologyTemplate.upsert({
-      where: { firmId_templateType_auditType: { firmId, templateType: TEMPLATE_TYPE, auditType: AUDIT_TYPE } },
+      where: { firmId_templateType_auditType: { firmId, templateType, auditType: AUDIT_TYPE } },
       create: {
         firmId,
-        templateType: TEMPLATE_TYPE,
+        templateType,
         auditType: AUDIT_TYPE,
         items: categories as any,
       },
