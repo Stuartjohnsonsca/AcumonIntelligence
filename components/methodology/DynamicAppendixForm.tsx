@@ -241,6 +241,19 @@ export function DynamicAppendixForm({
             </div>
             <div className="border border-t-0 border-slate-200 rounded-b-lg">
               {visibleQuestions.map((q, idx) => {
+                // Sub-header rows: full-width grouping label, no inputs.
+                // Rendered here inside the same bordered container so
+                // they sit in the visual flow of questions as a
+                // section divider.
+                if (q.inputType === 'subheader') {
+                  return (
+                    <div key={q.id} className={`px-3 py-2 bg-slate-100/70 ${idx > 0 ? 'border-t border-slate-200' : ''}`}>
+                      <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                        {q.questionText}
+                      </h4>
+                    </div>
+                  );
+                }
                 const outline = getFieldOutline(q.id);
                 return (
                   <div key={q.id} className={`flex gap-0 ${idx > 0 ? 'border-t border-slate-100' : ''}`}>

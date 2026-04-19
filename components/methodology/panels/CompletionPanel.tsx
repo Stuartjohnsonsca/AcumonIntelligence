@@ -805,6 +805,18 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                 </thead>
                 <tbody>
                   {sectionQs.map(q => {
+                    // Sub-header rows span the whole table width. They
+                    // carry no answer and don't route through the
+                    // question-column rendering below.
+                    if (q.inputType === 'subheader') {
+                      return (
+                        <tr key={q.id} className="bg-slate-100/80 border-b border-slate-200">
+                          <td colSpan={headers.length} className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">
+                            {q.questionText}
+                          </td>
+                        </tr>
+                      );
+                    }
                     // For table layout the question text lives in col0 → check that for a source marker
                     const firstColSource = answerSources[`${q.id}_col0`];
                     return (
@@ -911,6 +923,14 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
               /* Standard Q&A layout */
               <div className="divide-y divide-slate-100">
                 {sectionQs.map(q => {
+                  // Sub-headers render as an inline grouping heading.
+                  if (q.inputType === 'subheader') {
+                    return (
+                      <div key={q.id} className="px-3 py-2 bg-slate-100/70">
+                        <h5 className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">{q.questionText}</h5>
+                      </div>
+                    );
+                  }
                   const cellKey = `${q.id}_col1`;
                   const cellSource = answerSources[cellKey];
                   return (

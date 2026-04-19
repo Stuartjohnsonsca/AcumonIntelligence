@@ -44,6 +44,7 @@ const INPUT_TYPE_OPTIONS: { value: QuestionInputType; label: string }[] = [
   { value: 'formula', label: 'Formula (computed)' },
   { value: 'checkbox', label: 'Checkbox' },
   { value: 'table_row', label: 'Table Row' },
+  { value: 'subheader', label: 'Sub-header (group heading)' },
 ];
 
 function generateId(): string {
@@ -56,6 +57,7 @@ function inputTypeBadge(inputType: string) {
     inputType === 'yesno' || inputType === 'yna' || inputType === 'yes_only' ? 'bg-green-100 text-green-600' :
     inputType === 'number' || inputType === 'currency' ? 'bg-amber-100 text-amber-600' :
     inputType === 'date' ? 'bg-indigo-100 text-indigo-600' :
+    inputType === 'subheader' ? 'bg-slate-200 text-slate-700 font-semibold' :
     'bg-slate-100 text-slate-500';
   return <span className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap ${cls}`}>
     {INPUT_TYPE_OPTIONS.find(o => o.value === inputType)?.label || inputType}
@@ -156,6 +158,25 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
       sectionKey,
       questionText: '',
       inputType: 'textarea',
+      sortOrder: maxSort + 1,
+    };
+    setQuestions(prev => [...prev, newQ]);
+    setExpandedId(newQ.id);
+    setSaved(false);
+  }
+
+  /** Insert a sub-header row at the bottom of a section. Sub-headers
+   *  render as a full-width grouping label in both the designer and
+   *  the rendered form — they hold no answer value and don't
+   *  participate in validation or formulas. */
+  function addSubheader(sectionKey: string) {
+    const sectionQs = questions.filter(q => q.sectionKey === sectionKey);
+    const maxSort = sectionQs.length > 0 ? Math.max(...sectionQs.map(q => q.sortOrder)) : -1;
+    const newQ: TemplateQuestion = {
+      id: generateId(),
+      sectionKey,
+      questionText: 'New sub-header',
+      inputType: 'subheader',
       sortOrder: maxSort + 1,
     };
     setQuestions(prev => [...prev, newQ]);
@@ -387,6 +408,11 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                   className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
+                <button onClick={e => { e.stopPropagation(); addSubheader(sectionKey); }}
+                  title="Add a sub-header row that groups the questions or rows below it"
+                  className="text-xs text-slate-600 hover:text-slate-800 font-medium px-2 py-1 rounded hover:bg-slate-100">
+                  + Sub-header
+                </button>
                 <button onClick={e => { e.stopPropagation(); addQuestion(sectionKey); }}
                   className="text-xs text-blue-600 hover:text-blue-700 font-medium px-2 py-1 rounded hover:bg-blue-50">
                   + Add {sectionMeta[sectionKey]?.layout !== 'standard' ? 'Row' : 'Question'}
@@ -416,18 +442,19 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
               <div className="divide-y divide-slate-100">
                 {sorted.map((q, i) => {
                   const isExpanded = expandedId === q.id;
+                  const isSubheader = q.inputType === 'subheader';
                   return (
-                    <div key={q.id} className="group hover:bg-slate-50/50">
-                      {/* Question row */}
+                    <div key={q.id} className={`group ${isSubheader ? 'bg-slate-100/70 hover:bg-slate-200/60' : 'hover:bg-slate-50/50'}`}>
+                      {/* Question / sub-header row */}
                       <div className="flex items-center gap-2 px-4 py-2">
                         <GripVertical className="h-3 w-3 text-slate-300 flex-shrink-0 cursor-grab" />
                         <span className="text-[10px] text-slate-400 w-5 flex-shrink-0">{i + 1}</span>
                         <button
                           onClick={() => setExpandedId(isExpanded ? null : q.id)}
-                          className="flex-1 text-left text-sm text-slate-700 hover:text-blue-600 min-w-0"
+                          className={`flex-1 text-left min-w-0 ${isSubheader ? 'text-sm font-semibold text-slate-800 uppercase tracking-wide' : 'text-sm text-slate-700 hover:text-blue-600'}`}
                           title="Click to expand/collapse editing"
                         >
-                          <span className="line-clamp-2">{q.questionText || <span className="italic text-slate-300">New question...</span>}</span>
+                          <span className="line-clamp-2">{q.questionText || <span className="italic text-slate-300">{isSubheader ? 'Sub-header text…' : 'New question...'}</span>}</span>
                         </button>
                         {inputTypeBadge(q.inputType)}
                         {/* Action buttons - always visible */}

@@ -566,6 +566,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       : allCols;
     if (cols.length === 0) { setCopyFeedback('No columns selected to copy'); window.setTimeout(() => setCopyFeedback(null), 2000); return; }
 
+    // Row selection overrides filters when any rows are ticked. So the
+    // user can multi-select rows across filters, then copy just those.
+    const rowsToCopy = selectedRowKeys.size > 0
+      ? rows.filter((r, idx) => selectedRowKeys.has(rowKey(r, idx)))
+      : filteredRows;
+    if (rowsToCopy.length === 0) { setCopyFeedback('No rows to copy'); window.setTimeout(() => setCopyFeedback(null), 2000); return; }
+
     /** Escape a cell for TSV. Real-world TB descriptions sometimes
      *  contain tabs or newlines (pasted from PDFs) — we strip those
      *  rather than quote, since Excel's TSV paste handles
@@ -577,11 +584,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     };
 
     const header = cols.map(c => cell(c.label)).join('\t');
-    const body = filteredRows.map(r => cols.map(c => cell((r as any)[c.field])).join('\t')).join('\n');
+    const body = rowsToCopy.map(r => cols.map(c => cell((r as any)[c.field])).join('\t')).join('\n');
     const tsv = `${header}\n${body}`;
     try {
       await navigator.clipboard.writeText(tsv);
-      setCopyFeedback(`Copied ${filteredRows.length} row${filteredRows.length === 1 ? '' : 's'} × ${cols.length} column${cols.length === 1 ? '' : 's'}`);
+      const selectedNote = selectedRowKeys.size > 0 ? ' (selected)' : '';
+      setCopyFeedback(`Copied ${rowsToCopy.length} row${rowsToCopy.length === 1 ? '' : 's'}${selectedNote} × ${cols.length} column${cols.length === 1 ? '' : 's'}`);
     } catch {
       // Fallback for insecure contexts — drop the content into a
       // textarea the user can Ctrl+C from. Exits silently if even
@@ -1230,15 +1238,23 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               column checkboxes are ticked, only those columns are
               included — handy for "just show me the Description +
               FS Level for this particular FS Statement" workflows. */}
-          <button
-            onClick={copyFilteredRows}
-            disabled={filteredRows.length === 0}
-            title={`Copy the ${filteredRows.length} visible row${filteredRows.length === 1 ? '' : 's'}${selectedColumns.size > 0 ? ` (${selectedColumns.size} selected column${selectedColumns.size === 1 ? '' : 's'})` : ' (all columns)'} to clipboard — paste into Excel`}
-            className="text-xs px-3 py-1 bg-slate-100 text-slate-700 rounded hover:bg-slate-200 disabled:opacity-50"
-          >
-            📋 Copy {filteredRows.length} row{filteredRows.length === 1 ? '' : 's'}
-            {selectedColumns.size > 0 && <> <span className="text-slate-500">({selectedColumns.size} col{selectedColumns.size === 1 ? '' : 's'})</span></>}
-          </button>
+          {(() => {
+            // Row selection beats filters — if any rows are ticked, copy
+            // those; otherwise copy whatever the filters show.
+            const copyCount = selectedRowKeys.size > 0 ? selectedRowKeys.size : filteredRows.length;
+            const copyScope = selectedRowKeys.size > 0 ? 'selected' : 'filtered';
+            return (
+              <button
+                onClick={copyFilteredRows}
+                disabled={copyCount === 0}
+                title={`Copy ${copyCount} ${copyScope} row${copyCount === 1 ? '' : 's'}${selectedColumns.size > 0 ? ` (${selectedColumns.size} selected column${selectedColumns.size === 1 ? '' : 's'})` : ' (all columns)'} to clipboard — paste into Excel`}
+                className="text-xs px-3 py-1 bg-slate-100 text-slate-700 rounded hover:bg-slate-200 disabled:opacity-50"
+              >
+                📋 Copy {copyCount} {copyScope} row{copyCount === 1 ? '' : 's'}
+                {selectedColumns.size > 0 && <> <span className="text-slate-500">({selectedColumns.size} col{selectedColumns.size === 1 ? '' : 's'})</span></>}
+              </button>
+            );
+          })()}
           {anyCustomWidth && (
             <button onClick={resetColumnWidths} className="text-[10px] text-slate-400 hover:text-slate-700" title="Reset column widths to defaults">
               Reset widths
