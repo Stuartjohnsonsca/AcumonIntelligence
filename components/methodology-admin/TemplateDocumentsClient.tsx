@@ -734,49 +734,51 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
 
   /** Insert plain text into the subject input at the cursor position.
    *
-   *  Subtlety: clicking a palette button briefly transfers focus from
-   *  the input, which in some browsers resets `selectionStart` to 0.
-   *  If we naively read the LIVE selectionStart at insert time we'd
-   *  end up inserting at the start of the field (looking like the
-   *  existing text was deleted). We defend against that by:
-   *    (a) Capturing the selection every time it changes while the
-   *        input is focused (savedSubjectSelectionRef).
-   *    (b) Preferring the saved selection when the input's current
-   *        reading looks unreliable (input not focused).
-   *    (c) Palette buttons also do onMouseDown preventDefault so the
-   *        subject never actually loses focus on click — this is the
-   *        primary defence; (a)/(b) back it up.
+   *  Uses the browser's native HTMLInputElement.setRangeText() API
+   *  rather than reconstructing the value in JavaScript, which was
+   *  previously causing the whole field to appear wiped under some
+   *  focus-loss conditions. setRangeText():
+   *    - Replaces the current selection (or inserts at caret if no
+   *      selection) with the given text.
+   *    - Updates selectionStart/End automatically.
+   *    - Doesn't need the input to be focused.
+   *    - Is the standards-track native way to do this.
    *
-   *  Never replaces existing text — always an insert at the caret. */
+   *  Then we dispatch a synthetic input event so React's onChange
+   *  handler picks up the new value and pushes it into state. This
+   *  is the canonical pattern for programmatic updates to controlled
+   *  inputs, and has no focus / selection / caret restoration issues. */
   function insertIntoSubject(text: string) {
     const input = subjectRef.current;
     if (!input) return;
+    // Work out where to insert — live selection if focused, else the
+    // last-saved caret, else end of the current value.
     const activeIsSubject = document.activeElement === input;
     const saved = savedSubjectSelectionRef.current;
-    // Live position only trusted when the input is actually focused.
-    // Otherwise fall back to the saved position, then to end-of-text.
-    let start = activeIsSubject && input.selectionStart != null
-      ? input.selectionStart
-      : (saved?.start ?? editSubject.length);
-    let end = activeIsSubject && input.selectionEnd != null
-      ? input.selectionEnd
-      : (saved?.end ?? start);
-    // Clamp — paranoia against a stale saved range that's longer
-    // than the current editSubject value.
-    if (start > editSubject.length) start = editSubject.length;
-    if (end > editSubject.length) end = editSubject.length;
+    const liveStart = activeIsSubject ? input.selectionStart : null;
+    const liveEnd   = activeIsSubject ? input.selectionEnd   : null;
+    let start = liveStart ?? saved?.start ?? input.value.length;
+    let end   = liveEnd   ?? saved?.end   ?? start;
+    // Clamp against stale saved ranges.
+    const currentLen = input.value.length;
+    if (start > currentLen) start = currentLen;
+    if (end > currentLen) end = currentLen;
     if (end < start) end = start;
-    const newVal = editSubject.slice(0, start) + text + editSubject.slice(end);
-    setEditSubject(newVal);
+    // Make sure the input is focused so setRangeText applies
+    // cleanly and the user can carry on typing from the new caret.
+    input.focus();
+    // 'end' selection mode → caret ends up immediately after the
+    // inserted text, which is what chained inserts need.
+    input.setRangeText(text, start, end, 'end');
+    // React's `value=` prop reads from state — we need to push the
+    // new input value into state so the controlled input doesn't
+    // immediately snap back to the old value on the next render.
+    // Calling the setter from our state directly keeps it simple and
+    // avoids synthetic-event hacks.
+    setEditSubject(input.value);
+    // Persist the new caret position for subsequent palette clicks.
     const newCaret = start + text.length;
-    // Update saved selection so successive inserts chain naturally
-    // (user picks 3 placeholders in a row — each should append to the
-    // previous, not land back at the original caret).
     savedSubjectSelectionRef.current = { start: newCaret, end: newCaret };
-    setTimeout(() => {
-      input.focus();
-      input.setSelectionRange(newCaret, newCaret);
-    }, 0);
   }
 
   function insertJobSectionLink(section: typeof JOB_SECTIONS[number]) {
