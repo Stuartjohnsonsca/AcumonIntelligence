@@ -68,6 +68,28 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [showDifferences, setShowDifferences] = useState(false);
+  // ── Bulk-select state ─────────────────────────────────────────────
+  // Rows are keyed by the same identity we already use as the render
+  // key (row.id OR `new-${index}` for unsaved rows). That keeps the
+  // selection stable across re-renders as long as the admin isn't
+  // also reordering rows.
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
+  const [selectedColumns, setSelectedColumns] = useState<Set<string>>(new Set());
+  function rowKey(r: TBRow, idx: number): string { return r.id || `new-${idx}`; }
+  function toggleRowSelection(key: string) {
+    setSelectedRowKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+  function toggleColumnSelection(field: string) {
+    setSelectedColumns(prev => {
+      const next = new Set(prev);
+      if (next.has(field)) next.delete(field); else next.add(field);
+      return next;
+    });
+  }
 
   // Compute unique values per column for filter dropdowns
   const columnValues = useMemo(() => {
@@ -252,6 +274,70 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         console.error('Failed to delete TB row:', err);
       }
     }
+  }
+
+  // ── Bulk-select helpers ──────────────────────────────────────────
+  /** Select every visible row (filtered + sorted view). Useful when
+   *  the admin wants to bulk-delete all rows matching a filter. */
+  function selectAllVisibleRows() {
+    const keys = new Set<string>();
+    filteredRows.forEach((r) => {
+      const originalIdx = rows.indexOf(r);
+      keys.add(rowKey(r, originalIdx));
+    });
+    setSelectedRowKeys(keys);
+  }
+  function clearRowSelection() { setSelectedRowKeys(new Set()); }
+  function selectAllColumns(fields: string[]) { setSelectedColumns(new Set(fields)); }
+  function clearColumnSelection() { setSelectedColumns(new Set()); }
+
+  /** Delete every selected row. Fires a single bulk DELETE for saved
+   *  rows, filters out unsaved ones from local state. Server request
+   *  is fire-and-forget; local state wins immediately. */
+  async function deleteSelectedRows() {
+    if (selectedRowKeys.size === 0) return;
+    if (!confirm(`Delete ${selectedRowKeys.size} selected row${selectedRowKeys.size === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    const toDeleteSavedIds: string[] = [];
+    setRows(prev => prev.filter((r, i) => {
+      const k = rowKey(r, i);
+      if (!selectedRowKeys.has(k)) return true;
+      if (r.id) toDeleteSavedIds.push(r.id);
+      return false;
+    }));
+    setSelectedRowKeys(new Set());
+    for (const rowId of toDeleteSavedIds) {
+      fetch(`/api/engagements/${engagementId}/trial-balance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', rowId }),
+      }).catch((err) => console.error('Failed to delete TB row', rowId, err));
+    }
+  }
+
+  /** Clear the values at the intersection of selected rows × selected
+   *  columns. Non-destructive at the row level — only empties cells.
+   *  Saved rows will be re-saved via the existing autosave loop
+   *  since the `rows` state changes. */
+  function clearSelectedCells() {
+    if (selectedRowKeys.size === 0 || selectedColumns.size === 0) return;
+    const cellCount = selectedRowKeys.size * selectedColumns.size;
+    if (!confirm(`Clear ${cellCount} cell${cellCount === 1 ? '' : 's'} (${selectedRowKeys.size} row${selectedRowKeys.size === 1 ? '' : 's'} × ${selectedColumns.size} column${selectedColumns.size === 1 ? '' : 's'})?`)) return;
+    setRows(prev => prev.map((r, i) => {
+      const k = rowKey(r, i);
+      if (!selectedRowKeys.has(k)) return r;
+      const patch: Partial<TBRow> = {};
+      for (const field of selectedColumns) {
+        // Numeric columns clear to null; string columns clear to '' or null.
+        if (field === 'currentYear' || field === 'priorYear' || field === 'aiConfidence') {
+          (patch as any)[field] = null;
+        } else if (field === 'accountCode' || field === 'description') {
+          (patch as any)[field] = '';
+        } else {
+          (patch as any)[field] = null;
+        }
+      }
+      return { ...r, ...patch } as TBRow;
+    }));
   }
 
   // When FS Note is selected, auto-populate FS Level (from parent) and FS Statement
@@ -601,6 +687,31 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           </label>
         </div>
         <div className="flex items-center gap-2">
+          {/* Bulk-action buttons — only surface when something's selected.
+              Two independent modes:
+                • Rows selected → Delete N rows
+                • Rows + columns selected → Clear the intersecting cells
+             */}
+          {selectedRowKeys.size > 0 && (
+            <>
+              <span className="text-[10px] text-slate-500">
+                {selectedRowKeys.size} row{selectedRowKeys.size === 1 ? '' : 's'}
+                {selectedColumns.size > 0 && <> · {selectedColumns.size} col{selectedColumns.size === 1 ? '' : 's'}</>}
+              </span>
+              {selectedColumns.size > 0 && (
+                <button onClick={clearSelectedCells}
+                  className="text-xs px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 font-medium">
+                  Clear {selectedRowKeys.size * selectedColumns.size} cells
+                </button>
+              )}
+              <button onClick={deleteSelectedRows}
+                className="text-xs px-3 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 font-medium">
+                Delete rows
+              </button>
+              <button onClick={() => { clearRowSelection(); clearColumnSelection(); }}
+                className="text-[10px] text-slate-400 hover:text-slate-700">Clear selection</button>
+            </>
+          )}
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
@@ -917,8 +1028,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           </colgroup>
           {/* Column headers only — summary is now a separate table above */}
           <thead className="sticky top-0 z-10">
-            <tr className="bg-slate-100 border-b border-slate-200">
-              {[
+            {(() => {
+              const columnDefs = [
                 { field: 'accountCode', label: 'Account Code', align: 'left' },
                 { field: 'description', label: 'Description', align: 'left' },
                 ...(showCategory ? [{ field: 'category', label: 'Category', align: 'left' }] : []),
@@ -929,15 +1040,65 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 { field: 'fsStatement', label: 'FS Statement', align: 'left' },
                 { field: 'aiConfidence', label: 'AI %', align: 'center' },
                 ...(isGroupAudit ? [{ field: 'groupName', label: 'Group Name', align: 'left' }] : []),
-              ].map(col => (
-                <th key={col.field} className={`text-${col.align} px-2 py-2 text-slate-500 font-medium cursor-pointer hover:text-slate-700 select-none`} onClick={() => toggleSort(col.field)}>
-                  {col.label} {sortCol === col.field ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-                </th>
-              ))}
-              <th className="w-8"></th>
-            </tr>
+              ];
+              const allColumnFields = columnDefs.map(c => c.field);
+              const allVisibleRowKeys = filteredRows.map(r => rowKey(r, rows.indexOf(r)));
+              const allRowsSelected = allVisibleRowKeys.length > 0 && allVisibleRowKeys.every(k => selectedRowKeys.has(k));
+              const allColumnsSelected = allColumnFields.length > 0 && allColumnFields.every(f => selectedColumns.has(f));
+              return (
+                <>
+                  <tr className="bg-slate-100 border-b border-slate-200">
+                    {/* Master row-select checkbox in the far-left column */}
+                    <th className="w-8 px-1 py-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={allRowsSelected}
+                        onChange={() => allRowsSelected ? clearRowSelection() : selectAllVisibleRows()}
+                        title={allRowsSelected ? 'Deselect all visible rows' : 'Select all visible rows'}
+                        className="w-3.5 h-3.5 rounded cursor-pointer"
+                      />
+                    </th>
+                    {columnDefs.map(col => (
+                      <th key={col.field} className={`text-${col.align} px-2 py-2 text-slate-500 font-medium cursor-pointer hover:text-slate-700 select-none`} onClick={() => toggleSort(col.field)}>
+                        {col.label} {sortCol === col.field ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                      </th>
+                    ))}
+                    <th className="w-8"></th>
+                  </tr>
+                  {/* Column-select checkbox row — tick a column to include
+                      it in the "Clear selected cells" bulk action. The
+                      far-left cell toggles the lot. */}
+                  <tr className="bg-slate-50/70 border-b border-slate-200">
+                    <th className="w-8 px-1 py-0.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={allColumnsSelected}
+                        onChange={() => allColumnsSelected ? clearColumnSelection() : selectAllColumns(allColumnFields)}
+                        title={allColumnsSelected ? 'Deselect all columns' : 'Select all columns'}
+                        className="w-3 h-3 rounded cursor-pointer"
+                      />
+                    </th>
+                    {columnDefs.map(col => (
+                      <th key={col.field} className="px-2 py-0.5 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedColumns.has(col.field)}
+                          onChange={() => toggleColumnSelection(col.field)}
+                          title={`Select column: ${col.label}`}
+                          className="w-3 h-3 rounded cursor-pointer"
+                        />
+                      </th>
+                    ))}
+                    <th></th>
+                  </tr>
+                </>
+              );
+            })()}
             {/* Filter row — dropdown arrows with checkbox options */}
             <tr className="bg-slate-50 border-b border-slate-200">
+              {/* Spacer cell to align the filter row with the new
+                  checkbox column on the left. */}
+              <th className="w-8"></th>
               {['accountCode', 'description', ...(showCategory ? ['category'] : []), 'currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement', 'aiConfidence', ...(isGroupAudit ? ['groupName'] : [])].map(field => {
                 const vals = [...(columnValues[field] || [])].sort();
                 const activeCount = filters[field]?.size || 0;
@@ -982,12 +1143,25 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           <tbody>
             {filteredRows.map((row) => {
               const i = rows.indexOf(row);
+              const key = rowKey(row, i);
+              const isSelected = selectedRowKeys.has(key);
               return (
               <tr
                 key={row.id || `new-${i}`}
                 data-scroll-anchor={row.accountCode ? `tbcyvpy-${row.accountCode}` : undefined}
-                className="border-b border-slate-100 hover:bg-slate-50/50"
+                className={`border-b border-slate-100 hover:bg-slate-50/50 ${isSelected ? 'bg-blue-50/40' : ''}`}
               >
+                {/* Per-row selection checkbox. Clicking the cell outside
+                    the checkbox also toggles — saves a pixel-perfect
+                    click on a tiny element. */}
+                <td className="w-8 px-1 py-0.5 text-center">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleRowSelection(key)}
+                    className="w-3.5 h-3.5 rounded cursor-pointer"
+                  />
+                </td>
                 <td className="px-2 py-0.5">
                   <input type="text" value={row.accountCode} onChange={e => updateRow(i, 'accountCode', e.target.value)} onPaste={e => handlePaste(e, i, 0)} className={txtCls} placeholder="Code" />
                 </td>
