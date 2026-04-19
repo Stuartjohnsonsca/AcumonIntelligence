@@ -2,10 +2,16 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react';
 
-interface AutoSaveOptions {
+interface AutoSaveOptions<TResp = unknown> {
   delay?: number;
   enabled?: boolean;
   method?: 'PUT' | 'POST' | 'PATCH';
+  /** Optional callback fired with the parsed JSON response on a
+   *  successful save. Useful when the server assigns IDs to newly-
+   *  created rows — the consumer can pull those IDs back into state so
+   *  the next save doesn't churn the DB (delete-then-recreate) on the
+   *  same logical rows. */
+  onSaveSuccess?: (response: TResp) => void;
 }
 
 interface AutoSaveResult {
@@ -15,12 +21,14 @@ interface AutoSaveResult {
   triggerSave: () => void;
 }
 
-export function useAutoSave<T>(
+export function useAutoSave<T, TResp = unknown>(
   endpoint: string,
   data: T,
-  options: AutoSaveOptions = {}
+  options: AutoSaveOptions<TResp> = {}
 ): AutoSaveResult {
-  const { delay = 2000, enabled = true, method = 'PUT' } = options;
+  const { delay = 2000, enabled = true, method = 'PUT', onSaveSuccess } = options;
+  const onSaveSuccessRef = useRef(onSaveSuccess);
+  onSaveSuccessRef.current = onSaveSuccess;
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +67,15 @@ export function useAutoSave<T>(
         throw new Error(body.error || `Save failed (${res.status})`);
       }
       lastSavedPayloadRef.current = payload;
+      // Pass the parsed response to the consumer so it can, e.g.,
+      // fold server-assigned IDs back into the client state. Safe to
+      // ignore on endpoints that don't return JSON.
+      if (onSaveSuccessRef.current) {
+        try {
+          const respBody = await res.json();
+          onSaveSuccessRef.current(respBody as TResp);
+        } catch { /* non-JSON response — that's fine */ }
+      }
       setLastSaved(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');

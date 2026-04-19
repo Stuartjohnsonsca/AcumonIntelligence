@@ -37,7 +37,13 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   const { rows } = body as { rows: { id?: string; accountCode: string; description: string; category?: string; currentYear?: number; priorYear?: number; fsNoteLevel?: string; fsLevel?: string; fsStatement?: string; groupName?: string; sortOrder: number }[] };
 
   const existingIds = rows.filter(r => r.id).map(r => r.id!);
-  await prisma.auditTBRow.deleteMany({ where: { engagementId, id: { notIn: existingIds } } });
+  // Prisma treats `{ notIn: [] }` as "everything", which would silently
+  // wipe the whole TB if the client only sent rows with empty IDs
+  // (e.g. immediately after a paste). Guard against that: only delete
+  // rows the caller implicitly excluded from their id list.
+  if (existingIds.length > 0) {
+    await prisma.auditTBRow.deleteMany({ where: { engagementId, id: { notIn: existingIds } } });
+  }
 
   for (const row of rows) {
     if (row.id) {

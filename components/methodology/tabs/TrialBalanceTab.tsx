@@ -340,10 +340,45 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     onShowCategoryChange?.(show);
   }
 
-  const { saving, lastSaved, error, triggerSave } = useAutoSave(
+  const { saving, lastSaved, error, triggerSave } = useAutoSave<{ rows: TBRow[] }, { rows: TBRow[] }>(
     `/api/engagements/${engagementId}/trial-balance`,
     { rows },
-    { enabled: !importing && JSON.stringify(rows) !== JSON.stringify(initialRows) }
+    {
+      enabled: !importing && JSON.stringify(rows) !== JSON.stringify(initialRows),
+      /**
+       * Fold server-assigned IDs back into client state. The PUT
+       * endpoint returns the full, freshly-reloaded list of TB rows
+       * including any newly-created ones with their real DB IDs.
+       * Without this merge-back, client rows that were created with
+       * `id=''` keep that empty ID forever, and every subsequent save
+       * deletes the just-created DB row and creates a new one — which
+       * produces the "rows are being duplicated / AI classifications
+       * keep getting wiped" symptom users see.
+       *
+       * We match by sortOrder (the stable position identifier) and
+       * only touch rows that still have an empty id, so we don't
+       * overwrite live edits the user has made since the save fired.
+       */
+      onSaveSuccess: (resp) => {
+        if (!resp || !Array.isArray(resp.rows)) return;
+        const byOrder = new Map<number, string>();
+        for (const r of resp.rows) {
+          if (typeof r.sortOrder === 'number' && r.id) byOrder.set(r.sortOrder, r.id);
+        }
+        setRows(prev => {
+          let changed = false;
+          const next = prev.map(r => {
+            if (!r.id) {
+              const serverId = byOrder.get(r.sortOrder);
+              if (serverId) { changed = true; return { ...r, id: serverId }; }
+            }
+            return r;
+          });
+          return changed ? next : prev;
+        });
+        setInitialRows(resp.rows);
+      },
+    }
   );
 
   // Create a set of blank rows for paste-ready spreadsheet
