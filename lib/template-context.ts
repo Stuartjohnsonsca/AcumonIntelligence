@@ -11,6 +11,45 @@
 
 import { prisma } from '@/lib/db';
 
+/** A single RMM row rendered into template context — every useful
+ *  field from AuditRMMRow. Templates can show a minimal view (just
+ *  `name` + `fsLine`) or a detailed view (everything) depending on
+ *  which columns they tick in the dynamic table modal. */
+export interface AuditRisk {
+  id: string;
+  /** Display name for the risk — prefers the explicit risk description,
+   *  falls back to the line item. Safe to use in prose. */
+  name: string;
+  /** The FS line the risk attaches to (for grouping tables). */
+  fsLine: string;
+  /** Risk description as typed in the RMM tab. Often multi-line. */
+  description: string;
+  /** Assertions the risk covers (e.g. "EO", "RO"). Joined with ", ". */
+  assertions: string;
+  relevance: string | null;
+  complexityText: string | null;
+  subjectivityText: string | null;
+  changeText: string | null;
+  uncertaintyText: string | null;
+  susceptibilityText: string | null;
+  /** Inherent risk level — Remote / Low / Medium / High / Very High. */
+  inherentRiskLevel: string | null;
+  /** Auditor-reviewed AI summary of the risk. */
+  aiSummary: string | null;
+  likelihood: string | null;
+  magnitude: string | null;
+  finalRiskAssessment: string | null;
+  controlRisk: string | null;
+  overallRisk: string | null;
+  /** 'significant_risk' | 'area_of_focus' — drives the filtered views. */
+  rowCategory: string | null;
+  amount: number | null;
+  notes: string | null;
+  fsStatement: string | null;
+  fsLevel: string | null;
+  sortOrder: number;
+}
+
 export interface TemplateContext {
   currentDate: string;   // ISO yyyy-mm-dd
   currentYear: number;
@@ -76,8 +115,14 @@ export interface TemplateContext {
     riSignedByName: string | null;
   }>;
   auditPlan: {
-    significantRisks: Array<{ fsLine: string; name: string }>;
-    areasOfFocus: Array<{ fsLine: string; reason: string }>;
+    /** All RMM rows flagged as either a significant risk or an area
+     *  of focus — each row exposes the FULL underlying assessment so
+     *  document templates can pick which columns to render. */
+    risks: AuditRisk[];
+    /** Filtered view: only significant risks. */
+    significantRisks: AuditRisk[];
+    /** Filtered view: only areas of focus. */
+    areasOfFocus: AuditRisk[];
   };
   /** Agreed dates from the Opening Tab's Audit Timetable section —
    *  Planning / Fieldwork / Completion etc. Use in document templates
@@ -229,18 +274,64 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     riSignedByName: c.riSignedByName,
   }));
 
-  // Audit plan: significant risks + areas of focus are derived from the
-  // RMM table (AuditRMMRow) where category is flagged accordingly.
-  let significantRisks: Array<{ fsLine: string; name: string }> = [];
-  let areasOfFocus: Array<{ fsLine: string; reason: string }> = [];
+  // ── Audit plan: risks + areas of focus ───────────────────────────
+  // Derived from the RMM table. Previously this filtered on
+  // `isSignificantRisk` / `category === 'Significant Risk'` — neither
+  // of which exist on AuditRMMRow. The actual column is `rowCategory`
+  // with the literal values 'significant_risk' and 'area_of_focus'
+  // (set via the Sig.Risk column in the RMM tab). That bug meant the
+  // Planning Letter's risk sections rendered empty no matter what.
+  //
+  // Now: load ALL tagged rows, expose the FULL RMM field set on each
+  // one, and provide three views:
+  //   auditPlan.risks             — all significant + area-of-focus rows
+  //   auditPlan.significantRisks  — rowCategory === 'significant_risk'
+  //   auditPlan.areasOfFocus      — rowCategory === 'area_of_focus'
+  // Templates can use the simple views for a single-column list, or
+  // `risks` for a mixed table that filters/groups by rowCategory
+  // through the dynamic-table modal's filter UI.
+  let risks: AuditRisk[] = [];
+  let significantRisks: AuditRisk[] = [];
+  let areasOfFocus: AuditRisk[] = [];
   try {
-    const rmm = await (prisma as any).auditRMMRow?.findMany?.({ where: { engagementId } }) ?? [];
-    significantRisks = rmm
-      .filter((r: any) => r?.isSignificantRisk || r?.category === 'Significant Risk')
-      .map((r: any) => ({ fsLine: r.lineItem || r.fsLine || '', name: r.riskName || r.description || 'Significant risk' }));
-    areasOfFocus = rmm
-      .filter((r: any) => r?.isAreaOfFocus || r?.category === 'Area of Focus')
-      .map((r: any) => ({ fsLine: r.lineItem || r.fsLine || '', reason: r.description || '' }));
+    const rmm = await (prisma as any).auditRMMRow?.findMany?.({
+      where: {
+        engagementId,
+        rowCategory: { in: ['significant_risk', 'area_of_focus'] },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { lineItem: 'asc' }],
+    }) ?? [];
+    risks = rmm.map((r: any): AuditRisk => ({
+      id: String(r.id || ''),
+      name: (r.riskIdentified && String(r.riskIdentified).trim())
+        || (r.aiSummary && String(r.aiSummary).trim())
+        || (r.lineItem && String(r.lineItem).trim())
+        || 'Risk',
+      fsLine: String(r.lineItem || r.fsLine || ''),
+      description: String(r.riskIdentified || ''),
+      assertions: Array.isArray(r.assertions) ? r.assertions.join(', ') : String(r.assertions || ''),
+      relevance: r.relevance ?? null,
+      complexityText: r.complexityText ?? null,
+      subjectivityText: r.subjectivityText ?? null,
+      changeText: r.changeText ?? null,
+      uncertaintyText: r.uncertaintyText ?? null,
+      susceptibilityText: r.susceptibilityText ?? null,
+      inherentRiskLevel: r.inherentRiskLevel ?? null,
+      aiSummary: r.aiSummary ?? null,
+      likelihood: r.likelihood ?? null,
+      magnitude: r.magnitude ?? null,
+      finalRiskAssessment: r.finalRiskAssessment ?? null,
+      controlRisk: r.controlRisk ?? null,
+      overallRisk: r.overallRisk ?? null,
+      rowCategory: r.rowCategory ?? null,
+      amount: typeof r.amount === 'number' ? r.amount : (r.amount ? Number(r.amount) : null),
+      notes: r.notes ?? null,
+      fsStatement: r.fsStatement ?? null,
+      fsLevel: r.fsLevel ?? null,
+      sortOrder: Number(r.sortOrder) || 0,
+    }));
+    significantRisks = risks.filter(r => r.rowCategory === 'significant_risk');
+    areasOfFocus = risks.filter(r => r.rowCategory === 'area_of_focus');
   } catch { /* model may not be wired on this env — tolerant */ }
 
   // Questionnaires are stored as `{ data: { <uuid>: value, ... } }`
@@ -496,7 +587,7 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     errorSchedule,
     errorScheduleTotals,
     testConclusions,
-    auditPlan: { significantRisks, areasOfFocus },
+    auditPlan: { risks, significantRisks, areasOfFocus },
     auditTimetable,
     // Spread every discovered questionnaire under its camelCase key.
     // Casting through `as any` because the index signature doesn't
