@@ -831,27 +831,9 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                   {isExpanded && (
                     <tr className="bg-blue-50/30 border-b border-slate-200">
                       <td colSpan={showCategory ? 18 : 17} className="px-4 py-3">
-                        {/* Planning Letter category — auto-derived from the Sig.Risk dot.
-                            Updates whenever overallRisk / riskClassificationTable changes via
-                            the syncPlanningLetterCategory effect, so this is a read-only
-                            display. */}
-                        <div className="mb-3 flex items-center gap-3 p-2 rounded border-2 border-red-400 bg-red-50/30">
-                          <label className="text-[11px] font-semibold text-red-700 whitespace-nowrap">
-                            Planning Letter category:
-                          </label>
-                          <span className={`text-xs font-medium px-2 py-1 rounded border ${
-                            row.rowCategory === 'significant_risk' ? 'bg-red-100 text-red-700 border-red-300' :
-                            row.rowCategory === 'area_of_focus' ? 'bg-orange-100 text-orange-700 border-orange-300' :
-                            'bg-slate-50 text-slate-500 border-slate-200'
-                          }`}>
-                            {row.rowCategory === 'significant_risk' ? 'Significant Risk'
-                              : row.rowCategory === 'area_of_focus' ? 'Area of Focus'
-                              : '— Not in letter —'}
-                          </span>
-                          <span className="text-[10px] text-red-600 italic">
-                            Derived from the Sig.Risk? dot above. Change the row&apos;s Likelihood, Magnitude or Control Risk to update it.
-                          </span>
-                        </div>
+                        {/* Planning Letter category banner removed — the Sig.Risk dot column
+                            already conveys this. rowCategory is still derived in state via
+                            the auto-derive effect so the Planning Letter template still works. */}
                         <div className="grid grid-cols-5 gap-3">
                           {INHERENT_RISK_COMPONENTS.map(comp => {
                             const textKey = `${comp.key}Text` as keyof RMMRow;
