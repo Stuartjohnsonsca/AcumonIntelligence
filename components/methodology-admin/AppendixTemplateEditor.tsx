@@ -101,16 +101,32 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
   // toast library.
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  /** Copy a question's id to the clipboard. The id is what goes into
-   *  the `Conditional on` field on another question, or into any
-   *  Handlebars template that needs to reference this question. */
+  /** Copy a formula-safe reference for a question to the clipboard.
+   *
+   *  The formula engine's identifier regex is [A-Za-z_][A-Za-z0-9_]*
+   *  — dashes aren't allowed. So a UUID-style id (`a1b2-c3d4`) can't
+   *  be referenced directly in a formula, whereas a slug derived from
+   *  the question text (`audit_fee`) always can. This helper picks:
+   *    • the slug, if the question has text that slugifies to a
+   *      valid identifier
+   *    • the raw id, only when it's already identifier-safe
+   *      (seeded templates that use snake_case ids like
+   *      `audit_fee` directly)
+   *
+   *  Both are registered in the formula engine's values map, so
+   *  whichever we copy will resolve at evaluation time. */
   async function copyQuestionReference(questionId: string) {
+    const q = questions.find(qq => qq.id === questionId);
+    const slug = slugifyQuestionText(q?.questionText);
+    const isIdentifierSafe = (s: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s);
+    // Prefer a non-empty slug; fall back to the id (even if it has
+    // dashes — caller might want it for Conditional-on or a cross
+    // reference, not a formula).
+    const ref = slug && isIdentifierSafe(slug) ? slug : questionId;
     try {
-      await navigator.clipboard.writeText(questionId);
+      await navigator.clipboard.writeText(ref);
     } catch {
-      // Fallback for very old browsers / insecure contexts — surface the
-      // id in a prompt so the admin can still copy it manually.
-      window.prompt('Question reference (copy this):', questionId);
+      window.prompt('Question reference (copy this):', ref);
       return;
     }
     setCopiedId(questionId);
@@ -448,11 +464,18 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 />
                                 <div className="space-y-1">
                                   <p className="text-[10px] text-slate-500">
-                                    Click a chip to append it to the expression. Use bare identifiers (no
-                                    braces) for simple references. Arithmetic: <code className="bg-slate-100 px-1 rounded">+ - * /</code>.
-                                    Functions: <code className="bg-slate-100 px-1 rounded">IF(cond, a, b)</code>,{' '}
+                                    Click a chip to append it to the expression. Use bare identifiers (no braces)
+                                    for simple references. Arithmetic: <code className="bg-slate-100 px-1 rounded">+ - * /</code>.
+                                    Functions:{' '}
+                                    <code className="bg-slate-100 px-1 rounded">IF(cond, a, b)</code>,{' '}
                                     <code className="bg-slate-100 px-1 rounded">ROUND(x, 2)</code>,{' '}
-                                    <code className="bg-slate-100 px-1 rounded">SUM(a, b, c)</code>.
+                                    <code className="bg-slate-100 px-1 rounded">SUM(a, b, …)</code>,{' '}
+                                    <code className="bg-slate-100 px-1 rounded">AVG(…)</code>,{' '}
+                                    <code className="bg-slate-100 px-1 rounded">MIN(…)</code> /{' '}
+                                    <code className="bg-slate-100 px-1 rounded">MAX(…)</code>,{' '}
+                                    <code className="bg-slate-100 px-1 rounded">ABS(x)</code>,{' '}
+                                    <code className="bg-slate-100 px-1 rounded">COUNT(…)</code>,{' '}
+                                    <code className="bg-slate-100 px-1 rounded">PERCENT(num, den)</code>.
                                   </p>
                                   {/* Available fields in this template. Chips display the
                                       question text; clicking inserts a slug derived from the
@@ -460,41 +483,22 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                       the slug via buildFormulaValues so bare-identifier
                                       references work regardless of whether the underlying id
                                       is a GUID or a snake_case string. */}
+                                  {/* Search + scrollable chip list — the previous
+                                      version silently hid anything past the 60th
+                                      question, which is easy to hit on a long
+                                      schedule. A tiny search box filters by text
+                                      or slug; the list scrolls when it overflows. */}
+                                  <FormulaFieldChips
+                                    currentQuestionId={q.id}
+                                    questions={questions}
+                                    onInsert={(slug) => {
+                                      const current = q.formulaExpression || '';
+                                      const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
+                                      updateQuestion(q.id, { formulaExpression: current + sep + slug });
+                                    }}
+                                  />
                                   <div className="flex flex-wrap gap-1">
-                                    {(() => {
-                                      const usedSlugs = new Set<string>();
-                                      return questions
-                                        .filter(other => other.id !== q.id && other.id && (other.questionText || other.id))
-                                        .slice(0, 60)
-                                        .map(other => {
-                                          const base = slugifyQuestionText(other.questionText) || other.id;
-                                          let slug = base;
-                                          let n = 2;
-                                          while (usedSlugs.has(slug)) slug = `${base}_${n++}`;
-                                          usedSlugs.add(slug);
-                                          const label = other.questionText && other.questionText.trim().length > 0
-                                            ? other.questionText.length > 40
-                                              ? other.questionText.slice(0, 40) + '…'
-                                              : other.questionText
-                                            : other.id;
-                                          return (
-                                            <button
-                                              key={other.id}
-                                              type="button"
-                                              onClick={() => {
-                                                const current = q.formulaExpression || '';
-                                                const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
-                                                updateQuestion(q.id, { formulaExpression: current + sep + slug });
-                                              }}
-                                              title={`${other.questionText || other.id}  →  inserts "${slug}"`}
-                                              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
-                                            >
-                                              <span>{label}</span>
-                                              <span className="font-mono text-[9px] text-blue-500">{slug}</span>
-                                            </button>
-                                          );
-                                        });
-                                    })()}
+                                    {[].map(() => null)}
                                     {/* Firm-wide variables — loaded dynamically from
                                          Methodology Admin → Firm-Wide Assumptions → Firm Variables */}
                                     {firmVariables.map(fv => (
@@ -520,7 +524,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                   </div>
                                   {/* Operator chips */}
                                   <div className="flex flex-wrap gap-1">
-                                    {['+', '-', '*', '/', '(', ')', 'IF(', 'ROUND(', 'SUM('].map(op => (
+                                    {['+', '-', '*', '/', '(', ')', 'IF(', 'ROUND(', 'SUM(', 'AVG(', 'MIN(', 'MAX(', 'ABS(', 'PERCENT(', 'COUNT('].map(op => (
                                       <button
                                         key={op}
                                         type="button"
@@ -711,6 +715,86 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
           No sections yet. Click &quot;Add Section&quot; to get started.
         </div>
       )}
+    </div>
+  );
+}
+
+/** Searchable, un-capped chip palette for formula field references.
+ *
+ *  Previously the palette listed up to 60 questions directly in the
+ *  formula editor — anything past that silently disappeared, which on
+ *  long schedules meant you'd see the "Copy Question Reference" button
+ *  on a question but couldn't find its chip here. This version:
+ *    • Shows every question (except the current one)
+ *    • Filters by a search box (matches text + slug)
+ *    • Scrolls when the list overflows — no more cap
+ *    • Same behaviour as before otherwise: clicking a chip appends its
+ *      slug to the formula expression with a sensible separator
+ */
+function FormulaFieldChips({
+  currentQuestionId,
+  questions,
+  onInsert,
+}: {
+  currentQuestionId: string;
+  questions: TemplateQuestion[];
+  onInsert: (slug: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  // Pre-compute slug for every sibling question with collision-safe suffixes.
+  const rows = (() => {
+    const usedSlugs = new Set<string>();
+    return questions
+      .filter(other => other.id !== currentQuestionId && other.id && (other.questionText || other.id))
+      .map(other => {
+        const base = slugifyQuestionText(other.questionText) || other.id;
+        let slug = base;
+        let n = 2;
+        while (usedSlugs.has(slug)) slug = `${base}_${n++}`;
+        usedSlugs.add(slug);
+        const label = other.questionText && other.questionText.trim().length > 0
+          ? (other.questionText.length > 40 ? other.questionText.slice(0, 40) + '…' : other.questionText)
+          : other.id;
+        return { id: other.id, slug, label, fullText: other.questionText || other.id };
+      });
+  })();
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter(r => r.slug.toLowerCase().includes(q) || r.fullText.toLowerCase().includes(q))
+    : rows;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={`Search ${rows.length} fields…`}
+          className="flex-1 text-[10px] border border-slate-200 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+        />
+        <span className="text-[9px] text-slate-400 font-medium">
+          {q ? `${filtered.length}/${rows.length}` : `${rows.length}`}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto pr-1 border border-slate-100 rounded p-1 bg-white">
+        {filtered.length === 0 ? (
+          <span className="text-[9px] text-slate-400 italic px-1 py-0.5">No fields match &ldquo;{query}&rdquo;</span>
+        ) : (
+          filtered.map(row => (
+            <button
+              key={row.id}
+              type="button"
+              onClick={() => onInsert(row.slug)}
+              title={`${row.fullText}  →  inserts "${row.slug}"`}
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+            >
+              <span>{row.label}</span>
+              <span className="font-mono text-[9px] text-blue-500">{row.slug}</span>
+            </button>
+          ))
+        )}
+      </div>
     </div>
   );
 }

@@ -76,7 +76,11 @@ export function evaluateFormula(
 }
 
 /** Known formula function names that must NOT be treated as value references. */
-const FORMULA_FUNCTIONS = new Set(['IF', 'SUM', 'ROUND', 'OR', 'AND', 'TRUE', 'FALSE', 'INDEX', 'MATCH']);
+const FORMULA_FUNCTIONS = new Set([
+  'IF', 'SUM', 'ROUND', 'OR', 'AND', 'TRUE', 'FALSE', 'INDEX', 'MATCH',
+  // Aggregations + common maths — added for percentage / averaging workflows.
+  'AVG', 'AVERAGE', 'MIN', 'MAX', 'COUNT', 'ABS', 'PERCENT', 'PCT',
+]);
 
 /**
  * Replace bare identifiers with their values from `values`. Skips anything
@@ -198,6 +202,29 @@ function parseExpression(expr: string): string | number | boolean | null {
     return parseOR(expr);
   }
 
+  // AVG / AVERAGE — mean of numeric args (blank args ignored so an
+  // unanswered question doesn't drag the average towards zero).
+  if (expr.toUpperCase().startsWith('AVG(') || expr.toUpperCase().startsWith('AVERAGE(')) {
+    return parseAverage(expr);
+  }
+
+  // MIN / MAX — smallest / largest numeric arg.
+  if (expr.toUpperCase().startsWith('MIN(')) return parseMinMax(expr, 'MIN');
+  if (expr.toUpperCase().startsWith('MAX(')) return parseMinMax(expr, 'MAX');
+
+  // COUNT — number of non-blank / non-null args.
+  if (expr.toUpperCase().startsWith('COUNT(')) return parseCount(expr);
+
+  // ABS — absolute value. Handy for variance calcs.
+  if (expr.toUpperCase().startsWith('ABS(')) return parseAbs(expr);
+
+  // PERCENT(numerator, denominator [, decimals]) / PCT(...)
+  // One-shot "num / den × 100" with zero-division returning 0 so you
+  // don't get "Infinity" or "NaN" in a schedule field.
+  if (expr.toUpperCase().startsWith('PERCENT(') || expr.toUpperCase().startsWith('PCT(')) {
+    return parsePercent(expr);
+  }
+
   // String literal
   if (expr.startsWith('"') && expr.endsWith('"')) {
     return expr.slice(1, -1);
@@ -259,6 +286,81 @@ function parseOR(expr: string): boolean {
     if (typeof val === 'string') return val !== '' && val !== '0';
     return false;
   });
+}
+
+/** Numeric value collector — parses a list of function args and
+ *  returns only the ones that evaluate to a finite number. Skips
+ *  blanks and non-numerics so AVG/MIN/MAX behave sensibly on a
+ *  partially-filled form. */
+function numericArgs(inner: string[]): number[] {
+  const out: number[] = [];
+  for (const raw of inner) {
+    const v = parseExpression(raw.trim());
+    if (typeof v === 'number' && Number.isFinite(v)) out.push(v);
+    else if (typeof v === 'string' && v.trim() !== '') {
+      const n = Number(v);
+      if (Number.isFinite(n)) out.push(n);
+    }
+  }
+  return out;
+}
+
+function parseAverage(expr: string): number | null {
+  const name = expr.toUpperCase().startsWith('AVERAGE(') ? 'AVERAGE' : 'AVG';
+  const inner = extractFunctionArgs(expr, name);
+  if (!inner) return null;
+  const nums = numericArgs(inner);
+  if (nums.length === 0) return null;
+  return nums.reduce((s, n) => s + n, 0) / nums.length;
+}
+
+function parseMinMax(expr: string, kind: 'MIN' | 'MAX'): number | null {
+  const inner = extractFunctionArgs(expr, kind);
+  if (!inner) return null;
+  const nums = numericArgs(inner);
+  if (nums.length === 0) return null;
+  return kind === 'MIN' ? Math.min(...nums) : Math.max(...nums);
+}
+
+function parseCount(expr: string): number {
+  const inner = extractFunctionArgs(expr, 'COUNT');
+  if (!inner) return 0;
+  // "Non-blank" rather than "numeric" — matches Excel COUNTA semantics,
+  // which is what users usually mean when asking "how many answered?".
+  let n = 0;
+  for (const raw of inner) {
+    const v = parseExpression(raw.trim());
+    if (v === null || v === undefined || v === '') continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    n++;
+  }
+  return n;
+}
+
+function parseAbs(expr: string): number | null {
+  const inner = extractFunctionArgs(expr, 'ABS');
+  if (!inner || inner.length === 0) return null;
+  const v = parseExpression(inner[0].trim());
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  return Math.abs(v);
+}
+
+/** PERCENT(num, den [, decimals])  →  (num / den) × 100
+ *  Zero-division returns 0 (not NaN / Infinity) so blank denominators
+ *  don't show as "Infinity%" in a schedule cell. Default 2 decimal
+ *  places; pass a third arg to override. */
+function parsePercent(expr: string): number | null {
+  const name = expr.toUpperCase().startsWith('PERCENT(') ? 'PERCENT' : 'PCT';
+  const inner = extractFunctionArgs(expr, name);
+  if (!inner || inner.length < 2) return null;
+  const num = parseExpression(inner[0].trim());
+  const den = parseExpression(inner[1].trim());
+  if (typeof num !== 'number' || typeof den !== 'number') return null;
+  if (den === 0) return 0;
+  const decimals = inner.length >= 3 ? Number(parseExpression(inner[2].trim())) : 2;
+  const raw = (num / den) * 100;
+  const factor = Math.pow(10, Number.isFinite(decimals) ? decimals : 2);
+  return Math.round(raw * factor) / factor;
 }
 
 function evaluateCondition(condStr: string): boolean {
