@@ -547,11 +547,10 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
                 </div>
               </div>
               <div className={`${pyc} flex justify-end`}>
-                {getPy(`om_factor_${i}`) && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                    getPy(`om_factor_${i}`) === 'High' ? 'bg-red-100 text-red-700' : getPy(`om_factor_${i}`) === 'Low' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                  }`}>{getPy(`om_factor_${i}`)}</span>
-                )}
+                <PriorLmhSelect
+                  value={getPy(`om_factor_${i}`) as string | null}
+                  onCommit={(v) => setPy(`om_factor_${i}`, v)}
+                />
               </div>
               <div className={`${ic} flex items-center gap-2`}>
                 {!nr && (i === 0 ? (
@@ -593,11 +592,10 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
                 </div>
               </div>
               <div className={`${pyc} flex justify-end`}>
-                {getPy(`pm_factor_${i}`) && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                    getPy(`pm_factor_${i}`) === 'High' ? 'bg-red-100 text-red-700' : getPy(`pm_factor_${i}`) === 'Low' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                  }`}>{getPy(`pm_factor_${i}`)}</span>
-                )}
+                <PriorLmhSelect
+                  value={getPy(`pm_factor_${i}`) as string | null}
+                  onCommit={(v) => setPy(`pm_factor_${i}`, v)}
+                />
               </div>
               <div className={`${ic} flex items-center justify-end`}>
                 {!nr ? <LmhSelect value={get(`pm_factor_${i}`) || 'Medium'} onChange={v => set(`pm_factor_${i}`, v)} /> : <span className="text-[10px] text-slate-400 italic">Not relevant</span>}
@@ -663,6 +661,32 @@ function PriorNumberInput({ value, onCommit, format }: { value: number | null; o
     >
       {value != null && value !== 0 ? format(value) : <span className="text-slate-300">—</span>}
     </button>
+  );
+}
+
+/** Editable prior-period Low / Medium / High select. Styled to look
+ *  like the colour-coded pills the read-only version used (red / amber
+ *  / green background tied to the value) but is actually a compact
+ *  <select> so the auditor can change it with one click. Empty value
+ *  clears the override and falls back to the prior-engagement value. */
+function PriorLmhSelect({ value, onCommit }: { value: string | null | undefined; onCommit: (v: string | null) => void }) {
+  const v = (value === 'Low' || value === 'Medium' || value === 'High') ? value : '';
+  const colour = v === 'High' ? 'bg-red-100 text-red-700 border-red-200'
+    : v === 'Low' ? 'bg-green-100 text-green-700 border-green-200'
+    : v === 'Medium' ? 'bg-amber-100 text-amber-700 border-amber-200'
+    : 'bg-slate-50 text-slate-400 border-slate-200';
+  return (
+    <select
+      value={v}
+      onChange={e => onCommit(e.target.value || null)}
+      className={`text-[10px] font-medium rounded px-1.5 py-0.5 border ${colour} focus:border-blue-400 outline-none cursor-pointer`}
+      title="Click to edit prior period assessment (stored as a local override on this engagement)"
+    >
+      <option value="">—</option>
+      <option value="Low">Low</option>
+      <option value="Medium">Medium</option>
+      <option value="High">High</option>
+    </select>
   );
 }
 
