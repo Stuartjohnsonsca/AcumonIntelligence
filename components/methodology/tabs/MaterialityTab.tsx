@@ -312,8 +312,8 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
           <thead>
             <tr className="bg-slate-100 border-b">
               <th className="text-left px-3 py-2 text-slate-600 w-[40%]"></th>
-              <th className="text-right px-3 py-2 text-slate-500 w-[15%]">Prior Year</th>
-              <th className="text-right px-3 py-2 text-slate-600 w-[15%]">Current Year</th>
+              <th className="text-right px-3 py-2 text-slate-500 w-[15%]">Prior Period</th>
+              <th className="text-right px-3 py-2 text-slate-600 w-[15%]">Current Period</th>
               <th className="w-[30%]"></th>
             </tr>
           </thead>
@@ -444,7 +444,7 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
             <div className={ic}><textarea value={get('key_judgements') || ''} onChange={e => set('key_judgements', e.target.value)} rows={2} className="w-full text-xs border rounded px-2 py-1.5" /></div>
           </div>
           <div className="flex">
-            <div className={lc}>Any change in basis from prior year?</div>
+            <div className={lc}>Any change in basis from prior period?</div>
             <div className={pyc}>{getPy('basis_changed') != null ? (getPy('basis_changed') ? 'Yes' : 'No') : '—'}</div>
             <div className={`${ic} flex items-center gap-3`}>
               <label className="flex items-center gap-1 text-xs"><input type="radio" name="basis_changed" checked={basisChanged === true} onChange={() => set('basis_changed', true)} className="w-3 h-3" /> Yes</label>
