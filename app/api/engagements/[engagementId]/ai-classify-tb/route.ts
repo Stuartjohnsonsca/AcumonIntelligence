@@ -3,6 +3,7 @@ import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import OpenAI from 'openai';
+import { buildCorpusForFirm, findCanonical, topExamples, normaliseDescription } from '@/lib/tb-ai-corpus';
 
 export const maxDuration = 120; // Allow up to 2 minutes for large TB classification
 
@@ -257,16 +258,81 @@ No other text.`;
 
       let totalClassified = 0;
 
+      // ── Firm-wide learning corpus ────────────────────────────────
+      // Built from past auditor classifications across every engagement
+      // (snapshots captured on TB-tab unmount, aggregated by
+      // buildCorpusForFirm). Two uses:
+      //   1. Short-circuit — when an incoming row's description has a
+      //      confident canonical answer, return it immediately without
+      //      bothering the LLM. Faster, cheaper, and more consistent.
+      //   2. Few-shot — otherwise, prepend the top ~20 most-confident
+      //      corpus entries to the system prompt so the LLM has real
+      //      examples of this firm's preferred classifications.
+      const corpus = await buildCorpusForFirm(firmId);
+      // Build a few-shot examples block to add to the system prompt.
+      // Compact format: "<description> → <note> / <level> / <stmt>"
+      const examples = topExamples(corpus, 20);
+      const fewShotBlock = examples.length > 0
+        ? `\n\nFIRM'S CANONICAL EXAMPLES (real auditor classifications from past engagements — prefer these patterns):\n` +
+          examples.map(e => `- "${e.description}" → ${e.canonical.fsNoteLevel || ''} / ${e.canonical.fsLevel || ''} / ${e.canonical.fsStatement || ''} (${e.consensusCount}/${e.sampleCount} agree)`).join('\n')
+        : '';
+      const systemPromptWithCorpus = systemPrompt + fewShotBlock;
+
       // Process in batches of 30
       for (let i = 0; i < rows.length; i += 30) {
         const batch = rows.slice(i, i + 30);
 
+        // Split batch into corpus-hits (confident historical answer
+        // exists) vs needs-LLM. The hits are classified instantly
+        // from the canonical map; only the rest go to the LLM.
+        const corpusHits: Array<{ index: number; fsNoteLevel: string | null; fsLevel: string | null; fsStatement: string | null; aiConfidence: number }> = [];
+        const needsLlm: any[] = [];
+        for (const r of batch) {
+          const canonical = findCanonical(corpus, r.description);
+          if (canonical) {
+            corpusHits.push({
+              index: r.index,
+              fsNoteLevel: canonical.fsNoteLevel,
+              fsLevel: canonical.fsLevel,
+              fsStatement: canonical.fsStatement,
+              aiConfidence: 0.99, // Corpus lookups are high-confidence by definition
+            });
+          } else {
+            needsLlm.push(r);
+          }
+        }
+
         await prisma.backgroundTask.update({
           where: { id: task.id },
-          data: { progress: { phase: 'classifying', classified: totalClassified, total: rows.length, batch: `${i + 1}–${Math.min(i + 30, rows.length)}` } as any },
+          data: { progress: { phase: 'classifying', classified: totalClassified, total: rows.length, batch: `${i + 1}–${Math.min(i + 30, rows.length)}`, corpusHits: corpusHits.length, llmRows: needsLlm.length } as any },
         });
 
-        const rowDescriptions = batch
+        // Apply corpus hits to DB immediately — no LLM needed.
+        for (const hit of corpusHits) {
+          const sourceRow = batch.find((r: any) => r.index === hit.index);
+          if (!sourceRow) continue;
+          const dbRow = tbRowsDb.find(r => r.accountCode === sourceRow.accountCode);
+          if (dbRow && (hit.fsNoteLevel || hit.fsLevel || hit.fsStatement)) {
+            const resolvedFsLineId = resolveFsLineId(fsLines, hit.fsLevel, hit.fsNoteLevel);
+            await prisma.auditTBRow.update({
+              where: { id: dbRow.id },
+              data: {
+                fsNoteLevel: hit.fsNoteLevel || undefined,
+                fsLevel: hit.fsLevel || undefined,
+                fsLineId: resolvedFsLineId || undefined,
+                fsStatement: hit.fsStatement || undefined,
+                aiConfidence: hit.aiConfidence,
+              } as any,
+            });
+            totalClassified++;
+          }
+        }
+
+        // If everything in this batch was a corpus hit, skip the LLM
+        // call entirely and move to the next batch.
+        if (needsLlm.length === 0) continue;
+
+        const rowDescriptions = needsLlm
           .map((r: any) => {
             let line = `[${r.index}] Code: "${r.accountCode || ''}" | Desc: "${r.description || ''}" | Amount: ${r.currentYear ?? 'nil'}`;
             if (r.sourceMetadata) {
@@ -284,7 +350,11 @@ No other text.`;
           const completion = await client.chat.completions.create({
             model: MODEL,
             messages: [
-              { role: 'system', content: systemPrompt },
+              // systemPromptWithCorpus includes the base prompt plus
+              // the firm's top-N canonical examples as few-shot
+              // guidance. Auto-scales with the corpus — an empty
+              // corpus degrades gracefully to the bare prompt.
+              { role: 'system', content: systemPromptWithCorpus },
               { role: 'user', content: rowDescriptions },
             ],
             max_tokens: 4096,

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain } from 'lucide-react';
 
 const tiles = [
   {
@@ -27,6 +27,14 @@ const tiles = [
     icon: Users,
     color: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100',
     iconColor: 'text-indigo-600',
+  },
+  {
+    title: 'TB AI Corpus',
+    description: 'Firm-wide learning from past TB classifications — descriptions, consensus answers, and AI accept/override rates',
+    href: '/methodology-admin/tb-ai-corpus',
+    icon: Brain,
+    color: 'bg-fuchsia-50 border-fuchsia-200 hover:bg-fuchsia-100',
+    iconColor: 'text-fuchsia-600',
   },
   {
     title: 'Audit Methodology',
