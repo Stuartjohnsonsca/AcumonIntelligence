@@ -88,12 +88,26 @@ export const MERGE_FIELDS: MergeField[] = [
   ]},
 
   // ─── Materiality ─────────────────────────────────────────────────────────
-  { group: 'Materiality', key: 'materiality.overall', label: 'Overall materiality', type: 'currency', sampleValue: 125000 },
-  { group: 'Materiality', key: 'materiality.performance', label: 'Performance materiality', type: 'currency', sampleValue: 87500 },
-  { group: 'Materiality', key: 'materiality.clearlyTrivial', label: 'Clearly trivial', type: 'currency', sampleValue: 6250 },
-  { group: 'Materiality', key: 'materiality.benchmark', label: 'Benchmark', type: 'scalar', sampleValue: 'Profit before tax' },
-  { group: 'Materiality', key: 'materiality.benchmarkAmount', label: 'Benchmark amount', type: 'currency', sampleValue: 2500000 },
-  { group: 'Materiality', key: 'materiality.benchmarkPct', label: 'Benchmark %', type: 'scalar', sampleValue: 5 },
+  { group: 'Materiality', key: 'materiality.overall', label: 'Overall materiality (current period)', type: 'currency', sampleValue: 125000 },
+  { group: 'Materiality', key: 'materiality.performance', label: 'Performance materiality (current period)', type: 'currency', sampleValue: 87500 },
+  { group: 'Materiality', key: 'materiality.clearlyTrivial', label: 'Clearly trivial (current period)', type: 'currency', sampleValue: 6250 },
+  { group: 'Materiality', key: 'materiality.benchmark', label: 'Benchmark (current period)', type: 'scalar', sampleValue: 'Profit before tax' },
+  { group: 'Materiality', key: 'materiality.benchmarkAmount', label: 'Benchmark amount (current period)', type: 'currency', sampleValue: 2500000 },
+  { group: 'Materiality', key: 'materiality.benchmarkPct', label: 'Benchmark % (current period)', type: 'scalar', sampleValue: 5 },
+  // Prior-period equivalents — resolved from the prior engagement's
+  // materiality record, with the current engagement's priorOverrides
+  // taking precedence. Null when there is no prior engagement yet.
+  { group: 'Materiality', key: 'materiality.prior.overall', label: 'Overall materiality (prior period)', type: 'currency', sampleValue: 110000,
+    description: 'Prior-period overall materiality — auto from the prior engagement, overridable on the Materiality tab.' },
+  { group: 'Materiality', key: 'materiality.prior.performance', label: 'Performance materiality (prior period)', type: 'currency', sampleValue: 77000 },
+  { group: 'Materiality', key: 'materiality.prior.clearlyTrivial', label: 'Clearly trivial (prior period)', type: 'currency', sampleValue: 5500 },
+  { group: 'Materiality', key: 'materiality.prior.benchmark', label: 'Benchmark (prior period)', type: 'scalar', sampleValue: 'Profit before tax' },
+  { group: 'Materiality', key: 'materiality.prior.benchmarkPct', label: 'Benchmark % (prior period)', type: 'scalar', sampleValue: 5 },
+  { group: 'Materiality', key: 'materiality.prior.basisChanged', label: 'Change in basis from prior period (Yes/No)', type: 'scalar', sampleValue: false },
+  { group: 'Materiality', key: 'materiality.prior.basisChangeReason', label: 'Reason for change in basis (prior period)', type: 'scalar', sampleValue: '' },
+  { group: 'Materiality', key: 'materiality.prior.stakeholders', label: 'Stakeholders identified (prior period)', type: 'scalar', sampleValue: '' },
+  { group: 'Materiality', key: 'materiality.prior.stakeholderFocus', label: 'Stakeholder focus (prior period)', type: 'scalar', sampleValue: '' },
+  { group: 'Materiality', key: 'materiality.prior.keyJudgements', label: 'Key judgements in setting materiality (prior period)', type: 'scalar', sampleValue: '' },
 
   // ─── Error Schedule ──────────────────────────────────────────────────────
   { group: 'Error Schedule', key: 'errorSchedule', label: 'Error schedule items (array)', type: 'array',

@@ -87,6 +87,22 @@ export interface TemplateContext {
     benchmark: string | null;
     benchmarkAmount: number | null;
     benchmarkPct: number | null;
+    /** Prior-period materiality figures — pulled from the prior
+     *  engagement's materiality record, with any local overrides
+     *  from `priorOverrides` on the current engagement applied on
+     *  top. Null-valued when there is no prior engagement yet. */
+    prior: {
+      overall: number | null;
+      performance: number | null;
+      clearlyTrivial: number | null;
+      benchmark: string | null;
+      benchmarkPct: number | null;
+      basisChanged: boolean | null;
+      basisChangeReason: string | null;
+      stakeholders: string | null;
+      stakeholderFocus: string | null;
+      keyJudgements: string | null;
+    };
   };
   errorSchedule: Array<{
     id: string;
@@ -204,24 +220,65 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
   const preparer = team.find(t => t.role === 'Junior') || team.find(t => t.role === 'Preparer') || null;
 
   // Materiality — the primary data JSON holds Appendix-E-style values.
-  let materiality: TemplateContext['materiality'] = {
-    overall: null, performance: null, clearlyTrivial: null,
-    benchmark: null, benchmarkAmount: null, benchmarkPct: null,
-  };
+  // We ALSO resolve the prior-period figures here, coming from two
+  // sources merged in precedence order:
+  //   1. data.priorOverrides — the auditor's local overrides, typed
+  //      directly on the Materiality tab. These take precedence.
+  //   2. The prior engagement's own materiality record, looked up by
+  //      (clientId, auditType, earlier period). Non-destructive —
+  //      the prior engagement is never written to.
+  let currentMaterialityData: any = null;
+  let priorMaterialityData: any = null;
+  let priorOverrides: Record<string, any> = {};
   try {
     const mat = await prisma.auditMateriality.findUnique({ where: { engagementId } }) as any;
-    if (mat?.data) {
-      const d: any = mat.data;
-      materiality = {
-        overall: d.overallMateriality ?? d.materiality ?? null,
-        performance: d.performanceMateriality ?? null,
-        clearlyTrivial: d.clearlyTrivial ?? null,
-        benchmark: d.benchmark ?? null,
-        benchmarkAmount: d.benchmarkAmount ?? null,
-        benchmarkPct: d.benchmarkPct ?? null,
-      };
+    currentMaterialityData = mat?.data ?? null;
+    if (currentMaterialityData?.priorOverrides && typeof currentMaterialityData.priorOverrides === 'object') {
+      priorOverrides = currentMaterialityData.priorOverrides;
     }
-  } catch { /* tolerant — missing materiality row is fine */ }
+  } catch { /* tolerant */ }
+  try {
+    if (engagement.priorPeriodEngagement?.id) {
+      const priorMat = await prisma.auditMateriality.findUnique({ where: { engagementId: engagement.priorPeriodEngagement.id } }) as any;
+      priorMaterialityData = priorMat?.data ?? null;
+    }
+  } catch { /* tolerant — first-year engagements have no prior */ }
+
+  /** Read a key from priorOverrides first, then from the prior
+   *  engagement's materiality data. Same precedence the Materiality
+   *  tab's `getPy` helper uses. */
+  function pickPrior<T = any>(key: string): T | null {
+    const o = priorOverrides?.[key];
+    if (o !== undefined && o !== null && o !== '') return o as T;
+    const p = priorMaterialityData?.[key];
+    if (p !== undefined && p !== null && p !== '') return p as T;
+    return null;
+  }
+
+  const currentD = currentMaterialityData || {};
+  const materiality: TemplateContext['materiality'] = {
+    overall: currentD.overallMateriality ?? currentD.materiality ?? null,
+    performance: currentD.performanceMateriality ?? null,
+    clearlyTrivial: currentD.clearlyTrivial ?? null,
+    benchmark: currentD.benchmark ?? currentD.materiality_benchmark ?? null,
+    benchmarkAmount: currentD.benchmarkAmount ?? null,
+    benchmarkPct: currentD.benchmarkPct ?? currentD.benchmark_pct ?? null,
+    prior: {
+      // The Materiality tab stores prior figures under these snake_case
+      // keys (materiality_manual, performance_materiality_manual, etc.)
+      // in both the prior engagement's data and in priorOverrides.
+      overall: (pickPrior<number>('materiality_manual') ?? pickPrior<number>('overallMateriality') ?? null),
+      performance: (pickPrior<number>('performance_materiality_manual') ?? pickPrior<number>('performanceMateriality') ?? null),
+      clearlyTrivial: (pickPrior<number>('clearly_trivial_manual') ?? pickPrior<number>('clearlyTrivial') ?? null),
+      benchmark: pickPrior<string>('materiality_benchmark') ?? pickPrior<string>('benchmark') ?? null,
+      benchmarkPct: pickPrior<number>('benchmark_pct') ?? null,
+      basisChanged: (pickPrior<boolean>('basis_changed') as boolean | null) ?? null,
+      basisChangeReason: pickPrior<string>('basis_change_reason') ?? null,
+      stakeholders: pickPrior<string>('stakeholders') ?? null,
+      stakeholderFocus: pickPrior<string>('stakeholder_focus') ?? null,
+      keyJudgements: pickPrior<string>('key_judgements') ?? null,
+    },
+  };
 
   // Error schedule.
   const errorRows = await prisma.auditErrorSchedule.findMany({ where: { engagementId } });
