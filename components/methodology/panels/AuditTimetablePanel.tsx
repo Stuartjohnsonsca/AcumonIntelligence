@@ -326,21 +326,15 @@ export function AuditTimetablePanel({ engagementId, initialDates }: Props) {
                     />
                   </td>
                   <td className="py-1 px-2">
-                    <input
-                      type="date"
-                      value={toDateInput(row.targetDate)}
-                      onChange={e => update(idx, { targetDate: e.target.value || null })}
-                      onBlur={flushNow}
-                      className="text-xs border border-transparent hover:border-slate-200 focus:border-blue-300 rounded px-1.5 py-1 bg-transparent focus:bg-white outline-none"
+                    <UkDateInput
+                      value={row.targetDate}
+                      onCommit={(iso) => { update(idx, { targetDate: iso }); flushNow(); }}
                     />
                   </td>
                   <td className="py-1 px-2">
-                    <input
-                      type="date"
-                      value={toDateInput(row.revisedTarget)}
-                      onChange={e => update(idx, { revisedTarget: e.target.value || null })}
-                      onBlur={flushNow}
-                      className="text-xs border border-transparent hover:border-slate-200 focus:border-blue-300 rounded px-1.5 py-1 bg-transparent focus:bg-white outline-none"
+                    <UkDateInput
+                      value={row.revisedTarget}
+                      onCommit={(iso) => { update(idx, { revisedTarget: iso }); flushNow(); }}
                     />
                   </td>
                   <td className="py-1 px-2">
@@ -376,6 +370,66 @@ export function AuditTimetablePanel({ engagementId, initialDates }: Props) {
   );
 }
 
+/** Date input that accepts UK-style formats and parses on blur /
+ *  Enter. Displays as dd/mm/yyyy. Commits to parent only when the
+ *  input either becomes cleanly empty (parent gets null) or parses
+ *  to a valid date (parent gets ISO yyyy-mm-dd) — malformed input
+ *  on blur reverts to the last committed value (with a brief red
+ *  border to show the user their input was rejected).
+ *
+ *  Why not <input type="date">: the native picker fires onChange
+ *  with '' when the user types raw digits without slashes (e.g.
+ *  `01042026`), which silently persists as null. This control
+ *  accepts `01042026`, `01/04/2026`, `1/4/26`, `1 Apr 2026` etc. */
+function UkDateInput({ value, onCommit }: { value: string | null; onCommit: (iso: string | null) => void }) {
+  const display = toUkDisplay(value);
+  const [text, setText] = useState(display);
+  const [rejected, setRejected] = useState(false);
+  // Keep the text in sync when the parent hands us a different
+  // committed value (e.g. from a fresh server hydration).
+  useEffect(() => { setText(toUkDisplay(value)); setRejected(false); }, [value]);
+
+  function commit() {
+    const parsed = parseUkDate(text);
+    if (parsed === null) {
+      // Explicit empty — clear the saved date.
+      setRejected(false);
+      if (value !== null) onCommit(null);
+      return;
+    }
+    if (parsed === false) {
+      // Nonsense input — flash the field red and revert to the last
+      // committed value so we never save a half-typed number.
+      setRejected(true);
+      setText(toUkDisplay(value));
+      window.setTimeout(() => setRejected(false), 1200);
+      return;
+    }
+    setRejected(false);
+    // Normalise the display to canonical dd/mm/yyyy now that we
+    // have a valid parse.
+    setText(toUkDisplay(parsed));
+    if (parsed !== value) onCommit(parsed);
+  }
+
+  return (
+    <input
+      type="text"
+      value={text}
+      onChange={e => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { (e.currentTarget as HTMLInputElement).blur(); }
+      }}
+      placeholder="dd/mm/yyyy"
+      className={`w-28 text-xs border rounded px-1.5 py-1 bg-transparent focus:bg-white outline-none ${
+        rejected ? 'border-red-400 text-red-700' : 'border-transparent hover:border-slate-200 focus:border-blue-300'
+      }`}
+      title={rejected ? 'Invalid date — reverted. Try dd/mm/yyyy or 01042026 etc.' : 'Accepts dd/mm/yyyy, 01042026, 1/4/26, 1 Apr 2026, etc.'}
+    />
+  );
+}
+
 /** Seed three default rows when the engagement has none so the admin
  *  sees a helpful starting state. Marked `_seeded` so the saver skips
  *  them until the admin types into one. */
@@ -392,14 +446,88 @@ function seedIfEmpty(initial: AgreedDateData[]): Row[] {
   }));
 }
 
-/** Convert an ISO-ish string (or null) to the `yyyy-mm-dd` format
- *  the `<input type="date">` element requires. Never throws. */
-function toDateInput(v: string | null): string {
+/** Convert an ISO-ish string (or null) to a UK display string
+ *  `dd/mm/yyyy`. Never throws. Empty-in / invalid → empty-out. */
+function toUkDisplay(v: string | null): string {
   if (!v) return '';
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '';
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return `${day}/${m}/${y}`;
+}
+
+/** Parse a user-typed date in any of these flavours into an ISO
+ *  `yyyy-mm-dd` string. Returns null when the input is empty, and
+ *  `false` when the input has text but can't be parsed (so the
+ *  caller can distinguish "user cleared the field" from "user typed
+ *  nonsense and we should keep the previous value"). Accepts:
+ *    • `01042026`       (8 raw digits — dd mm yyyy)
+ *    • `1042026`        (7 raw digits — d mm yyyy)
+ *    • `01/04/2026`     (slashes, hyphens, dots, or spaces)
+ *    • `1/4/2026`
+ *    • `1/4/26`         (2-digit year → +2000)
+ *    • `01-04-2026`, `01.04.2026`, `01 04 2026`
+ *    • `2026-04-01`     (already ISO)
+ *    • `1 Apr 2026` / `1 April 2026` / `apr 1 2026`
+ *  Rejects clearly out-of-range day/month. */
+function parseUkDate(raw: string): string | null | false {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+
+  // ISO short-circuit.
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (iso) {
+    const d = new Date(`${iso[1]}-${iso[2]}-${iso[3]}T00:00:00Z`);
+    return Number.isNaN(d.getTime()) ? false : `${iso[1]}-${iso[2]}-${iso[3]}`;
+  }
+
+  // Raw digits — 6 / 7 / 8 long. Interpret as ddmmyy / dmmyyyy / ddmmyyyy.
+  const digits = s.replace(/[^0-9]/g, '');
+  if (digits.length === 8 && /^\d+$/.test(s.replace(/\s+/g, ''))) {
+    const d = digits.slice(0, 2), m = digits.slice(2, 4), y = digits.slice(4, 8);
+    return buildIso(Number(d), Number(m), Number(y));
+  }
+  if (digits.length === 6 && /^\d+$/.test(s.replace(/\s+/g, ''))) {
+    const d = digits.slice(0, 2), m = digits.slice(2, 4), y = digits.slice(4, 6);
+    return buildIso(Number(d), Number(m), 2000 + Number(y));
+  }
+  if (digits.length === 7 && /^\d+$/.test(s.replace(/\s+/g, ''))) {
+    const d = digits.slice(0, 1), m = digits.slice(1, 3), y = digits.slice(3, 7);
+    return buildIso(Number(d), Number(m), Number(y));
+  }
+
+  // Separated dd/mm/yyyy with any of the common UK separators.
+  const sep = /^(\d{1,2})[\/\-\.\s](\d{1,2})[\/\-\.\s](\d{2}|\d{4})$/.exec(s);
+  if (sep) {
+    const year = sep[3].length === 2 ? 2000 + Number(sep[3]) : Number(sep[3]);
+    return buildIso(Number(sep[1]), Number(sep[2]), year);
+  }
+
+  // Month-name formats — let Date try.
+  const tried = new Date(s);
+  if (!Number.isNaN(tried.getTime())) {
+    const y = tried.getFullYear();
+    const m = String(tried.getMonth() + 1).padStart(2, '0');
+    const d = String(tried.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return false;
+}
+
+/** Check day/month/year are in range and assemble an ISO string.
+ *  Rejects 31 Feb etc. (via Date's own rollover detection). */
+function buildIso(day: number, month: number, year: number): string | false {
+  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) return false;
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+  if (year < 1900 || year > 2100) return false;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  // Reject rolled-over dates like 31-Feb becoming 3-Mar.
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() + 1 !== month || d.getUTCDate() !== day) return false;
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
 }
