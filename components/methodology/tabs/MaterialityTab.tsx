@@ -158,7 +158,27 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
 
   function set(key: string, value: any) { setData(prev => ({ ...prev, [key]: value })); }
   function get(key: string): any { return data[key]; }
-  function getPy(key: string): any { return priorData?.[key]; }
+  /** Prior-period getter — returns the auditor's local override if
+   *  set (stored on this engagement's materiality data under
+   *  `priorOverrides`), else falls back to the prior engagement's
+   *  own materiality data. Keeps the prior engagement untouched. */
+  function getPy(key: string): any {
+    const override = (data.priorOverrides as Record<string, any> | undefined)?.[key];
+    if (override !== undefined && override !== null && override !== '') return override;
+    return priorData?.[key];
+  }
+  /** Write a prior-period override onto the current engagement.
+   *  Blank / null clears the override (so getPy falls back to the
+   *  prior engagement's stored value again). */
+  function setPy(key: string, value: any) {
+    setData(prev => {
+      const existing = (prev.priorOverrides as Record<string, any>) || {};
+      const next: Record<string, any> = { ...existing };
+      if (value === '' || value === null || value === undefined) delete next[key];
+      else next[key] = value;
+      return { ...prev, priorOverrides: next };
+    });
+  }
 
   // ─── Derived values ────────────────────────────────────────────
   const benchmark = get('materiality_benchmark') as string || '';
@@ -320,19 +340,37 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
           <tbody>
             <tr className="border-b">
               <td className={lc}>Materiality</td>
-              <td className={pyc}>{pyMateriality ? fmtCurrency(pyMateriality) : '—'}</td>
+              <td className={pyc}>
+                <PriorNumberInput
+                  value={pyMateriality || null}
+                  onCommit={(v) => setPy('materiality_manual', v)}
+                  format={fmtCurrency}
+                />
+              </td>
               <td className={`${rc} font-semibold text-slate-800`}>{fmtCurrency(materiality)}</td>
               <td></td>
             </tr>
             <tr className="border-b" data-scroll-anchor="materiality-pm">
               <td className={lc}>Performance Materiality</td>
-              <td className={pyc}>{pyPM ? fmtCurrency(pyPM) : '—'}</td>
+              <td className={pyc}>
+                <PriorNumberInput
+                  value={pyPM || null}
+                  onCommit={(v) => setPy('performance_materiality_manual', v)}
+                  format={fmtCurrency}
+                />
+              </td>
               <td className={`${rc} font-semibold text-slate-800`}>{fmtCurrency(performanceMateriality)}</td>
               <td></td>
             </tr>
             <tr data-scroll-anchor="materiality-clearly-trivial">
               <td className={lc}>Clearly Trivial</td>
-              <td className={pyc}>{pyCT ? fmtCurrency(pyCT) : '—'}</td>
+              <td className={pyc}>
+                <PriorNumberInput
+                  value={pyCT || null}
+                  onCommit={(v) => setPy('clearly_trivial_manual', v)}
+                  format={fmtCurrency}
+                />
+              </td>
               <td className={`${rc} font-semibold text-slate-800`}>{fmtCurrency(clearlyTrivial)}</td>
               <td></td>
             </tr>
@@ -367,7 +405,16 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
           {/* Benchmark selector */}
           <div className="flex">
             <div className={lc} data-scroll-anchor="materiality-benchmark">Materiality Benchmark</div>
-            <div className={pyc}>{getPy('materiality_benchmark') || '—'}</div>
+            <div className={pyc}>
+              <select
+                value={getPy('materiality_benchmark') || ''}
+                onChange={e => setPy('materiality_benchmark', e.target.value)}
+                className="w-full text-xs border border-transparent hover:border-slate-300 focus:border-blue-400 rounded px-1 py-0.5 bg-transparent focus:bg-white outline-none text-right"
+              >
+                <option value="">—</option>
+                {BENCHMARKS.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
             <div className={ic}>
               <select value={benchmark} onChange={e => set('materiality_benchmark', e.target.value)} className="w-full text-xs border rounded px-2 py-1.5">
                 <option value="">Select...</option>
@@ -387,7 +434,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
           {/* Benchmark % — read-only for all except RI */}
           <div className="flex">
             <div className={lc}>Benchmark %</div>
-            <div className={pyc}>{pyBenchmarkPct ? `${pyBenchmarkPct}%` : '—'}</div>
+            <div className={pyc}>
+              <PriorNumberInput
+                value={pyBenchmarkPct || null}
+                onCommit={(v) => setPy('benchmark_pct', v)}
+                format={(n) => `${n}%`}
+              />
+            </div>
             <div className={`${ic} flex items-center gap-2`}>
               {isRI ? (
                 <input type="text" inputMode="decimal" value={userBenchmarkPct ?? ''} onChange={e => {
@@ -430,22 +483,34 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
         <div className="border border-t-0 rounded-b-lg divide-y">
           <div className="flex">
             <div className={lc}>Stakeholders identified</div>
-            <div className={pyc}><span className="text-[10px] break-words">{getPy('stakeholders') || ''}</span></div>
+            <div className={pyc}>
+              <PriorTextarea value={getPy('stakeholders')} onCommit={v => setPy('stakeholders', v)} />
+            </div>
             <div className={ic}><textarea value={get('stakeholders') || ''} onChange={e => set('stakeholders', e.target.value)} rows={2} className="w-full text-xs border rounded px-2 py-1.5" /></div>
           </div>
           <div className="flex">
             <div className={lc}>How audit team assessed focus of stakeholders</div>
-            <div className={pyc}><span className="text-[10px] break-words">{getPy('stakeholder_focus') || ''}</span></div>
+            <div className={pyc}>
+              <PriorTextarea value={getPy('stakeholder_focus')} onCommit={v => setPy('stakeholder_focus', v)} />
+            </div>
             <div className={ic}><textarea value={get('stakeholder_focus') || ''} onChange={e => set('stakeholder_focus', e.target.value)} rows={2} className="w-full text-xs border rounded px-2 py-1.5" /></div>
           </div>
           <div className="flex">
             <div className={lc}>Key judgements in setting materiality</div>
-            <div className={pyc}><span className="text-[10px] break-words">{getPy('key_judgements') || ''}</span></div>
+            <div className={pyc}>
+              <PriorTextarea value={getPy('key_judgements')} onCommit={v => setPy('key_judgements', v)} />
+            </div>
             <div className={ic}><textarea value={get('key_judgements') || ''} onChange={e => set('key_judgements', e.target.value)} rows={2} className="w-full text-xs border rounded px-2 py-1.5" /></div>
           </div>
           <div className="flex">
             <div className={lc}>Any change in basis from prior period?</div>
-            <div className={pyc}>{getPy('basis_changed') != null ? (getPy('basis_changed') ? 'Yes' : 'No') : '—'}</div>
+            <div className={`${pyc} flex items-center gap-2 justify-end`}>
+              <label className="flex items-center gap-1 text-[10px] text-slate-600"><input type="radio" checked={getPy('basis_changed') === true} onChange={() => setPy('basis_changed', true)} className="w-3 h-3" /> Yes</label>
+              <label className="flex items-center gap-1 text-[10px] text-slate-600"><input type="radio" checked={getPy('basis_changed') === false} onChange={() => setPy('basis_changed', false)} className="w-3 h-3" /> No</label>
+              {getPy('basis_changed') != null && (
+                <button type="button" onClick={() => setPy('basis_changed', null)} className="text-[9px] text-slate-400 hover:text-slate-600" title="Clear override">×</button>
+              )}
+            </div>
             <div className={`${ic} flex items-center gap-3`}>
               <label className="flex items-center gap-1 text-xs"><input type="radio" name="basis_changed" checked={basisChanged === true} onChange={() => set('basis_changed', true)} className="w-3 h-3" /> Yes</label>
               <label className="flex items-center gap-1 text-xs"><input type="radio" name="basis_changed" checked={basisChanged === false || get('basis_changed') == null} onChange={() => { set('basis_changed', false); set('basis_change_reason', ''); }} className="w-3 h-3" /> No</label>
@@ -454,7 +519,9 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
           {basisChanged && (
             <div className="flex">
               <div className={lc}>Reasons for change in basis</div>
-              <div className={pyc}><span className="text-[10px] break-words">{getPy('basis_change_reason') || ''}</span></div>
+              <div className={pyc}>
+                <PriorTextarea value={getPy('basis_change_reason')} onCommit={v => setPy('basis_change_reason', v)} />
+              </div>
               <div className={ic}><textarea value={get('basis_change_reason') || ''} onChange={e => set('basis_change_reason', e.target.value)} rows={2} className="w-full text-xs border rounded px-2 py-1.5" /></div>
             </div>
           )}
@@ -541,5 +608,103 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
         </div>
       </div>
     </div>
+  );
+}
+
+/** Editable prior-period number cell. Displays the formatted value
+ *  when not focused (so the cell looks like a table value, not an
+ *  input), switches to a raw-number text field while editing, and
+ *  commits onBlur / Enter. Empty input clears the override. Used
+ *  throughout the Materiality tab's prior-period column. */
+function PriorNumberInput({ value, onCommit, format }: { value: number | null; onCommit: (v: number | null) => void; format: (n: number) => string }) {
+  // Local text state so the user can see what they're typing
+  // unmolested (React controlled-input quirk — see SubjectLine fix).
+  const [text, setText] = useState(value != null ? String(value) : '');
+  const [editing, setEditing] = useState(false);
+  // Sync local text when the parent-committed value changes (e.g.
+  // fresh server hydration or clearing the override).
+  useEffect(() => {
+    if (!editing) setText(value != null ? String(value) : '');
+  }, [value, editing]);
+
+  function commit() {
+    setEditing(false);
+    const trimmed = text.trim();
+    if (trimmed === '') {
+      if (value !== null) onCommit(null);
+      return;
+    }
+    const n = Number(trimmed.replace(/,/g, ''));
+    if (!Number.isFinite(n)) {
+      // Revert — invalid number.
+      setText(value != null ? String(value) : '');
+      return;
+    }
+    if (n !== value) onCommit(n);
+  }
+
+  return editing ? (
+    <input
+      type="text"
+      inputMode="decimal"
+      autoFocus
+      value={text}
+      onChange={e => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') { (e.currentTarget as HTMLInputElement).blur(); } if (e.key === 'Escape') { setText(value != null ? String(value) : ''); setEditing(false); } }}
+      className="w-full text-right bg-white border border-blue-300 rounded px-1 py-0.5 text-xs outline-none"
+    />
+  ) : (
+    <button
+      type="button"
+      onClick={() => { setEditing(true); setText(value != null ? String(value) : ''); }}
+      className="w-full text-right text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded px-1 py-0.5 cursor-text"
+      title="Click to edit prior period value (stored as a local override on this engagement)"
+    >
+      {value != null && value !== 0 ? format(value) : <span className="text-slate-300">—</span>}
+    </button>
+  );
+}
+
+/** Editable prior-period free-text cell (multi-line). Click to edit,
+ *  blur or Ctrl+Enter to commit, Escape to revert. Empty clears the
+ *  override so getPy falls back to the stored prior-engagement value. */
+function PriorTextarea({ value, onCommit }: { value: string | null | undefined; onCommit: (v: string | null) => void }) {
+  const v = typeof value === 'string' ? value : '';
+  const [text, setText] = useState(v);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { if (!editing) setText(v); }, [v, editing]);
+
+  function commit() {
+    setEditing(false);
+    const trimmed = text;
+    if (trimmed === v) return;
+    onCommit(trimmed === '' ? null : trimmed);
+  }
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { (e.currentTarget as HTMLTextAreaElement).blur(); }
+          if (e.key === 'Escape') { setText(v); setEditing(false); }
+        }}
+        rows={2}
+        className="w-full text-[10px] border border-blue-300 rounded px-1 py-0.5 bg-white outline-none"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => { setEditing(true); setText(v); }}
+      className="w-full text-left text-[10px] text-slate-600 hover:bg-slate-50 rounded px-1 py-0.5 cursor-text min-h-[18px] break-words"
+      title="Click to edit prior period value (stored as a local override on this engagement)"
+    >
+      {v || <span className="text-slate-300">—</span>}
+    </button>
   );
 }
