@@ -289,30 +289,9 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   const rc = 'text-right px-2 py-1.5 text-xs font-mono';
   const lc = 'bg-slate-50 px-3 py-1.5 text-xs text-slate-700 w-[40%]';
   const pyc = 'bg-slate-100 text-right px-2 py-1.5 text-xs text-slate-500 font-mono w-[15%]';
-  const ic = 'px-2 py-1 flex-1';
-
-  function LmhSelect({ value, onChange, pyValue }: { value: string; onChange: (v: string) => void; pyValue?: string }) {
-    return (
-      <div className="flex items-center gap-1">
-        {pyValue !== undefined && (
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-            pyValue === 'High' ? 'bg-red-100 text-red-700' : pyValue === 'Low' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-          }`}>{pyValue || '—'}</span>
-        )}
-        <select
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          className={`text-xs border rounded px-2 py-1 ${
-            value === 'High' ? 'border-red-300 text-red-700 bg-red-50' :
-            value === 'Low' ? 'border-green-300 text-green-700 bg-green-50' :
-            'border-amber-300 text-amber-700 bg-amber-50'
-          }`}
-        >
-          {LMH.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </div>
-    );
-  }
+  const ic = 'px-2 py-1 flex-1';                               // Generic input column (used by Benchmark / Justification etc.)
+  const cc = 'px-2 py-1.5 flex-1 min-w-0';                     // OM/PM Comments column (text/yes-no input)
+  const dc = 'px-2 py-1.5 w-[140px] flex-shrink-0';            // OM/PM Dropdown column (LMH select)
 
   return (
     <div className="space-y-4">
@@ -534,6 +513,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
           <h3 className="text-xs font-semibold text-blue-800">Overall Materiality Assessment</h3>
         </div>
         <div className="border border-t-0 rounded-b-lg divide-y">
+          {/* Column header row — aligns with the data rows below */}
+          <div className="flex items-center bg-slate-100/70 text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+            <div className={`${lc} bg-slate-100/70`}>Factor</div>
+            <div className={`${pyc} bg-slate-100/70`}>Prior Period</div>
+            <div className={cc}>Comments</div>
+            <div className={`${dc} text-right`}>Assessment</div>
+          </div>
           {OM_INDICATORS.map((f, i) => {
             const nr = !!get(`om_nr_${i}`);
             return (
@@ -552,15 +538,27 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
                   onCommit={(v) => setPy(`om_factor_${i}`, v)}
                 />
               </div>
-              <div className={`${ic} flex items-center gap-2`}>
+              <div className={cc}>
                 {!nr && (i === 0 ? (
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-1 text-xs"><input type="radio" name={`om_yn_${i}`} checked={get(`om_yn_${i}`) === 'Yes'} onChange={() => set(`om_yn_${i}`, 'Yes')} className="w-3 h-3" /> Yes</label>
-                    <label className="flex items-center gap-1 text-xs"><input type="radio" name={`om_yn_${i}`} checked={get(`om_yn_${i}`) !== 'Yes'} onChange={() => set(`om_yn_${i}`, 'No')} className="w-3 h-3" /> No</label>
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-1 text-xs cursor-pointer">
+                      <input type="radio" name={`om_yn_${i}`}
+                        checked={get(`om_yn_${i}`) === 'Yes'}
+                        onChange={() => { set(`om_yn_${i}`, 'Yes'); set(`om_factor_${i}`, 'Low'); }}
+                        className="w-3 h-3" /> Yes <span className="text-[10px] text-slate-400">(Low)</span>
+                    </label>
+                    <label className="flex items-center gap-1 text-xs cursor-pointer">
+                      <input type="radio" name={`om_yn_${i}`}
+                        checked={get(`om_yn_${i}`) === 'No'}
+                        onChange={() => { set(`om_yn_${i}`, 'No'); set(`om_factor_${i}`, 'High'); }}
+                        className="w-3 h-3" /> No <span className="text-[10px] text-slate-400">(High)</span>
+                    </label>
                   </div>
                 ) : (
-                  <input type="text" value={get(`om_text_${i}`) || ''} onChange={e => set(`om_text_${i}`, e.target.value)} className="flex-1 text-xs border rounded px-2 py-1.5" />
+                  <input type="text" value={get(`om_text_${i}`) || ''} onChange={e => set(`om_text_${i}`, e.target.value)} className="w-full text-xs border rounded px-2 py-1.5" placeholder="Comments..." />
                 ))}
+              </div>
+              <div className={dc}>
                 {!nr && <LmhSelect value={get(`om_factor_${i}`) || 'Medium'} onChange={v => set(`om_factor_${i}`, v)} />}
                 {nr && <span className="text-[10px] text-slate-400 italic">Not relevant</span>}
               </div>
@@ -579,6 +577,13 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
           </p>
         </div>
         <div className="border border-t-0 rounded-b-lg divide-y">
+          {/* Column header row — aligns with the data rows below */}
+          <div className="flex items-center bg-slate-100/70 text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+            <div className={`${lc} bg-slate-100/70`}>Indicator</div>
+            <div className={`${pyc} bg-slate-100/70`}>Prior Period</div>
+            <div className={cc}>Comments</div>
+            <div className={`${dc} text-right`}>Assessment</div>
+          </div>
           {PM_INDICATORS.map((f, i) => {
             const nr = !!get(`pm_nr_${i}`);
             return (
@@ -597,7 +602,12 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
                   onCommit={(v) => setPy(`pm_factor_${i}`, v)}
                 />
               </div>
-              <div className={`${ic} flex items-center justify-end`}>
+              <div className={cc}>
+                {!nr && (
+                  <input type="text" value={get(`pm_text_${i}`) || ''} onChange={e => set(`pm_text_${i}`, e.target.value)} className="w-full text-xs border rounded px-2 py-1.5" placeholder="Comments..." />
+                )}
+              </div>
+              <div className={dc}>
                 {!nr ? <LmhSelect value={get(`pm_factor_${i}`) || 'Medium'} onChange={v => set(`pm_factor_${i}`, v)} /> : <span className="text-[10px] text-slate-400 italic">Not relevant</span>}
               </div>
             </div>
@@ -664,16 +674,52 @@ function PriorNumberInput({ value, onCommit, format }: { value: number | null; o
   );
 }
 
-/** Editable prior-period Low / Medium / High select. Styled to look
- *  like the colour-coded pills the read-only version used (red / amber
- *  / green background tied to the value) but is actually a compact
- *  <select> so the auditor can change it with one click. Empty value
- *  clears the override and falls back to the prior-engagement value. */
+/** Editable Low / Medium / High select used in the Overall Materiality
+ *  Assessment and Performance Materiality Indicators tables. Lives at module
+ *  scope (rather than nested inside MaterialityTab) so the underlying
+ *  <select> isn't re-mounted on every parent re-render — that re-mount was
+ *  the cause of the "can't pick High — the dropdown closes when I hover"
+ *  bug, because the native dropdown is closed by the browser the moment its
+ *  backing DOM element is unmounted.
+ *
+ *  Colour scheme (per firm preference):
+ *    High    → blue
+ *    Medium  → orange
+ *    Low     → red
+ */
+function LmhSelect({ value, onChange, pyValue }: { value: string; onChange: (v: string) => void; pyValue?: string }) {
+  return (
+    <div className="flex items-center gap-1 justify-end">
+      {pyValue !== undefined && (
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+          pyValue === 'High' ? 'bg-blue-100 text-blue-700' :
+          pyValue === 'Low' ? 'bg-red-100 text-red-700' :
+          'bg-orange-100 text-orange-700'
+        }`}>{pyValue || '—'}</span>
+      )}
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={`text-xs border rounded px-2 py-1 cursor-pointer ${
+          value === 'High' ? 'border-blue-300 text-blue-700 bg-blue-50' :
+          value === 'Low' ? 'border-red-300 text-red-700 bg-red-50' :
+          'border-orange-300 text-orange-700 bg-orange-50'
+        }`}
+      >
+        {LMH.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+/** Editable prior-period Low / Medium / High select. Same colour scheme as
+ *  LmhSelect (High=blue / Medium=orange / Low=red). Empty value clears the
+ *  override and falls back to the prior-engagement value. */
 function PriorLmhSelect({ value, onCommit }: { value: string | null | undefined; onCommit: (v: string | null) => void }) {
   const v = (value === 'Low' || value === 'Medium' || value === 'High') ? value : '';
-  const colour = v === 'High' ? 'bg-red-100 text-red-700 border-red-200'
-    : v === 'Low' ? 'bg-green-100 text-green-700 border-green-200'
-    : v === 'Medium' ? 'bg-amber-100 text-amber-700 border-amber-200'
+  const colour = v === 'High' ? 'bg-blue-100 text-blue-700 border-blue-200'
+    : v === 'Low' ? 'bg-red-100 text-red-700 border-red-200'
+    : v === 'Medium' ? 'bg-orange-100 text-orange-700 border-orange-200'
     : 'bg-slate-50 text-slate-400 border-slate-200';
   return (
     <select
