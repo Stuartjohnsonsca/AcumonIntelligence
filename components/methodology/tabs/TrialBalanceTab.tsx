@@ -1043,9 +1043,32 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                       {aiLookupLoading && aiLookupRow === i ? '…' : '⚡'}
                     </button>
                   </div>
-                  {/* Datalist for paste/type suggestions from FS Lines */}
+                  {/* Datalist for paste/type suggestions. Offers BOTH
+                      FS Notes (note_items) AND FS Lines (fs_line_items)
+                      so the admin can classify a row at the FS Line
+                      level directly — useful when there is no more-
+                      specific note. handleFsNoteChange already resolves
+                      an FS Line pick back to fsLevel, so picking "Revenue"
+                      here populates fsLevel=Revenue and fsStatement
+                      without needing a separate click. Duplicates are
+                      de-duped by name so a line doubled up as a note
+                      doesn't show twice. */}
                   <datalist id={`fs-notes-${i}`}>
-                    {fsNotes.map((n, ni) => <option key={n.id || `note-${ni}`} value={n.name} />)}
+                    {(() => {
+                      const seen = new Set<string>();
+                      const opts: JSX.Element[] = [];
+                      for (const n of fsNotes) {
+                        if (!n.name || seen.has(n.name)) continue;
+                        seen.add(n.name);
+                        opts.push(<option key={`note-${n.id || n.name}`} value={n.name} />);
+                      }
+                      for (const l of fsLevels) {
+                        if (!l.name || seen.has(l.name)) continue;
+                        seen.add(l.name);
+                        opts.push(<option key={`line-${l.name}`} value={l.name} />);
+                      }
+                      return opts;
+                    })()}
                   </datalist>
                   {/* AI loading spinner */}
                   {aiLookupRow === i && aiLookupLoading && (
