@@ -781,6 +781,8 @@ export function AuditTypeSchedulesClient({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [savingMaster, setSavingMaster] = useState(false);
+  const [masterSaved, setMasterSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Drag state
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -1225,14 +1227,26 @@ export function AuditTypeSchedulesClient({
 
   async function saveMasterSchedules() {
     setSavingMaster(true);
+    setSaveError(null);
     try {
-      await fetch('/api/methodology-admin/audit-type-schedules', {
+      const res = await fetch('/api/methodology-admin/audit-type-schedules', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'save_master', schedules: masterSchedules }),
       });
-    } catch {}
-    setSavingMaster(false);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const msg = errData?.error || `Save failed (HTTP ${res.status})`;
+        setSaveError(`Master Schedule List — ${msg}${res.status === 403 ? ' (Methodology Admin or Super Admin required.)' : ''}`);
+        return;
+      }
+      setMasterSaved(true);
+      setTimeout(() => setMasterSaved(false), 3000);
+    } catch (err: any) {
+      setSaveError(`Master Schedule List — network error: ${err?.message || 'unknown'}`);
+    } finally {
+      setSavingMaster(false);
+    }
   }
 
   function addFramework() {
@@ -1258,35 +1272,43 @@ export function AuditTypeSchedulesClient({
 
   async function saveAll() {
     setSaving(true);
-    try {
-      await fetch('/api/methodology-admin/audit-type-schedules', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'save_master', schedules: masterSchedules }),
-      });
+    setSaveError(null);
+    const failures: string[] = [];
 
-      for (const at of AUDIT_TYPES) {
-        await fetch('/api/methodology-admin/audit-type-schedules', {
+    async function doPut(label: string, body: unknown) {
+      try {
+        const res = await fetch('/api/methodology-admin/audit-type-schedules', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            auditType: at.key,
-            stageKeyed: stageMappings[at.key] || emptyMapping(),
-            framework: frameworks[at.key] || null,
-          }),
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          const msg = errData?.error || `HTTP ${res.status}`;
+          failures.push(`${label}: ${msg}${res.status === 403 ? ' (Methodology Admin or Super Admin required.)' : ''}`);
+        }
+      } catch (err: any) {
+        failures.push(`${label}: ${err?.message || 'network error'}`);
+      }
+    }
+
+    try {
+      await doPut('Master Schedule List', { action: 'save_master', schedules: masterSchedules });
+      for (const at of AUDIT_TYPES) {
+        await doPut(at.label, {
+          auditType: at.key,
+          stageKeyed: stageMappings[at.key] || emptyMapping(),
+          framework: frameworks[at.key] || null,
         });
       }
+      await doPut('Framework Options', { auditType: '__framework_options', schedules: frameworkOptions });
 
-      await fetch('/api/methodology-admin/audit-type-schedules', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auditType: '__framework_options', schedules: frameworkOptions }),
-      });
-
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (err) {
-      console.error('Save failed:', err);
+      if (failures.length === 0) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      } else {
+        setSaveError(`${failures.length} item(s) failed to save:\n${failures.join('\n')}`);
+      }
     } finally {
       setSaving(false);
     }
@@ -1370,9 +1392,25 @@ export function AuditTypeSchedulesClient({
                 className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-slate-600 text-white rounded hover:bg-slate-700 disabled:opacity-50"
               >
                 {savingMaster ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                Save
+                Save Master List
               </button>
+              {masterSaved && (
+                <span className="text-[10px] font-medium text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
+                  ✓ Saved
+                </span>
+              )}
             </div>
+
+            {saveError && (
+              <div className="mt-2 text-[10px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 whitespace-pre-wrap">
+                <strong>Save error:</strong> {saveError}
+              </div>
+            )}
+
+            <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-2">
+              <strong>Note:</strong> Adding a schedule above only updates the form. You must click <strong>Save Master List</strong>
+              (or <strong>Save All Changes</strong> at the bottom) for the change to persist.
+            </p>
           </div>
         )}
       </div>
