@@ -79,6 +79,16 @@ export interface TemplateContext {
     significantRisks: Array<{ fsLine: string; name: string }>;
     areasOfFocus: Array<{ fsLine: string; reason: string }>;
   };
+  /** Agreed dates from the Opening Tab's Audit Timetable section —
+   *  Planning / Fieldwork / Completion etc. Use in document templates
+   *  with a dynamic table to render the firm's agreed schedule. */
+  auditTimetable: Array<{
+    milestone: string;       // the row's description (Planning / Fieldwork / …)
+    targetDate: string | null;   // ISO yyyy-mm-dd
+    revisedTarget: string | null;
+    progress: string | null;     // Not Started / In Progress / Complete / Overdue
+    sortOrder: number;
+  }>;
   questionnaires: {
     // Core four are always present (even if empty) so legacy
     // templates keep resolving `questionnaires.ethics.x` paths.
@@ -186,6 +196,25 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     unadjusted: errorSchedule.filter(e => !e.resolution).reduce((s, e) => s + e.amount, 0),
     count: errorSchedule.length,
   };
+
+  // Audit Timetable — the agreed dates from the Opening Tab. Exposed
+  // under `auditTimetable` as an array so templates can render them
+  // through a dynamic table (one row per milestone). Ordered by the
+  // sortOrder the admin chose on the Opening tab.
+  let auditTimetable: TemplateContext['auditTimetable'] = [];
+  try {
+    const agreedDates = await prisma.auditAgreedDate.findMany({
+      where: { engagementId },
+      orderBy: { sortOrder: 'asc' },
+    });
+    auditTimetable = agreedDates.map(d => ({
+      milestone: d.description || '',
+      targetDate: iso(d.targetDate),
+      revisedTarget: iso(d.revisedTarget),
+      progress: d.progress ?? null,
+      sortOrder: d.sortOrder ?? 0,
+    }));
+  } catch { /* tolerant — missing table / legacy env */ }
 
   // Test conclusions.
   const concRows = await prisma.auditTestConclusion.findMany({ where: { engagementId } });
@@ -468,6 +497,7 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     errorScheduleTotals,
     testConclusions,
     auditPlan: { significantRisks, areasOfFocus },
+    auditTimetable,
     // Spread every discovered questionnaire under its camelCase key.
     // Casting through `as any` because the index signature doesn't
     // narrow well alongside the four named core properties in the

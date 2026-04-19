@@ -133,6 +133,19 @@ export const MERGE_FIELDS: MergeField[] = [
       { key: 'fsLine', label: 'FS line', type: 'scalar', sampleValue: 'Revenue' },
       { key: 'name', label: 'Risk name', type: 'scalar', sampleValue: 'Revenue recognition (ISA 240 rebuttable presumption)' },
     ]},
+  { group: 'Audit Plan', key: 'auditTimetable', label: 'Audit Timetable (array)', type: 'array',
+    description: 'Agreed dates from the Opening Tab — Planning, Fieldwork, Completion, etc. Use with {{#each auditTimetable}} or insert a dynamic table.',
+    sampleValue: [
+      { milestone: 'Planning',   targetDate: '2026-04-15', revisedTarget: null, progress: 'Complete',    sortOrder: 1 },
+      { milestone: 'Fieldwork',  targetDate: '2026-05-20', revisedTarget: null, progress: 'In Progress', sortOrder: 2 },
+      { milestone: 'Completion', targetDate: '2026-06-30', revisedTarget: null, progress: 'Not Started', sortOrder: 3 },
+    ], itemFields: [
+      { key: 'milestone',     label: 'Milestone',       type: 'scalar', sampleValue: 'Planning' },
+      { key: 'targetDate',    label: 'Target date',     type: 'date',   sampleValue: '2026-04-15' },
+      { key: 'revisedTarget', label: 'Revised target',  type: 'date',   sampleValue: null },
+      { key: 'progress',      label: 'Progress status', type: 'scalar', sampleValue: 'Complete' },
+      { key: 'sortOrder',     label: 'Sort order',      type: 'scalar', sampleValue: 1 },
+    ]},
   { group: 'Audit Plan', key: 'auditPlan.areasOfFocus', label: 'Areas of focus (array)', type: 'array',
     sampleValue: [ { fsLine: 'Trade Debtors', reason: 'Material balance; prior-year debates over doubtful provision.' } ],
     itemFields: [
