@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, Plus, X, Zap } from 'lucide-react';
 import {
@@ -20,10 +20,50 @@ interface Template {
   items: unknown;
 }
 
+interface MasterSchedule {
+  key: string;
+  label: string;
+  defaultStage?: string;
+  stage?: string;
+}
+
 interface Props {
   firmId: string;
   initialTemplates: Template[];
+  /**
+   * The firm's master schedule list (from MethodologyRiskTable / 'master_schedules').
+   * Any schedule here that isn't a built-in tool (Trial Balance, Portal, etc.) and
+   * isn't in the hardcoded HARDCODED_APPENDIX list below is shown dynamically so
+   * users can add questions to it.
+   */
+  masterSchedules?: MasterSchedule[];
 }
+
+/**
+ * Master-schedule keys that have a dedicated React component (no questions form).
+ * These are excluded from the "Appendix Templates" tab list because they don't
+ * have configurable questions — the engagement renders them as built-in tools.
+ */
+const BUILT_IN_TOOL_SCHEDULE_KEYS = new Set([
+  // Engagement tabs
+  'opening',
+  'prior_period',
+  'trial_balance',
+  'par',
+  'walkthroughs',
+  'rmm',
+  'documents',
+  'communication',
+  'outstanding',
+  'portal',
+  // Completion sub-tabs that are panels (no questions)
+  'fs_review',
+  'adj_tb',
+  'test_summary_results',
+  'error_schedule',
+  'eqr_review',
+  'significant_risk_completion',
+]);
 
 // Simple list templates (string arrays)
 const LIST_TEMPLATE_TYPES = [
@@ -33,8 +73,10 @@ const LIST_TEMPLATE_TYPES = [
   { key: 'permanent_file', label: 'Permanent File Sections', defaults: PERMANENT_FILE_SECTIONS.map((s) => s.label) },
 ];
 
-// Structured appendix templates (TemplateQuestion arrays)
-const APPENDIX_TEMPLATE_TYPES = [
+// Structured appendix templates (TemplateQuestion arrays).
+// This is the BUILT-IN list — newly-added schedules from the master list are
+// merged in dynamically inside the component (see appendixTemplateTypes useMemo).
+const HARDCODED_APPENDIX_TEMPLATE_TYPES = [
   { key: 'permanent_file_questions', label: 'Permanent', sectionDefaults: PERMANENT_FILE_SECTIONS.map(s => s.label) },
   { key: 'ethics_questions', label: 'Ethics', sectionDefaults: ['Non Audit Services', 'Threats', 'Relationships', 'Other Considerations', 'Fee Assessment', 'ORITP'] },
   { key: 'continuance_questions', label: 'Continuance', sectionDefaults: ['Entity Details', 'Ownership', 'Continuity', 'Management Info', 'Nature of Business', 'Fee Considerations', 'Resourcing', 'EQR', 'AML', 'MLRO', 'Final Conclusion'] },
@@ -69,7 +111,30 @@ const DEFAULT_ACTION_TRIGGERS = [
   'On Section Sign Off',
 ];
 
-export function SchedulesClient({ firmId, initialTemplates }: Props) {
+export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: Props) {
+  // Dynamically build the appendix tab list:
+  //   1. Start with the hardcoded entries (preserves existing labels and section defaults)
+  //   2. Append any master-schedule entry that ISN'T already covered AND isn't a built-in tool
+  // This means a user can add a new schedule via /audit-types and immediately
+  // configure its questions here without any code change.
+  const appendixTemplateTypes = useMemo(() => {
+    const merged: Array<{ key: string; label: string; sectionDefaults: string[] }> = [
+      ...HARDCODED_APPENDIX_TEMPLATE_TYPES,
+    ];
+    const seen = new Set(HARDCODED_APPENDIX_TEMPLATE_TYPES.map(t => t.key));
+    for (const ms of masterSchedules || []) {
+      if (BUILT_IN_TOOL_SCHEDULE_KEYS.has(ms.key)) continue;
+      if (seen.has(ms.key)) continue;
+      merged.push({
+        key: ms.key,
+        label: ms.label,
+        sectionDefaults: ['General'],
+      });
+      seen.add(ms.key);
+    }
+    return merged;
+  }, [masterSchedules]);
+
   const [templates, setTemplates] = useState<Record<string, string[]>>(() => {
     const map: Record<string, string[]> = {};
     for (const t of initialTemplates) {
@@ -92,11 +157,17 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
   });
   const [viewMode, setViewMode] = useState<ViewMode>('lists');
   const [activeTemplateType, setActiveTemplateType] = useState(TEMPLATE_TYPES[0].key);
-  const [activeAppendixType, setActiveAppendixType] = useState(APPENDIX_TEMPLATE_TYPES[0].key);
+  const [activeAppendixType, setActiveAppendixType] = useState(HARDCODED_APPENDIX_TEMPLATE_TYPES[0].key);
   const [activeAuditType, setActiveAuditType] = useState('ALL');
   const [tabLabels, setTabLabels] = useState<Record<string, string>>(() => {
     const m: Record<string, string> = {};
-    APPENDIX_TEMPLATE_TYPES.forEach(t => { m[t.key] = t.label; });
+    HARDCODED_APPENDIX_TEMPLATE_TYPES.forEach(t => { m[t.key] = t.label; });
+    // Also seed labels for any master-schedule entries that aren't hardcoded
+    for (const ms of masterSchedules || []) {
+      if (!m[ms.key] && !BUILT_IN_TOOL_SCHEDULE_KEYS.has(ms.key)) {
+        m[ms.key] = ms.label;
+      }
+    }
     return m;
   });
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
@@ -215,7 +286,7 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
 
   const currentAppendixKey = `${activeAppendixType}|${activeAuditType}`;
   const currentAppendixQuestions = appendixTemplates[currentAppendixKey] || [];
-  const currentAppendixType = APPENDIX_TEMPLATE_TYPES.find(t => t.key === activeAppendixType);
+  const currentAppendixType = appendixTemplateTypes.find(t => t.key === activeAppendixType);
 
   return (
     <div className="space-y-6">
@@ -295,7 +366,7 @@ export function SchedulesClient({ firmId, initialTemplates }: Props) {
         <>
           {/* Appendix Type Tabs */}
           <div className="flex flex-wrap gap-2 border-b pb-2">
-            {APPENDIX_TEMPLATE_TYPES.map(tt => (
+            {appendixTemplateTypes.map(tt => (
               <div key={tt.key} className="relative">
                 {editingLabel === tt.key ? (
                   <input type="text" value={tabLabels[tt.key] || tt.label} autoFocus
