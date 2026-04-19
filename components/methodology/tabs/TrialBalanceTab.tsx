@@ -68,6 +68,69 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [showDifferences, setShowDifferences] = useState(false);
+  // ── Column widths — resizable by dragging the right edge of any
+  // header cell. Defaults biased toward the "Description is the most
+  // important column" ask: narrow Code, wide Description, compact FS
+  // classification columns. Persisted to localStorage per engagement
+  // so the admin's layout survives page reloads.
+  const DEFAULT_COL_WIDTHS: Record<string, number> = {
+    select: 32,
+    accountCode: 90,
+    description: 320,
+    category: 110,
+    currentYear: 110,
+    priorYear: 110,
+    fsNoteLevel: 170,
+    fsLevel: 140,
+    fsStatement: 140,
+    aiConfidence: 60,
+    groupName: 120,
+    trailing: 32,
+  };
+  const widthsStorageKey = `tbcyvpy:widths:${engagementId}`;
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return DEFAULT_COL_WIDTHS;
+    try {
+      const raw = window.localStorage.getItem(widthsStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return { ...DEFAULT_COL_WIDTHS, ...parsed };
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_COL_WIDTHS;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { window.localStorage.setItem(widthsStorageKey, JSON.stringify(columnWidths)); } catch { /* quota / disabled — ignore */ }
+  }, [columnWidths, widthsStorageKey]);
+
+  /** Start a drag-resize for the given column. Mouse events are
+   *  attached at the document level so dragging outside the header
+   *  cell still tracks. Min width 40px so a column can't be
+   *  vanished by accident. */
+  function startColumnResize(field: string, startX: number, startWidth: number) {
+    const onMove = (e: MouseEvent) => {
+      const dx = e.clientX - startX;
+      const next = Math.max(40, startWidth + dx);
+      setColumnWidths(prev => ({ ...prev, [field]: next }));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  /** Reset all column widths to their defaults. Surfaced as a small
+   *  link in the toolbar when any width has been customised. */
+  function resetColumnWidths() { setColumnWidths(DEFAULT_COL_WIDTHS); }
+  const anyCustomWidth = Object.entries(columnWidths).some(([k, v]) => DEFAULT_COL_WIDTHS[k] !== v);
+
   // ── Bulk-select state ─────────────────────────────────────────────
   // Rows are keyed by the same identity we already use as the render
   // key (row.id OR `new-${index}` for unsaved rows). That keeps the
@@ -525,48 +588,115 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     setAiLookupResults([]);
     setAiLookupLoading(true);
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
+      // Kick off the background task. This used to return the
+      // classification synchronously, but the endpoint has since
+      // been moved to a background-task model (to handle large
+      // batches + corpus aggregation). We now poll for the result
+      // same as the "Populate All" button already does.
+      const kickoff = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rows: [{ index, accountCode: row.accountCode, description: row.description, currentYear: row.currentYear }],
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        const c = data.classifications?.[0];
-        if (c) {
-          setAiLookupResults([{
-            name: `${c.fsNoteLevel} → ${c.fsLevel} → ${c.fsStatement}`,
-            label: c.fsNoteLevel,
-            fsLevel: c.fsLevel,
-            fsStatement: c.fsStatement,
-          }]);
-          // Remember the suggestion for feedback purposes. Keyed by
-          // rowKey so it's stable across reorders and the "Clear
-          // selection" flow doesn't wipe it.
-          const key = rowKey(row, index);
-          setAiSuggestionByRow(prev => ({
-            ...prev,
-            [key]: {
-              fsNoteLevel: c.fsNoteLevel ?? null,
-              fsLevel: c.fsLevel ?? null,
-              fsStatement: c.fsStatement ?? null,
-              aiConfidence: typeof c.aiConfidence === 'number' ? c.aiConfidence : null,
-            },
-          }));
-        }
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        console.error('AI lookup failed:', res.status, errData);
-        setAiLookupResults([{ name: `❌ ${errData.error || `Error ${res.status}`}`, label: `Error: ${errData.error || res.status}`, fsLevel: '', fsStatement: '' }]);
+      if (!kickoff.ok) {
+        const errData = await kickoff.json().catch(() => ({}));
+        console.error('AI lookup kickoff failed:', kickoff.status, errData);
+        setAiLookupResults([{ name: `❌ ${errData.error || `Error ${kickoff.status}`}`, label: `Error: ${errData.error || kickoff.status}`, fsLevel: '', fsStatement: '' }]);
+        return;
       }
+      const kickData = await kickoff.json();
+      const taskId = kickData.taskId;
+      if (!taskId) {
+        // Legacy synchronous response — some older deployments may
+        // still return classifications inline. Fall through to the
+        // old handling for those.
+        const c = kickData.classifications?.[0];
+        if (c) {
+          applyAiSuggestion(index, c, row);
+          return;
+        }
+        setAiLookupResults([{ name: '❌ No taskId returned', label: 'Error', fsLevel: '', fsStatement: '' }]);
+        return;
+      }
+      // Poll the task with a short interval (~800ms) until it
+      // completes or 45s max. Single-row classifications normally
+      // finish in <3s — the longer ceiling is for cold-start cases.
+      const start = Date.now();
+      while (Date.now() - start < 45_000) {
+        await new Promise(r => setTimeout(r, 800));
+        const pollRes = await fetch(`/api/engagements/${engagementId}/ai-classify-tb`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'poll', taskId }),
+        });
+        if (!pollRes.ok) continue;
+        const pollData = await pollRes.json();
+        if (pollData.status === 'completed' || pollData.status === 'complete' || pollData.status === 'succeeded') {
+          // Pull the classification for this row from the saved DB
+          // row — the background task writes results directly to
+          // auditTBRow, so re-reading the engagement's TB gives the
+          // latest values. Fast path: read the result field if the
+          // task embedded classifications in it.
+          const c = Array.isArray(pollData.result?.classifications)
+            ? pollData.result.classifications.find((x: any) => x.index === index)
+            : null;
+          if (c) {
+            applyAiSuggestion(index, c, row);
+          } else {
+            // Fallback: refresh the TB rows from server and read the
+            // classification off the stored row.
+            await loadData();
+            const refreshed = rows[index];
+            if (refreshed?.fsNoteLevel || refreshed?.fsLevel) {
+              setAiLookupResults([{
+                name: `${refreshed.fsNoteLevel || ''} → ${refreshed.fsLevel || ''} → ${refreshed.fsStatement || ''}`,
+                label: refreshed.fsNoteLevel || refreshed.fsLevel || '',
+                fsLevel: refreshed.fsLevel || '',
+                fsStatement: refreshed.fsStatement || '',
+              }]);
+            } else {
+              setAiLookupResults([{ name: 'ℹ No classification returned', label: '(empty)', fsLevel: '', fsStatement: '' }]);
+            }
+          }
+          return;
+        }
+        if (pollData.status === 'failed' || pollData.status === 'error') {
+          setAiLookupResults([{ name: `❌ ${pollData.error || 'Classification failed'}`, label: pollData.error || 'Error', fsLevel: '', fsStatement: '' }]);
+          return;
+        }
+        // still running — loop
+      }
+      setAiLookupResults([{ name: '❌ Timed out — try again', label: 'Timeout', fsLevel: '', fsStatement: '' }]);
     } catch (err) {
       console.error('AI lookup failed:', err);
       setAiLookupResults([{ name: '❌ AI service unavailable', label: 'Error: service unavailable', fsLevel: '', fsStatement: '' }]);
     } finally {
       setAiLookupLoading(false);
     }
+  }
+
+  /** Shared apply-suggestion helper — wraps the "add to results +
+   *  remember AI suggestion per row" logic that both the sync and
+   *  async branches of handleAiLookup need. */
+  function applyAiSuggestion(index: number, c: any, row: TBRow) {
+    setAiLookupResults([{
+      name: `${c.fsNoteLevel || ''} → ${c.fsLevel || ''} → ${c.fsStatement || ''}`,
+      label: c.fsNoteLevel,
+      fsLevel: c.fsLevel,
+      fsStatement: c.fsStatement,
+    }]);
+    const key = rowKey(row, index);
+    setAiSuggestionByRow(prev => ({
+      ...prev,
+      [key]: {
+        fsNoteLevel: c.fsNoteLevel ?? null,
+        fsLevel: c.fsLevel ?? null,
+        fsStatement: c.fsStatement ?? null,
+        aiConfidence: typeof c.aiConfidence === 'number' ? c.aiConfidence : null,
+      },
+    }));
   }
 
   // AI classify all rows at once
@@ -873,6 +1003,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
+          {anyCustomWidth && (
+            <button onClick={resetColumnWidths} className="text-[10px] text-slate-400 hover:text-slate-700" title="Reset column widths to defaults">
+              Reset widths
+            </button>
+          )}
           <button onClick={addRow} className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
           <button onClick={() => setFarOpen(true)} className="text-xs px-3 py-1 bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 font-medium">📋 Add FAR</button>
           <button
@@ -1170,19 +1305,24 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
       {/* Main data table */}
       <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 360px)' }}>
-        <table className="w-full text-xs" style={{ tableLayout: 'fixed' }}>
+        <table className="text-xs" style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
+          {/* Widths come from state so the drag-resize handles on
+              each column header can update them. Persisted to
+              localStorage per engagement. Row-select column first,
+              then the data columns, then a trailing delete column. */}
           <colgroup>
-            <col style={{ width: '96px' }} />{/* Account Code */}
-            <col style={{ width: '192px' }} />{/* Description */}
-            {showCategory && <col style={{ width: '96px' }} />}{/* Category */}
-            <col style={{ width: '130px' }} />{/* CY */}
-            <col style={{ width: '130px' }} />{/* PY */}
-            <col style={{ width: '160px' }} />{/* FS Note */}
-            <col style={{ width: '100px' }} />{/* FS Level */}
-            <col style={{ width: '120px' }} />{/* FS Statement */}
-            <col style={{ width: '50px' }} />{/* AI Confidence */}
-            {isGroupAudit && <col style={{ width: '112px' }} />}{/* Group */}
-            <col style={{ width: '32px' }} />{/* Delete */}
+            <col style={{ width: `${columnWidths.select}px` }} />{/* Row select */}
+            <col style={{ width: `${columnWidths.accountCode}px` }} />
+            <col style={{ width: `${columnWidths.description}px` }} />
+            {showCategory && <col style={{ width: `${columnWidths.category}px` }} />}
+            <col style={{ width: `${columnWidths.currentYear}px` }} />
+            <col style={{ width: `${columnWidths.priorYear}px` }} />
+            <col style={{ width: `${columnWidths.fsNoteLevel}px` }} />
+            <col style={{ width: `${columnWidths.fsLevel}px` }} />
+            <col style={{ width: `${columnWidths.fsStatement}px` }} />
+            <col style={{ width: `${columnWidths.aiConfidence}px` }} />
+            {isGroupAudit && <col style={{ width: `${columnWidths.groupName}px` }} />}
+            <col style={{ width: `${columnWidths.trailing}px` }} />
           </colgroup>
           {/* Column headers only — summary is now a separate table above */}
           <thead className="sticky top-0 z-10">
@@ -1217,8 +1357,34 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                       />
                     </th>
                     {columnDefs.map(col => (
-                      <th key={col.field} className={`text-${col.align} px-2 py-2 text-slate-500 font-medium cursor-pointer hover:text-slate-700 select-none`} onClick={() => toggleSort(col.field)}>
-                        {col.label} {sortCol === col.field ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                      <th
+                        key={col.field}
+                        className={`text-${col.align} px-2 py-2 text-slate-500 font-medium select-none relative`}
+                        style={{ position: 'relative' }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(col.field)}
+                          className="text-left w-full cursor-pointer hover:text-slate-700"
+                          style={{ textAlign: col.align as any }}
+                          title="Click to sort"
+                        >
+                          {col.label} {sortCol === col.field ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                        </button>
+                        {/* Drag handle on the right edge — mousedown
+                            captures the starting x + width, listeners
+                            at document level handle the drag even if
+                            the cursor leaves the header. */}
+                        <span
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            startColumnResize(col.field, e.clientX, columnWidths[col.field] ?? 120);
+                          }}
+                          title="Drag to resize column"
+                          className="absolute top-0 bottom-0 right-0 w-1.5 cursor-col-resize hover:bg-blue-300/60 active:bg-blue-500/60 transition-colors"
+                          style={{ zIndex: 5 }}
+                        />
                       </th>
                     ))}
                     <th className="w-8"></th>
@@ -1324,7 +1490,18 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   <input type="text" value={row.accountCode} onChange={e => updateRow(i, 'accountCode', e.target.value)} onPaste={e => handlePaste(e, i, 0)} className={txtCls} placeholder="Code" />
                 </td>
                 <td className="px-2 py-0.5">
-                  <input type="text" value={row.description} onChange={e => updateRow(i, 'description', e.target.value)} onPaste={e => handlePaste(e, i, 1)} className={txtCls} placeholder="Description" />
+                  {/* Description can be long and is the most important
+                      field to see in full. title= shows the whole text
+                      on hover when the narrow cell truncates it. */}
+                  <input
+                    type="text"
+                    value={row.description}
+                    onChange={e => updateRow(i, 'description', e.target.value)}
+                    onPaste={e => handlePaste(e, i, 1)}
+                    className={txtCls}
+                    placeholder="Description"
+                    title={row.description || undefined}
+                  />
                 </td>
                 {showCategory && (
                   <td className="px-2 py-0.5">
