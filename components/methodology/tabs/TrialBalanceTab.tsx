@@ -1305,179 +1305,47 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
         );
       })()}
 
-      {/* Summary comparison table — full Xero-vs-FS only when an accounting import has been run.
-          Otherwise show a slimmer FS-only summary so we don't display misleading £0.00 Xero columns. */}
-      {!xeroSummary && (() => {
-        const sum = (filter: (r: TBRow) => boolean, field: 'currentYear' | 'priorYear') =>
-          rows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
-        const fCyRev = sum(r => r.fsLevel === 'Revenue', 'currentYear');
-        const fPyRev = sum(r => r.fsLevel === 'Revenue', 'priorYear');
-        const fCyCosts = sum(r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue', 'currentYear');
-        const fPyCosts = sum(r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue', 'priorYear');
-        const fCyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'currentYear');
-        const fPyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'priorYear');
-        const fCyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0, 'currentYear');
-        const fPyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.priorYear || 0) > 0, 'priorYear');
-        const fCyBS = sum(r => r.fsStatement === 'Balance Sheet', 'currentYear');
-        const fPyBS = sum(r => r.fsStatement === 'Balance Sheet', 'priorYear');
-        const cyTotal = rows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
-        const pyTotal = rows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
-        const cyBal = Math.abs(cyTotal) < 0.01;
-        const pyBal = Math.abs(pyTotal) < 0.01;
+      {/* Totals strip — shows CY / PY totals for the currently selected
+          rows (or all filtered rows when nothing is selected). Replaces
+          the old Xero-vs-FS summary table, which users found unhelpful. */}
+      {(() => {
+        const selectedRows = selectedRowKeys.size > 0
+          ? rows.filter((r, i) => selectedRowKeys.has(rowKey(r, i)))
+          : filteredRows;
+        const isSelection = selectedRowKeys.size > 0;
+        const cySum = selectedRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
+        const pySum = selectedRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
         const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
-        const fc = 'text-right px-2 py-px text-[10px] text-blue-600';
-        const lc = 'text-right pr-2 py-px text-[10px] text-slate-400';
         const cyDateLabel = formatDateDDMMYYYY(periodEndDate) || 'CY';
         const pyDateLabel = dayBefore(periodStartDate) || 'PY';
+        const cyBal = Math.abs(cySum) < 0.01;
+        const pyBal = Math.abs(pySum) < 0.01;
+        const scope = isSelection
+          ? `${selectedRows.length} selected row${selectedRows.length === 1 ? '' : 's'}`
+          : hasActiveFilters
+            ? `${selectedRows.length} filtered row${selectedRows.length === 1 ? '' : 's'}`
+            : `All ${selectedRows.length} row${selectedRows.length === 1 ? '' : 's'}`;
         return (
-          <div className="border border-slate-200 rounded-lg mb-2 overflow-hidden">
-            <table className="text-xs">
-              <thead>
-                <tr className="border-b border-slate-100">
-                  <th className="w-28"></th>
-                  <th className="text-right px-2 py-px text-[9px] text-blue-500 font-medium w-24">{cyDateLabel}</th>
-                  <th className="text-right px-2 py-px text-[9px] text-blue-500 font-medium w-24">{pyDateLabel}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td className={lc}>Revenue</td><td className={fc}>{f(fCyRev)}</td><td className={fc}>{f(fPyRev)}</td></tr>
-                <tr><td className={lc}>Costs</td><td className={fc}>{f(fCyCosts)}</td><td className={fc}>{f(fPyCosts)}</td></tr>
-                <tr><td className={`${lc} font-semibold text-slate-500`}>Profit</td><td className={`${fc} font-semibold`}>{f(fCyPnL)}</td><td className={`${fc} font-semibold`}>{f(fPyPnL)}</td></tr>
-                <tr><td className={lc}>Gross Assets</td><td className={fc}>{f(fCyGross)}</td><td className={fc}>{f(fPyGross)}</td></tr>
-                <tr><td className={`${lc} font-semibold text-slate-500`}>Net Assets</td><td className={`${fc} font-semibold`}>{f(fCyBS)}</td><td className={`${fc} font-semibold`}>{f(fPyBS)}</td></tr>
-                <tr className="border-t border-slate-200">
-                  <td className="text-right pr-2 py-px text-[10px] font-bold text-slate-500">Total</td>
-                  <td className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(cyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${cyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></td>
-                  <td className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(pyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${pyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></td>
-                </tr>
-              </tbody>
-            </table>
+          <div className="flex items-center justify-end gap-6 mb-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+            <span className="text-slate-500">{scope}</span>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] uppercase tracking-wide text-slate-400">{cyDateLabel}</span>
+              <span className="font-mono font-semibold text-slate-800">{f(cySum)}</span>
+              {!isSelection && !hasActiveFilters && (
+                <span className={`inline-block w-2 h-2 rounded-full ${cyBal ? 'bg-green-500' : 'bg-red-500'}`} title={cyBal ? 'TB balances' : 'TB does not balance'} />
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] uppercase tracking-wide text-slate-400">{pyDateLabel}</span>
+              <span className="font-mono font-semibold text-slate-800">{f(pySum)}</span>
+              {!isSelection && !hasActiveFilters && (
+                <span className={`inline-block w-2 h-2 rounded-full ${pyBal ? 'bg-green-500' : 'bg-red-500'}`} title={pyBal ? 'TB balances' : 'TB does not balance'} />
+              )}
+            </div>
           </div>
         );
       })()}
 
-      {/* Full Xero-vs-FS summary — only when there's an accounting connection + import */}
-      {xeroSummary && (() => {
-        const sum = (filter: (r: TBRow) => boolean, field: 'currentYear' | 'priorYear') =>
-          rows.filter(filter).reduce((s, r) => s + (Number(r[field]) || 0), 0);
-
-        // Xero categorisation (from imported category field)
-        const xPnlCats = new Set(['Revenue', 'Cost of Sales', 'Expenses', 'Administrative Expenses', 'Other Income', 'Depreciation']);
-        const xRevCats = new Set(['Revenue', 'Other Income']);
-        const xCyRev = sum(r => xRevCats.has(r.category || ''), 'currentYear');
-        const xPyRev = sum(r => xRevCats.has(r.category || ''), 'priorYear');
-        const xCyCosts = sum(r => xPnlCats.has(r.category || '') && !xRevCats.has(r.category || ''), 'currentYear');
-        const xPyCosts = sum(r => xPnlCats.has(r.category || '') && !xRevCats.has(r.category || ''), 'priorYear');
-        const xCyPnL = sum(r => xPnlCats.has(r.category || ''), 'currentYear');
-        const xPyPnL = sum(r => xPnlCats.has(r.category || ''), 'priorYear');
-        const xCyGross = sum(r => !xPnlCats.has(r.category || '') && (r.currentYear || 0) > 0, 'currentYear');
-        const xPyGross = sum(r => !xPnlCats.has(r.category || '') && (r.priorYear || 0) > 0, 'priorYear');
-        const xCyBS = sum(r => !xPnlCats.has(r.category || ''), 'currentYear');
-        const xPyBS = sum(r => !xPnlCats.has(r.category || ''), 'priorYear');
-
-        // FS Classification (from AI / taxonomy)
-        const fCyRev = sum(r => r.fsLevel === 'Revenue', 'currentYear');
-        const fPyRev = sum(r => r.fsLevel === 'Revenue', 'priorYear');
-        const fCyCosts = sum(r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue', 'currentYear');
-        const fPyCosts = sum(r => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue', 'priorYear');
-        const fCyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'currentYear');
-        const fPyPnL = sum(r => r.fsStatement === 'Profit & Loss', 'priorYear');
-        const fCyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0, 'currentYear');
-        const fPyGross = sum(r => r.fsStatement === 'Balance Sheet' && (r.priorYear || 0) > 0, 'priorYear');
-        const fCyBS = sum(r => r.fsStatement === 'Balance Sheet', 'currentYear');
-        const fPyBS = sum(r => r.fsStatement === 'Balance Sheet', 'priorYear');
-
-        const cyTotal = rows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
-        const pyTotal = rows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
-        const cyBal = Math.abs(cyTotal) < 0.01;
-        const pyBal = Math.abs(pyTotal) < 0.01;
-        const f = (v: number) => { const a = Math.abs(v); const s = '£' + a.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return v < 0 ? `(${s})` : s; };
-        const xc = 'text-right px-2 py-px text-[10px] text-purple-600';
-        const fc = 'text-right px-2 py-px text-[10px] text-blue-600';
-        const lc = 'text-right pr-2 py-px text-[10px] text-slate-400';
-        const src = xeroSummary?.source || 'Xero';
-        const cyDateLabel = formatDateDDMMYYYY(periodEndDate) || 'CY';
-        const pyDateLabel = dayBefore(periodStartDate) || 'PY';
-
-
-        // Build tooltip: totals + only rows that DIFFER between Xero and FS
-        function diffDot(
-          xVal: number, fVal: number,
-          xeroFilter: (r: TBRow) => boolean, fsFilter: (r: TBRow) => boolean,
-          field: 'currentYear' | 'priorYear'
-        ) {
-          const match = Math.abs(xVal - fVal) < 0.01;
-          if (match) return <span className="inline-block w-2 h-2 rounded-full bg-green-500 ml-1" title={`${src} and FS agree: ${f(xVal)}`} />;
-          // Only rows where Xero and FS disagree on classification
-          const diffs = rows.filter(r => xeroFilter(r) !== fsFilter(r));
-          const lines = [
-            `${src} Total: ${f(xVal)}`,
-            `FS Total: ${f(fVal)}`,
-            `Difference: ${f(xVal - fVal)}`,
-            '',
-            ...diffs.map(r => {
-              const amt = Number(r[field]) || 0;
-              const inXero = xeroFilter(r);
-              const inFs = fsFilter(r);
-              // Show: what Xero says, what FS says, and the amount that moved
-              const xAmt = inXero ? f(amt) : '—';
-              const fAmt = inFs ? f(amt) : '—';
-              return `${r.description} (${r.accountCode}): ${src} ${xAmt} | FS ${fAmt} | Diff ${f(inXero ? amt : -amt)}`;
-            }),
-          ];
-          return <span className="inline-block w-2 h-2 rounded-full bg-red-500 ml-1 cursor-help" title={lines.join('\n')} />;
-        }
-
-        return (
-          <div className="border border-slate-200 rounded-lg mb-2 overflow-hidden">
-            <table className="text-xs">
-              <thead>
-                <tr>
-                  <th className="w-28"></th>
-                  <th colSpan={3} className="text-center px-2 py-1 text-[10px] font-semibold text-slate-600 border-b border-slate-200">{cyDateLabel}</th>
-                  <th colSpan={3} className="text-center px-2 py-1 text-[10px] font-semibold text-slate-600 border-b border-slate-200">{pyDateLabel}</th>
-                </tr>
-                <tr className="border-b border-slate-100">
-                  <th></th>
-                  <th className="text-right px-2 py-px text-[9px] text-purple-500 font-medium w-24">{src}</th>
-                  <th className="text-right px-2 py-px text-[9px] text-blue-500 font-medium w-24">FS</th>
-                  <th className="w-4"></th>
-                  <th className="text-right px-2 py-px text-[9px] text-purple-500 font-medium w-24">{src}</th>
-                  <th className="text-right px-2 py-px text-[9px] text-blue-500 font-medium w-24">FS</th>
-                  <th className="w-4"></th>
-                </tr>
-              </thead>
-              {(() => {
-                // Filter functions for Xero and FS per summary line
-                const xRevF = (r: TBRow) => xRevCats.has(r.category || '');
-                const fRevF = (r: TBRow) => r.fsLevel === 'Revenue';
-                const xCostF = (r: TBRow) => xPnlCats.has(r.category || '') && !xRevCats.has(r.category || '');
-                const fCostF = (r: TBRow) => r.fsStatement === 'Profit & Loss' && r.fsLevel !== 'Revenue';
-                const xPnlF = (r: TBRow) => xPnlCats.has(r.category || '');
-                const fPnlF = (r: TBRow) => r.fsStatement === 'Profit & Loss';
-                const xGrossF = (r: TBRow) => !xPnlCats.has(r.category || '') && (r.currentYear || 0) > 0;
-                const fGrossF = (r: TBRow) => r.fsStatement === 'Balance Sheet' && (r.currentYear || 0) > 0;
-                const xBsF = (r: TBRow) => !xPnlCats.has(r.category || '');
-                const fBsF = (r: TBRow) => r.fsStatement === 'Balance Sheet';
-                return (
-              <tbody>
-                <tr><td className={lc}>Revenue</td><td className={xc}>{f(xCyRev)}</td><td className={fc}>{f(fCyRev)}</td><td className="px-0.5">{diffDot(xCyRev, fCyRev, xRevF, fRevF, 'currentYear')}</td><td className={xc}>{f(xPyRev)}</td><td className={fc}>{f(fPyRev)}</td><td className="px-0.5">{diffDot(xPyRev, fPyRev, xRevF, fRevF, 'priorYear')}</td></tr>
-                <tr><td className={lc}>Costs</td><td className={xc}>{f(xCyCosts)}</td><td className={fc}>{f(fCyCosts)}</td><td className="px-0.5">{diffDot(xCyCosts, fCyCosts, xCostF, fCostF, 'currentYear')}</td><td className={xc}>{f(xPyCosts)}</td><td className={fc}>{f(fPyCosts)}</td><td className="px-0.5">{diffDot(xPyCosts, fPyCosts, xCostF, fCostF, 'priorYear')}</td></tr>
-                <tr><td className={`${lc} font-semibold text-slate-500`}>Profit</td><td className={`${xc} font-semibold`}>{f(xCyPnL)}</td><td className={`${fc} font-semibold`}>{f(fCyPnL)}</td><td className="px-0.5">{diffDot(xCyPnL, fCyPnL, xPnlF, fPnlF, 'currentYear')}</td><td className={`${xc} font-semibold`}>{f(xPyPnL)}</td><td className={`${fc} font-semibold`}>{f(fPyPnL)}</td><td className="px-0.5">{diffDot(xPyPnL, fPyPnL, xPnlF, fPnlF, 'priorYear')}</td></tr>
-                <tr><td className={lc}>Gross Assets</td><td className={xc}>{f(xCyGross)}</td><td className={fc}>{f(fCyGross)}</td><td className="px-0.5">{diffDot(xCyGross, fCyGross, xGrossF, fGrossF, 'currentYear')}</td><td className={xc}>{f(xPyGross)}</td><td className={fc}>{f(fPyGross)}</td><td className="px-0.5">{diffDot(xPyGross, fPyGross, xGrossF, fGrossF, 'priorYear')}</td></tr>
-                <tr><td className={`${lc} font-semibold text-slate-500`}>Net Assets</td><td className={`${xc} font-semibold`}>{f(xCyBS)}</td><td className={`${fc} font-semibold`}>{f(fCyBS)}</td><td className="px-0.5">{diffDot(xCyBS, fCyBS, xBsF, fBsF, 'currentYear')}</td><td className={`${xc} font-semibold`}>{f(xPyBS)}</td><td className={`${fc} font-semibold`}>{f(fPyBS)}</td><td className="px-0.5">{diffDot(xPyBS, fPyBS, xBsF, fBsF, 'priorYear')}</td></tr>
-                <tr className="border-t border-slate-200">
-                  <td className="text-right pr-2 py-px text-[10px] font-bold text-slate-500">Total</td>
-                  <td colSpan={3} className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(cyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${cyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></td>
-                  <td colSpan={3} className="text-right px-2 py-px text-[10px] font-bold text-slate-800"><span className="inline-flex items-center gap-1 justify-end">{f(pyTotal)}<span className={`inline-block w-2 h-2 rounded-full ${pyBal ? 'bg-green-500' : 'bg-red-500'}`} /></span></td>
-                </tr>
-              </tbody>
-                );
-              })()}
-            </table>
-          </div>
-        );
-      })()}
 
       {/* Main data table */}
       <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 360px)' }}>
