@@ -6,6 +6,7 @@ import { useAutoSave } from '@/hooks/useAutoSave';
 import { ASSERTION_TYPES, INHERENT_RISK_COMPONENTS } from '@/types/methodology';
 import { lookupInherentRisk, lookupOverallRisk, riskColor, inherentRiskDropdownColor } from '@/lib/risk-table-lookup';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
+import { PlanningLetterModal } from '../panels/PlanningLetterModal';
 
 interface Props {
   engagementId: string;
@@ -83,6 +84,9 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   const [initialRows, setInitialRows] = useState<RMMRow[]>([]);
   const [viewMode, setViewMode] = useState<'fs_line' | 'tb_account'>('fs_line');
   const [showCategory, setShowCategory] = useState(false);
+  // Planning Letter modal — two modes, same component. Opened from
+  // the toolbar buttons added below.
+  const [planningLetterMode, setPlanningLetterMode] = useState<'send' | 'download' | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [generatingAI, setGeneratingAI] = useState<string | null>(null);
   const [importingTB, setImportingTB] = useState(false);
@@ -448,6 +452,21 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
             className="text-xs px-3 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100">
             ✂ Split by Assertion
           </button>
+          {/* Planning Letter actions — picks template, renders .docx,
+              optionally emails Informed-Management portal contacts
+              and uploads to the Client Portal Documents list. */}
+          <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setPlanningLetterMode('send')}
+              title="Send the Planning Letter to Informed Management contacts + post to the Client Portal"
+              className="text-xs px-3 py-1 bg-white text-blue-600 rounded-md shadow-sm font-medium hover:bg-blue-50 flex items-center gap-1"
+            >📮 Send Planning Letter</button>
+            <button
+              onClick={() => setPlanningLetterMode('download')}
+              title="Generate and download the Planning Letter .docx for this engagement"
+              className="text-xs px-3 py-1 text-slate-600 rounded-md hover:bg-white hover:text-slate-900 flex items-center gap-1"
+            >⬇ Download Planning Letter</button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
@@ -744,6 +763,16 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
           </tbody>
         </table>
       </div>
+
+      {/* Planning Letter modal — rendered at document root so it
+          portals over the table without layout interference. */}
+      {planningLetterMode && (
+        <PlanningLetterModal
+          mode={planningLetterMode}
+          engagementId={engagementId}
+          onClose={() => setPlanningLetterMode(null)}
+        />
+      )}
     </div>
   );
 }

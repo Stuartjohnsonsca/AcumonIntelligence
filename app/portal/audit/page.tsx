@@ -72,9 +72,41 @@ const AUDIT_SUB_TABS = [
   { key: 'concerns', label: 'Concerns' },
   { key: 'confirmations', label: 'Confirmations' },
   { key: 'errors', label: 'Errors Identified' },
+  { key: 'documents', label: 'Documents' }, // Firm→Client docs (e.g. Planning Letter)
 ];
 
+/** Row returned by /api/portal/documents — firm-sent documents the
+ *  client can download (Planning Letter, Management Letter, etc.). */
+interface PortalDocListItem {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  fileName: string;
+  contentType: string;
+  fileSize: number | null;
+  uploadedByName: string | null;
+  createdAt: string;
+  engagementId: string | null;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Human-readable file size — K / M rounded, handles null/0. */
+function formatFileSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Turn a category slug like "audit_planning_letter" into a label
+ *  like "Audit Planning Letter" for display in the portal list. */
+function formatCategoryLabel(category: string): string {
+  return String(category || 'general')
+    .split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
 
 function getStatusForColumn(request: EvidenceRequest, key: string): 'blank' | 'red' | 'orange' | 'green' {
   const required = (request as unknown as Record<string, unknown>)[key];
@@ -118,6 +150,15 @@ export default function PortalAuditPage() {
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [bulkFiles, setBulkFiles] = useState<{ file: File; mappedRequestId: string }[]>([]);
+  // Documents tab — firm→client documents (Planning Letter etc.).
+  // Loaded lazily when the admin first clicks the Documents sub-tab
+  // (avoids an extra round-trip on every portal page load). Filtered
+  // by the active engagement so clients don't see documents from
+  // parallel engagements they also have portal access to.
+  const [portalDocs, setPortalDocs] = useState<PortalDocListItem[]>([]);
+  const [portalDocsLoading, setPortalDocsLoading] = useState(false);
+  const [portalDocsLoaded, setPortalDocsLoaded] = useState(false);
+  const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
 
   // Confirmation popup state
   const [confirmPopup, setConfirmPopup] = useState<{ requestId: string; evidenceType: string; label: string } | null>(null);
@@ -220,6 +261,64 @@ export default function PortalAuditPage() {
     }
     loadCounts();
   }, [clients]);
+
+  // Load firm→client documents when the Documents sub-tab is opened.
+  // Keyed on active client + engagement — switching engagement or
+  // client resets the cache so we don't leak one client's letters
+  // into another client's view.
+  useEffect(() => {
+    setPortalDocsLoaded(false);
+    setPortalDocs([]);
+  }, [activeClientId, activePeriodId]);
+  useEffect(() => {
+    if (activeSubTab !== 'documents') return;
+    if (!activeClientId || portalDocsLoaded) return;
+    const engId = periods.find(p => p.id === activePeriodId)?.engagementId || '';
+    setPortalDocsLoading(true);
+    (async () => {
+      try {
+        const params = new URLSearchParams({ clientId: activeClientId });
+        if (engId) params.set('engagementId', engId);
+        const res = await fetch(`/api/portal/documents?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          setPortalDocs(Array.isArray(data.documents) ? data.documents : []);
+        }
+      } catch {
+        // silent — UI shows empty state
+      } finally {
+        setPortalDocsLoading(false);
+        setPortalDocsLoaded(true);
+      }
+    })();
+  }, [activeSubTab, activeClientId, activePeriodId, periods, portalDocsLoaded]);
+
+  /** Download a portal document — goes through our proxy endpoint so
+   *  the blob SAS URL never hits the browser. We build a Blob from
+   *  the response and trigger a click on a hidden <a>. */
+  async function downloadPortalDoc(doc: PortalDocListItem) {
+    if (!activeClientId) return;
+    setDownloadingDocId(doc.id);
+    try {
+      const res = await fetch(`/api/portal/documents/${doc.id}/download?clientId=${activeClientId}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || `Download failed (${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = doc.fileName || `${doc.name}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloadingDocId(null);
+    }
+  }
 
   // Load per-tab status counts
   useEffect(() => {
@@ -590,6 +689,65 @@ export default function PortalAuditPage() {
           <h3 className="text-sm font-semibold text-slate-700 mb-2">Errors Identified</h3>
           <p className="text-xs text-slate-400">Misstatements, errors, and adjustments identified during the audit process.</p>
           <p className="text-xs text-slate-300 mt-4 italic">Coming soon</p>
+        </div>
+      )}
+
+      {/* Documents — Firm→Client documents the auditor has shared
+          (e.g. Planning Letter, Management Letter). Separate from
+          Evidence which carries files in the other direction. */}
+      {activeSubTab === 'documents' && activeClientId && activePeriodId && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-500" /> Documents from your auditor
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">Planning letters, management letters, and other documents your audit team has shared with you.</p>
+            </div>
+            {portalDocsLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+          </div>
+          {portalDocsLoaded && portalDocs.length === 0 && (
+            <div className="text-center py-8">
+              <FileText className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+              <p className="text-xs text-slate-400 italic">No documents have been shared yet.</p>
+              <p className="text-[10px] text-slate-400 mt-1">When your auditor sends a Planning Letter or other document through the portal, it will appear here.</p>
+            </div>
+          )}
+          {portalDocs.length > 0 && (
+            <ul className="divide-y divide-slate-100">
+              {portalDocs.map(d => {
+                const size = d.fileSize ? formatFileSize(d.fileSize) : null;
+                const sent = new Date(d.createdAt);
+                const sentLabel = sent.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                const categoryLabel = formatCategoryLabel(d.category);
+                return (
+                  <li key={d.id} className="py-3 flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-slate-800 truncate">{d.name}</div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {categoryLabel}
+                        {d.uploadedByName && <> · Sent by {d.uploadedByName}</>}
+                        <> · {sentLabel}</>
+                        {size && <> · {size}</>}
+                      </div>
+                      {d.description && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{d.description}</div>}
+                    </div>
+                    <button
+                      onClick={() => downloadPortalDoc(d)}
+                      disabled={downloadingDocId === d.id}
+                      className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 font-medium disabled:opacity-50"
+                    >
+                      {downloadingDocId === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3 rotate-180" />}
+                      Download
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
 
