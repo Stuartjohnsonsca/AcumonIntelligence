@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown, Copy, Check } from 'lucide-react';
 import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { slugifyQuestionText } from '@/lib/formula-engine';
 import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
@@ -96,6 +96,26 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
     setExpandedId(null);
   }, [templateType, auditType]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Tracks which question id was just copied so we can flash a green
+  // tick for ~1.5s on that row. Lets the admin see feedback without a
+  // toast library.
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  /** Copy a question's id to the clipboard. The id is what goes into
+   *  the `Conditional on` field on another question, or into any
+   *  Handlebars template that needs to reference this question. */
+  async function copyQuestionReference(questionId: string) {
+    try {
+      await navigator.clipboard.writeText(questionId);
+    } catch {
+      // Fallback for very old browsers / insecure contexts — surface the
+      // id in a prompt so the admin can still copy it manually.
+      window.prompt('Question reference (copy this):', questionId);
+      return;
+    }
+    setCopiedId(questionId);
+    window.setTimeout(() => setCopiedId(prev => (prev === questionId ? null : prev)), 1500);
+  }
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [editingSectionName, setEditingSectionName] = useState<string | null>(null);
   const [sectionNameDraft, setSectionNameDraft] = useState('');
@@ -351,6 +371,19 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                             className="p-0.5 text-slate-400 hover:text-blue-600" title="Edit question">
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
+                          {/* Copy Question Reference — puts the question's id on the
+                              clipboard. Used for wiring up cross-references in other
+                              tools (Handlebars, flow-engine rules, external docs).
+                              In-schedule conditionals no longer need this since the
+                              Conditional-on picker is a dropdown, but the copy button
+                              stays useful for everything else. */}
+                          <button
+                            onClick={() => copyQuestionReference(q.id)}
+                            className={`p-0.5 ${copiedId === q.id ? 'text-green-600' : 'text-slate-400 hover:text-indigo-600'}`}
+                            title={copiedId === q.id ? 'Copied!' : 'Copy Question Reference (id)'}
+                          >
+                            {copiedId === q.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
                           <button onClick={() => removeQuestion(q.id)}
                             className="p-0.5 text-red-300 hover:text-red-600" title="Delete question">
                             <X className="h-3.5 w-3.5" />
@@ -545,24 +578,116 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 <input type="text" value={q.crossRef || ''} onChange={e => updateQuestion(q.id, { crossRef: e.target.value || undefined })}
                                   className="border border-slate-200 rounded px-2 py-1 text-xs w-44" placeholder="appendix_b.field_id" />
                               </label>
-                              <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                                Conditional on:
-                                <input
-                                  type="text"
-                                  value={typeof q.conditionalOn === 'string' ? q.conditionalOn : q.conditionalOn ? `${q.conditionalOn.questionId}=${q.conditionalOn.value}` : ''}
-                                  onChange={e => {
-                                    const raw = e.target.value;
-                                    if (!raw) {
-                                      updateQuestion(q.id, { conditionalOn: undefined });
-                                    } else {
-                                      const [questionId, value] = raw.split('=');
-                                      updateQuestion(q.id, { conditionalOn: { questionId: questionId || '', value: value || '' } });
-                                    }
-                                  }}
-                                  className="border border-slate-200 rounded px-2 py-1 text-xs w-44"
-                                  placeholder="other_question_key=Y"
-                                />
-                              </label>
+                              {/* Conditional on: only show this question when ANOTHER
+                                  question on this schedule satisfies an operator-based
+                                  check. Three dropdowns + an optional value:
+                                    [parent question]  [operator]  [value]
+                                  Operator controls how the parent's answer is compared.
+                                  isEmpty / isNotEmpty are unary (no value needed). */}
+                              {(() => {
+                                const cond = q.conditionalOn;
+                                const condParentId = cond?.questionId || '';
+                                const condOperator = (cond?.operator || 'eq') as NonNullable<typeof cond>['operator'];
+                                const parent = questions.find(p => p.id === condParentId);
+                                const siblings = questions.filter(p => p.id !== q.id);
+                                const isUnary = condOperator === 'isEmpty' || condOperator === 'isNotEmpty';
+
+                                function patchCond(patch: Partial<NonNullable<typeof q.conditionalOn>>) {
+                                  const base = q.conditionalOn || { questionId: '', value: '' };
+                                  updateQuestion(q.id, { conditionalOn: { ...base, ...patch } });
+                                }
+
+                                // Value-input adapts to parent's input type.
+                                const valueInput = (() => {
+                                  if (!parent || isUnary) return null;
+                                  const current = cond?.value || '';
+                                  const onValueChange = (v: string) => patchCond({ value: v });
+                                  if (parent.inputType === 'dropdown' && Array.isArray(parent.dropdownOptions) && parent.dropdownOptions.length > 0) {
+                                    return (
+                                      <select value={current} onChange={e => onValueChange(e.target.value)}
+                                        className="border border-slate-200 rounded px-2 py-1 text-xs w-32">
+                                        <option value="">— answer —</option>
+                                        {parent.dropdownOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                      </select>
+                                    );
+                                  }
+                                  if (parent.inputType === 'yesno' || parent.inputType === 'yes_only' || parent.inputType === 'yna' || parent.inputType === 'checkbox') {
+                                    return (
+                                      <select value={current} onChange={e => onValueChange(e.target.value)}
+                                        className="border border-slate-200 rounded px-2 py-1 text-xs w-24">
+                                        <option value="">— answer —</option>
+                                        <option value="Y">Y</option>
+                                        <option value="N">N</option>
+                                        <option value="Yes">Yes</option>
+                                        <option value="No">No</option>
+                                        <option value="N/A">N/A</option>
+                                        <option value="true">true</option>
+                                        <option value="false">false</option>
+                                      </select>
+                                    );
+                                  }
+                                  // Numeric operators → number input for parity.
+                                  const isNumeric = condOperator === 'gt' || condOperator === 'gte' || condOperator === 'lt' || condOperator === 'lte';
+                                  return (
+                                    <input
+                                      type={isNumeric ? 'number' : 'text'}
+                                      value={current}
+                                      onChange={e => onValueChange(e.target.value)}
+                                      placeholder={isNumeric ? '0' : 'expected value'}
+                                      className="border border-slate-200 rounded px-2 py-1 text-xs w-32"
+                                    />
+                                  );
+                                })();
+
+                                return (
+                                  <label className="flex items-center gap-1.5 text-xs text-slate-500 flex-wrap">
+                                    Conditional on:
+                                    <select
+                                      value={condParentId}
+                                      onChange={e => {
+                                        const newParentId = e.target.value;
+                                        if (!newParentId) updateQuestion(q.id, { conditionalOn: undefined });
+                                        else patchCond({ questionId: newParentId });
+                                      }}
+                                      className="border border-slate-200 rounded px-2 py-1 text-xs max-w-[14rem]"
+                                      title="Pick a sibling question — this question only shows when the chosen operator + value match"
+                                    >
+                                      <option value="">— Always show —</option>
+                                      {siblings.map(p => (
+                                        <option key={p.id} value={p.id}>
+                                          {(p.questionText || '(untitled)').length > 50
+                                            ? (p.questionText || '').slice(0, 50) + '…'
+                                            : (p.questionText || '(untitled)')}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {condParentId && (
+                                      <select
+                                        value={condOperator}
+                                        onChange={e => {
+                                          const op = e.target.value as NonNullable<typeof q.conditionalOn>['operator'];
+                                          // Clear value when switching to a unary operator.
+                                          if (op === 'isEmpty' || op === 'isNotEmpty') patchCond({ operator: op, value: '' });
+                                          else patchCond({ operator: op });
+                                        }}
+                                        className="border border-slate-200 rounded px-1.5 py-1 text-xs"
+                                      >
+                                        <option value="eq">equals</option>
+                                        <option value="ne">does not equal</option>
+                                        <option value="contains">contains text</option>
+                                        <option value="notContains">does not contain text</option>
+                                        <option value="gt">greater than</option>
+                                        <option value="gte">greater or equal to</option>
+                                        <option value="lt">less than</option>
+                                        <option value="lte">less or equal to</option>
+                                        <option value="isEmpty">is empty</option>
+                                        <option value="isNotEmpty">is not empty</option>
+                                      </select>
+                                    )}
+                                    {valueInput}
+                                  </label>
+                                );
+                              })()}
                             </div>
                           </div>
                         </div>

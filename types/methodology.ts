@@ -326,7 +326,15 @@ export interface TemplateQuestion {
   validationMin?: number;
   validationMax?: number;
   validationDecimals?: number;
-  conditionalOn?: { questionId: string; value: string };
+  /** Show this question only when another question on the same
+   *  schedule satisfies the operator+value check. `operator` defaults
+   *  to 'eq' when absent for back-compat with the original
+   *  equality-only implementation. */
+  conditionalOn?: {
+    questionId: string;
+    value: string;
+    operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'notContains' | 'isEmpty' | 'isNotEmpty';
+  };
   mergedWith?: string;
   isBold?: boolean; // For conclusion/header rows in tables
 }

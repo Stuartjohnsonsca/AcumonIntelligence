@@ -114,10 +114,35 @@ export function DynamicAppendixForm({
     trackFieldEdit(questionId);
   }
 
+  /** Evaluate a `conditionalOn` rule against the current answers
+   *  collection. Supports the full operator set; defaults to 'eq'
+   *  when no operator is set (back-compat with old schemas). */
   function isVisible(q: TemplateQuestion): boolean {
     if (!q.conditionalOn) return true;
-    const depValue = values[q.conditionalOn.questionId];
-    return String(depValue) === q.conditionalOn.value;
+    const { questionId, value, operator = 'eq' } = q.conditionalOn;
+    const depValue = values[questionId];
+    const depStr = depValue == null ? '' : String(depValue);
+    const expected = String(value ?? '');
+    // Numeric operators coerce both sides via Number() — NaN short-
+    // circuits to false so a missing/unparseable answer hides the
+    // dependent question instead of showing it unexpectedly.
+    const asNum = (v: string) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : NaN;
+    };
+    switch (operator) {
+      case 'eq':          return depStr === expected;
+      case 'ne':          return depStr !== expected;
+      case 'contains':    return depStr.toLowerCase().includes(expected.toLowerCase());
+      case 'notContains': return !depStr.toLowerCase().includes(expected.toLowerCase());
+      case 'isEmpty':     return depStr.trim().length === 0;
+      case 'isNotEmpty':  return depStr.trim().length > 0;
+      case 'gt':  { const a = asNum(depStr), b = asNum(expected); return Number.isFinite(a) && Number.isFinite(b) && a >  b; }
+      case 'gte': { const a = asNum(depStr), b = asNum(expected); return Number.isFinite(a) && Number.isFinite(b) && a >= b; }
+      case 'lt':  { const a = asNum(depStr), b = asNum(expected); return Number.isFinite(a) && Number.isFinite(b) && a <  b; }
+      case 'lte': { const a = asNum(depStr), b = asNum(expected); return Number.isFinite(a) && Number.isFinite(b) && a <= b; }
+      default:            return depStr === expected;
+    }
   }
 
   return (
