@@ -136,6 +136,17 @@ export async function POST(req: NextRequest) {
             type: kind,
             description: answerType ? `answer type: ${answerType}` : undefined,
           });
+          // And the prior-period counterpart — attached under the
+          // top-level `priorPeriod.*` mirror that buildTemplateContext
+          // creates for us. Suffix the label so the AI picks the
+          // right one when the admin says "prior period …".
+          dynamicEntries.push({
+            path: `priorPeriod.questionnaires.${ctxKey}.${key}`,
+            label: `${questionText} (prior period)`,
+            group: `${typeLabel}${groupTitle ? ' · ' + groupTitle : ''} (prior period)`,
+            type: kind,
+            description: answerType ? `answer type: ${answerType} — prior period` : 'prior period value',
+          });
         }
       }
     }
@@ -159,6 +170,13 @@ The catalog has TWO parts:
   2. A DYNAMIC list of the firm's actual questionnaire questions — these have a QUESTION text to match the admin's description against. PREFER a dynamic entry when the admin describes a specific question (e.g. "key judgements in setting materiality" should match a question labelled along those lines).
 
 When matching a questionnaire question, use semantic similarity on the QUESTION text, not just keyword overlap.
+
+PRIOR-PERIOD MIRROR RULE: every current-period path has an equivalent prior-period path prefixed with \`priorPeriod.\` — e.g.:
+  materiality.overall              ↔  priorPeriod.materiality.overall
+  errorSchedule                    ↔  priorPeriod.errorSchedule
+  questionnaires.materiality.X     ↔  priorPeriod.questionnaires.materiality.X
+  auditPlan.significantRisks       ↔  priorPeriod.auditPlan.significantRisks
+If the admin's description mentions "prior period", "prior year", "last year", "PY", or similar, return the \`priorPeriod.\`-prefixed path. First-year engagements have priorPeriod = null, but the admin's intent is still to reference the prior-period value.
 
 Catalog:
 ${menu}

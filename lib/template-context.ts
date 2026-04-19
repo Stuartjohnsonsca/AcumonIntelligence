@@ -172,6 +172,10 @@ export interface TemplateContext {
     // open-ended, hence the index signature.
     [extraType: string]: Record<string, any>;
   };
+  /** Full mirror of the context, built for the prior engagement if
+   *  one is linked. Null on first-year engagements. Every current-
+   *  period path has a sibling under `priorPeriod.*`. */
+  priorPeriod?: TemplateContext | null;
   tb: {
     rows: Array<{
       fsStatement: string | null;
@@ -205,7 +209,19 @@ function num(v: unknown): number { const n = Number(v); return Number.isFinite(n
  * materiality) are loaded with `catch` fallbacks so a missing record
  * doesn't prevent the whole render.
  */
-export async function buildTemplateContext(engagementId: string): Promise<TemplateContext> {
+/**
+ * Build the full render context for an engagement.
+ *
+ * Options:
+ *   - `includePriorPeriod` (default `true` at the top-level call) —
+ *     when true AND the engagement has a prior period linked, recursively
+ *     builds the prior engagement's context and attaches it under
+ *     `priorPeriod` on the result. Set to false for the recursive call
+ *     itself so we only ever load TWO engagements (current + prior),
+ *     never a chain.
+ */
+export async function buildTemplateContext(engagementId: string, opts: { includePriorPeriod?: boolean } = {}): Promise<TemplateContext> {
+  const includePriorPeriod = opts.includePriorPeriod !== false;
   const engagement = await prisma.auditEngagement.findUnique({
     where: { id: engagementId },
     include: {
@@ -689,6 +705,29 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
       totalAssets, totalEquity,
     },
   };
+
+  // ── Prior-period mirror ─────────────────────────────────────────────
+  // If the engagement has a prior period linked, recursively build its
+  // full context and attach under `priorPeriod`. This gives every
+  // current-period path a sibling under priorPeriod.*:
+  //    {{materiality.overall}}              → current
+  //    {{priorPeriod.materiality.overall}}  → prior
+  //    {{#each errorSchedule}}…{{/each}}    → current
+  //    {{#each priorPeriod.errorSchedule}}  → prior
+  // The recursive call passes includePriorPeriod=false so we never
+  // walk more than one period back.
+  if (includePriorPeriod && engagement.priorPeriodEngagement?.id) {
+    try {
+      const priorCtx = await buildTemplateContext(engagement.priorPeriodEngagement.id, { includePriorPeriod: false });
+      (ctx as any).priorPeriod = priorCtx;
+    } catch {
+      // Prior engagement may be inaccessible (rare but possible when
+      // a prior is soft-deleted or schema drifts). Tolerant.
+      (ctx as any).priorPeriod = null;
+    }
+  } else {
+    (ctx as any).priorPeriod = null;
+  }
 
   return ctx;
 }
