@@ -1,8 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Loader2, Send, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Send, CheckCircle2, UserPlus } from 'lucide-react';
 import { PasteAwareTextarea } from './PasteAwareTextarea';
+
+interface TeamMember {
+  id: string;
+  email: string;
+  name: string;
+  role: string | null;
+  isActive: boolean;
+}
 
 interface ChatMessage {
   from: 'firm' | 'client';
@@ -40,11 +48,42 @@ const SECTIONS = [
   { key: 'connections', label: 'Connections' },
 ];
 
-// Clean question text: remove [Questionnaire / Group] prefix if present
-function cleanQuestion(text: string): { question: string; source: string | null } {
-  const match = text.match(/^\[(.+?)\]\s*(.+)$/);
-  if (match) return { source: match[1], question: match[2] };
-  return { source: null, question: text };
+// Clean question text: remove [Questionnaire / Group] prefix if present.
+// Also splits subject (first line) from body (rest), and strips the
+// redundant "Audit: <fsLine> for <client> (period ending <date>)"
+// preamble that flow-engine prepends — that context is already visible
+// in the page header, duplicating it in every request just clutters
+// the portal. Result: clean subject on top, nicely-wrapped body below.
+function cleanQuestion(text: string): { subject: string; body: string; source: string | null } {
+  let rest = String(text ?? '');
+  // Strip a `[source]` tag at the very start.
+  let source: string | null = null;
+  const tag = rest.match(/^\[(.+?)\]\s*/);
+  if (tag) { source = tag[1]; rest = rest.slice(tag[0].length); }
+  // Normalise line endings.
+  rest = rest.replace(/\r\n/g, '\n').trim();
+  // Split subject from body at the first blank line (subject\n\nbody).
+  let subject = '';
+  let body = '';
+  const blankIdx = rest.indexOf('\n\n');
+  if (blankIdx >= 0) {
+    subject = rest.slice(0, blankIdx).trim();
+    body = rest.slice(blankIdx + 2).trim();
+  } else {
+    // Fallback: just take first line as subject if there's a line break.
+    const nlIdx = rest.indexOf('\n');
+    if (nlIdx >= 0) {
+      subject = rest.slice(0, nlIdx).trim();
+      body = rest.slice(nlIdx + 1).trim();
+    } else {
+      subject = rest;
+    }
+  }
+  // Drop the redundant "Audit: … for … (period ending …)" preamble the
+  // flow engine prepends. The information is already in the engagement
+  // header so duplicating it in every request is noise.
+  body = body.replace(/^Audit:[^\n]+\n\n?/i, '').trim();
+  return { subject, body, source };
 }
 
 export function OutstandingTab({ clientId, token, engagementId, onCountChange, viewMode = 'team', portalUserName }: Props) {
@@ -56,6 +95,11 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successes, setSuccesses] = useState<Set<string>>(new Set());
+  // Team-member state for the "Assign to" dropdown — mirrors the
+  // pattern already used on ExplanationsTab. Fetched alongside items
+  // so the dropdown is ready when the user expands a section.
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [assignees, setAssignees] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadItems();
@@ -67,18 +111,50 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
       let url = `/api/portal/requests?clientId=${clientId}&status=outstanding`;
       if (engagementId) url += `&engagementId=${engagementId}`;
       console.log('[OutstandingTab] Fetching:', url);
-      const res = await fetch(url);
+      // Parallel: requests + team members. Team members feed the
+      // Assign-to dropdown; we derive initial assignees from the
+      // request rows' `assignedTo` field when present.
+      const [res, teamRes] = await Promise.all([
+        fetch(url),
+        fetch(`/api/portal/users?clientId=${clientId}`),
+      ]);
       if (res.ok) {
         const data = await res.json();
         const reqs = data.requests || [];
         console.log('[OutstandingTab] Loaded', reqs.length, 'items, sections:', [...new Set(reqs.map((r: any) => r.section))]);
         setItems(reqs);
         onCountChange?.(reqs.length);
+        // Seed local `assignees` state from whatever's already on each
+        // row so the dropdown reflects the server truth.
+        const seeded: Record<string, string> = {};
+        for (const r of reqs) {
+          if ((r as any).assignedTo) seeded[r.id] = (r as any).assignedTo;
+        }
+        setAssignees(seeded);
       } else {
         console.error('[OutstandingTab] Fetch failed:', res.status);
       }
+      if (teamRes.ok) {
+        const users = await teamRes.json();
+        setTeamMembers((Array.isArray(users) ? users : []).filter((u: any) => u.isActive));
+      }
     } catch (err) { console.error('[OutstandingTab] Error:', err); }
     setLoading(false);
+  }
+
+  /** Reassign an outstanding request to a different team member —
+   *  keeps the item outstanding; just updates the displayed assignee.
+   *  Mirrors the PUT call ExplanationsTab uses. */
+  async function handleAssign(itemId: string, assigneeName: string) {
+    // Optimistic local update so the UI responds immediately.
+    setAssignees(prev => ({ ...prev, [itemId]: assigneeName }));
+    try {
+      await fetch('/api/portal/requests', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: itemId, action: 'assign_portal', assignTo: assigneeName }),
+      });
+    } catch { /* tolerant — next refresh will re-sync from server */ }
   }
 
   function toggleSection(key: string) {
@@ -199,21 +275,50 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
                 ) : (
                   <div className="divide-y divide-slate-100">
                     {sectionItems.map((item) => {
-                      const { question, source } = cleanQuestion(item.question);
+                      const { subject, body, source } = cleanQuestion(item.question);
                       return (
                         <div key={item.id} className="px-5 py-3">
                           <div className="mb-2">
-                            <p className="text-sm text-slate-800 font-medium">{question}</p>
-                            <div className="flex items-center gap-2 mt-0.5">
+                            {/* Subject — short, bold, one line */}
+                            <p className="text-sm text-slate-900 font-semibold">{subject || '(no subject)'}</p>
+                            {/* Body — preserves line breaks + whitespace so
+                                multi-paragraph messages render readably
+                                instead of as one run-on blob */}
+                            {body && (
+                              <p className="text-xs text-slate-700 mt-1 whitespace-pre-wrap leading-relaxed">
+                                {body}
+                              </p>
+                            )}
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
                               {source && (
                                 <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">{source}</span>
                               )}
                               <span className="text-[10px] text-slate-400">
                                 Requested by {item.requestedByName} &middot; {new Date(item.requestedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                               </span>
-                              {(item as any).assignedTo && (
+                              {/* Assign-to dropdown — only shown when the
+                                  client has more than one portal user. For
+                                  single-user clients there's no one to
+                                  reassign to, so we skip the clutter. */}
+                              {teamMembers.length > 1 && (
+                                <span className="inline-flex items-center gap-1">
+                                  <UserPlus className="h-3 w-3 text-slate-400" />
+                                  <span className="text-[10px] text-slate-500">Assign to:</span>
+                                  <select
+                                    value={assignees[item.id] || ''}
+                                    onChange={e => handleAssign(item.id, e.target.value)}
+                                    className="text-[10px] border border-slate-200 rounded px-1.5 py-0.5 bg-white"
+                                  >
+                                    <option value="">— Unassigned —</option>
+                                    {teamMembers.map(m => (
+                                      <option key={m.id} value={m.name}>{m.name}{m.role ? ` (${m.role})` : ''}</option>
+                                    ))}
+                                  </select>
+                                </span>
+                              )}
+                              {assignees[item.id] && teamMembers.length <= 1 && (
                                 <span className="text-[9px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">
-                                  Assigned: {(item as any).assignedTo}
+                                  Assigned: {assignees[item.id]}
                                 </span>
                               )}
                             </div>
