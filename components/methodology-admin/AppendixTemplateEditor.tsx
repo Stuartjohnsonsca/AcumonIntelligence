@@ -170,6 +170,42 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
     setSaved(false);
   }
 
+  /** Move an entire section (and all its questions) up or down.
+   *  Section order isn't stored explicitly — it comes from the order
+   *  of questions in the `questions` array (via grouping). To move a
+   *  section, we re-serialise the array with that section swapped
+   *  past its neighbour. Per-section question sortOrder is preserved. */
+  function moveSection(sectionKey: string, direction: 'up' | 'down') {
+    setQuestions(prev => {
+      // Derive current section order from question array order.
+      const sectionOrder: string[] = [];
+      for (const q of prev) {
+        if (!sectionOrder.includes(q.sectionKey)) sectionOrder.push(q.sectionKey);
+      }
+      const idx = sectionOrder.indexOf(sectionKey);
+      if (idx === -1) return prev;
+      if (direction === 'up' && idx === 0) return prev;
+      if (direction === 'down' && idx === sectionOrder.length - 1) return prev;
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      [sectionOrder[idx], sectionOrder[swapIdx]] = [sectionOrder[swapIdx], sectionOrder[idx]];
+      // Group by section then re-flatten in the new order, preserving
+      // each section's internal sortOrder.
+      const grouped = new Map<string, TemplateQuestion[]>();
+      for (const q of prev) {
+        if (!grouped.has(q.sectionKey)) grouped.set(q.sectionKey, []);
+        grouped.get(q.sectionKey)!.push(q);
+      }
+      for (const qs of grouped.values()) qs.sort((a, b) => a.sortOrder - b.sortOrder);
+      const reordered: TemplateQuestion[] = [];
+      for (const key of sectionOrder) {
+        const qs = grouped.get(key);
+        if (qs) reordered.push(...qs);
+      }
+      return reordered;
+    });
+    setSaved(false);
+  }
+
   function moveQuestion(id: string, direction: 'up' | 'down') {
     setQuestions(prev => {
       const idx = prev.findIndex(q => q.id === id);
@@ -271,10 +307,12 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
         </div>
       </div>
 
-      {Array.from(sections.entries()).map(([sectionKey, sectionQs]) => {
+      {Array.from(sections.entries()).map(([sectionKey, sectionQs], sectionIdx, allSections) => {
         const isCollapsed = collapsedSections.has(sectionKey);
         const sorted = [...sectionQs].sort((a, b) => a.sortOrder - b.sortOrder);
         const isEditingName = editingSectionName === sectionKey;
+        const isFirstSection = sectionIdx === 0;
+        const isLastSection = sectionIdx === allSections.length - 1;
 
         return (
           <div key={sectionKey} className="border border-slate-200 rounded-lg overflow-hidden w-full">
@@ -322,6 +360,25 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                     className="w-3 h-3 rounded" />
                   Sign-off
                 </label>
+                {/* Section reorder — move the whole section (and its
+                    questions) up or down in the schedule. Disabled at
+                    the edges. */}
+                <button
+                  onClick={() => moveSection(sectionKey, 'up')}
+                  disabled={isFirstSection}
+                  title="Move section up"
+                  className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 disabled:cursor-not-allowed rounded hover:bg-slate-100"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => moveSection(sectionKey, 'down')}
+                  disabled={isLastSection}
+                  title="Move section down"
+                  className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-20 disabled:cursor-not-allowed rounded hover:bg-slate-100"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
                 <button onClick={() => renameSection(sectionKey)} title="Rename section"
                   className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50">
                   <Pencil className="h-3.5 w-3.5" />
