@@ -60,13 +60,50 @@ type Row = AgreedDateData & {
 const SAVE_DEBOUNCE_MS = 800;
 
 export function AuditTimetablePanel({ engagementId, initialDates }: Props) {
-  // Seed ONCE on mount — never re-sync from props afterwards. The
-  // component owns its state for the rest of its lifetime; on tab
-  // switch it unmounts and remounts with fresh server data.
+  // Initial render shows whatever the parent's cached engagement has.
+  // That cache is set ONCE on page load and never refetched, so after
+  // a save + tab-switch the parent still thinks the timetable is
+  // empty. To fix that, we fetch fresh data from the server on mount
+  // (see the useEffect below) and replace the initial seed with it.
+  // This means: even though the parent never refreshes, the panel
+  // always shows live data when it mounts.
   const [rows, setRows] = useState<Row[]>(() => seedIfEmpty(initialDates));
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Hydration state — true once we've successfully fetched fresh
+  // rows. While loading we still show the seeded/cached rows so the
+  // admin doesn't see a flash of emptiness.
+  const [hydrated, setHydrated] = useState(false);
+
+  // ── Fetch fresh rows on mount ───────────────────────────────────
+  // Guarantees we always see the truth after switching tabs, even
+  // though the parent's `initialDates` prop is stale cached data
+  // from the initial page load.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/agreed-dates`);
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        const serverRows: AgreedDateData[] = Array.isArray(data?.dates) ? data.dates : [];
+        if (cancelled) return;
+        // If the user has already started editing, don't stomp their
+        // in-progress work. The next save will push their edits to
+        // the server anyway, and subsequent mounts will hydrate fresh.
+        if (dirtyRef.current) return;
+        // If the server has real data, replace local seed with it.
+        // If it's empty, keep the seeded starter rows.
+        if (serverRows.length > 0) {
+          setRows(serverRows.map(r => ({ ...r })));
+        }
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId]);
 
   // The latest rows — a ref mirror so the debounced/unmount saver
   // sees fresh values at call time, not the stale closure.
@@ -76,6 +113,11 @@ export function AuditTimetablePanel({ engagementId, initialDates }: Props) {
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const savingRef = useRef(false);
   const pendingWhileSavingRef = useRef(false);
+  // Flips true the moment the user edits anything. The initial
+  // hydration fetch checks this before replacing state — if the user
+  // has already started typing, we skip the hydration so their edits
+  // aren't overwritten by the race-winning fetch response.
+  const dirtyRef = useRef(false);
 
   /** Take the current local rows, filter to the subset that should
    *  actually be persisted, strip client-only fields, and send. */
@@ -204,10 +246,12 @@ export function AuditTimetablePanel({ engagementId, initialDates }: Props) {
 
   // ── Mutation helpers ────────────────────────────────────────────
   function update(idx: number, patch: Partial<Row>) {
+    dirtyRef.current = true;
     setRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch, _seeded: false } : r));
     scheduleSave();
   }
   function addRow() {
+    dirtyRef.current = true;
     setRows(prev => [
       ...prev,
       {
@@ -223,6 +267,7 @@ export function AuditTimetablePanel({ engagementId, initialDates }: Props) {
     // Don't save yet — blank row with no description. Save after user types.
   }
   function removeRow(idx: number) {
+    dirtyRef.current = true;
     setRows(prev => prev.filter((_, i) => i !== idx));
     scheduleSave();
   }
