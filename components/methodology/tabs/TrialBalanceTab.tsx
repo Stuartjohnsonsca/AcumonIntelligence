@@ -499,6 +499,75 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     }));
   }
 
+  /** Copy the currently-visible (filtered + sorted) rows to the
+   *  clipboard as tab-separated values. Headers on the first line,
+   *  one row per TB entry — drops straight into Excel, Google
+   *  Sheets, or any editor with a paste-as-table.
+   *
+   *  Column inclusion is driven by the existing column-selection
+   *  checkboxes: if any are ticked, only those are copied, otherwise
+   *  all columns are included. Feedback via a transient toolbar
+   *  chip ("Copied N rows × M columns") rather than an alert. */
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  async function copyFilteredRows() {
+    if (filteredRows.length === 0) return;
+    // Column definitions mirror what the table renders. Keeps headers
+    // in sync if showCategory / isGroupAudit toggle state-side.
+    const allCols: Array<{ field: keyof TBRow | string; label: string }> = [
+      { field: 'accountCode',  label: 'Account Code' },
+      { field: 'description',  label: 'Description' },
+      ...(showCategory ? [{ field: 'category', label: 'Category' }] : []),
+      { field: 'currentYear',  label: formatDateDDMMYYYY(periodEndDate) || 'Current Year' },
+      { field: 'priorYear',    label: dayBefore(periodStartDate) || 'Prior Year' },
+      { field: 'fsNoteLevel',  label: 'FS Note' },
+      { field: 'fsLevel',      label: 'FS Level' },
+      { field: 'fsStatement',  label: 'FS Statement' },
+      { field: 'aiConfidence', label: 'AI %' },
+      ...(isGroupAudit ? [{ field: 'groupName', label: 'Group Name' }] : []),
+    ];
+    // Filter to selected columns if any are ticked, else copy all.
+    const cols = selectedColumns.size > 0
+      ? allCols.filter(c => selectedColumns.has(String(c.field)))
+      : allCols;
+    if (cols.length === 0) { setCopyFeedback('No columns selected to copy'); window.setTimeout(() => setCopyFeedback(null), 2000); return; }
+
+    /** Escape a cell for TSV. Real-world TB descriptions sometimes
+     *  contain tabs or newlines (pasted from PDFs) — we strip those
+     *  rather than quote, since Excel's TSV paste handles
+     *  space-normalised content better than quoted content. */
+    const cell = (v: any): string => {
+      if (v === null || v === undefined) return '';
+      const s = typeof v === 'number' ? String(v) : String(v);
+      return s.replace(/[\t\r\n]+/g, ' ');
+    };
+
+    const header = cols.map(c => cell(c.label)).join('\t');
+    const body = filteredRows.map(r => cols.map(c => cell((r as any)[c.field])).join('\t')).join('\n');
+    const tsv = `${header}\n${body}`;
+    try {
+      await navigator.clipboard.writeText(tsv);
+      setCopyFeedback(`Copied ${filteredRows.length} row${filteredRows.length === 1 ? '' : 's'} × ${cols.length} column${cols.length === 1 ? '' : 's'}`);
+    } catch {
+      // Fallback for insecure contexts — drop the content into a
+      // textarea the user can Ctrl+C from. Exits silently if even
+      // that fails (older browsers / sandboxed iframes).
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = tsv;
+        ta.style.position = 'fixed';
+        ta.style.left = '-1000px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopyFeedback(`Copied ${filteredRows.length} rows (fallback)`);
+      } catch {
+        setCopyFeedback('Copy failed — your browser blocked clipboard access');
+      }
+    }
+    window.setTimeout(() => setCopyFeedback(null), 2500);
+  }
+
   /** Clear the selected columns across EVERY visible row (respects
    *  current filters). This is the "delete column" action the user
    *  sees when columns are selected but no rows — same semantics as
@@ -1003,6 +1072,22 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
+          {copyFeedback && (
+            <span className="text-[10px] text-green-600 font-medium">{copyFeedback}</span>
+          )}
+          {/* Copy filtered rows as TSV (Excel-friendly). When any
+              column checkboxes are ticked, only those columns are
+              included — handy for "just show me the Description +
+              FS Level for this particular FS Statement" workflows. */}
+          <button
+            onClick={copyFilteredRows}
+            disabled={filteredRows.length === 0}
+            title={`Copy the ${filteredRows.length} visible row${filteredRows.length === 1 ? '' : 's'}${selectedColumns.size > 0 ? ` (${selectedColumns.size} selected column${selectedColumns.size === 1 ? '' : 's'})` : ' (all columns)'} to clipboard — paste into Excel`}
+            className="text-xs px-3 py-1 bg-slate-100 text-slate-700 rounded hover:bg-slate-200 disabled:opacity-50"
+          >
+            📋 Copy {filteredRows.length} row{filteredRows.length === 1 ? '' : 's'}
+            {selectedColumns.size > 0 && <> <span className="text-slate-500">({selectedColumns.size} col{selectedColumns.size === 1 ? '' : 's'})</span></>}
+          </button>
           {anyCustomWidth && (
             <button onClick={resetColumnWidths} className="text-[10px] text-slate-400 hover:text-slate-700" title="Reset column widths to defaults">
               Reset widths
