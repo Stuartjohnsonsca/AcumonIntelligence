@@ -115,22 +115,27 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
   // Dynamically build the appendix tab list:
   //   1. Start with the hardcoded entries (preserves existing labels and section defaults)
   //   2. Append any master-schedule entry that ISN'T already covered AND isn't a built-in tool
-  // This means a user can add a new schedule via /audit-types and immediately
-  // configure its questions here without any code change.
+  //
+  // Dedup is done on a NORMALISED key (suffix stripped) because the hardcoded list
+  // and the master list have historically used inconsistent naming for the same
+  // schedule — e.g. hardcoded `audit_summary_memo_questions` vs master
+  // `audit_summary_memo`. Without normalisation, those two appear as duplicate tabs.
   const appendixTemplateTypes = useMemo(() => {
+    const normalise = (k: string) => k.replace(/_(questions|categories)$/, '');
     const merged: Array<{ key: string; label: string; sectionDefaults: string[] }> = [
       ...HARDCODED_APPENDIX_TEMPLATE_TYPES,
     ];
-    const seen = new Set(HARDCODED_APPENDIX_TEMPLATE_TYPES.map(t => t.key));
+    const seen = new Set(HARDCODED_APPENDIX_TEMPLATE_TYPES.map(t => normalise(t.key)));
     for (const ms of masterSchedules || []) {
       if (BUILT_IN_TOOL_SCHEDULE_KEYS.has(ms.key)) continue;
-      if (seen.has(ms.key)) continue;
+      const nk = normalise(ms.key);
+      if (seen.has(nk)) continue;
       merged.push({
         key: ms.key,
         label: ms.label,
         sectionDefaults: ['General'],
       });
-      seen.add(ms.key);
+      seen.add(nk);
     }
     return merged;
   }, [masterSchedules]);
@@ -163,10 +168,14 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
     const m: Record<string, string> = {};
     HARDCODED_APPENDIX_TEMPLATE_TYPES.forEach(t => { m[t.key] = t.label; });
     // Also seed labels for any master-schedule entries that aren't hardcoded
+    // (using the same normalisation rule as the appendixTemplateTypes dedup
+    //  above so we don't seed a label for a key that's been suppressed as a dupe).
+    const normalise = (k: string) => k.replace(/_(questions|categories)$/, '');
+    const hardcodedNorms = new Set(HARDCODED_APPENDIX_TEMPLATE_TYPES.map(t => normalise(t.key)));
     for (const ms of masterSchedules || []) {
-      if (!m[ms.key] && !BUILT_IN_TOOL_SCHEDULE_KEYS.has(ms.key)) {
-        m[ms.key] = ms.label;
-      }
+      if (BUILT_IN_TOOL_SCHEDULE_KEYS.has(ms.key)) continue;
+      if (hardcodedNorms.has(normalise(ms.key))) continue;
+      if (!m[ms.key]) m[ms.key] = ms.label;
     }
     return m;
   });
