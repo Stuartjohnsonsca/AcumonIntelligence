@@ -87,6 +87,15 @@ export interface TemplateContext {
     benchmark: string | null;
     benchmarkAmount: number | null;
     benchmarkPct: number | null;
+    // Narrative fields captured on the Materiality tab's Justification
+    // section. Also available via questionnaires.materiality.* but
+    // surfaced here for convenience + discoverability in the AI
+    // suggester. Each has a prior-period counterpart under .prior.
+    basisChanged: boolean | null;
+    basisChangeReason: string | null;
+    stakeholders: string | null;
+    stakeholderFocus: string | null;
+    keyJudgements: string | null;
     /** Prior-period materiality figures — pulled from the prior
      *  engagement's materiality record, with any local overrides
      *  from `priorOverrides` on the current engagement applied on
@@ -256,6 +265,12 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
   }
 
   const currentD = currentMaterialityData || {};
+  /** Read a current-period key, tolerating empty strings. */
+  function pickCurrent<T = any>(key: string): T | null {
+    const v = currentD?.[key];
+    if (v === undefined || v === null || v === '') return null;
+    return v as T;
+  }
   const materiality: TemplateContext['materiality'] = {
     overall: currentD.overallMateriality ?? currentD.materiality ?? null,
     performance: currentD.performanceMateriality ?? null,
@@ -263,6 +278,14 @@ export async function buildTemplateContext(engagementId: string): Promise<Templa
     benchmark: currentD.benchmark ?? currentD.materiality_benchmark ?? null,
     benchmarkAmount: currentD.benchmarkAmount ?? null,
     benchmarkPct: currentD.benchmarkPct ?? currentD.benchmark_pct ?? null,
+    // Narrative fields — the Materiality tab saves these under the
+    // snake_case keys (basis_changed, key_judgements, etc.) directly
+    // on the materiality data JSON.
+    basisChanged: (pickCurrent<boolean>('basis_changed') as boolean | null) ?? null,
+    basisChangeReason: pickCurrent<string>('basis_change_reason') ?? null,
+    stakeholders: pickCurrent<string>('stakeholders') ?? null,
+    stakeholderFocus: pickCurrent<string>('stakeholder_focus') ?? null,
+    keyJudgements: pickCurrent<string>('key_judgements') ?? null,
     prior: {
       // The Materiality tab stores prior figures under these snake_case
       // keys (materiality_manual, performance_materiality_manual, etc.)

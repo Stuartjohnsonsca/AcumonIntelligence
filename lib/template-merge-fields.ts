@@ -94,6 +94,15 @@ export const MERGE_FIELDS: MergeField[] = [
   { group: 'Materiality', key: 'materiality.benchmark', label: 'Benchmark (current period)', type: 'scalar', sampleValue: 'Profit before tax' },
   { group: 'Materiality', key: 'materiality.benchmarkAmount', label: 'Benchmark amount (current period)', type: 'currency', sampleValue: 2500000 },
   { group: 'Materiality', key: 'materiality.benchmarkPct', label: 'Benchmark % (current period)', type: 'scalar', sampleValue: 5 },
+  // Narrative / qualitative fields captured on the Materiality tab's
+  // Justification section. Current period.
+  { group: 'Materiality', key: 'materiality.keyJudgements', label: 'Key judgements in setting materiality (current period)', type: 'scalar',
+    description: 'Text captured in the Materiality tab under Justification → Key judgements.',
+    sampleValue: 'PBT is the most appropriate benchmark given continuing profitable trading and the stakeholder focus on post-tax profit.' },
+  { group: 'Materiality', key: 'materiality.stakeholders', label: 'Stakeholders identified (current period)', type: 'scalar', sampleValue: 'Shareholders, HMRC, senior lender.' },
+  { group: 'Materiality', key: 'materiality.stakeholderFocus', label: 'How audit team assessed stakeholder focus (current period)', type: 'scalar', sampleValue: 'Shareholders focus on dividend capacity; lender focus on covenant compliance.' },
+  { group: 'Materiality', key: 'materiality.basisChanged', label: 'Change in basis from prior period (Yes/No, current period)', type: 'scalar', sampleValue: false },
+  { group: 'Materiality', key: 'materiality.basisChangeReason', label: 'Reason for change in basis (current period)', type: 'scalar', sampleValue: '' },
   // Prior-period equivalents — resolved from the prior engagement's
   // materiality record, with the current engagement's priorOverrides
   // taking precedence. Null when there is no prior engagement yet.
