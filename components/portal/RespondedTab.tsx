@@ -40,10 +40,35 @@ const SECTION_LABELS: Record<string, string> = {
   connections: 'Connections',
 };
 
-function cleanQuestion(text: string): { question: string; source: string | null } {
-  const match = text.match(/^\[(.+?)\]\s*(.+)$/);
-  if (match) return { source: match[1], question: match[2] };
-  return { source: null, question: text };
+/** Split a stored PortalRequest.question into subject + body + source tag.
+ *  The flow-engine stores "<subject>\n\n<body>"; we surface them
+ *  separately so the portal can render a bold heading on top and a
+ *  whitespace-preserving paragraph underneath. Keeps parity with the
+ *  OutstandingTab version (see full comment there). */
+function cleanQuestion(text: string): { subject: string; body: string; source: string | null } {
+  let rest = String(text ?? '');
+  let source: string | null = null;
+  const tag = rest.match(/^\[(.+?)\]\s*/);
+  if (tag) { source = tag[1]; rest = rest.slice(tag[0].length); }
+  rest = rest.replace(/\r\n/g, '\n').trim();
+  let subject = '';
+  let body = '';
+  const blankIdx = rest.indexOf('\n\n');
+  if (blankIdx >= 0) {
+    subject = rest.slice(0, blankIdx).trim();
+    body = rest.slice(blankIdx + 2).trim();
+  } else {
+    const nlIdx = rest.indexOf('\n');
+    if (nlIdx >= 0) {
+      subject = rest.slice(0, nlIdx).trim();
+      body = rest.slice(nlIdx + 1).trim();
+    } else {
+      subject = rest;
+    }
+  }
+  // Drop the redundant "Audit: … for … (period ending …)" preamble.
+  body = body.replace(/^Audit:[^\n]+\n\n?/i, '').trim();
+  return { subject, body, source };
 }
 
 function formatDate(dateStr: string): string {
@@ -165,13 +190,21 @@ export function RespondedTab({ clientId, token, engagementId, onUnacceptedCount,
             </div>
             <div className="divide-y divide-slate-100">
               {sectionItems.map(item => {
-                const { question, source } = cleanQuestion(item.question);
+                const { subject, body, source } = cleanQuestion(item.question);
                 const duration = item.respondedAt ? durationBetween(item.requestedAt, item.respondedAt) : null;
                 const chatMsgs = (item.chatHistory || []).filter(m => m.name !== 'System');
                 return (
                   <div key={item.id} className="px-5 py-3">
                     <div className="flex-1">
-                      <p className="text-sm text-slate-800 font-medium">{question}</p>
+                      {/* Subject — bold heading, one line */}
+                      <p className="text-sm text-slate-900 font-semibold">{subject || '(no subject)'}</p>
+                      {/* Body — preserves line breaks so multi-paragraph
+                          messages render readably */}
+                      {body && (
+                        <p className="text-xs text-slate-700 mt-1 whitespace-pre-wrap leading-relaxed">
+                          {body}
+                        </p>
+                      )}
                       {source && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded inline-block mt-0.5">{source}</span>}
 
                       {/* Chat history thread */}
