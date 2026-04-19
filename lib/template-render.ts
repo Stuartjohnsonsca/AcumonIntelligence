@@ -125,6 +125,43 @@ export async function previewTemplate(
   return { html, error, missingPlaceholders: missing, usedLiveContext };
 }
 
+/**
+ * Render an EMAIL-kind template against a live engagement. Returns
+ * the rendered subject + HTML body (both through Handlebars). Used by
+ * the Planning Letter send endpoint to produce a covering email.
+ *
+ * Unlike `renderTemplateToDocx`, this does not touch skeletons and
+ * does not produce a Word file — it's pure Handlebars over the
+ * template's `subject` and `content` fields.
+ */
+export interface EmailRenderResult {
+  subject: string;
+  html: string;
+  templateName: string;
+}
+export async function renderEmailTemplate(templateId: string, engagementId: string): Promise<EmailRenderResult> {
+  const template = await prisma.documentTemplate.findUnique({ where: { id: templateId } });
+  if (!template) throw new Error('Email template not found');
+  if (template.kind !== 'email') throw new Error('Template kind must be "email" to render as an email body');
+
+  const context = await buildTemplateContext(engagementId);
+  // Render subject and body separately so a Handlebars error in one
+  // doesn't mask the other. Subject falls back to the template name
+  // when the template has no subject configured.
+  const rawSubject = template.subject || template.name;
+  const { html: subjectHtml, error: subjectError } = renderBody(rawSubject, context);
+  if (subjectError) throw new Error(`Email subject render failed: ${subjectError}`);
+  // Subjects are plain text — strip any tags Handlebars didn't consume.
+  const subject = stripHtml(subjectHtml).trim() || template.name;
+
+  const { html, error: bodyError } = renderBody(template.content || '', context);
+  if (bodyError) throw new Error(`Email body render failed: ${bodyError}`);
+  return { subject, html, templateName: template.name };
+}
+function stripHtml(s: string): string {
+  return String(s || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+}
+
 /** Return the default skeleton for a firm+auditType, falling back to
  *  any default skeleton for ALL audit types, then any active skeleton
  *  at all. Null if the firm has nothing uploaded. */

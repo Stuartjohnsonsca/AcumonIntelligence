@@ -336,6 +336,10 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
 
   const editorRef = useRef<HTMLDivElement>(null);
   const subjectRef = useRef<HTMLInputElement>(null);
+  // Selection state captured while the subject input has focus — used
+  // by insertIntoSubject so merge-field inserts land at the right
+  // place even after the input has lost focus to a palette button.
+  const savedSubjectSelectionRef = useRef<{ start: number; end: number } | null>(null);
   // Track which editor area was last focused so palette inserts go to the right place
   const lastFocusRef = useRef<'body' | 'subject'>('body');
   // Track whether we should skip the next useEffect innerHTML reset
@@ -728,17 +732,50 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     setTableMenu(null);
   }
 
-  /** Insert plain text into the subject input at the cursor position */
+  /** Insert plain text into the subject input at the cursor position.
+   *
+   *  Subtlety: clicking a palette button briefly transfers focus from
+   *  the input, which in some browsers resets `selectionStart` to 0.
+   *  If we naively read the LIVE selectionStart at insert time we'd
+   *  end up inserting at the start of the field (looking like the
+   *  existing text was deleted). We defend against that by:
+   *    (a) Capturing the selection every time it changes while the
+   *        input is focused (savedSubjectSelectionRef).
+   *    (b) Preferring the saved selection when the input's current
+   *        reading looks unreliable (input not focused).
+   *    (c) Palette buttons also do onMouseDown preventDefault so the
+   *        subject never actually loses focus on click — this is the
+   *        primary defence; (a)/(b) back it up.
+   *
+   *  Never replaces existing text — always an insert at the caret. */
   function insertIntoSubject(text: string) {
     const input = subjectRef.current;
     if (!input) return;
-    const start = input.selectionStart ?? editSubject.length;
-    const end = input.selectionEnd ?? start;
+    const activeIsSubject = document.activeElement === input;
+    const saved = savedSubjectSelectionRef.current;
+    // Live position only trusted when the input is actually focused.
+    // Otherwise fall back to the saved position, then to end-of-text.
+    let start = activeIsSubject && input.selectionStart != null
+      ? input.selectionStart
+      : (saved?.start ?? editSubject.length);
+    let end = activeIsSubject && input.selectionEnd != null
+      ? input.selectionEnd
+      : (saved?.end ?? start);
+    // Clamp — paranoia against a stale saved range that's longer
+    // than the current editSubject value.
+    if (start > editSubject.length) start = editSubject.length;
+    if (end > editSubject.length) end = editSubject.length;
+    if (end < start) end = start;
     const newVal = editSubject.slice(0, start) + text + editSubject.slice(end);
     setEditSubject(newVal);
+    const newCaret = start + text.length;
+    // Update saved selection so successive inserts chain naturally
+    // (user picks 3 placeholders in a row — each should append to the
+    // previous, not land back at the original caret).
+    savedSubjectSelectionRef.current = { start: newCaret, end: newCaret };
     setTimeout(() => {
       input.focus();
-      input.setSelectionRange(start + text.length, start + text.length);
+      input.setSelectionRange(newCaret, newCaret);
     }, 0);
   }
 
@@ -1268,8 +1305,36 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                     ref={subjectRef}
                     type="text"
                     value={editSubject}
-                    onChange={(e) => setEditSubject(e.target.value)}
+                    onChange={(e) => {
+                      setEditSubject(e.target.value);
+                      // After a keystroke the caret has moved — refresh
+                      // the saved selection so the next palette insert
+                      // lands where the user is currently typing.
+                      const el = e.currentTarget;
+                      savedSubjectSelectionRef.current = {
+                        start: el.selectionStart ?? e.target.value.length,
+                        end: el.selectionEnd ?? el.selectionStart ?? e.target.value.length,
+                      };
+                    }}
                     onFocus={() => { lastFocusRef.current = 'subject'; }}
+                    // Capture the caret on every interaction so we can
+                    // re-use it after focus has transferred to the
+                    // palette. Covers click-to-move-caret, Shift+Arrow
+                    // selections, keyboard nav, and mouse drag-selects.
+                    onSelect={(e) => {
+                      const el = e.currentTarget;
+                      savedSubjectSelectionRef.current = {
+                        start: el.selectionStart ?? editSubject.length,
+                        end: el.selectionEnd ?? el.selectionStart ?? editSubject.length,
+                      };
+                    }}
+                    onKeyUp={(e) => {
+                      const el = e.currentTarget;
+                      savedSubjectSelectionRef.current = {
+                        start: el.selectionStart ?? editSubject.length,
+                        end: el.selectionEnd ?? el.selectionStart ?? editSubject.length,
+                      };
+                    }}
                     placeholder="e.g. Audit of {{client_name}} — {{period_end}}"
                     className="w-full px-2 py-1.5 text-sm border rounded-md"
                   />
@@ -1483,6 +1548,17 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                                   return (
                                     <button
                                       key={field.key}
+                                      // IMPORTANT: preventDefault on
+                                      // mousedown stops the browser
+                                      // transferring focus from the
+                                      // subject / body editor to this
+                                      // button. Without this, the
+                                      // source's selection collapses
+                                      // and the eventual insert can
+                                      // look like it wiped the field
+                                      // (insert-at-start fallback when
+                                      // selectionStart resets to 0).
+                                      onMouseDown={(e) => e.preventDefault()}
                                       onClick={() => insertMergeField(field.key, field.label, field.source, field.path)}
                                       className={`w-full text-left px-1.5 py-1 rounded text-[11px] hover:bg-teal-100 transition-colors flex items-center gap-1.5 ${
                                         isUsed ? 'bg-teal-50 text-teal-700' : 'text-slate-600'
@@ -1509,6 +1585,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                           {RESPONSE_OPTIONS.map((opt) => (
                             <button
                               key={opt.key}
+                              onMouseDown={(e) => e.preventDefault()}
                               onClick={() => insertResponseOption(opt)}
                               className="w-full text-left px-1.5 py-1.5 rounded text-[11px] text-slate-600 hover:bg-amber-100 transition-colors flex items-center gap-1.5"
                             >
@@ -1534,6 +1611,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                           {JOB_SECTIONS.map((section) => (
                             <button
                               key={section.key}
+                              onMouseDown={(e) => e.preventDefault()}
                               onClick={() => insertJobSectionLink(section)}
                               className="w-full text-left px-1.5 py-1 rounded text-[11px] text-slate-600 hover:bg-indigo-100 transition-colors flex items-center gap-1.5"
                             >
@@ -1574,6 +1652,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
                           </div>
                           <button
                             type="button"
+                            onMouseDown={(e) => e.preventDefault()}
                             onClick={() => insertMergeField('custom_link', editCustomLinkLabel || 'Custom Link', 'system', 'customLink')}
                             className="w-full text-left px-1.5 py-1.5 rounded text-[11px] text-violet-700 bg-violet-100 hover:bg-violet-200 transition-colors flex items-center gap-1.5 font-medium"
                           >

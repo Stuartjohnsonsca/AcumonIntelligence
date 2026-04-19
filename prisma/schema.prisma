@@ -2508,6 +2508,40 @@ model DocumentTemplate {
   @@map("document_templates")
 }
 
+/// Documents pushed FROM the firm TO the client via the Client Portal
+/// (e.g. a rendered Planning Letter). Distinct from EvidenceUpload
+/// which carries files in the other direction.
+///
+/// Rows survive template deletion — `templateId` is SetNull on delete
+/// so history of what was sent stays intact even if the template is
+/// later re-organised. Blob lives in the `portal-documents` container
+/// by convention; the `blobPath` is `${clientId}/${id}_${fileName}`.
+model PortalDocument {
+  id             String   @id @default(cuid())
+  firmId         String
+  clientId       String
+  engagementId   String?
+  templateId     String?
+  name           String   // display name shown on the portal list
+  description    String?
+  category       String   @default("general") // mirrors template category
+  fileName       String
+  contentType    String   @default("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+  fileSize       Int?
+  blobPath       String
+  containerName  String   @default("portal-documents")
+  uploadedById   String?  // firm user who triggered the send
+  uploadedByName String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([engagementId])
+  @@index([firmId])
+  @@index([createdAt(sort: Desc)])
+}
+
 /// Firm-branded Word document skeleton. Uploaded once per firm (per
 /// audit type if desired) and reused by many DocumentTemplates. The
 /// uploaded .docx must contain the raw-XML marker `{@body}` in its
