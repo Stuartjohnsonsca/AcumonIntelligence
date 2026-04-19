@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X, AlertTriangle, Edit3 } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X, AlertTriangle, Edit3, FileSpreadsheet } from 'lucide-react';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
 import { DocumentAnnotator } from '../panels/DocumentAnnotator';
-import { WalkthroughMatrixSection } from '../panels/WalkthroughMatrixSection';
+import { WalkthroughMatrixSection, type WalkthroughMatrixSectionHandle, type WalkthroughMatrix } from '../panels/WalkthroughMatrixSection';
 import { expandZipFile } from '@/lib/client-unzip';
 
 // ─── Types ───
@@ -592,9 +592,44 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
 
   function toggleSection(key: string) { setSectionOpen(prev => ({ ...prev, [key]: !prev[key] })); }
 
-  // Handle import-from-Excel confirmation: update narrative + controls locally,
-  // then persist with a single PUT so next reload reflects the import.
-  const handleMatrixImported = useCallback(async ({ narrative: n, controls: c }: { narrative: string; controls: { description: string; type: string; frequency: string; tested: boolean }[] }) => {
+  const matrixRef = useRef<WalkthroughMatrixSectionHandle>(null);
+  const uploadDocRef = useRef<HTMLInputElement>(null);
+
+  // Generate a flowchart from the parsed matrix narrative (and optional evidence files),
+  // persist it, and advance the stage. Used by both Import from Excel and Upload Process Document.
+  async function generateFromNarrative(opts: { narrative: string; controls: { description: string; type: string; frequency: string; tested: boolean }[]; evidenceFiles?: { storagePath: string; name: string; mimeType?: string }[]; replaceExisting?: boolean }) {
+    if (status.flowchart && status.flowchart.length > 0 && !opts.replaceExisting) {
+      if (!window.confirm('This will replace the current flowchart. Continue?')) return false;
+    }
+    setGenerating(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/walkthrough-flowchart`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ processKey, processLabel, narrative: opts.narrative, controls: opts.controls, evidenceFiles: opts.evidenceFiles }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        alert(`Flowchart generation failed: ${err.error || res.status}`);
+        return false;
+      }
+      const data = await res.json();
+      if (data.extractedNarrative) {
+        const merged = opts.narrative ? `${opts.narrative}\n\n--- Extracted from document ---\n${data.extractedNarrative}` : data.extractedNarrative;
+        setNarrative(merged);
+      }
+      await saveStatus({ stage: 'flowchart_generated', flowchart: data.steps || [] });
+      return true;
+    } catch (err: any) {
+      alert(`Flowchart generation error: ${err?.message || 'unknown'}`);
+      return false;
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  // Handle import-from-Excel confirmation: update narrative + controls, persist,
+  // then generate the flowchart from the derived narrative so the parsed matrix drives the chart.
+  const handleMatrixImported = useCallback(async ({ matrix, narrative: n, controls: c }: { matrix: WalkthroughMatrix; narrative: string; controls: { description: string; type: string; frequency: string; tested: boolean }[] }) => {
     const nextNarrative = n ? n : narrative;
     const nextControls = c.length ? [...controls, ...c] : controls;
     setNarrative(nextNarrative);
@@ -605,7 +640,49 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
         body: JSON.stringify({ sectionKey: `walkthrough_${processKey}`, data: { narrative: nextNarrative, controls: nextControls } }),
       });
     } catch {}
-  }, [engagementId, processKey, narrative, controls]);
+    // Drive flowchart generation from the imported matrix.
+    await generateFromNarrative({ narrative: nextNarrative, controls: nextControls, replaceExisting: true });
+    void matrix; // matrix is already persisted inside WalkthroughMatrixSection
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engagementId, processKey, narrative, controls, status.flowchart]);
+
+  // Upload a single process document (PDF/Word/etc.), store it as evidence, and
+  // generate the flowchart from it via the existing analyse pipeline.
+  async function uploadProcessDocument(file: File) {
+    if (status.flowchart && status.flowchart.length > 0) {
+      if (!window.confirm('This will replace the current flowchart. Continue?')) return;
+    }
+    const uploadForm = new FormData();
+    uploadForm.append('file', file);
+    uploadForm.append('engagementId', engagementId);
+    uploadForm.append('stepId', `process-doc-${processKey}`);
+    let uploaded: { id?: string; name?: string; storagePath?: string } = {};
+    try {
+      const upRes = await fetch('/api/walkthrough/upload', { method: 'POST', body: uploadForm });
+      if (!upRes.ok) {
+        const err = await upRes.json().catch(() => ({}));
+        alert(`Upload failed: ${err.error || upRes.status}`);
+        return;
+      }
+      uploaded = await upRes.json();
+    } catch (err: any) {
+      alert(`Upload error: ${err?.message || 'unknown'}`);
+      return;
+    }
+    if (!uploaded.storagePath) { alert('Upload did not return a storage path.'); return; }
+
+    // Add to evidence so the document shows up in the Evidence list.
+    const evidence = [...(status.evidence || []), { id: uploaded.id || Date.now().toString(), name: uploaded.name || file.name, type: file.type, storagePath: uploaded.storagePath }];
+    await saveStatus({ evidence });
+
+    // Generate flowchart from the uploaded document.
+    await generateFromNarrative({
+      narrative,
+      controls,
+      evidenceFiles: [{ storagePath: uploaded.storagePath, name: uploaded.name || file.name, mimeType: file.type }],
+      replaceExisting: true,
+    });
+  }
 
   const stage = status.stage || 'draft';
 
@@ -736,6 +813,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
 
       {/* Walkthrough matrix (Excel template structure) */}
       <WalkthroughMatrixSection
+        ref={matrixRef}
         engagementId={engagementId}
         processKey={processKey}
         processLabel={processLabel}
@@ -882,6 +960,41 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
             )}
           </div>
         )}
+      </div>
+
+      {/* Bottom action strip — two ways to drive the flowchart */}
+      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-lg p-3">
+        <p className="text-[11px] font-semibold text-indigo-800 mb-2">Build the flowchart from an existing source</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            ref={uploadDocRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.txt"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (file) await uploadProcessDocument(file);
+              if (uploadDocRef.current) uploadDocRef.current.value = '';
+            }}
+          />
+          <button
+            onClick={() => uploadDocRef.current?.click()}
+            disabled={generating}
+            className="text-xs px-3 py-2 bg-white border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-100 disabled:opacity-50 inline-flex items-center gap-1.5"
+          >
+            {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            Upload Process Document
+          </button>
+          <button
+            onClick={() => matrixRef.current?.openImport()}
+            disabled={generating}
+            className="text-xs px-3 py-2 bg-white border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-100 disabled:opacity-50 inline-flex items-center gap-1.5"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            Import from Excel
+          </button>
+          <span className="text-[10px] text-indigo-600/80 ml-1">Each option generates the flowchart automatically.</span>
+        </div>
       </div>
 
       {/* Teams Meeting Modal */}
