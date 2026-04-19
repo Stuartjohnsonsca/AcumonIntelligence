@@ -648,6 +648,39 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     } : r));
   }
 
+  // Tab / Enter autocomplete: when the user's current input has a unique
+  // case-insensitive prefix match among the candidate names (and isn't
+  // already an exact match), auto-fill to that candidate. Invoke the
+  // supplied commit function so the caller can route the completed value
+  // through its hierarchy-resolution logic (handleFsNoteChange etc).
+  function autocompleteOnTabEnter(
+    e: React.KeyboardEvent<HTMLInputElement>,
+    candidates: string[],
+    commit: (val: string) => void,
+  ) {
+    if (e.key !== 'Tab' && e.key !== 'Enter') return;
+    const input = e.currentTarget;
+    const typed = input.value.trim();
+    if (!typed) return;
+    const lc = typed.toLowerCase();
+    // Exact match already — let the keypress through untouched
+    if (candidates.some(c => c.toLowerCase() === lc)) return;
+    const matches = candidates.filter(c => c.toLowerCase().startsWith(lc));
+    if (matches.length === 0) return;
+    // Pick the shortest unique prefix match (if there's one clear winner
+    // it's top; if multiple, prefer the shortest since it's the most
+    // "canonical" completion — e.g. typing "Rev" → "Revenue" not
+    // "Revenue grants").
+    const pick = matches.slice().sort((a, b) => a.length - b.length)[0];
+    e.preventDefault();
+    commit(pick);
+    // Keep focus on the input so the user can keep typing; Tab users
+    // expect focus to move — we'll mirror that by blurring the input
+    // so form navigation continues. For Enter, blur on Enter matches
+    // how other cells handle commit.
+    setTimeout(() => input.blur(), 0);
+  }
+
   // AI classify: use Claude to intelligently classify a single row
   async function handleAiLookup(index: number) {
     const row = rows[index];
@@ -1681,6 +1714,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                       value={row.fsNoteLevel || ''}
                       onChange={e => handleFsNoteChange(i, e.target.value)}
                       onPaste={e => handlePaste(e, i, showCategory ? 5 : 4)}
+                      onKeyDown={e => autocompleteOnTabEnter(
+                        e,
+                        // Same union the datalist below offers
+                        Array.from(new Set([...fsNotes.map(n => n.name), ...fsLevels.map(l => l.name)].filter(Boolean))),
+                        v => handleFsNoteChange(i, v),
+                      )}
                       className={`${txtCls} flex-1`}
                       list={`fs-notes-${i}`}
                     />
@@ -1759,7 +1798,19 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 </td>
                 {/* FS Level — editable, can be set by AI or manually */}
                 <td className="px-2 py-0.5">
-                  <input type="text" value={row.fsLevel || ''} onChange={e => updateRow(i, 'fsLevel', e.target.value || null)} className={txtCls} placeholder="FS Level" list="fsLevelList" />
+                  <input
+                    type="text"
+                    value={row.fsLevel || ''}
+                    onChange={e => handleFsLevelChange(i, e.target.value)}
+                    onKeyDown={e => autocompleteOnTabEnter(
+                      e,
+                      fsLevels.map(l => l.name).filter(Boolean),
+                      v => handleFsLevelChange(i, v),
+                    )}
+                    className={txtCls}
+                    placeholder="FS Level"
+                    list="fsLevelList"
+                  />
                 </td>
                 {/* FS Statement — editable dropdown */}
                 <td className="px-2 py-0.5">
