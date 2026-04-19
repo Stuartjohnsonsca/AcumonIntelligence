@@ -36,23 +36,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     }
   }
 
-  // Get existing RMM rows to find max sortOrder and avoid duplicates
+  // Get existing RMM rows so we can update-in-place instead of silently
+  // skipping. Previously a duplicate lineItem was thrown away, which made
+  // the UI look like "Send to RMM" did nothing — user sees no new row on
+  // the RMM tab even though something was clicked.
   const existingRmm = await prisma.auditRMMRow.findMany({
     where: { engagementId },
-    select: { lineItem: true, sortOrder: true },
+    select: { id: true, lineItem: true, sortOrder: true, riskIdentified: true, amount: true },
   });
-  const existingLineItems = new Set(existingRmm.map(r => r.lineItem));
+  const existingByLineItem = new Map(existingRmm.map(r => [r.lineItem, r]));
   let maxSort = existingRmm.reduce((max, r) => Math.max(max, r.sortOrder), 0);
 
   let created = 0;
+  let updated = 0;
+  const createdLineItems: string[] = [];
+  const updatedLineItems: string[] = [];
   for (const item of items) {
     const lineItem = item.particulars || '';
-    if (!lineItem || existingLineItems.has(lineItem)) continue;
+    if (!lineItem) continue;
 
-    // Look up amount from TB aggregation
     const amount = amountsByLevel[lineItem] ?? item.currentYear ?? null;
-
-    // Look up FS hierarchy from TB — find the matching row(s) for this line item
     const matchingTb = tbRows.find(tb =>
       tb.fsLevel === lineItem || tb.fsNoteLevel === lineItem || tb.description === lineItem
     ) || tbRows.find(tb =>
@@ -63,31 +66,54 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const fsLevel = matchingTb?.fsLevel || item.fsLevel || null;
     const fsNote = matchingTb?.fsNoteLevel || item.fsNote || null;
 
-    // Nature = client explanation text only (not audit team notes)
+    // Nature = client explanation text only (not audit team notes).
     let clientText = '';
     if (item.reasons) {
-      const lines = item.reasons.split('\n').filter((l: string) => l.trim() && !l.startsWith('[Attachments:'));
+      const lines = String(item.reasons).split('\n').filter((l: string) => l.trim() && !l.startsWith('[Attachments:'));
       const clientLines = lines.filter((l: string) => !l.startsWith('PAR variance:') && !l.startsWith('['));
       clientText = clientLines.join('\n').trim();
       if (!clientText) clientText = lines[0] || '';
     }
+    const riskIdentified = clientText || `Flagged from PAR — significant movement identified`;
+    const roundedAmount = amount != null ? Math.round(amount * 100) / 100 : null;
 
-    await prisma.auditRMMRow.create({
-      data: {
-        engagementId,
-        lineItem,
-        lineType: 'fs_line',
-        riskIdentified: clientText || `Flagged from PAR — significant movement identified`,
-        amount: amount != null ? Math.round(amount * 100) / 100 : null,
-        sortOrder: ++maxSort,
-        fsStatement,
-        fsLevel,
-        fsNote,
-      },
-    });
-    created++;
-    existingLineItems.add(lineItem);
+    const existing = existingByLineItem.get(lineItem);
+    if (existing) {
+      // Refresh the amount + keep the narrative up to date without
+      // trampling any manual RMM enrichments the user may have added.
+      await prisma.auditRMMRow.update({
+        where: { id: existing.id },
+        data: {
+          amount: roundedAmount ?? existing.amount,
+          riskIdentified: existing.riskIdentified && existing.riskIdentified.length > riskIdentified.length
+            ? existing.riskIdentified
+            : riskIdentified,
+          fsStatement: fsStatement ?? undefined,
+          fsLevel: fsLevel ?? undefined,
+          fsNote: fsNote ?? undefined,
+        },
+      });
+      updated++;
+      updatedLineItems.push(lineItem);
+    } else {
+      await prisma.auditRMMRow.create({
+        data: {
+          engagementId,
+          lineItem,
+          lineType: 'fs_line',
+          riskIdentified,
+          amount: roundedAmount,
+          sortOrder: ++maxSort,
+          fsStatement,
+          fsLevel,
+          fsNote,
+        },
+      });
+      created++;
+      createdLineItems.push(lineItem);
+      existingByLineItem.set(lineItem, { id: 'new', lineItem, sortOrder: maxSort, riskIdentified, amount: roundedAmount });
+    }
   }
 
-  return NextResponse.json({ success: true, created });
+  return NextResponse.json({ success: true, created, updated, createdLineItems, updatedLineItems });
 }

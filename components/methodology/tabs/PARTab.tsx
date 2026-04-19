@@ -2,6 +2,14 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import {
+  DEFAULT_ROUNDING_ORDER,
+  ROUNDING_LABELS,
+  type RoundingMode,
+  formatRounded,
+  parseRoundedInput,
+  roundingUnitSuffix,
+} from '@/lib/audit-rounding';
 
 interface Props {
   engagementId: string;
@@ -84,6 +92,87 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
   const [periodEnd, setPeriodEnd] = useState<string>('');
   const [periodStartMinus1, setPeriodStartMinus1] = useState<string>('');
   const [sending, setSending] = useState(false);
+
+  // ── Column widths — drag the right edge of any header to resize,
+  // persisted to localStorage per engagement so each auditor's layout
+  // survives reloads. Mirrors the pattern used in TBCYvPY.
+  const DEFAULT_COL_WIDTHS: Record<string, number> = {
+    particulars: 220,
+    currentYear: 110,
+    priorYear: 110,
+    absVariance: 110,
+    absVariancePct: 90,
+    significantChange: 120,
+    sendMgt: 90,
+    reasons: 240,
+    auditorView: 220,
+    rmm: 70,
+    accepted: 150,
+    trailing: 32,
+  };
+  const widthsStorageKey = `par:widths:${engagementId}`;
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return DEFAULT_COL_WIDTHS;
+    try {
+      const raw = window.localStorage.getItem(widthsStorageKey);
+      if (raw) return { ...DEFAULT_COL_WIDTHS, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return DEFAULT_COL_WIDTHS;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { window.localStorage.setItem(widthsStorageKey, JSON.stringify(columnWidths)); } catch { /* ignore */ }
+  }, [columnWidths, widthsStorageKey]);
+
+  function startColumnResize(field: string, startX: number, startWidth: number) {
+    const onMove = (e: MouseEvent) => {
+      const dx = e.clientX - startX;
+      setColumnWidths(prev => ({ ...prev, [field]: Math.max(40, startWidth + dx) }));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  // ── Rounding mode — display only. Raw values always stored in £. The
+  // selected mode divides the display (e.g. "thousands" shows 12.5 for a
+  // stored value of 12,500). Persisted per engagement in permanent-file
+  // section `par_rounding` so it also flows through to RMM / plans /
+  // completion once those tabs adopt the shared util.
+  const [rounding, setRounding] = useState<RoundingMode>('unrounded');
+  const [roundingOptions, setRoundingOptions] = useState<RoundingMode[]>(DEFAULT_ROUNDING_ORDER);
+  useEffect(() => {
+    fetch(`/api/engagements/${engagementId}/permanent-file?section=par_rounding`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const mode = d?.data?.mode as RoundingMode | undefined;
+        if (mode && DEFAULT_ROUNDING_ORDER.includes(mode)) setRounding(mode);
+      })
+      .catch(() => {});
+    // Seed list of allowed options from firm assumptions if configured;
+    // fall back to the four defaults otherwise.
+    fetch('/api/methodology-admin/risk-tables?tableType=rounding_options')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const opts = d?.table?.data?.options as RoundingMode[] | undefined;
+        if (Array.isArray(opts) && opts.length) setRoundingOptions(opts.filter(o => DEFAULT_ROUNDING_ORDER.includes(o)));
+      })
+      .catch(() => {});
+  }, [engagementId]);
+  function onRoundingChange(next: RoundingMode) {
+    setRounding(next);
+    fetch(`/api/engagements/${engagementId}/permanent-file`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sectionKey: 'par_rounding', data: { mode: next } }),
+    }).catch(() => {});
+  }
 
   const { saving, lastSaved, error } = useAutoSave(
     `/api/engagements/${engagementId}/par`,
@@ -438,15 +527,34 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
       });
 
       if (res.ok) {
-        // Mark as sent
+        const data = await res.json().catch(() => ({}));
+        const created = Number(data?.created ?? 0);
+        const updated = Number(data?.updated ?? 0);
+        const skipped = Math.max(0, itemsToSend.length - created - updated);
+        // Mark as sent locally — the RMM table now holds these rows. We
+        // intentionally don't persist addedToRmmSent server-side (it's
+        // session-scoped) so re-opening the page shows them ready-to-send
+        // again if something new has changed.
         setRows(prev => prev.map(r => {
           if (r.addedToRmm && !(r as any).addedToRmmSent) {
             return { ...r, addedToRmmSent: true } as any;
           }
           return r;
         }));
+        const lines = [
+          created ? `${created} new RMM row${created === 1 ? '' : 's'} created` : '',
+          updated ? `${updated} existing row${updated === 1 ? '' : 's'} updated` : '',
+          skipped ? `${skipped} skipped` : '',
+        ].filter(Boolean);
+        alert(lines.length ? `Sent to RMM: ${lines.join(', ')}.` : 'Sent to RMM (no changes detected).');
+      } else {
+        const data = await res.json().catch(() => ({ error: res.statusText }));
+        alert(`Send to RMM failed: ${data?.error || res.status}`);
       }
-    } catch (err) { console.error('Send to RMM failed:', err); }
+    } catch (err: any) {
+      console.error('Send to RMM failed:', err);
+      alert(`Send to RMM error: ${err?.message || 'unknown error'}`);
+    }
     setSendingRmm(false);
   }
 
@@ -459,6 +567,17 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <label className="inline-flex items-center gap-1 text-xs text-slate-500">
+            Rounding
+            <select
+              value={rounding}
+              onChange={e => onRoundingChange(e.target.value as RoundingMode)}
+              className="border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white focus:outline-none focus:border-blue-400"
+              title="Display all amounts in this unit. Raw pounds are always stored."
+            >
+              {roundingOptions.map(o => <option key={o} value={o}>{ROUNDING_LABELS[o]}</option>)}
+            </select>
+          </label>
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}
@@ -479,25 +598,51 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
       </div>
 
       <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 280px)' }}>
-        <table className="w-full text-xs border-collapse">
+        <table className="text-xs border-collapse" style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
+          <colgroup>
+            <col style={{ width: columnWidths.particulars }} />
+            <col style={{ width: columnWidths.currentYear }} />
+            <col style={{ width: columnWidths.priorYear }} />
+            <col style={{ width: columnWidths.absVariance }} />
+            <col style={{ width: columnWidths.absVariancePct }} />
+            <col style={{ width: columnWidths.significantChange }} />
+            <col style={{ width: columnWidths.sendMgt }} />
+            <col style={{ width: columnWidths.reasons }} />
+            <col style={{ width: columnWidths.auditorView }} />
+            <col style={{ width: columnWidths.rmm }} />
+            <col style={{ width: columnWidths.accepted }} />
+            <col style={{ width: columnWidths.trailing }} />
+          </colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-44 whitespace-nowrap">Particulars</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24 whitespace-nowrap">{periodEnd || 'Period End'}</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24 whitespace-nowrap">{periodStartMinus1 || 'PY End'}</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-24 whitespace-nowrap">ABS Variance</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-20 whitespace-nowrap">ABS Var %</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-28 whitespace-nowrap">
-                <span title="Material if ABS Variance > PM AND ABS Var % > Threshold">Significant Change</span>
-              </th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-20 whitespace-nowrap">
-                <span title="Send to Management">Send Mgt</span>
-              </th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium min-w-[200px]">Reasons</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium min-w-[180px]">Auditor View</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-16 whitespace-nowrap" title="Add to Identifying & Assessing RMM">RMM</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-36 whitespace-nowrap">Accepted</th>
-              <th className="w-6"></th>
+              {([
+                { key: 'particulars', label: 'Particulars', align: 'left' as const },
+                { key: 'currentYear', label: `${periodEnd || 'Period End'}${roundingUnitSuffix(rounding) ? ' ' + roundingUnitSuffix(rounding) : ''}`, align: 'right' as const },
+                { key: 'priorYear', label: `${periodStartMinus1 || 'PY End'}${roundingUnitSuffix(rounding) ? ' ' + roundingUnitSuffix(rounding) : ''}`, align: 'right' as const },
+                { key: 'absVariance', label: `ABS Variance${roundingUnitSuffix(rounding) ? ' ' + roundingUnitSuffix(rounding) : ''}`, align: 'right' as const },
+                { key: 'absVariancePct', label: 'ABS Var %', align: 'right' as const },
+                { key: 'significantChange', label: 'Significant Change', align: 'center' as const, title: 'Material if ABS Variance > threshold AND ABS Var % > threshold' },
+                { key: 'sendMgt', label: 'Send Mgt', align: 'center' as const, title: 'Send to Management' },
+                { key: 'reasons', label: 'Reasons', align: 'left' as const },
+                { key: 'auditorView', label: 'Auditor View', align: 'left' as const },
+                { key: 'rmm', label: 'RMM', align: 'center' as const, title: 'Add to Identifying & Assessing RMM' },
+                { key: 'accepted', label: 'Accepted', align: 'center' as const },
+              ]).map(col => (
+                <th key={col.key} className="relative px-2 py-2 text-slate-500 font-medium whitespace-nowrap" style={{ textAlign: col.align }} title={col.title}>
+                  {col.label}
+                  <span
+                    onMouseDown={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      startColumnResize(col.key, e.clientX, columnWidths[col.key] ?? 120);
+                    }}
+                    title="Drag to resize column"
+                    className="absolute top-0 bottom-0 right-0 w-1.5 cursor-col-resize hover:bg-blue-300/60 active:bg-blue-500/60 transition-colors"
+                    style={{ zIndex: 5 }}
+                  />
+                </th>
+              ))}
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -525,14 +670,28 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                       className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" placeholder="Line item..." />
                   </td>
                   <td className="px-2 py-0.5">
-                    <input type="number" value={row.currentYear ?? ''} onChange={e => updateRow(i, 'currentYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={formatRounded(row.currentYear, rounding)}
+                      onChange={e => updateRow(i, 'currentYear', parseRoundedInput(e.target.value, rounding))}
+                      className={numCls}
+                      placeholder="—"
+                    />
                   </td>
                   <td className="px-2 py-0.5">
-                    <input type="number" value={row.priorYear ?? ''} onChange={e => updateRow(i, 'priorYear', e.target.value ? Number(e.target.value) : null)} className={numCls} step="0.01" />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={formatRounded(row.priorYear, rounding)}
+                      onChange={e => updateRow(i, 'priorYear', parseRoundedInput(e.target.value, rounding))}
+                      className={numCls}
+                      placeholder="—"
+                    />
                   </td>
                   {/* ABS Variance = |CY - PY| */}
                   <td className="px-2 py-0.5 text-right text-slate-500 font-mono">
-                    {row.absVariance != null && row.absVariance > 0 ? row.absVariance.toLocaleString(undefined, { maximumFractionDigits: 0 }) : ''}
+                    {row.absVariance != null && row.absVariance > 0 ? formatRounded(row.absVariance, rounding) : ''}
                   </td>
                   {/* ABS Var % = |CY-PY|/PY * 100, rounded 2dp */}
                   <td className="px-2 py-0.5 text-right text-slate-500 font-mono">
@@ -573,15 +732,22 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                       )}
                     </div>
                   </td>
-                  {/* Reasons */}
-                  <td className="px-2 py-0.5">
+                  {/* Reasons — read-only once the client has responded via the
+                       portal. The cell wraps and auto-expands to fit the full
+                       explanation so the auditor can read it without scrolling
+                       inside a tiny textarea. */}
+                  <td className="px-2 py-0.5 align-top">
                     <textarea
                       value={row.reasons || ''}
                       onChange={e => updateRow(i, 'reasons', e.target.value || null)}
-                      className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none"
+                      readOnly={!!mgt.respondedAt}
+                      className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none whitespace-pre-wrap break-words ${mgt.respondedAt ? 'text-slate-700 cursor-default' : ''}`}
                       rows={1}
-                      placeholder="Reason..."
+                      placeholder={mgt.respondedAt ? '' : 'Reason...'}
+                      style={{ wordBreak: 'break-word' }}
+                      title={mgt.respondedAt ? `Response received from client — read-only. Edit the Auditor View column to add your conclusions.` : ''}
                       onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
+                      ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
                     />
                   </td>
                   {/* Auditor View — shows last client message inline, chat history + attachments as icons */}
@@ -602,10 +768,12 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
                         <textarea
                           value={row.auditorView || ''}
                           onChange={e => updateRow(i, 'auditorView', e.target.value || null)}
-                          className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none"
+                          className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 resize-none whitespace-pre-wrap break-words"
                           rows={1}
                           placeholder="Auditor view..."
+                          style={{ wordBreak: 'break-word' }}
                           onInput={(e) => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }}
+                          ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
                         />
                       </div>
                       {/* Chat history bubble — hover to see full conversation */}

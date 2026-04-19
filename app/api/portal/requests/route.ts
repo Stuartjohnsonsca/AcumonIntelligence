@@ -310,12 +310,21 @@ export async function PUT(req: Request) {
             // Extract the particulars (first line of question)
             const particulars = request.question.split('\n')[0];
 
-            // Build the full response text with chat history
-            const chatMsgs = commitHistory
-              .filter((m: any) => m.name !== 'System')
-              .map((m: any) => `[${m.name}, ${new Date(m.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}]: ${m.message}`)
+            // Build the paste-back text. The Reasons cell is a record of
+            // what the *client* said — so attribute to the portal
+            // respondent (request.respondedByName) using the portal's
+            // respondedAt timestamp. Firm-side chat rebuttals and the
+            // auto-generated System lines are deliberately excluded so a
+            // Reasons cell never shows an auditor as if they'd written it.
+            const clientStamp = request.respondedByName && request.respondedAt
+              ? `[${request.respondedByName} on ${new Date(request.respondedAt).toLocaleDateString('en-GB')}]`
+              : '';
+            const clientFollowUps = commitHistory
+              .filter((m: any) => m && m.from === 'client' && m.message && m.message !== request.response)
+              .map((m: any) => `[${m.name || request.respondedByName || 'Client'} on ${new Date(m.timestamp).toLocaleDateString('en-GB')}]: ${m.message}`)
               .join('\n');
-            const responseText = [request.response, chatMsgs].filter(Boolean).join('\n\n');
+            const responseBody = [request.response, clientFollowUps].filter(Boolean).join('\n');
+            const responseText = clientStamp ? `${clientStamp}: ${responseBody}` : responseBody;
 
             // Find the matching PAR row
             const parRow = await prisma.auditPARRow.findFirst({

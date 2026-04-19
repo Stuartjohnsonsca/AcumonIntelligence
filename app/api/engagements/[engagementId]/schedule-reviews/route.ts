@@ -155,17 +155,26 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       </p>
       <p style="font-size:12px;color:#94a3b8">This link is private — please don&rsquo;t forward it.</p>
     </div>`;
+  let messageId: string | undefined;
   try {
-    await sendEmail(assigneeEmail, subject, html, { displayName: assigneeName });
+    console.log(`[schedule-reviews] Sending specialist review email — engagement=${engagementId} schedule="${scheduleKey}" role=${role} to=${assigneeEmail}`);
+    const emailResult = await sendEmail(assigneeEmail, subject, html, { displayName: assigneeName });
+    messageId = emailResult?.messageId;
+    console.log(`[schedule-reviews] Specialist review email accepted by provider — messageId=${messageId || '(none)'} to=${assigneeEmail}`);
   } catch (err: any) {
     // Roll back on email failure — no point leaving orphaned rows the
-    // specialist never knows about.
+    // specialist never knows about. Surface the full provider error
+    // back to the caller so the UI can tell the auditor *why* it failed
+    // rather than pretending the review was sent.
     await prisma.scheduleSpecialistReview.delete({ where: { id: created.id } }).catch(() => {});
-    return NextResponse.json({ error: `Email failed: ${err?.message || 'unknown error'}` }, { status: 500 });
+    const detail = err?.message || 'unknown error';
+    console.error(`[schedule-reviews] Specialist review email FAILED — to=${assigneeEmail} — ${detail}`);
+    return NextResponse.json({ error: `Email failed: ${detail}` }, { status: 500 });
   }
 
   return NextResponse.json({
     ok: true,
+    messageId,
     review: {
       id: created.id,
       scheduleKey: created.scheduleKey,
