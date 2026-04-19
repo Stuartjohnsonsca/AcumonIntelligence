@@ -5,6 +5,7 @@ import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquar
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
 import { DocumentAnnotator } from '../panels/DocumentAnnotator';
+import { WalkthroughMatrixSection } from '../panels/WalkthroughMatrixSection';
 import { expandZipFile } from '@/lib/client-unzip';
 
 // ─── Types ───
@@ -591,6 +592,21 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
 
   function toggleSection(key: string) { setSectionOpen(prev => ({ ...prev, [key]: !prev[key] })); }
 
+  // Handle import-from-Excel confirmation: update narrative + controls locally,
+  // then persist with a single PUT so next reload reflects the import.
+  const handleMatrixImported = useCallback(async ({ narrative: n, controls: c }: { narrative: string; controls: { description: string; type: string; frequency: string; tested: boolean }[] }) => {
+    const nextNarrative = n ? n : narrative;
+    const nextControls = c.length ? [...controls, ...c] : controls;
+    setNarrative(nextNarrative);
+    setControls(nextControls);
+    try {
+      await fetch(`/api/engagements/${engagementId}/permanent-file`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKey: `walkthrough_${processKey}`, data: { narrative: nextNarrative, controls: nextControls } }),
+      });
+    } catch {}
+  }, [engagementId, processKey, narrative, controls]);
+
   const stage = status.stage || 'draft';
 
   return (
@@ -717,6 +733,14 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
           </div>
         )}
       </div>
+
+      {/* Walkthrough matrix (Excel template structure) */}
+      <WalkthroughMatrixSection
+        engagementId={engagementId}
+        processKey={processKey}
+        processLabel={processLabel}
+        onImported={handleMatrixImported}
+      />
 
       {/* Controls section */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
