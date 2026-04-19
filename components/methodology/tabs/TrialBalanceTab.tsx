@@ -716,6 +716,82 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     setTimeout(() => input.blur(), 0);
   }
 
+  /** Ordered list of editable fields in the TB row, left-to-right,
+   *  matching the table's visible column order. Used by the arrow-key
+   *  cell-navigation handler to figure out the "next column". */
+  const navCols = useMemo(() => {
+    const cols: string[] = ['accountCode', 'description'];
+    if (showCategory) cols.push('category');
+    cols.push('currentYear', 'priorYear', 'fsNoteLevel', 'fsLevel', 'fsStatement');
+    if (isGroupAudit) cols.push('groupName');
+    return cols;
+  }, [showCategory, isGroupAudit]);
+
+  /** Arrow-key cell navigation à la Excel / Google Sheets. Delegated
+   *  from the tbody so we don't have to wire a handler onto every
+   *  individual input. Each editable input/select carries a
+   *  data-tb-cell="${filteredRowIndex}-${fieldName}" attribute which
+   *  this handler uses to compute the neighbouring cell.
+   *
+   *  Rules:
+   *   - ArrowUp / ArrowDown: move rows within the same column.
+   *     Skipped on <select> elements so the native "cycle options"
+   *     behaviour is preserved.
+   *   - ArrowLeft / ArrowRight: move between columns, but ONLY when
+   *     the caret is at the start / end of the input text, so
+   *     within-text caret movement still works as expected.
+   *   - Next text input is auto-selected so the user can immediately
+   *     overtype, again matching Excel's feel. */
+  function handleCellNav(e: React.KeyboardEvent<HTMLTableSectionElement>) {
+    const key = e.key;
+    if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'ArrowLeft' && key !== 'ArrowRight') return;
+    const target = e.target as HTMLElement;
+    const cellId = target.getAttribute?.('data-tb-cell');
+    if (!cellId) return;
+    const dashIdx = cellId.indexOf('-');
+    if (dashIdx < 0) return;
+    const fi = parseInt(cellId.slice(0, dashIdx), 10);
+    const col = cellId.slice(dashIdx + 1);
+    if (isNaN(fi)) return;
+
+    // SELECT: let native up/down cycle options. Left/right still navigates.
+    if (target.tagName === 'SELECT' && (key === 'ArrowUp' || key === 'ArrowDown')) return;
+
+    // INPUT[type=text]: only steal left/right when the caret is at the edge
+    if (target.tagName === 'INPUT' && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+      const input = target as HTMLInputElement;
+      if (input.type === 'text') {
+        const start = input.selectionStart ?? 0;
+        const end = input.selectionEnd ?? input.value.length;
+        const hasSelection = start !== end;
+        if (key === 'ArrowLeft' && !(start === 0 && !hasSelection)) return;
+        if (key === 'ArrowRight' && !(end === input.value.length && !hasSelection)) return;
+      }
+    }
+
+    const colIdx = navCols.indexOf(col);
+    if (colIdx < 0) return;
+
+    let nextFi = fi;
+    let nextColIdx = colIdx;
+    if (key === 'ArrowUp') nextFi--;
+    else if (key === 'ArrowDown') nextFi++;
+    else if (key === 'ArrowLeft') nextColIdx--;
+    else if (key === 'ArrowRight') nextColIdx++;
+
+    if (nextFi < 0 || nextFi >= filteredRows.length) return;
+    if (nextColIdx < 0 || nextColIdx >= navCols.length) return;
+
+    const nextSel = `${nextFi}-${navCols[nextColIdx]}`;
+    const nextEl = document.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-tb-cell="${nextSel}"]`);
+    if (!nextEl) return;
+    e.preventDefault();
+    nextEl.focus();
+    if (nextEl instanceof HTMLInputElement && nextEl.type === 'text') {
+      nextEl.select();
+    }
+  }
+
   // AI classify: use Claude to intelligently classify a single row
   async function handleAiLookup(index: number) {
     const row = rows[index];
@@ -1543,8 +1619,8 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               </th>
             </tr>
           </thead>
-          <tbody>
-            {filteredRows.map((row) => {
+          <tbody onKeyDown={handleCellNav}>
+            {filteredRows.map((row, fi) => {
               const i = rows.indexOf(row);
               const key = rowKey(row, i);
               const isSelected = selectedRowKeys.has(key);
@@ -1566,7 +1642,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   />
                 </td>
                 <td className="px-2 py-0.5">
-                  <input type="text" value={row.accountCode} onChange={e => updateRow(i, 'accountCode', e.target.value)} onPaste={e => handlePaste(e, i, 0)} className={txtCls} placeholder="Code" />
+                  <input type="text" value={row.accountCode} onChange={e => updateRow(i, 'accountCode', e.target.value)} onPaste={e => handlePaste(e, i, 0)} className={txtCls} placeholder="Code" data-tb-cell={`${fi}-accountCode`} />
                 </td>
                 <td className="px-2 py-0.5">
                   {/* Description can be long and is the most important
@@ -1580,11 +1656,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     className={txtCls}
                     placeholder="Description"
                     title={row.description || undefined}
+                    data-tb-cell={`${fi}-description`}
                   />
                 </td>
                 {showCategory && (
                   <td className="px-2 py-0.5">
-                    <input type="text" value={row.category || ''} onChange={e => updateRow(i, 'category', e.target.value || null)} className={txtCls} placeholder="Category" />
+                    <input type="text" value={row.category || ''} onChange={e => updateRow(i, 'category', e.target.value || null)} className={txtCls} placeholder="Category" data-tb-cell={`${fi}-category`} />
                   </td>
                 )}
                 <td className="px-2 py-0.5">
@@ -1596,6 +1673,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     onBlur={() => setEditingCell(null)}
                     onPaste={e => handlePaste(e, i, showCategory ? 3 : 2)}
                     className={numCls}
+                    data-tb-cell={`${fi}-currentYear`}
                   />
                 </td>
                 <td className="px-2 py-0.5">
@@ -1607,6 +1685,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     onBlur={() => setEditingCell(null)}
                     onPaste={e => handlePaste(e, i, showCategory ? 4 : 3)}
                     className={numCls}
+                    data-tb-cell={`${fi}-priorYear`}
                   />
                 </td>
                 {/* FS Note — text input (pastable) + AI lookup button */}
@@ -1625,6 +1704,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                       )}
                       className={`${txtCls} flex-1`}
                       list={`fs-notes-${i}`}
+                      data-tb-cell={`${fi}-fsNoteLevel`}
                     />
                     <button
                       type="button"
@@ -1713,11 +1793,12 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     className={txtCls}
                     placeholder="FS Level"
                     list="fsLevelList"
+                    data-tb-cell={`${fi}-fsLevel`}
                   />
                 </td>
                 {/* FS Statement — editable dropdown */}
                 <td className="px-2 py-0.5">
-                  <select value={row.fsStatement || ''} onChange={e => updateRow(i, 'fsStatement', e.target.value || null)} className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5">
+                  <select value={row.fsStatement || ''} onChange={e => updateRow(i, 'fsStatement', e.target.value || null)} className="w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5" data-tb-cell={`${fi}-fsStatement`}>
                     <option value="">—</option>
                     <option value="Profit & Loss">Profit & Loss</option>
                     <option value="Balance Sheet">Balance Sheet</option>
@@ -1739,7 +1820,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 </td>
                 {isGroupAudit && (
                   <td className="px-2 py-0.5">
-                    <input type="text" value={row.groupName || ''} onChange={e => updateRow(i, 'groupName', e.target.value || null)} className={txtCls} />
+                    <input type="text" value={row.groupName || ''} onChange={e => updateRow(i, 'groupName', e.target.value || null)} className={txtCls} data-tb-cell={`${fi}-groupName`} />
                   </td>
                 )}
                 {canDeleteRows && (
