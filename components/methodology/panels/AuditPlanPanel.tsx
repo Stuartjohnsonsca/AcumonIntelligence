@@ -625,16 +625,21 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       if (test.framework && framework && test.framework.toLowerCase() !== framework.toLowerCase() && test.framework !== 'ALL') continue;
       if (!assertionMatches(test.assertions as string[] | null, assertions)) continue;
 
-      // Risk-based filtering using test.category:
-      // - Significant Risk: all tests EXCEPT Analytical Review (substantive focus)
-      // - Area of Focus: all except Significant Risk and Analytical Review
-      // - Normal (>PM, no RMM): only Normal + Mandatory (no AR, no Sig Risk, no AoF)
-      // - AR (≤PM): only Analytical Review + Mandatory
+      // Risk-based filtering using the firm-defined Test Classification mapping
+      // (see Firm Wide Assumptions → Risk Classification table → Test Classification column):
+      // - AR              → Analytical Review only
+      // - Normal          → Normal only
+      // - Area of Focus   → Area of Focus + Normal
+      // - Significant Risk → Significant Risk + Normal
+      // Mandatory tests are always allowed regardless of classification.
       const testCategory = (test as any).category || (test.significantRisk ? 'Significant Risk' : 'Normal');
-      if (riskClassification === 'AR' && testCategory !== 'Analytical Review' && testCategory !== 'Mandatory') continue;
-      if (riskClassification === 'Normal' && testCategory !== 'Normal' && testCategory !== 'Mandatory') continue;
-      if (riskClassification === 'Area of Focus' && (testCategory === 'Significant Risk' || testCategory === 'Analytical Review')) continue;
-      if (riskClassification === 'Significant Risk' && testCategory === 'Analytical Review') continue;
+      const allowedCategories: string[] =
+        riskClassification === 'AR' ? ['Analytical Review', 'Mandatory'] :
+        riskClassification === 'Normal' ? ['Normal', 'Mandatory'] :
+        riskClassification === 'Area of Focus' ? ['Area of Focus', 'Normal', 'Mandatory'] :
+        riskClassification === 'Significant Risk' ? ['Significant Risk', 'Normal', 'Mandatory'] :
+        ['Normal', 'Mandatory']; // safe default if classification missing
+      if (!allowedCategories.includes(testCategory)) continue;
 
       const tt = testTypes.find(t => t.code === test.testTypeCode);
       const color = TEST_TYPE_COLORS[tt?.actionType || ''] || 'bg-slate-100 text-slate-600 border-slate-200';

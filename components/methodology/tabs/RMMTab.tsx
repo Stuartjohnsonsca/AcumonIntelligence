@@ -48,6 +48,11 @@ interface RMMRow {
   sortOrder: number;
   rowSignOffs?: RowSignOffs;
   lastEditedAt?: string;
+  // FS hierarchy mirrored from the underlying Prisma model — used to filter
+  // applicable assertions by statement (P&L vs Balance Sheet etc.).
+  fsStatement?: string | null;
+  fsLevel?: string | null;
+  fsNote?: string | null;
 }
 
 const RISK_LEVELS = ['Remote', 'Low', 'Medium', 'High', 'Very High'] as const;
@@ -105,12 +110,19 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   );
 
   const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
+  // Per-row Inherent Risk sub-component levels: { [rowId]: { complexity?, subjectivity?, change?, uncertainty?, susceptibility? } }
+  // Stored server-side in auditPermanentFile (sectionKey 'rmm_ir_levels'); see RMM API.
+  const [irLevels, setIrLevels] = useState<Record<string, Record<string, string>>>({});
+  const irSaveTimer = useRef<NodeJS.Timeout | null>(null);
+  // Assertions matrix from Firm Wide Assumptions (which assertions apply to BS / PNL etc.)
+  const [assertionsTable, setAssertionsTable] = useState<{ rows: Array<{ key: string; [k: string]: any }> } | null>(null);
 
   const loadData = useCallback(async () => {
     try {
-      const [res, rcRes] = await Promise.all([
+      const [res, rcRes, asRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/rmm`),
         fetch('/api/methodology-admin/risk-tables?tableType=riskClassification'),
+        fetch('/api/methodology-admin/risk-tables?tableType=assertions'),
       ]);
       if (res.ok) {
         const json = await res.json();
@@ -122,16 +134,118 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
         }));
         setRows(loaded);
         setInitialRows(loaded);
+        // Hydrate per-component IR levels.  When no map exists yet, seed every
+        // row from its legacy `inherentRiskLevel` so existing data remains visible
+        // until the user edits a sub-component.
+        const serverIr = (json.irLevels || {}) as Record<string, Record<string, string>>;
+        const hydrated: Record<string, Record<string, string>> = {};
+        for (const r of loaded) {
+          const existing = serverIr[r.id];
+          if (existing && Object.keys(existing).length > 0) {
+            hydrated[r.id] = existing;
+          } else if (r.inherentRiskLevel) {
+            hydrated[r.id] = {
+              complexity: r.inherentRiskLevel,
+              subjectivity: r.inherentRiskLevel,
+              change: r.inherentRiskLevel,
+              uncertainty: r.inherentRiskLevel,
+              susceptibility: r.inherentRiskLevel,
+            };
+          }
+        }
+        setIrLevels(hydrated);
       }
       if (rcRes.ok) {
         const rcData = await rcRes.json();
         if (rcData.table?.data) setRiskClassificationTable(rcData.table.data);
       }
+      if (asRes.ok) {
+        const asData = await asRes.json();
+        if (asData.table?.data) setAssertionsTable(asData.table.data);
+      }
     } catch (err) { console.error('Failed to load:', err); }
     finally { setLoading(false); }
   }, [engagementId, auditType]);
 
+  // Persist IR sub-component levels (debounced) — separate save path from the
+  // main RMM rows because the data lives in auditPermanentFile, not on the row.
+  function updateIrLevel(rowId: string, component: string, level: string) {
+    setIrLevels(prev => {
+      const next = { ...prev, [rowId]: { ...(prev[rowId] || {}), [component]: level } };
+      if (level === '') delete next[rowId][component];
+      if (irSaveTimer.current) clearTimeout(irSaveTimer.current);
+      irSaveTimer.current = setTimeout(async () => {
+        await fetch(`/api/engagements/${engagementId}/rmm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'save_ir_levels', irLevels: next }),
+        }).catch(() => {});
+      }, 800);
+      return next;
+    });
+  }
+
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Map assertion display name → camelCase key used in the Firm Wide Assumptions
+  // assertions table (so we can ask "is Completeness applicable to BS?").
+  const ASSERTION_KEY_MAP: Record<string, string> = {
+    'Completeness': 'completeness',
+    'Occurrence & Accuracy': 'occurrenceAccuracy',
+    'Cut Off': 'cutOff',
+    'Classification': 'classification',
+    'Presentation': 'presentation',
+    'Existence': 'existence',
+    'Valuation': 'valuation',
+    'Rights & Obligations': 'rightsObligations',
+  };
+
+  /** Returns the subset of ASSERTION_TYPES that are applicable to a row, based on
+   *  the row's FS Statement (P&L vs Balance Sheet) and the firm-configured
+   *  Assertions matrix. Falls back to ALL assertions if the matrix or the row's
+   *  statement aren't set yet, so the UI never silently hides everything. */
+  function applicableAssertionsFor(row: RMMRow): readonly string[] {
+    if (!assertionsTable?.rows?.length) return ASSERTION_TYPES;
+    const stmt = row.fsStatement || '';
+    let key: string | null = null;
+    if (/profit/i.test(stmt) || /loss/i.test(stmt) || /pnl/i.test(stmt) || /income/i.test(stmt)) key = 'PNL';
+    else if (/balance/i.test(stmt) || /^bs$/i.test(stmt)) key = 'BS';
+    else if (/cash/i.test(stmt) || /cf/i.test(stmt)) key = 'CF';
+    if (!key) return ASSERTION_TYPES;
+    const matrixRow = assertionsTable.rows.find(r => r.key === key);
+    if (!matrixRow) return ASSERTION_TYPES;
+    return ASSERTION_TYPES.filter(a => {
+      const k = ASSERTION_KEY_MAP[a];
+      return k ? matrixRow[k] === true : true;
+    });
+  }
+
+  // Auto-derive Planning Letter category from Sig.Risk dot.  Whenever a row's
+  // overallRisk (or the firm-wide riskClassificationTable) changes, recompute
+  // rowCategory using the same fallback as the Sig.Risk? coloured dot in the
+  // table — Significant Risk → 'significant_risk', Area of Focus →
+  // 'area_of_focus', everything else clears it.  We only bump state when a row
+  // actually changes to avoid an infinite render loop with useAutoSave.
+  useEffect(() => {
+    setRows(prev => {
+      let mutated = false;
+      const next = prev.map(r => {
+        const overall = r.overallRisk;
+        const classification = overall ? (riskClassificationTable?.[overall]
+          || (overall === 'High' || overall === 'Very High' ? 'Significant Risk'
+              : overall === 'Medium' ? 'Area of Focus' : null)) : null;
+        const target = classification === 'Significant Risk' ? 'significant_risk'
+          : classification === 'Area of Focus' ? 'area_of_focus'
+          : null;
+        if ((r.rowCategory || null) !== target) {
+          mutated = true;
+          return { ...r, rowCategory: target as any };
+        }
+        return r;
+      });
+      return mutated ? next : prev;
+    });
+  }, [riskClassificationTable, rows.map(r => r.overallRisk).join('|')]);
 
   // Check if prior year engagement exists
   useEffect(() => {
@@ -586,7 +700,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                     </td>
                     <td className="px-2 py-1 align-top">
                       <div className="flex flex-wrap gap-0.5 justify-center">
-                        {ASSERTION_TYPES.map(a => {
+                        {applicableAssertionsFor(row).map(a => {
                           const short = a.split(' ')[0].slice(0, 3);
                           const selected = (row.assertions || []).includes(a);
                           return (
@@ -717,36 +831,43 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                   {isExpanded && (
                     <tr className="bg-blue-50/30 border-b border-slate-200">
                       <td colSpan={showCategory ? 18 : 17} className="px-4 py-3">
-                        {/* Planning Letter category — client-visible */}
+                        {/* Planning Letter category — auto-derived from the Sig.Risk dot.
+                            Updates whenever overallRisk / riskClassificationTable changes via
+                            the syncPlanningLetterCategory effect, so this is a read-only
+                            display. */}
                         <div className="mb-3 flex items-center gap-3 p-2 rounded border-2 border-red-400 bg-red-50/30">
                           <label className="text-[11px] font-semibold text-red-700 whitespace-nowrap">
                             Planning Letter category:
                           </label>
-                          <select
-                            value={row.rowCategory || ''}
-                            onChange={e => updateRow(i, 'rowCategory', (e.target.value || null) as any)}
-                            className="border border-red-300 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
-                          >
-                            <option value="">— Not in letter —</option>
-                            <option value="significant_risk">Significant Risk</option>
-                            <option value="area_of_focus">Area of Focus</option>
-                          </select>
+                          <span className={`text-xs font-medium px-2 py-1 rounded border ${
+                            row.rowCategory === 'significant_risk' ? 'bg-red-100 text-red-700 border-red-300' :
+                            row.rowCategory === 'area_of_focus' ? 'bg-orange-100 text-orange-700 border-orange-300' :
+                            'bg-slate-50 text-slate-500 border-slate-200'
+                          }`}>
+                            {row.rowCategory === 'significant_risk' ? 'Significant Risk'
+                              : row.rowCategory === 'area_of_focus' ? 'Area of Focus'
+                              : '— Not in letter —'}
+                          </span>
                           <span className="text-[10px] text-red-600 italic">
-                            If set, this row will appear on the Planning Letter sent to the client.
+                            Derived from the Sig.Risk? dot above. Change the row&apos;s Likelihood, Magnitude or Control Risk to update it.
                           </span>
                         </div>
                         <div className="grid grid-cols-5 gap-3">
                           {INHERENT_RISK_COMPONENTS.map(comp => {
                             const textKey = `${comp.key}Text` as keyof RMMRow;
                             const textVal = (row[textKey] as string) || '';
+                            // Per-component IR level lives in irLevels (not on the row), so
+                            // the 5 dropdowns are independent of each other and of the legacy
+                            // single inherentRiskLevel field.
+                            const compLevel = irLevels[row.id]?.[comp.key] || '';
                             return (
                               <div key={comp.key} className="space-y-1">
                                 <label className="block text-[10px] font-medium text-slate-600">{comp.label}</label>
                                 <textarea value={textVal} onChange={e => updateRow(i, textKey, e.target.value)}
                                   className="w-full border border-slate-200 rounded px-2 py-1 text-xs min-h-[50px] resize-y focus:outline-none focus:ring-1 focus:ring-blue-300"
                                   placeholder={`${comp.label} assessment...`} />
-                                <select value={row.inherentRiskLevel || ''} onChange={e => updateRow(i, 'inherentRiskLevel', e.target.value)}
-                                  className={`w-full border border-slate-200 rounded px-1 py-0.5 text-xs ${inherentRiskDropdownColor(row.inherentRiskLevel)}`}>
+                                <select value={compLevel} onChange={e => updateIrLevel(row.id, comp.key, e.target.value)}
+                                  className={`w-full border border-slate-200 rounded px-1 py-0.5 text-xs ${inherentRiskDropdownColor(compLevel)}`}>
                                   <option value="">Select risk level...</option>
                                   {RISK_LEVELS.map(rl => <option key={rl} value={rl}>{rl}</option>)}
                                 </select>

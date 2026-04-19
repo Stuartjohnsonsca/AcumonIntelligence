@@ -11,6 +11,28 @@ async function verifyAccess(engagementId: string, firmId: string | undefined, is
   return e;
 }
 
+/** Per-row Inherent Risk sub-component levels.
+ *  Stored as a single auditPermanentFile entry with sectionKey 'rmm_ir_levels'
+ *  to avoid a DB schema change. Shape:
+ *  { [rowId]: { complexity?, subjectivity?, change?, uncertainty?, susceptibility? } }
+ */
+const IR_LEVELS_SECTION = 'rmm_ir_levels';
+
+async function loadIrLevels(engagementId: string) {
+  const row = await prisma.auditPermanentFile.findUnique({
+    where: { engagementId_sectionKey: { engagementId, sectionKey: IR_LEVELS_SECTION } },
+  }).catch(() => null);
+  return ((row?.data as any) || {}) as Record<string, Record<string, string>>;
+}
+
+async function saveIrLevels(engagementId: string, levels: Record<string, Record<string, string>>) {
+  await prisma.auditPermanentFile.upsert({
+    where: { engagementId_sectionKey: { engagementId, sectionKey: IR_LEVELS_SECTION } },
+    create: { engagementId, sectionKey: IR_LEVELS_SECTION, data: levels as object },
+    update: { data: levels as object },
+  });
+}
+
 export async function GET(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -22,8 +44,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     return getPermanentFileSignOffs(engagementId, 'rmm');
   }
 
-  const rows = await prisma.auditRMMRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' } });
-  return NextResponse.json({ rows });
+  const [rows, irLevels] = await Promise.all([
+    prisma.auditRMMRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' } }),
+    loadIrLevels(engagementId),
+  ]);
+  return NextResponse.json({ rows, irLevels });
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
@@ -100,6 +125,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   }
   if (body.action === 'fieldMeta') {
     await savePermanentFileFieldMeta(engagementId, body.fieldMeta, 'rmm');
+    return NextResponse.json({ success: true });
+  }
+  if (body.action === 'save_ir_levels') {
+    // body.irLevels: { [rowId]: { complexity?, subjectivity?, change?, uncertainty?, susceptibility? } }
+    if (!body.irLevels || typeof body.irLevels !== 'object') {
+      return NextResponse.json({ error: 'irLevels object required' }, { status: 400 });
+    }
+    await saveIrLevels(engagementId, body.irLevels);
     return NextResponse.json({ success: true });
   }
 

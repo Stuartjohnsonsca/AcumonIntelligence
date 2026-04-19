@@ -218,6 +218,28 @@ export function FirmAssumptionsClient({
   }, []);
 
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [firmVariablesSaving, setFirmVariablesSaving] = useState(false);
+
+  // Persist the firm_variables table immediately (used by Add / Delete so rows
+  // survive a page refresh without forcing the admin to hit "Save All").
+  const persistFirmVariables = useCallback(async (
+    variables: Array<{ name: string; label: string; value: number }>
+  ) => {
+    setFirmVariablesSaving(true);
+    try {
+      const { invalidateFirmVariables } = await import('@/hooks/useFirmVariables');
+      invalidateFirmVariables();
+      await fetch('/api/methodology-admin/risk-tables', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firmId, tableType: 'firm_variables', data: { variables } }),
+      });
+    } catch (err) {
+      console.error('Auto-save firm_variables failed:', err);
+    } finally {
+      setFirmVariablesSaving(false);
+    }
+  }, [firmId]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -229,16 +251,22 @@ export function FirmAssumptionsClient({
       invalidateFirmVariables();
 
       // Dedup firm variables by name — keeps the LAST entry so an admin editing a
-      // duplicate row sees their change take effect. Also strips blank-name rows
-      // so the admin doesn't accidentally save empty placeholders.
+      // duplicate row sees their change take effect. Blank-name rows are PRESERVED
+      // so an admin who clicked "Add Variable" and pressed Save before filling in
+      // a name doesn't silently lose the row.
       const cleanedFirmVariables = (() => {
         const seen = new Map<string, { name: string; label: string; value: number }>();
+        const blanks: Array<{ name: string; label: string; value: number }> = [];
         for (const v of firmVariables) {
           const trimmedName = (v.name || '').trim();
-          if (!trimmedName) continue;
-          seen.set(trimmedName, { name: trimmedName, label: v.label || trimmedName, value: Number(v.value) || 0 });
+          const row = { name: trimmedName, label: v.label || trimmedName, value: Number(v.value) || 0 };
+          if (!trimmedName) {
+            blanks.push(row);
+            continue;
+          }
+          seen.set(trimmedName, row);
         }
-        return Array.from(seen.values());
+        return [...Array.from(seen.values()), ...blanks];
       })();
 
       // Save firm_variables in its own isolated call so an unrelated row failure
@@ -453,17 +481,30 @@ export function FirmAssumptionsClient({
         </button>
         {expandedSections.riskClassification && (
           <div className="p-4">
-            <p className="text-sm text-slate-500 mb-3">Determines which tests are allocated based on the Overall Risk from the Control Risk Table above. <strong>Significant Risk</strong> and <strong>Area of Focus</strong> items receive full substantive tests. <strong>AR</strong> items receive Analytical Review only.</p>
+            <p className="text-sm text-slate-500 mb-3">
+              Determines which tests are allocated based on the Overall Risk from the Control Risk Table above.
+              The <strong>Test Classification</strong> column is derived automatically and shows which Audit Test
+              Categories will be pulled for each row in the Audit Plan.
+            </p>
             <table className="border-collapse">
               <thead>
                 <tr>
                   <th className="border border-slate-300 p-2 bg-slate-100 text-sm font-medium text-left min-w-[120px]">Overall Risk Level</th>
                   <th className="border border-slate-300 p-2 bg-slate-100 text-sm font-medium text-center min-w-[180px]">Classification</th>
+                  <th className="border border-slate-300 p-2 bg-slate-100 text-sm font-medium text-center min-w-[220px]">Test Classification</th>
                 </tr>
               </thead>
               <tbody>
                 {RISK_LEVELS.map(level => {
                   const val = riskClassification[level] || 'AR';
+                  // Derived: Significant Risk and Area of Focus broaden into "+ Normal"
+                  // so the Audit Plan pulls Normal tests in addition to the higher-tier
+                  // tests for those rows. AR and Normal stay as-is.
+                  const testClassification =
+                    val === 'Significant Risk' ? 'Significant Risk + Normal' :
+                    val === 'Area of Focus' ? 'Area of Focus + Normal' :
+                    val === 'AR' ? 'AR' :
+                    'Normal';
                   return (
                     <tr key={level}>
                       <td className={`border border-slate-300 p-2 text-sm font-medium ${RISK_COLORS[level] || ''}`}>{level}</td>
@@ -478,11 +519,18 @@ export function FirmAssumptionsClient({
                           ))}
                         </select>
                       </td>
+                      <td className="border border-slate-300 p-2 text-sm text-slate-700 text-center bg-slate-50/50 italic">
+                        {testClassification}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            <p className="text-[10px] text-slate-400 mt-2">
+              Test Classification is derived from Classification — Significant Risk and Area of Focus rows
+              automatically include Normal tests as well. The Audit Plan reads this to filter tests per row.
+            </p>
           </div>
         )}
       </div>
@@ -808,6 +856,7 @@ export function FirmAssumptionsClient({
                             setFirmVariables(prev => prev.map((x, i) => i === idx ? { ...x, name: clean } : x));
                             setSaved(false);
                           }}
+                          onBlur={() => void persistFirmVariables(firmVariables)}
                           placeholder="firm_fees"
                           className="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
@@ -820,6 +869,7 @@ export function FirmAssumptionsClient({
                             setFirmVariables(prev => prev.map((x, i) => i === idx ? { ...x, label: e.target.value } : x));
                             setSaved(false);
                           }}
+                          onBlur={() => void persistFirmVariables(firmVariables)}
                           placeholder="Firm Annual Fee Income"
                           className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
@@ -833,14 +883,17 @@ export function FirmAssumptionsClient({
                             setFirmVariables(prev => prev.map((x, i) => i === idx ? { ...x, value: Number(e.target.value) || 0 } : x));
                             setSaved(false);
                           }}
+                          onBlur={() => void persistFirmVariables(firmVariables)}
                           className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </td>
                       <td className="px-3 py-2 text-center">
                         <button
                           onClick={() => {
-                            setFirmVariables(prev => prev.filter((_, i) => i !== idx));
+                            const next = firmVariables.filter((_, i) => i !== idx);
+                            setFirmVariables(next);
                             setSaved(false);
+                            void persistFirmVariables(next);
                           }}
                           className="text-slate-400 hover:text-red-500"
                           aria-label="Delete variable"
@@ -857,12 +910,22 @@ export function FirmAssumptionsClient({
 
             <button
               onClick={() => {
-                setFirmVariables(prev => [...prev, { name: '', label: '', value: 0 }]);
+                const next = [...firmVariables, { name: '', label: '', value: 0 }];
+                setFirmVariables(next);
                 setSaved(false);
+                // Persist immediately so the new row survives a refresh — the
+                // admin no longer has to remember to click "Save All" after
+                // adding a row.
+                void persistFirmVariables(next);
               }}
-              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+              disabled={firmVariablesSaving}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-60"
             >
-              + Add Variable
+              {firmVariablesSaving ? (
+                <><Loader2 className="h-3 w-3 animate-spin" /> Saving...</>
+              ) : (
+                <>+ Add Variable</>
+              )}
             </button>
 
             {/* Duplicate name warning */}
