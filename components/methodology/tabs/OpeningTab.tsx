@@ -145,15 +145,36 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   function handleRenewConnection() {
     // For Xero (OAuth), redirect directly with returnUrl so user comes back here
     if (connection?.system?.toLowerCase() === 'xero') {
-      // Include engagement context so the page auto-opens the right engagement on return
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', 'opening');
-      url.searchParams.set('periodId', engagement.periodId);
-      const returnUrl = encodeURIComponent(url.pathname + url.search);
-      window.location.href = `/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${returnUrl}`;
+      handleConnectXero();
       return;
     }
     setShowConnectorModal(true);
+  }
+
+  /** Start the Xero OAuth flow. Used by both the initial "Connect
+   *  with Xero" button (when there's no existing connection) and by
+   *  "Renew Connection" on an existing one. Builds the returnUrl
+   *  from the LIVE window location at click time — the previous
+   *  implementation computed it inline on the `<a href>` which
+   *  sometimes produced `periodId=undefined` when the prop hadn't
+   *  fully hydrated, making the callback redirect land on the
+   *  engagement chooser instead of back on the tab. */
+  function handleConnectXero() {
+    if (!engagement?.clientId) {
+      alert('Cannot connect — no client id on this engagement. Please reopen the engagement and try again.');
+      return;
+    }
+    const back = new URL(window.location.href);
+    back.searchParams.set('tab', 'opening');
+    if (engagement.periodId) back.searchParams.set('periodId', engagement.periodId);
+    // Keep clientId in the URL too — AuditEngagementPage's auto-open
+    // relies on both clientId + periodId being present to re-hydrate
+    // the engagement after the OAuth round-trip.
+    back.searchParams.set('clientId', engagement.clientId);
+    const returnUrl = back.pathname + back.search;
+    const connectUrl = `/api/accounting/xero/connect?clientId=${encodeURIComponent(engagement.clientId)}&returnUrl=${encodeURIComponent(returnUrl)}`;
+    console.log('[Xero] Redirecting to', connectUrl);
+    window.location.href = connectUrl;
   }
 
   function handleConnectorSetupComplete() {
@@ -472,15 +493,16 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
             </div>
             <p className="text-xs text-slate-400 mb-3">Connect to your client's accounting system to import trial balance data and automate evidence gathering.</p>
             <div className="flex items-center gap-2">
-              <a
-                href={`/api/accounting/xero/connect?clientId=${engagement.clientId}&returnUrl=${encodeURIComponent(window.location.pathname + '?tab=opening&periodId=' + engagement.periodId)}`}
+              <button
+                type="button"
+                onClick={handleConnectXero}
                 className="inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-[#13B5EA] text-white rounded-md hover:bg-[#0e9fd0] font-medium"
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.41 15.41L7.17 14l1.41-1.41L11 15.17l4.59-4.59L17 12l-6.41 6.41z"/></svg>
                 Connect with Xero
-              </a>
+              </button>
               <button
-                onClick={handleRenewConnection}
+                onClick={() => setShowConnectorModal(true)}
                 className="text-xs px-4 py-1.5 border border-slate-200 text-slate-600 rounded-md hover:bg-slate-50 font-medium"
               >
                 Other Systems
