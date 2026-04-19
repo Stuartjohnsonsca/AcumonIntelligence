@@ -246,8 +246,9 @@ ${noteItems.join('\n')}
 
 Prefer matching to existing configured items where possible.
 
-Respond ONLY with a JSON array. Each element: { "index": <number>, "fsNoteLevel": "<string>", "fsLevel": "<string>", "fsStatement": "<string>", "confidence": <number 0-100> }
-No other text.`;
+Respond with a JSON object of the form:
+{ "classifications": [ { "index": <number>, "fsNoteLevel": "<string>", "fsLevel": "<string>", "fsStatement": "<string>", "confidence": <number 0-100> }, ... ] }
+Return exactly one entry per input row. No prose, no markdown.`;
 
       // Load all TB rows from DB for matching
       const tbRowsDb = await prisma.auditTBRow.findMany({
@@ -257,6 +258,55 @@ No other text.`;
       });
 
       let totalClassified = 0;
+      let totalLlmFailures = 0;
+      const failureSamples: string[] = [];
+
+      /**
+       * Robust JSON extraction for LLM responses. Handles:
+       *   - plain object `{ classifications: [...] }`
+       *   - plain array `[...]` (older prompt form)
+       *   - code-fenced blocks
+       *   - preamble/commentary around the JSON
+       *   - single trailing commas
+       */
+      function extractClassifications(raw: string): any[] {
+        if (!raw) return [];
+        let s = raw.trim();
+        // Strip code fences
+        s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+        // Try direct parse first
+        const tryParse = (txt: string): any[] | null => {
+          try {
+            const v = JSON.parse(txt);
+            if (Array.isArray(v)) return v;
+            if (v && Array.isArray(v.classifications)) return v.classifications;
+            if (v && Array.isArray(v.rows)) return v.rows;
+            return null;
+          } catch { return null; }
+        };
+        let got = tryParse(s);
+        if (got) return got;
+        // Try removing trailing commas (common LLM mistake)
+        got = tryParse(s.replace(/,(\s*[}\]])/g, '$1'));
+        if (got) return got;
+        // Scan for the first balanced array `[...]`
+        const firstBracket = s.indexOf('[');
+        const lastBracket = s.lastIndexOf(']');
+        if (firstBracket >= 0 && lastBracket > firstBracket) {
+          const sliced = s.slice(firstBracket, lastBracket + 1);
+          got = tryParse(sliced) || tryParse(sliced.replace(/,(\s*[}\]])/g, '$1'));
+          if (got) return got;
+        }
+        // Scan for the first balanced object `{...classifications...}`
+        const firstBrace = s.indexOf('{');
+        const lastBrace = s.lastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+          const sliced = s.slice(firstBrace, lastBrace + 1);
+          got = tryParse(sliced) || tryParse(sliced.replace(/,(\s*[}\]])/g, '$1'));
+          if (got) return got;
+        }
+        return [];
+      }
 
       // ── Firm-wide learning corpus ────────────────────────────────
       // Built from past auditor classifications across every engagement
@@ -347,25 +397,48 @@ No other text.`;
           .join('\n');
 
         try {
-          const completion = await client.chat.completions.create({
-            model: MODEL,
-            messages: [
-              // systemPromptWithCorpus includes the base prompt plus
-              // the firm's top-N canonical examples as few-shot
-              // guidance. Auto-scales with the corpus — an empty
-              // corpus degrades gracefully to the bare prompt.
-              { role: 'system', content: systemPromptWithCorpus },
-              { role: 'user', content: rowDescriptions },
-            ],
-            max_tokens: 4096,
-            temperature: 0.1,
-          });
+          // Try up to 2 passes: first with json_object mode (strict
+          // JSON); if that errors on the model side, retry without.
+          let responseText = '';
+          let usage: any = null;
+          try {
+            const completion = await client.chat.completions.create({
+              model: MODEL,
+              messages: [
+                { role: 'system', content: systemPromptWithCorpus },
+                { role: 'user', content: rowDescriptions },
+              ],
+              max_tokens: 4096,
+              temperature: 0.1,
+              // Together.ai supports json_object mode on Llama 3.3 / Qwen models.
+              // Cast because the OpenAI SDK's type requires schema vars we don't need.
+              response_format: { type: 'json_object' } as any,
+            });
+            responseText = completion.choices[0]?.message?.content || '';
+            usage = completion.usage;
+          } catch (jsonModeErr: any) {
+            console.warn('[AI Classify] json_object mode failed — falling back:', jsonModeErr?.message);
+            const completion = await client.chat.completions.create({
+              model: MODEL,
+              messages: [
+                { role: 'system', content: systemPromptWithCorpus },
+                { role: 'user', content: rowDescriptions },
+              ],
+              max_tokens: 4096,
+              temperature: 0.1,
+            });
+            responseText = completion.choices[0]?.message?.content || '';
+            usage = completion.usage;
+          }
 
-          const responseText = completion.choices[0]?.message?.content || '';
-          let jsonStr = responseText.trim();
-          if (jsonStr.startsWith('```')) jsonStr = jsonStr.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-
-          const classifications = JSON.parse(jsonStr);
+          const classifications = extractClassifications(responseText);
+          if (classifications.length === 0) {
+            totalLlmFailures += needsLlm.length;
+            if (failureSamples.length < 3) {
+              failureSamples.push(responseText.slice(0, 300));
+            }
+            console.error(`[AI Classify] Batch ${i}–${i + 30}: could not parse LLM response. First 500 chars:`, responseText.slice(0, 500));
+          }
 
           // Save each classification directly to DB — resolve fsLineId from canonical FS Lines
           for (const c of classifications) {
@@ -391,7 +464,6 @@ No other text.`;
 
           // Log AI usage
           try {
-            const usage = completion.usage;
             await prisma.aiUsage.create({
               data: {
                 clientId: engagement!.clientId,
@@ -408,6 +480,10 @@ No other text.`;
           } catch {}
         } catch (err: any) {
           console.error(`[AI Classify] Batch ${i}–${i + 30} failed:`, err?.message);
+          totalLlmFailures += needsLlm.length;
+          if (failureSamples.length < 3 && err?.message) {
+            failureSamples.push(`LLM error: ${String(err.message).slice(0, 200)}`);
+          }
           // Continue with next batch
         }
       }
@@ -428,7 +504,16 @@ No other text.`;
 
       await prisma.backgroundTask.update({
         where: { id: task.id },
-        data: { status: 'completed', result: { classified: totalClassified, total: rows.length, backfilled } as any },
+        data: {
+          status: 'completed',
+          result: {
+            classified: totalClassified,
+            total: rows.length,
+            backfilled,
+            llmFailures: totalLlmFailures,
+            failureSamples,
+          } as any,
+        },
       });
     } catch (err: any) {
       console.error('[AI Classify] Background task failed:', err);

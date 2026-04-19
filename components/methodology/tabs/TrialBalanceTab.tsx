@@ -860,10 +860,17 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             const r = data.result || {};
             // Reload TB data from DB to get the server-saved classifications
             await loadData();
-            setBackfillResult(
-              `AI Classify complete. Classified ${r.classified || 0} of ${r.total || 0} row${r.total === 1 ? '' : 's'}.` +
-              (r.backfilled ? ` Also backfilled ${r.backfilled} canonical FS Line ID${r.backfilled === 1 ? '' : 's'}.` : '')
-            );
+            let msg = `AI Classify complete. Classified ${r.classified || 0} of ${r.total || 0} row${r.total === 1 ? '' : 's'}.`;
+            if (r.backfilled) msg += ` Also backfilled ${r.backfilled} canonical FS Line ID${r.backfilled === 1 ? '' : 's'}.`;
+            if (r.llmFailures) {
+              msg += ` ⚠ ${r.llmFailures} row${r.llmFailures === 1 ? '' : 's'} failed — the AI returned an unparseable response.`;
+              if (Array.isArray(r.failureSamples) && r.failureSamples.length > 0) {
+                msg += ` Sample: ${String(r.failureSamples[0]).slice(0, 160)}`;
+              }
+            } else if ((r.classified || 0) === 0 && (r.total || 0) > 0) {
+              msg += ` ⚠ No rows were updated — check server logs (look for "[AI Classify]").`;
+            }
+            setBackfillResult(msg);
             setAiAllProgress('');
             setAiAllLoading(false);
           } else {
