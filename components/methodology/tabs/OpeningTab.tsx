@@ -7,6 +7,7 @@ import type { EngagementData } from '@/hooks/useEngagement';
 import { TeamPanel } from '../panels/TeamPanel';
 import { ClientContactsPanel } from '../panels/ClientContactsPanel';
 import { ConnectorSetupModal } from '../panels/ConnectorSetupModal';
+import { AuditTimetablePanel } from '../panels/AuditTimetablePanel';
 
 // Extended type for info requests that may have a receivedAt field
 type InfoRequestWithReceived = { receivedAt?: string | null };
@@ -381,8 +382,21 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
         </div>
       </div>
 
+      {/* Bottom row: Audit Timetable (left, wider) + Accounting Connection (right).
+          Audit Timetable is the primary engagement-setup artefact so it
+          gets more horizontal real estate; the connection status is
+          compact and fine squeezed to the right third. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          <AuditTimetablePanel
+            engagementId={engagement.id}
+            initialDates={engagement.agreedDates}
+          />
+        </div>
+        <div className="lg:col-span-1">
+
       {/* Accounting Connection */}
-      <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <div className="bg-white border border-slate-200 rounded-lg p-5 h-full">
         <h3 className="text-sm font-semibold text-slate-800 mb-3">Accounting Connection</h3>
         {connLoading ? (
           <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -474,6 +488,8 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
             </div>
           </div>
         )}
+      </div>
+        </div>
       </div>
 
       {/* Connector Setup Modal */}
