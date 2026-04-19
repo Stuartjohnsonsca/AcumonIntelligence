@@ -61,12 +61,20 @@ export interface DocumentTemplate {
 interface EngagementOption { id: string; clientName: string; periodEnd: string | null }
 
 const CATEGORIES = [
-  { value: 'general', label: 'General' },
-  { value: 'engagement', label: 'Engagement' },
-  { value: 'reporting', label: 'Reporting' },
-  { value: 'correspondence', label: 'Correspondence' },
-  { value: 'compliance', label: 'Compliance' },
-  { value: 'checklist', label: 'Checklist' },
+  // Specific workflow categories at the top — picking one of these
+  // makes the template visible in the corresponding tab action (e.g.
+  // RMM's Send/Download Planning Letter popup filters by
+  // `audit_planning_letter`).
+  { value: 'audit_planning_letter', label: 'Audit Planning Letter' },
+  { value: 'engagement_letter',     label: 'Engagement Letter' },
+  { value: 'management_letter',     label: 'Management Letter' },
+  // Generic buckets below.
+  { value: 'general',          label: 'General' },
+  { value: 'engagement',       label: 'Engagement' },
+  { value: 'reporting',        label: 'Reporting' },
+  { value: 'correspondence',   label: 'Correspondence' },
+  { value: 'compliance',       label: 'Compliance' },
+  { value: 'checklist',        label: 'Checklist' },
 ];
 const AUDIT_TYPES = [
   { value: 'ALL', label: 'All types' },

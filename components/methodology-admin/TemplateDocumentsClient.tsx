@@ -134,6 +134,14 @@ for (const cat of MERGE_FIELD_CATEGORIES) {
 }
 
 const DEFAULT_CATEGORIES = [
+  // Specific workflow categories at the top — these gate the
+  // email-template dropdowns in tab actions (e.g. RMM's Send Planning
+  // Letter popup filters email templates by `audit_planning_letter`
+  // so only planning-letter covering emails appear).
+  { value: 'audit_planning_letter', label: 'Audit Planning Letter' },
+  { value: 'engagement_letter',     label: 'Engagement Letter' },
+  { value: 'management_letter',     label: 'Management Letter' },
+  // Generic buckets.
   { value: 'general', label: 'General' },
   { value: 'engagement', label: 'Engagement' },
   { value: 'reporting', label: 'Reporting' },

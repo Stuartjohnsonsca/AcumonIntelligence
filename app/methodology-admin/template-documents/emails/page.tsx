@@ -17,7 +17,12 @@ export default async function EmailTemplatesPage() {
 
   try {
     templates = await prisma.documentTemplate.findMany({
-      where: { firmId: session.user.firmId },
+      // IMPORTANT: filter by kind = 'email' so document-kind templates
+      // don't leak into the email list. The two kinds share the same
+      // table but are strictly separate from an admin point of view.
+      // Legacy rows (pre kind column) default to 'email' so they
+      // continue to appear here without migration.
+      where: { firmId: session.user.firmId, kind: 'email' },
       orderBy: [{ category: 'asc' }, { name: 'asc' }],
     });
     // Serialize dates

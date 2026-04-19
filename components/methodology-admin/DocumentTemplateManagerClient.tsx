@@ -1,10 +1,28 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Plus, FileText, Loader2, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, FileText, Loader2, Trash2, Filter } from 'lucide-react';
 import { BackButton } from './BackButton';
 import { FirmSkeletonManager, type Skeleton } from './FirmSkeletonManager';
 import { DocumentTemplateEditor, type DocumentTemplate } from './DocumentTemplateEditor';
+
+/** Known document-template categories. "Audit Planning Letter" is
+ *  pre-seeded because the RMM tab's Send / Download Planning Letter
+ *  workflow depends on filtering by it. Admins can still type any
+ *  free-text category in the editor dropdown — this list is just the
+ *  canonical set the filter dropdown offers out of the box. */
+const DOC_TEMPLATE_CATEGORIES = [
+  { value: 'all',                    label: 'All categories' },
+  { value: 'audit_planning_letter',  label: 'Audit Planning Letter' },
+  { value: 'engagement_letter',      label: 'Engagement Letter' },
+  { value: 'management_letter',      label: 'Management Letter' },
+  { value: 'general',                label: 'General' },
+  { value: 'engagement',             label: 'Engagement' },
+  { value: 'reporting',              label: 'Reporting' },
+  { value: 'correspondence',         label: 'Correspondence' },
+  { value: 'compliance',             label: 'Compliance' },
+  { value: 'checklist',              label: 'Checklist' },
+];
 
 /**
  * Top-level client for Methodology Admin → Template Documents → Documents.
@@ -27,6 +45,17 @@ export function DocumentTemplateManagerClient() {
   const [selected, setSelected] = useState<DocumentTemplate | null>(null);
   const [engagements, setEngagements] = useState<EngagementOption[]>([]);
   const [creating, setCreating] = useState(false);
+  // Category filter — defaults to "all". Stored in URL-less local
+  // state because the list is small enough that round-tripping
+  // through ? params would be overkill.
+  const [filterCategory, setFilterCategory] = useState<string>('all');
+
+  // Filtered view. `templates` stays unchanged so the category count
+  // tooltip can still show N/M style indicators if we add them later.
+  const visibleTemplates = useMemo(() => {
+    if (filterCategory === 'all') return templates;
+    return templates.filter(t => t.category === filterCategory);
+  }, [templates, filterCategory]);
 
   async function loadTemplates() {
     try {
@@ -123,27 +152,46 @@ export function DocumentTemplateManagerClient() {
         <FirmSkeletonManager onChange={setSkeletons} />
 
         <div className="border border-slate-200 rounded-lg overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b">
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b gap-3 flex-wrap">
             <div>
               <h3 className="text-sm font-semibold text-slate-800">Document templates</h3>
               <p className="text-[11px] text-slate-500">Handlebars-enabled body content. Each template renders into a firm skeleton to produce a Word file.</p>
             </div>
-            <button
-              onClick={createTemplate}
-              disabled={creating || skeletons.length === 0}
-              title={skeletons.length === 0 ? 'Upload a firm skeleton first' : 'New template'}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 rounded hover:bg-indigo-100 disabled:opacity-50"
-            >
-              {creating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />} New template
-            </button>
+            <div className="flex items-center gap-2">
+              <div className="inline-flex items-center gap-1 text-[11px]">
+                <Filter className="h-3 w-3 text-slate-400" />
+                <select
+                  value={filterCategory}
+                  onChange={e => setFilterCategory(e.target.value)}
+                  className="text-[11px] border border-slate-200 rounded px-1.5 py-1 bg-white"
+                  title="Filter by category"
+                >
+                  {DOC_TEMPLATE_CATEGORIES.map(c => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={createTemplate}
+                disabled={creating || skeletons.length === 0}
+                title={skeletons.length === 0 ? 'Upload a firm skeleton first' : 'New template'}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 rounded hover:bg-indigo-100 disabled:opacity-50"
+              >
+                {creating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />} New template
+              </button>
+            </div>
           </div>
           {loading ? (
             <div className="p-6 text-center text-xs text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></div>
           ) : templates.length === 0 ? (
             <div className="p-6 text-center text-[11px] text-slate-400 italic">No document templates yet. Upload a firm skeleton, then click New template to build your first one.</div>
+          ) : visibleTemplates.length === 0 ? (
+            <div className="p-6 text-center text-[11px] text-slate-400 italic">
+              No templates match the current category filter. <button className="underline hover:text-slate-600" onClick={() => setFilterCategory('all')}>Show all</button>
+            </div>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {templates.map(t => (
+              {visibleTemplates.map(t => (
                 <li key={t.id} className="px-4 py-2 flex items-center gap-3 hover:bg-slate-50">
                   <FileText className="h-4 w-4 text-slate-400 flex-shrink-0" />
                   <button className="flex-1 text-left min-w-0" onClick={() => setSelected(t)}>
