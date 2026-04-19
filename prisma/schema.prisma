@@ -2543,6 +2543,39 @@ model PortalDocument {
   @@map("portal_documents")
 }
 
+/// Specialist review request for a single schedule on an engagement.
+///
+/// Created when an auditor clicks "Send to specialist" at the top of
+/// a signed-off schedule. Each row represents one request to one
+/// specialist (Ethics Partner / MRLO / Management Board / ACP, or a
+/// custom firm-defined role). The specialist opens the review via
+/// the magic-link URL /specialist-review/<token>, reads the schedule,
+/// writes comments, and picks Accept or Reject.
+model ScheduleSpecialistReview {
+  id            String   @id @default(cuid())
+  firmId        String   @map("firm_id")
+  engagementId  String   @map("engagement_id")
+  scheduleKey   String   @map("schedule_key")
+  role          String
+  assigneeName  String   @map("assignee_name")
+  assigneeEmail String   @map("assignee_email")
+  status        String   @default("pending") // pending | accepted | rejected
+  comments      String?
+  token         String   @unique
+  sentById      String?  @map("sent_by_id")
+  sentByName    String?  @map("sent_by_name")
+  sentAt        DateTime @default(now()) @map("sent_at")
+  decidedAt     DateTime? @map("decided_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([engagementId])
+  @@index([engagementId, scheduleKey])
+  @@index([firmId])
+  @@index([sentAt(sort: Desc)])
+  @@map("schedule_specialist_reviews")
+}
+
 /// Firm-branded Word document skeleton. Uploaded once per firm (per
 /// audit type if desired) and reused by many DocumentTemplates. The
 /// uploaded .docx must contain the raw-XML marker `{@body}` in its

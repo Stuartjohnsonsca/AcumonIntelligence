@@ -8,6 +8,7 @@ import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { useSignOff } from './SignOffHeader';
 import { evaluateFormula, buildFormulaValues } from '@/lib/formula-engine';
 import { evaluateRulesForSchedule, type ValidationRule, type RuleEvaluation } from '@/lib/validation-rules';
+import { ScheduleSpecialistReviewsPanel } from './ScheduleSpecialistReviewsPanel';
 import type { TemplateQuestion } from '@/types/methodology';
 
 type FormValues = Record<string, string | number | boolean | null>;
@@ -307,6 +308,13 @@ export function DynamicAppendixForm({
           </div>
         );
       })}
+
+      {/* Specialist-review panel — always mounted at the bottom. It
+          self-hides when there's nothing to show (no reviews yet AND
+          Reviewer hasn't signed off). Lets auditors request an
+          Ethics Partner / MRLO / Board / ACP review and displays
+          any existing reviews' status + comments. */}
+      <ScheduleSpecialistReviewsPanel engagementId={engagementId} scheduleKey={endpoint} />
     </div>
   );
 }

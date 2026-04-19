@@ -21,6 +21,14 @@ const tiles = [
     iconColor: 'text-rose-600',
   },
   {
+    title: 'Specialist Roles',
+    description: 'Ethics Partner / MRLO / Management Board / ACP — for the "Send for specialist review" button on schedules',
+    href: '/methodology-admin/specialist-roles',
+    icon: Users,
+    color: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100',
+    iconColor: 'text-indigo-600',
+  },
+  {
     title: 'Audit Methodology',
     description: 'Tools, industries, test bank, and schedules',
     href: '/methodology-admin/audit-methodology',
