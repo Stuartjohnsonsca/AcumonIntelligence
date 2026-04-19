@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { AlertTriangle, AlertOctagon } from 'lucide-react';
 import { FormField } from './FormField';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { useSignOff } from './SignOffHeader';
 import { evaluateFormula, buildFormulaValues } from '@/lib/formula-engine';
+import { evaluateRulesForSchedule, type ValidationRule, type RuleEvaluation } from '@/lib/validation-rules';
 import type { TemplateQuestion } from '@/types/methodology';
 
 type FormValues = Record<string, string | number | boolean | null>;
@@ -52,6 +54,30 @@ export function DynamicAppendixForm({
   const { trackFieldEdit, getFieldOutline } = useSignOff();
 
   useEffect(() => { setValues(initialData); }, [initialData]);
+
+  // ── Validation rules ─────────────────────────────────────────────
+  // Firm-wide rules set up by the Methodology Admin (Methodology
+  // Admin → Validation Rules). Each rule has a formula-engine
+  // expression; when it evaluates truthy against the current answers,
+  // a banner appears at the top of this schedule.
+  //
+  // Loaded once on mount. Re-evaluated on every change via the
+  // `values` dep. Scheduled key matches the form's `endpoint` prop
+  // (e.g. 'ethics', 'materiality', 'fees') — the admin picks the
+  // same key when setting up the rule, so they wire up 1:1.
+  const [rules, setRules] = useState<ValidationRule[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/methodology-admin/validation-rules');
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && Array.isArray(data.rules)) setRules(data.rules as ValidationRule[]);
+      } catch { /* silent — no rules = no banners */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const saveEndpoint = `/api/engagements/${engagementId}/${endpoint}`;
   // Merge trigger values into save payload
@@ -145,8 +171,57 @@ export function DynamicAppendixForm({
     }
   }
 
+  // Compute violated rules for THIS schedule against current answers.
+  // Runs on every render — cheap, since evaluation is pure string
+  // parsing + arithmetic over a small map. Rules keyed to other
+  // schedules are filtered out inside evaluateRulesForSchedule.
+  const ruleEvaluations: RuleEvaluation[] = evaluateRulesForSchedule(
+    rules,
+    endpoint,
+    questions,
+    values,
+    externalValues || undefined,
+  );
+  const violations = ruleEvaluations.filter(r => r.violated);
+
   return (
     <div className="space-y-4">
+      {/* Validation-rule banners — stack in order, red errors first,
+          then amber warnings. Each banner shows the rule label as
+          the heading and the admin-written message as the body. */}
+      {violations.length > 0 && (
+        <div className="space-y-2">
+          {violations
+            .slice()
+            .sort((a, b) => (a.rule.severity === 'error' ? -1 : 1) - (b.rule.severity === 'error' ? -1 : 1))
+            .map(v => (
+              <div
+                key={v.rule.id}
+                className={`flex items-start gap-2 p-3 rounded-lg border-2 ${
+                  v.rule.severity === 'error'
+                    ? 'bg-red-50 border-red-300'
+                    : 'bg-amber-50 border-amber-300'
+                }`}
+                role="alert"
+              >
+                {v.rule.severity === 'error'
+                  ? <AlertOctagon className="h-4 w-4 text-red-600 flex-shrink-0 mt-0.5" />
+                  : <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />}
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-semibold ${v.rule.severity === 'error' ? 'text-red-800' : 'text-amber-800'}`}>
+                    {v.rule.label || 'Validation issue'}
+                  </p>
+                  {v.rule.message && (
+                    <p className={`text-xs mt-0.5 whitespace-pre-wrap leading-relaxed ${v.rule.severity === 'error' ? 'text-red-700' : 'text-amber-700'}`}>
+                      {v.rule.message}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
+
       {/* Column headers */}
       <div className="flex gap-0 text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
         <div className="w-[35%] flex-shrink-0" />

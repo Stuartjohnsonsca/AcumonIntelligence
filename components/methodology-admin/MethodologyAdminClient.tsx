@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert } from 'lucide-react';
 
 const tiles = [
   {
@@ -11,6 +11,14 @@ const tiles = [
     icon: Settings,
     color: 'bg-blue-50 border-blue-200 hover:bg-blue-100',
     iconColor: 'text-blue-600',
+  },
+  {
+    title: 'Validation Rules',
+    description: 'Firm-wide checks that flag issues on schedules (e.g. audit-fee thresholds)',
+    href: '/methodology-admin/validation-rules',
+    icon: ShieldAlert,
+    color: 'bg-rose-50 border-rose-200 hover:bg-rose-100',
+    iconColor: 'text-rose-600',
   },
   {
     title: 'Audit Methodology',
