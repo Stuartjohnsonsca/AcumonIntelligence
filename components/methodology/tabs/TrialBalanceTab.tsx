@@ -411,10 +411,18 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
     }
   }
 
+  /** Default cleared value for a TB column by its field name.
+   *  Numeric columns go to null; description columns go to '' (so
+   *  they remain valid strings); FS classification columns go to
+   *  null. Kept in one place so all three clear flows stay in sync. */
+  function clearedValueFor(field: string): any {
+    if (field === 'currentYear' || field === 'priorYear' || field === 'aiConfidence') return null;
+    if (field === 'accountCode' || field === 'description') return '';
+    return null;
+  }
+
   /** Clear the values at the intersection of selected rows × selected
-   *  columns. Non-destructive at the row level — only empties cells.
-   *  Saved rows will be re-saved via the existing autosave loop
-   *  since the `rows` state changes. */
+   *  columns. Only used when BOTH are selected. */
   function clearSelectedCells() {
     if (selectedRowKeys.size === 0 || selectedColumns.size === 0) return;
     const cellCount = selectedRowKeys.size * selectedColumns.size;
@@ -423,16 +431,27 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       const k = rowKey(r, i);
       if (!selectedRowKeys.has(k)) return r;
       const patch: Partial<TBRow> = {};
-      for (const field of selectedColumns) {
-        // Numeric columns clear to null; string columns clear to '' or null.
-        if (field === 'currentYear' || field === 'priorYear' || field === 'aiConfidence') {
-          (patch as any)[field] = null;
-        } else if (field === 'accountCode' || field === 'description') {
-          (patch as any)[field] = '';
-        } else {
-          (patch as any)[field] = null;
-        }
-      }
+      for (const field of selectedColumns) (patch as any)[field] = clearedValueFor(field);
+      return { ...r, ...patch } as TBRow;
+    }));
+  }
+
+  /** Clear the selected columns across EVERY visible row (respects
+   *  current filters). This is the "delete column" action the user
+   *  sees when columns are selected but no rows — same semantics as
+   *  Excel's "clear column" rather than "delete column". Rows
+   *  themselves aren't removed; only the cell values are emptied. */
+  function clearSelectedColumnsAcrossVisibleRows() {
+    if (selectedColumns.size === 0) return;
+    const affectedRowCount = filteredRows.length;
+    if (affectedRowCount === 0) return;
+    if (!confirm(`Clear ${selectedColumns.size} column${selectedColumns.size === 1 ? '' : 's'} across ${affectedRowCount} visible row${affectedRowCount === 1 ? '' : 's'}?`)) return;
+    const visibleKeys = new Set(filteredRows.map(r => rowKey(r, rows.indexOf(r))));
+    setRows(prev => prev.map((r, i) => {
+      const k = rowKey(r, i);
+      if (!visibleKeys.has(k)) return r;
+      const patch: Partial<TBRow> = {};
+      for (const field of selectedColumns) (patch as any)[field] = clearedValueFor(field);
       return { ...r, ...patch } as TBRow;
     }));
   }
@@ -810,27 +829,43 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           </label>
         </div>
         <div className="flex items-center gap-2">
-          {/* Bulk-action buttons — only surface when something's selected.
-              Two independent modes:
-                • Rows selected → Delete N rows
-                • Rows + columns selected → Clear the intersecting cells
-             */}
-          {selectedRowKeys.size > 0 && (
+          {/* Bulk-action buttons — surface when EITHER rows or columns
+              are selected. Three modes:
+                • Only rows        → Delete N rows
+                • Only columns     → Clear N cols across visible rows
+                • Rows + columns   → Clear N×M cells (intersection) + Delete rows */}
+          {(selectedRowKeys.size > 0 || selectedColumns.size > 0) && (
             <>
               <span className="text-[10px] text-slate-500">
-                {selectedRowKeys.size} row{selectedRowKeys.size === 1 ? '' : 's'}
-                {selectedColumns.size > 0 && <> · {selectedColumns.size} col{selectedColumns.size === 1 ? '' : 's'}</>}
+                {selectedRowKeys.size > 0 && (
+                  <>{selectedRowKeys.size} row{selectedRowKeys.size === 1 ? '' : 's'}</>
+                )}
+                {selectedRowKeys.size > 0 && selectedColumns.size > 0 && <> · </>}
+                {selectedColumns.size > 0 && (
+                  <>{selectedColumns.size} col{selectedColumns.size === 1 ? '' : 's'}</>
+                )}
               </span>
-              {selectedColumns.size > 0 && (
+              {/* Rows + columns selected → clear the intersection. */}
+              {selectedRowKeys.size > 0 && selectedColumns.size > 0 && (
                 <button onClick={clearSelectedCells}
                   className="text-xs px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 font-medium">
                   Clear {selectedRowKeys.size * selectedColumns.size} cells
                 </button>
               )}
-              <button onClick={deleteSelectedRows}
-                className="text-xs px-3 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 font-medium">
-                Delete rows
-              </button>
+              {/* Only columns selected → clear the whole column across visible rows. */}
+              {selectedRowKeys.size === 0 && selectedColumns.size > 0 && (
+                <button onClick={clearSelectedColumnsAcrossVisibleRows}
+                  className="text-xs px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 font-medium">
+                  Clear {selectedColumns.size} column{selectedColumns.size === 1 ? '' : 's'}
+                </button>
+              )}
+              {/* Rows selected → delete them entirely. */}
+              {selectedRowKeys.size > 0 && (
+                <button onClick={deleteSelectedRows}
+                  className="text-xs px-3 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 font-medium">
+                  Delete {selectedRowKeys.size} row{selectedRowKeys.size === 1 ? '' : 's'}
+                </button>
+              )}
               <button onClick={() => { clearRowSelection(); clearColumnSelection(); }}
                 className="text-[10px] text-slate-400 hover:text-slate-700">Clear selection</button>
             </>
