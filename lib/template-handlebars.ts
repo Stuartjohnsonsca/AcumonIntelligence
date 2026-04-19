@@ -460,32 +460,109 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
   // extract reflect what the Handlebars compiler will actually see —
   // otherwise span-split tokens produce spurious "missing" entries.
   const clean = sanitiseHandlebarsInHtml(bodyTemplate);
-  const re = /\{\{\s*([#/]?)([~]?)([^}]+?)([~]?)\s*\}\}/g;
+  const re = /\{\{\{?\s*([^}]*?)\s*\}?\}\}/g;
   const paths = new Set<string>();
+  // Common loop-item field names that appear inside {{#each …}} blocks
+  // as bare references (e.g. {{name}}, {{milestone}}). These match
+  // itemFields declared on catalog arrays (errorSchedule, auditTimetable,
+  // auditPlan.risks, questionnaires.*.asList). Skipping them here means
+  // they don't show up as false-positive "missing" placeholders — only
+  // a true typo at the top level gets flagged.
+  const LOOP_ITEM_FIELDS = new Set([
+    // Generic
+    'id','name','description','type','status','notes','sortOrder','amount',
+    // Engagement team
+    'role','email',
+    // Error schedule
+    'fsLine','accountCode','errorType','resolution','explanation','isFraud',
+    // Test conclusions / audit plan
+    'testDescription','conclusion','totalErrors','extrapolatedError','auditorNotes',
+    'reviewedByName','riSignedByName',
+    // Audit timetable
+    'milestone','targetDate','revisedTarget','progress',
+    // Audit risks (RMM)
+    'assertions','relevance','complexityText','subjectivityText','changeText',
+    'uncertaintyText','susceptibilityText','inherentRiskLevel','aiSummary',
+    'likelihood','magnitude','finalRiskAssessment','controlRisk','overallRisk',
+    'rowCategory','fsStatement','fsLevel',
+    // Questionnaires asList
+    'question','answer','section','key','itemIndex','isEmpty',
+    'previousKey','previousQuestion','previousAnswer',
+    'nextKey','nextQuestion','nextAnswer',
+    // TB rows
+    'accountCode','currentYear','priorYear','fsStatement','fsLevel','fsLine',
+  ]);
   const KNOWN_HELPERS = new Set([
     'if','unless','each','with','lookup','log',
     'eq','ne','gt','lt','gte','lte','and','or','not',
-    'isEmpty','length','join',
+    'isEmpty','isNotEmpty','length','join',
     'formatDate','formatCurrency','formatNumber','formatPercent',
     'dateAdd','addYears','subtractYears','addMonths','subtractMonths','addDays','subtractDays',
     'add','subtract','sub','multiply','mul','divide','div','percent',
     'upper','lower','titleCase','default',
     'errorScheduleTable','testConclusionsTable',
     'sumField','sumFieldWhere','countItems',
-    'else',
+    'paragraph','else',
   ]);
+
+  /** Tokenise the inner body of a `{{ … }}` expression while respecting:
+   *    • single/double-quoted string literals (treated as ONE opaque token)
+   *    • parentheses (sub-expressions — stripped so inner tokens are seen)
+   *    • hash-prefixed block names (`#if`, `#each`, `#with`)
+   *  Returns a flat array of "candidate" tokens — paths or helper names. */
+  function tokenise(s: string): string[] {
+    const out: string[] = [];
+    let i = 0;
+    const n = s.length;
+    while (i < n) {
+      const ch = s[i];
+      // Skip whitespace and bare punctuation that separates tokens.
+      if (/\s/.test(ch) || ch === '(' || ch === ')') { i++; continue; }
+      // Quoted string literal — consume through matching close quote.
+      if (ch === '"' || ch === "'") {
+        const quote = ch;
+        i++;
+        while (i < n && s[i] !== quote) {
+          if (s[i] === '\\' && i + 1 < n) i++; // skip escape
+          i++;
+        }
+        i++; // skip closing quote (or advance past end)
+        continue; // skip entirely — literal, not a path
+      }
+      // Accumulate a token up to the next whitespace / paren / quote.
+      let start = i;
+      while (i < n && !/[\s()]/.test(s[i]) && s[i] !== '"' && s[i] !== "'") i++;
+      if (i > start) out.push(s.slice(start, i));
+    }
+    return out;
+  }
+
   let m: RegExpExecArray | null;
   while ((m = re.exec(clean)) !== null) {
-    const inner = (m[3] || '').trim();
+    let inner = (m[1] || '').trim();
     if (!inner) continue;
-    const tokens = inner.split(/\s+/).filter(Boolean);
-    for (const t of tokens) {
-      // Ignore string literals, numbers, and known helpers.
-      if (/^["'].*["']$/.test(t)) continue;
+    // Strip leading block markers (#if, /each, #each, #unless, else, etc.)
+    inner = inner.replace(/^([#/])/, '$1 ').replace(/\s*~\s*/g, ' ').trim();
+    const tokens = tokenise(inner);
+    for (let t of tokens) {
+      // Drop `else` / `#if` / `/each` etc. — not paths.
+      t = t.replace(/^[#/]/, '');
+      if (!t) continue;
+      // Numbers, booleans, null/undefined.
       if (/^-?\d+(\.\d+)?$/.test(t)) continue;
+      if (t === 'true' || t === 'false' || t === 'null' || t === 'undefined') continue;
+      // Known helpers.
       if (KNOWN_HELPERS.has(t)) continue;
-      if (t === 'this' || t === '.') continue;
+      // Loop-item refs inside {{#each}} — not top-level paths.
+      if (LOOP_ITEM_FIELDS.has(t)) continue;
+      // Handlebars conveniences.
+      if (t === 'this' || t === '.' || t === 'else') continue;
       if (t.startsWith('../') || t.startsWith('@')) continue; // block-scoped refs
+      if (t.startsWith('this.')) continue; // loop-item lookups via `this`
+      // `role=='Reviewer'` and other ill-formed inline comparisons are
+      // reported as Handlebars parse errors — skip them here so we
+      // don't double-flag.
+      if (/[=<>!]/.test(t) || t.includes('&&') || t.includes('||')) continue;
       paths.add(t);
     }
   }
