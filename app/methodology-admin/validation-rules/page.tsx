@@ -41,20 +41,51 @@ export default async function ValidationRulesPage() {
   } catch { /* tolerant */ }
 
   // Discover schedules available on this firm so the "Schedule"
-  // dropdown can show real options. We pull them from the audit-
-  // type mappings config — same source the engagement tabs use.
-  // Best-effort; falls back to a free-text field client-side.
-  let scheduleKeys: Array<{ key: string; label: string }> = [];
+  // dropdown can show real options. Master schedules live in
+  // methodologyRiskTable (NOT methodologyTemplate) under
+  // tableType='master_schedules', with the list at data.schedules.
+  // When the firm hasn't customised the list we fall back to the
+  // default master schedules the audit-type-schedules API serves.
+  const DEFAULT_MASTER_SCHEDULES = [
+    { key: 'permanent_file_questions',   label: 'Permanent File' },
+    { key: 'ethics_questions',           label: 'Ethics' },
+    { key: 'continuance_questions',      label: 'Continuance' },
+    { key: 'new_client_takeon_questions',label: 'New Client Take-On' },
+    { key: 'prior_period',               label: 'Prior Period' },
+    { key: 'trial_balance',              label: 'TBCYvPY' },
+    { key: 'materiality_questions',      label: 'Materiality' },
+    { key: 'par',                        label: 'PAR' },
+    { key: 'walkthroughs',               label: 'Walkthroughs' },
+    { key: 'rmm',                        label: 'Identifying & Assessing RMM' },
+    { key: 'documents',                  label: 'Documents' },
+    { key: 'communication',              label: 'Communication' },
+    { key: 'outstanding',                label: 'Outstanding' },
+    { key: 'portal',                     label: 'Portal' },
+    { key: 'subsequent_events_questions',label: 'Subsequent Events' },
+    { key: 'tax_technical_categories',   label: 'Tax Technical' },
+    { key: 'audit_summary_memo',         label: 'Audit Summary Memo' },
+    { key: 'significant_risk_completion',label: 'Significant Risk (Completion)' },
+    { key: 'update_procedures',          label: 'Update Procedures' },
+    { key: 'completion_checklist',       label: 'Completion Checklist' },
+    { key: 'test_summary_results',       label: 'Test Summary Results' },
+    { key: 'overall_review_fs',          label: 'Overall Review of FS' },
+    { key: 'fs_review',                  label: 'FS Review' },
+    { key: 'adj_tb',                     label: 'Adj TB' },
+    { key: 'error_schedule',             label: 'Error Schedule' },
+    { key: 'eqr_review',                 label: 'EQR Review' },
+  ];
+  let scheduleKeys: Array<{ key: string; label: string }> = DEFAULT_MASTER_SCHEDULES;
   try {
-    const masterRow = await prisma.methodologyTemplate.findFirst({
-      where: { firmId, templateType: 'master_schedules' },
+    const masterRow = await (prisma as any).methodologyRiskTable?.findUnique?.({
+      where: { firmId_tableType: { firmId, tableType: 'master_schedules' } },
     });
-    if (Array.isArray(masterRow?.items)) {
-      scheduleKeys = (masterRow!.items as any[])
-        .filter(m => m && typeof m.key === 'string')
-        .map(m => ({ key: m.key, label: m.label || m.key }));
+    const list = masterRow?.data?.schedules;
+    if (Array.isArray(list) && list.length > 0) {
+      scheduleKeys = list
+        .filter((m: any) => m && typeof m.key === 'string')
+        .map((m: any) => ({ key: m.key, label: m.label || m.key }));
     }
-  } catch { /* tolerant */ }
+  } catch { /* tolerant — keep defaults */ }
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-5xl">
