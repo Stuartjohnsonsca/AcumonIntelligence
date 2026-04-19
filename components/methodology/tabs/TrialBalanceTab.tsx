@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, Fragment, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 
@@ -174,6 +174,103 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [aiLookupRow, setAiLookupRow] = useState<number | null>(null);
   const [aiLookupResults, setAiLookupResults] = useState<{ name: string; label: string; fsLevel?: string; fsStatement?: string }[]>([]);
   const [aiLookupLoading, setAiLookupLoading] = useState(false);
+  // Per-row record of what the AI most-recently suggested for that
+  // row's FS classification. Keyed by rowKey (same identity the
+  // selection helpers use). Feeds the feedback logger: when the
+  // saved value diverges from the AI suggestion we log an "overridden"
+  // event; when it matches, we log "accepted". Feedback events are
+  // queued into a firm-wide corpus used to tune the classifier's
+  // prompt. The map itself lives only in client state — it's cleared
+  // on reload, which is fine since the server already has the final
+  // saved values.
+  const [aiSuggestionByRow, setAiSuggestionByRow] = useState<Record<string, { fsNoteLevel: string | null; fsLevel: string | null; fsStatement: string | null; aiConfidence: number | null }>>({});
+
+  /** Fire-and-forget telemetry for a SINGLE row event (e.g. the user
+   *  clicks an AI suggestion pill). Complements the tab-switch batch
+   *  snapshot — which captures the final state of every row — by
+   *  recording the specific moment of acceptance. */
+  function logAiFeedback(row: TBRow, action: 'accepted' | 'overridden' | 'cleared' | 'modified', suggested: any | null) {
+    try {
+      fetch(`/api/engagements/${engagementId}/tb-ai-feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountCode: row.accountCode,
+          description: row.description,
+          currentYear: row.currentYear,
+          suggested,
+          chosen: {
+            fsNoteLevel: row.fsNoteLevel,
+            fsLevel: row.fsLevel,
+            fsStatement: row.fsStatement,
+          },
+          action,
+        }),
+      }).catch(() => { /* silent */ });
+    } catch { /* silent */ }
+  }
+
+  /** Send a corpus snapshot of EVERY classified TB row to the server.
+   *  The server stores it as a single ActivityLog entry which future
+   *  prompt-tuning jobs read to build a canonical
+   *    (description → FS classification)
+   *  mapping across the firm. Captures the AI's suggestion alongside
+   *  the auditor's final choice for each row so diffs surface any
+   *  systematic mis-classifications by the model.
+   *
+   *  Fired on unmount (tab switch) — the user explicitly moving on
+   *  is the best "I'm done with this set" signal we have. Uses
+   *  navigator.sendBeacon when available so the request survives
+   *  the page unmount cleanly. */
+  const rowsRef = useRef<TBRow[]>(rows);
+  rowsRef.current = rows;
+  const aiSuggestionByRowRef = useRef(aiSuggestionByRow);
+  aiSuggestionByRowRef.current = aiSuggestionByRow;
+  useEffect(() => {
+    return () => {
+      const currentRows = rowsRef.current;
+      const suggestions = aiSuggestionByRowRef.current;
+      // Only rows with BOTH a description AND any classification are
+      // worth sending — unclassified rows carry no teaching signal,
+      // and description-less rows can't be keyed in the corpus.
+      const snapshotRows = currentRows
+        .filter(r => (r.description || r.accountCode) && (r.fsNoteLevel || r.fsLevel || r.fsStatement))
+        .map((r, i) => {
+          const k = rowKey(r, i);
+          const aiSuggested = suggestions[k] || null;
+          return {
+            accountCode: r.accountCode || '',
+            description: r.description || '',
+            currentYear: r.currentYear ?? null,
+            aiSuggested,
+            final: {
+              fsNoteLevel: r.fsNoteLevel || null,
+              fsLevel: r.fsLevel || null,
+              fsStatement: r.fsStatement || null,
+            },
+          };
+        });
+      if (snapshotRows.length === 0) return;
+      const url = `/api/engagements/${engagementId}/tb-ai-feedback`;
+      const payload = JSON.stringify({ rows: snapshotRows });
+      // sendBeacon survives unmount + page navigation; fall back to
+      // fetch with keepalive when the beacon API isn't available.
+      try {
+        if (typeof navigator !== 'undefined' && 'sendBeacon' in navigator) {
+          const blob = new Blob([payload], { type: 'application/json' });
+          navigator.sendBeacon(url, blob);
+        } else {
+          fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true,
+          }).catch(() => { /* silent */ });
+        }
+      } catch { /* silent */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engagementId]);
 
   function setShowCategory(show: boolean) {
     setShowCategoryLocal(show);
@@ -426,6 +523,19 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             fsLevel: c.fsLevel,
             fsStatement: c.fsStatement,
           }]);
+          // Remember the suggestion for feedback purposes. Keyed by
+          // rowKey so it's stable across reorders and the "Clear
+          // selection" flow doesn't wipe it.
+          const key = rowKey(row, index);
+          setAiSuggestionByRow(prev => ({
+            ...prev,
+            [key]: {
+              fsNoteLevel: c.fsNoteLevel ?? null,
+              fsLevel: c.fsLevel ?? null,
+              fsStatement: c.fsStatement ?? null,
+              aiConfidence: typeof c.aiConfidence === 'number' ? c.aiConfidence : null,
+            },
+          }));
         }
       } else {
         const errData = await res.json().catch(() => ({}));
@@ -557,14 +667,27 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   }
 
   function selectAiResult(index: number, result: any) {
-    setRows(prev => prev.map((r, i) => i === index ? {
+    const updated = rows.map((r, i) => i === index ? {
       ...r,
       fsNoteLevel: result.label || r.fsNoteLevel,
       fsLevel: result.fsLevel || r.fsLevel,
       fsStatement: result.fsStatement || r.fsStatement,
-    } : r));
+    } : r);
+    setRows(updated);
     setAiLookupRow(null);
     setAiLookupResults([]);
+    // Log acceptance for the feedback corpus — the user picked the
+    // AI suggestion wholesale, which is the strongest positive signal
+    // we can send back.
+    const r = updated[index];
+    const key = rowKey(r, index);
+    const suggested = {
+      fsNoteLevel: result.label || null,
+      fsLevel: result.fsLevel || null,
+      fsStatement: result.fsStatement || null,
+      aiConfidence: aiSuggestionByRow[key]?.aiConfidence ?? null,
+    };
+    logAiFeedback(r, 'accepted', suggested);
   }
 
   // Track which number cell is being edited (show raw value while editing)
