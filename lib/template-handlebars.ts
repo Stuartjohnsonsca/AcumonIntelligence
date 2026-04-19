@@ -76,6 +76,49 @@ hb.registerHelper('formatDate', (value: any, pattern?: any) => {
     .replace(/\bd\b/g, String(day));
 });
 
+// ─── Arithmetic ────────────────────────────────────────────────────────────
+/**
+ * Inline math helpers for template expressions — Handlebars has NO
+ * infix operator support, so `{{ a / b * 100 }}` is invalid. These
+ * give the admin composable building blocks:
+ *   {{add x y}}       x + y
+ *   {{subtract x y}}  x - y   (alias: {{sub x y}})
+ *   {{multiply x y}}  x * y   (alias: {{mul x y}})
+ *   {{divide x y}}    x / y   (alias: {{div x y}}) — returns 0 on divide-by-zero
+ *
+ * Non-numeric inputs are coerced via Number(); anything that returns
+ * NaN produces 0 so formatters downstream don't print "NaN".
+ */
+function toNum(v: any): number { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+hb.registerHelper('add',      (a: any, b: any) => toNum(a) + toNum(b));
+hb.registerHelper('subtract', (a: any, b: any) => toNum(a) - toNum(b));
+hb.registerHelper('sub',      (a: any, b: any) => toNum(a) - toNum(b));
+hb.registerHelper('multiply', (a: any, b: any) => toNum(a) * toNum(b));
+hb.registerHelper('mul',      (a: any, b: any) => toNum(a) * toNum(b));
+hb.registerHelper('divide',   (a: any, b: any) => { const d = toNum(b); return d === 0 ? 0 : toNum(a) / d; });
+hb.registerHelper('div',      (a: any, b: any) => { const d = toNum(b); return d === 0 ? 0 : toNum(a) / d; });
+
+/**
+ * {{percent numerator denominator decimals?}}
+ *
+ * Convenience helper that computes `(numerator / denominator) * 100`
+ * and formats to N decimals with a trailing % sign. Defaults to 2 dp
+ * — the common materiality case. Returns empty string on divide-by-
+ * zero so the template doesn't emit "NaN%".
+ *
+ * Example: PM as % of overall materiality to 2 dp:
+ *   {{percent materiality.performance materiality.overall}} → "70.00%"
+ *   {{percent materiality.performance materiality.overall 1}} → "70.0%"
+ *   {{percent materiality.performance materiality.overall 0}} → "70%"
+ */
+hb.registerHelper('percent', (num: any, den: any, decimals?: any) => {
+  const n = Number(num);
+  const d = Number(den);
+  if (!Number.isFinite(n) || !Number.isFinite(d) || d === 0) return '';
+  const dp = typeof decimals === 'number' && Number.isFinite(decimals) && decimals >= 0 ? Math.floor(decimals) : 2;
+  return `${((n / d) * 100).toFixed(dp)}%`;
+});
+
 // ─── Date arithmetic ───────────────────────────────────────────────────────
 /**
  * {{dateAdd value amount "unit"}}
@@ -425,6 +468,7 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
     'isEmpty','length','join',
     'formatDate','formatCurrency','formatNumber','formatPercent',
     'dateAdd','addYears','subtractYears','addMonths','subtractMonths','addDays','subtractDays',
+    'add','subtract','sub','multiply','mul','divide','div','percent',
     'upper','lower','titleCase','default',
     'errorScheduleTable','testConclusionsTable',
     'sumField','sumFieldWhere','countItems',
