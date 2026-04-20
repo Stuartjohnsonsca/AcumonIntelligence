@@ -110,10 +110,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       return NextResponse.json({ error: 'Unsupported file type — please upload CSV or Excel' }, { status: 400 });
     }
 
+    // Fetch the engagement's TB account codes up front. The parser uses
+    // them as a column-detection hint — the column whose values match
+    // real TB codes is by far the most reliable signal for "this is the
+    // Account column", beating generic shape-based heuristics that can
+    // confuse transaction-ids / reference numbers with account codes.
+    const tbCodesForHint = await prisma.auditTBRow.findMany({
+      where: { engagementId },
+      select: { accountCode: true },
+    });
+    const hintedAccountCodes = tbCodesForHint
+      .map(r => r.accountCode)
+      .filter((c): c is string => !!c);
+
     // Parse first so we don't store a file we can't make sense of
     let parsed;
     try {
-      parsed = isExcel ? await parseGlExcel(buffer) : parseGlCsv(buffer);
+      parsed = isExcel
+        ? await parseGlExcel(buffer, { hintedAccountCodes })
+        : parseGlCsv(buffer, { hintedAccountCodes });
     } catch (err: any) {
       return NextResponse.json({ error: `Parse failed: ${err?.message || 'unknown'}` }, { status: 400 });
     }

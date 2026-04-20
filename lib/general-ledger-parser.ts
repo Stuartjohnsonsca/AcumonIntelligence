@@ -26,6 +26,37 @@ export interface GlParseResult {
   warnings: string[];
 }
 
+/** Parsing hints supplied by the caller. `hintedAccountCodes` is the list
+ *  of codes that exist in the engagement's Trial Balance — when supplied,
+ *  the content-inferred parser prefers the column whose values match the
+ *  hinted set, which is far more reliable than shape-based matching
+ *  against a generic `/^\d{2,6}[a-z]?$/` regex. */
+export interface GlParseOptions {
+  hintedAccountCodes?: Iterable<string>;
+}
+
+/** Normalise a code for fuzzy comparison — lowercase, strip leading
+ *  zeros, remove whitespace / punctuation / the common '#' prefix some
+ *  accounting systems apply. Keeps the comparison reliable across
+ *  slightly different code formats between the GL and the TB. */
+function normaliseCode(raw: unknown): string {
+  if (raw == null) return '';
+  let s = String(raw).trim().toLowerCase();
+  s = s.replace(/^#+/, '').replace(/\s+/g, '').replace(/[^a-z0-9]/g, '');
+  s = s.replace(/^0+/, '') || s; // strip leading zeros but keep at least one char
+  return s;
+}
+
+function buildHintSet(codes: Iterable<string> | undefined): Set<string> | null {
+  if (!codes) return null;
+  const out = new Set<string>();
+  for (const c of codes) {
+    const n = normaliseCode(c);
+    if (n) out.add(n);
+  }
+  return out.size ? out : null;
+}
+
 // Header synonyms — lowercase comparison.  When parsing we normalise headers
 // to lowercase and strip non-alphanumerics, then check against these lists.
 const ACCOUNT_HEADERS = ['accountcode', 'account', 'code', 'glcode', 'glaccount', 'accountnumber', 'accountno', 'accountnumeric', 'nominal', 'nominalcode', 'nominalaccount', 'ac', 'accode', 'accountid', 'ledgeraccount', 'ledgercode', 'accountref'];
@@ -117,7 +148,7 @@ function parseAmount(raw: any): number {
 /**
  * Parse a CSV file buffer into GL lines.
  */
-export function parseGlCsv(buffer: Buffer): GlParseResult {
+export function parseGlCsv(buffer: Buffer, options: GlParseOptions = {}): GlParseResult {
   const text = buffer.toString('utf-8');
   const rows: any[][] = parseCsv(text, {
     skip_empty_lines: true,
@@ -129,7 +160,7 @@ export function parseGlCsv(buffer: Buffer): GlParseResult {
     return { lines: [], totalRows: 0, matchedColumns: { date: '', accountCode: '', amount: '' }, warnings: ['Empty CSV file'] };
   }
 
-  return parseWithFormatDetection(rows);
+  return parseWithFormatDetection(rows, options);
 }
 
 /**
@@ -138,7 +169,7 @@ export function parseGlCsv(buffer: Buffer): GlParseResult {
  * firms export a G/L report with a summary sheet first and the detail
  * on a later sheet, so blindly picking sheet 0 can miss the data.
  */
-export async function parseGlExcel(buffer: Buffer): Promise<GlParseResult> {
+export async function parseGlExcel(buffer: Buffer, options: GlParseOptions = {}): Promise<GlParseResult> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer as any);
   if (wb.worksheets.length === 0) {
@@ -160,7 +191,7 @@ export async function parseGlExcel(buffer: Buffer): Promise<GlParseResult> {
       rows.push(arr);
     });
     if (rows.length === 0) continue;
-    const result = parseWithFormatDetection(rows);
+    const result = parseWithFormatDetection(rows, options);
     if (!best || result.lines.length > best.lines.length) {
       best = result;
       bestSheetName = ws.name;
@@ -184,10 +215,11 @@ export async function parseGlExcel(buffer: Buffer): Promise<GlParseResult> {
  * first (looking for a header in the first ~20 rows); if that fails to find
  * the minimum columns we need, we fall back to the grouped parser.
  */
-function parseWithFormatDetection(rows: any[][]): GlParseResult {
+function parseWithFormatDetection(rows: any[][], options: GlParseOptions = {}): GlParseResult {
+  const hintSet = buildHintSet(options.hintedAccountCodes);
   const flat = tryParseFlat(rows);
   if (flat) return flat;
-  return parseGroupedReport(rows);
+  return parseGroupedReport(rows, hintSet);
 }
 
 /**
@@ -236,7 +268,7 @@ function tryParseFlat(rows: any[][]): GlParseResult | null {
  * between transaction rows), unheadered CSVs, and anything else where
  * the columns are in a sensible order even if they aren't labelled.
  */
-function parseGroupedReport(rows: any[][]): GlParseResult {
+function parseGroupedReport(rows: any[][], hintSet: Set<string> | null = null): GlParseResult {
   const warnings: string[] = [];
   const lines: GlLine[] = [];
 
@@ -245,11 +277,15 @@ function parseGroupedReport(rows: any[][]): GlParseResult {
 
   // Step 1 — profile columns. For each column index we count how often
   // its value parses as a valid date and how often it matches the
-  // account-code shape (short alphanumeric). The columns with the
-  // strongest signal for each role become our (dateCol, codeCol)
-  // candidates.
+  // account-code shape (short alphanumeric). When a caller has
+  // supplied the set of codes that exist in the engagement's TB, we
+  // also count direct matches against it — that signal is far more
+  // reliable than generic shape-matching because running-balance
+  // references, transaction ids and journal numbers will rarely match
+  // real account codes.
   const dateHits: Record<number, number> = {};
   const codeHits: Record<number, number> = {};
+  const hintedHits: Record<number, number> = {};
   const textHits: Record<number, number> = {};
   const textAvgLen: Record<number, number> = {};
   const textSeenLen: Record<number, number> = {};
@@ -264,6 +300,10 @@ function parseGroupedReport(rows: any[][]): GlParseResult {
       if (parseDate(v)) dateHits[c] = (dateHits[c] || 0) + 1;
       const s = String(v).trim();
       if (/^\d{2,6}[a-z]?$/i.test(s)) codeHits[c] = (codeHits[c] || 0) + 1;
+      if (hintSet) {
+        const n = normaliseCode(v);
+        if (n && hintSet.has(n)) hintedHits[c] = (hintedHits[c] || 0) + 1;
+      }
       if (/[a-z]{3,}/i.test(s)) {
         textHits[c] = (textHits[c] || 0) + 1;
         textAvgLen[c] = (textAvgLen[c] || 0) + s.length;
@@ -275,7 +315,13 @@ function parseGroupedReport(rows: any[][]): GlParseResult {
   }
 
   const dateCol = topColumn(dateHits);
-  const codeCol = topColumn(codeHits, [dateCol]);
+  // Prefer the column that actually matches known TB codes. Fall back
+  // to shape-based detection only when no hint has been supplied or
+  // no column has ≥3 hinted hits.
+  const hintedCol = hintSet ? topColumn(hintedHits, [dateCol]) : -1;
+  const codeCol = hintedCol >= 0 && (hintedHits[hintedCol] || 0) >= 3
+    ? hintedCol
+    : topColumn(codeHits, [dateCol]);
 
   if (dateCol < 0 && codeCol < 0) {
     return {
@@ -301,11 +347,18 @@ function parseGroupedReport(rows: any[][]): GlParseResult {
   type PairScore = { xorCount: number; bothPositive: number };
   const pairScores: Record<string, PairScore> = {};
   const signedHits: Record<number, { pos: number; neg: number; zero: number }> = {};
+  const codeLooksValid = (raw: unknown): boolean => {
+    const s = String(raw ?? '').trim();
+    if (!s) return false;
+    if (/^\d{2,6}[a-z]?$/i.test(s)) return true;
+    if (hintSet && hintSet.has(normaliseCode(raw))) return true;
+    return false;
+  };
   let txnCandidateCount = 0;
   for (const row of rows) {
     if (!row || row.length < 2) continue;
     const isTxn = (dateCol >= 0 ? !!parseDate(row[dateCol]) : true)
-      && (codeCol >= 0 ? /^\d{2,6}[a-z]?$/i.test(String(row[codeCol] ?? '').trim()) : true);
+      && (codeCol >= 0 ? codeLooksValid(row[codeCol]) : true);
     if (!isTxn) continue;
     txnCandidateCount++;
 
@@ -393,7 +446,7 @@ function parseGroupedReport(rows: any[][]): GlParseResult {
     const d = dateCol >= 0 ? parseDate(row[dateCol]) : null;
     const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '';
     if (dateCol >= 0 && !d) continue;
-    if (codeCol >= 0 && !/^\d{2,6}[a-z]?$/i.test(code)) continue;
+    if (codeCol >= 0 && !codeLooksValid(row[codeCol])) continue;
     let amount = 0;
     if (debitCol >= 0 && creditCol >= 0) {
       amount = parseAmount(row[debitCol]) - parseAmount(row[creditCol]);
