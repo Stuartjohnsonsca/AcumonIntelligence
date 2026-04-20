@@ -28,74 +28,83 @@ export interface ResolvedPortalUser {
 export async function resolvePortalUserFromToken(token: string | null | undefined): Promise<ResolvedPortalUser | null> {
   if (!token || typeof token !== 'string' || token.length < 16) return null;
 
-  const [hasSessionToken, hasSessionExpires] = await Promise.all([
-    columnExists('client_portal_users', 'session_token'),
-    columnExists('client_portal_users', 'session_expires_at'),
-  ]);
-  if (!hasSessionToken) {
-    // Pre-migration / missing column — we cannot validate. Safer to
-    // deny than to keep the old "findFirst" behaviour which leaked
-    // data across tenants.
-    return null;
-  }
-
+  // Try the full query first (session token + expiry) and fall back to
+  // token-only if the expiry column is missing. Bypasses the
+  // columnExists cache so a negative entry can't permanently break
+  // things on a serverless instance after the SQL has landed.
   try {
-    const where: Record<string, unknown> = { sessionToken: token, isActive: true };
-    if (hasSessionExpires) {
-      where.OR = [{ sessionExpiresAt: null }, { sessionExpiresAt: { gt: new Date() } }];
-    }
     const user = await prisma.clientPortalUser.findFirst({
-      where: where as any,
-      select: {
-        id: true,
-        clientId: true,
-        email: true,
-        name: true,
+      where: {
+        sessionToken: token,
         isActive: true,
-        isClientAdmin: true,
+        OR: [{ sessionExpiresAt: null }, { sessionExpiresAt: { gt: new Date() } }],
       },
+      select: { id: true, clientId: true, email: true, name: true, isActive: true, isClientAdmin: true },
     });
     return user || null;
   } catch (err) {
-    console.error('[portal-session] resolvePortalUserFromToken failed:', (err as any)?.message || err);
+    const msg = String((err as any)?.message || '');
+    // Prisma P2022 fires when Prisma's generated SQL references a
+    // column the DB doesn't have — typical partial-migration symptom.
+    if (!/sessionExpiresAt|session_expires_at|sessionToken|session_token|P2022/i.test(msg)) {
+      console.error('[portal-session] resolvePortalUserFromToken failed:', msg);
+      return null;
+    }
+  }
+
+  // Fallback: session_expires_at missing. Validate on token alone.
+  try {
+    const user = await prisma.clientPortalUser.findFirst({
+      where: { sessionToken: token, isActive: true },
+      select: { id: true, clientId: true, email: true, name: true, isActive: true, isClientAdmin: true },
+    });
+    return user || null;
+  } catch (err) {
+    // session_token column also missing — pre-migration. Deny safely.
+    console.error('[portal-session] resolvePortalUserFromToken token-only fallback also failed:', (err as any)?.message || err);
     return null;
   }
 }
 
 /** Generate a new opaque session token and persist it on the user.
- *  Robust to a partially-applied migration: checks both new columns
- *  independently and only writes the ones that exist. If neither
- *  exists, the token is returned without a DB write (client still gets
- *  the token; resolvePortalUserFromToken will deny until migration
- *  completes). A DB error on the write is swallowed — we still return
- *  the token so the login/reset flow doesn't fail on a partial DB state. */
+ *
+ *  Strategy: attempt the full write first (sessionToken +
+ *  sessionExpiresAt + lastLoginAt). If that fails — typically because
+ *  the 2026-04-20 migration hasn't reached this DB connection yet —
+ *  fall back to writing just lastLoginAt so the timestamp is still
+ *  refreshed, and return the token anyway. The caller treats a token
+ *  without a persisted row as "session-less" and the user will be
+ *  denied on the next protected request; we don't block login on a
+ *  DB-state problem because that would leave the user stuck with no
+ *  path forward.
+ *
+ *  Deliberately NOT using the columnExists cache here — a negative
+ *  cache entry from a probe done seconds before the admin ran the SQL
+ *  would otherwise permanently break new logins on that serverless
+ *  instance until a cold start. */
 export async function issuePortalSessionToken(userId: string): Promise<{ token: string; expiresAt: Date } | null> {
   const token = crypto.randomBytes(48).toString('hex');
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
-  const [hasSessionToken, hasSessionExpires] = await Promise.all([
-    columnExists('client_portal_users', 'session_token'),
-    columnExists('client_portal_users', 'session_expires_at'),
-  ]);
-
-  if (!hasSessionToken && !hasSessionExpires) {
-    return { token, expiresAt };
-  }
-
-  // Build the update payload from whichever new columns actually exist
-  // in the DB. lastLoginAt is part of the original schema and always
-  // safe to write — it doubles as a "reset happened" signal in the
-  // rare case neither session column is present yet.
-  const data: Record<string, unknown> = { lastLoginAt: new Date() };
-  if (hasSessionToken) data.sessionToken = token;
-  if (hasSessionExpires) data.sessionExpiresAt = expiresAt;
 
   try {
-    await prisma.clientPortalUser.update({ where: { id: userId }, data: data as any });
+    await prisma.clientPortalUser.update({
+      where: { id: userId },
+      data: { sessionToken: token, sessionExpiresAt: expiresAt, lastLoginAt: new Date() },
+    });
+    return { token, expiresAt };
   } catch (err) {
-    console.error('[portal-session] issuePortalSessionToken update failed:', (err as any)?.message || err);
-    // Deliberately swallow — we don't want a DB hiccup to break
-    // login / reset flows. The caller will decide what to do with
-    // the returned token.
+    console.error('[portal-session] full session-token write failed — falling back:', (err as any)?.message || err);
+  }
+
+  // Fallback — at minimum keep lastLoginAt fresh. Caller still gets a
+  // token, but protected endpoints will 401 until the migration lands.
+  try {
+    await prisma.clientPortalUser.update({
+      where: { id: userId },
+      data: { lastLoginAt: new Date() },
+    });
+  } catch (err) {
+    console.error('[portal-session] fallback lastLoginAt write also failed:', (err as any)?.message || err);
   }
   return { token, expiresAt };
 }
