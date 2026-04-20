@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { authorisePortalTenant } from '@/lib/portal-endpoint-auth';
 
 /**
  * GET /api/portal/periods?token=X&clientId=Y
@@ -13,6 +14,9 @@ export async function GET(req: Request) {
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required' }, { status: 400 });
   }
+
+  const guard = await authorisePortalTenant(req, { clientId });
+  if (!guard.ok) return guard.response;
 
   try {
     // Find engagements for this client that are active (started but not archived)

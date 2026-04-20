@@ -168,16 +168,30 @@ export default function PortalLoginPage() {
 
         {/* Login */}
         {step === 'credentials' && (
-          <div className="space-y-4">
+          // The login form lives inside a real <form> so password-manager
+          // browser extensions (1Password, Bitwarden, LastPass, Chrome's
+          // built-in) recognise the email + password pair cleanly. Without
+          // a form wrapper + correct autoComplete hints they sometimes
+          // attach key-event listeners that assume a sibling field
+          // exists and crash with 'undefined.toLowerCase' when typing
+          // into just one input — harmless but noisy in the console.
+          <form
+            className="space-y-4"
+            onSubmit={e => { e.preventDefault(); if (email && password) handleLogin(); }}
+          >
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
                 <Mail className="h-3.5 w-3.5 inline mr-1" />Email
               </label>
               <input
                 type="email"
+                name="email"
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleLogin()}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="your@email.com"
               />
@@ -188,27 +202,29 @@ export default function PortalLoginPage() {
               </label>
               <input
                 type="password"
+                name="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleLogin()}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="••••••••"
               />
             </div>
             <button
-              onClick={handleLogin}
+              type="submit"
               disabled={loading || !email || !password}
               className="w-full py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin inline" /> : 'Sign In'}
             </button>
             <button
+              type="button"
               onClick={() => { setStep('forgot'); setError(''); setMessage(''); }}
               className="w-full text-xs text-blue-600 hover:text-blue-800"
             >
               Forgot your password?
             </button>
-          </div>
+          </form>
         )}
 
         {/* 2FA Verify */}

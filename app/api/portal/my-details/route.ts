@@ -15,12 +15,19 @@ import { resolvePortalUserFromToken, resolvePortalUserFromTokenDetailed } from '
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const token = searchParams.get('token');
+  const debug = searchParams.get('debug') === '1';
   const { user: me, reason } = await resolvePortalUserFromTokenDetailed(token);
   if (!me) {
-    // Extra diagnostic — why couldn't we resolve the token?
-    // Surface the DB-side signal so the root cause is visible in the
-    // browser network tab. Only revealed on 401, so no user data leaks.
+    // Default 401 responses are minimal — { error, reason } — so the
+    // healthy path doesn't leak runtime internals. Append ?debug=1 to
+    // the request URL to get the full DB / schema diagnostic back; we
+    // used that during the Apr 2026 cross-project incident and it's
+    // handy to keep around for future triage without cluttering the
+    // happy path.
     const diag: Record<string, unknown> = { reason };
+    if (!debug) {
+      return NextResponse.json({ error: 'Invalid or expired session', ...diag }, { status: 401 });
+    }
     try {
       const colCheck = await prisma.$queryRaw<Array<{ session_token_exists: boolean; session_expires_at_exists: boolean; db_name: string; db_schema: string; db_user: string; db_host: string | null }>>`
         SELECT
@@ -37,20 +44,12 @@ export async function GET(req: Request) {
       diag.dbSchema = colCheck[0]?.db_schema ?? null;
       diag.dbUser = colCheck[0]?.db_user ?? null;
       diag.dbHost = colCheck[0]?.db_host ?? null;
-      // List every schema that has client_portal_users so we can
-      // spot search_path mismatches — Prisma with a pooled connection
-      // sometimes resolves an unqualified table against a schema
-      // that isn't `public` on Supabase.
       const schemas = await prisma.$queryRaw<Array<{ table_schema: string }>>`
         SELECT table_schema FROM information_schema.tables
          WHERE table_name = 'client_portal_users'
       `;
       diag.tableSchemas = schemas.map(s => s.table_schema);
 
-      // Extract the Supabase project ref from the connection string so
-      // we can compare it against the project whose SQL editor was used
-      // to add the columns. Project refs aren't secrets (they show up
-      // in NEXT_PUBLIC_SUPABASE_URL) so this is safe to echo.
       const dbUrl = process.env.DATABASE_URL || process.env.DIRECT_URL || '';
       const urlMatch = dbUrl.match(/@db\.([a-z0-9]{16,})\.supabase\.co/i)
         || dbUrl.match(/postgres\.([a-z0-9]{16,})[:@]/i)
@@ -62,9 +61,6 @@ export async function GET(req: Request) {
     }
     if (diag.sessionTokenColumn) {
       try {
-        // How many rows have ANY non-null session_token? Non-zero
-        // means persistence is working for somebody even if not for
-        // this caller.
         const withToken = await prisma.clientPortalUser.count({ where: { sessionToken: { not: null } } });
         diag.rowsWithAnyToken = withToken;
         // Is THIS token in the DB (without the isActive filter)?

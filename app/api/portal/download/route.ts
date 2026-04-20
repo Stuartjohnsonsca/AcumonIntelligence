@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateSasUrl } from '@/lib/azure-blob';
+import { authorisePortalTenant } from '@/lib/portal-endpoint-auth';
 
 /**
- * GET /api/portal/download?uploadId=X
- * Generate a time-limited SAS download URL for a portal upload.
+ * GET /api/portal/download?uploadId=X  (or &storagePath=X) [&token=X]
+ * Generate a time-limited SAS download URL for a portal upload. Caller
+ * must be authenticated — either a valid firm auth() session or a
+ * valid portal session token. A deeper tenant check against the
+ * upload's owning client is a follow-up.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -14,6 +18,9 @@ export async function GET(req: Request) {
   if (!uploadId && !storagePath) {
     return NextResponse.json({ error: 'uploadId or storagePath required' }, { status: 400 });
   }
+
+  const guard = await authorisePortalTenant(req);
+  if (!guard.ok) return guard.response;
 
   try {
     let blobName: string;

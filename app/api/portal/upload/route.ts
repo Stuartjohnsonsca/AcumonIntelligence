@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { uploadToInbox, generateSasUrl } from '@/lib/azure-blob';
+import { authorisePortalTenant } from '@/lib/portal-endpoint-auth';
 
 /**
  * GET /api/portal/upload?requestId=X  — uploads for a specific portal request
  * GET /api/portal/upload?engagementId=X&processLabel=Y — uploads for walkthrough requests matching a process
+ *
+ * Authorisation: any authenticated caller (firm session or portal
+ * token). Deeper tenant-owns-the-requestId check is a follow-up.
  */
 export async function GET(req: Request) {
+  const guard = await authorisePortalTenant(req);
+  if (!guard.ok) return guard.response;
+
   const { searchParams } = new URL(req.url);
   const requestId = searchParams.get('requestId');
   const engagementId = searchParams.get('engagementId');

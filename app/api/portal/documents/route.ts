@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { authorisePortalTenant } from '@/lib/portal-endpoint-auth';
 
 /**
- * GET /api/portal/documents?clientId=X&engagementId=Y&category=Z
+ * GET /api/portal/documents?token=X&clientId=Y&engagementId=Z&category=W
  *
  * Returns the list of documents the firm has pushed to the client via
  * the Client Portal (e.g. Planning Letters). Filtered by clientId;
  * engagementId + category are optional narrowings.
  *
- * Shape matches the pattern of sibling portal endpoints (periods,
- * requests, evidence): clientId passed in query, no deep auth in MVP.
- * Production tightening: validate the portal-session token against
- * the user's allocated clients — same TODO the other endpoints carry.
+ * Authorisation: portal callers (token) must own the clientId via a
+ * ClientPortalUser row; firm callers (auth session) are passed
+ * through so the firm-side methodology pages keep working.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -22,6 +22,9 @@ export async function GET(req: Request) {
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required' }, { status: 400 });
   }
+
+  const guard = await authorisePortalTenant(req, { clientId });
+  if (!guard.ok) return guard.response;
 
   try {
     const where: any = { clientId, isActive: true };

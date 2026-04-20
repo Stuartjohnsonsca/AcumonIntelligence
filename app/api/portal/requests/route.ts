@@ -2,10 +2,13 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { fireTrigger } from '@/lib/trigger-engine';
 import { resumeExecution, resumePipelineExecution } from '@/lib/flow-engine';
+import { authorisePortalTenant } from '@/lib/portal-endpoint-auth';
 
 /**
- * GET /api/portal/requests?clientId=X&status=outstanding|responded
- * Get portal requests for a client.
+ * GET /api/portal/requests?token=X&clientId=Y&status=outstanding|responded
+ * Get portal requests for a client. Authorisation: portal callers
+ * must own the clientId via their ClientPortalUser row; firm callers
+ * with a valid auth() session are passed through.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -16,6 +19,9 @@ export async function GET(req: Request) {
   if (!clientId) {
     return NextResponse.json({ error: 'clientId required' }, { status: 400 });
   }
+
+  const guard = await authorisePortalTenant(req, { clientId });
+  if (!guard.ok) return guard.response;
 
   const section = searchParams.get('section');
 
