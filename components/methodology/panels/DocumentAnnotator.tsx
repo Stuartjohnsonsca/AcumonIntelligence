@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Trash2, Save, ExternalLink, Loader2 } from 'lucide-react';
+import { X, Trash2, Save, ExternalLink, Loader2, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
 interface Annotation {
   x: number; // percent (0-100) relative to document viewport
@@ -34,7 +34,12 @@ export function DocumentAnnotator({ evidence, onClose, onSave }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingUrl, setLoadingUrl] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [zoom, setZoom] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  function fitZoom() { setZoom(1); }
+  function zoomIn() { setZoom(z => Math.min(z * 1.25, 5)); }
+  function zoomOut() { setZoom(z => Math.max(z / 1.25, 0.5)); }
 
   const imageMode = isImage(evidence.type, evidence.name);
   const pdfMode = isPdf(evidence.type, evidence.name);
@@ -85,11 +90,17 @@ export function DocumentAnnotator({ evidence, onClose, onSave }: Props) {
     setSaving(false);
   }
 
+  // Annotation circle size scales inversely with zoom so the dot stays a
+  // similar physical size on screen even after zooming the underlying
+  // document. Base ~48px at zoom 1.
+  const circleSize = Math.max(24, Math.round(48 / zoom));
+  const circleBorder = Math.max(3, Math.round(5 / zoom));
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-2">
+      <div className="bg-white rounded-lg shadow-2xl w-[98vw] h-[96vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <h3 className="text-sm font-semibold text-slate-800 truncate">{evidence.name}</h3>
             <span className="text-[10px] text-slate-400 whitespace-nowrap">
@@ -97,6 +108,20 @@ export function DocumentAnnotator({ evidence, onClose, onSave }: Props) {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {/* Zoom controls — only meaningful for images (PDF iframes have their own controls) */}
+            {imageMode && (
+              <div className="inline-flex items-center gap-0.5 border border-slate-200 rounded">
+                <button onClick={zoomOut} className="px-1.5 py-1 hover:bg-slate-100" title="Zoom out">
+                  <ZoomOut className="h-3.5 w-3.5 text-slate-600" />
+                </button>
+                <button onClick={fitZoom} className="px-2 py-1 hover:bg-slate-100 text-[10px] text-slate-600 font-medium min-w-[42px]" title="Fit to screen">
+                  {Math.round(zoom * 100)}%
+                </button>
+                <button onClick={zoomIn} className="px-1.5 py-1 hover:bg-slate-100" title="Zoom in">
+                  <ZoomIn className="h-3.5 w-3.5 text-slate-600" />
+                </button>
+              </div>
+            )}
             {previewUrl && (
               <a href={previewUrl} target="_blank" rel="noopener noreferrer"
                 className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 inline-flex items-center gap-1">
@@ -121,12 +146,13 @@ export function DocumentAnnotator({ evidence, onClose, onSave }: Props) {
         </div>
 
         {/* Instructions */}
-        <div className="px-4 py-1.5 bg-blue-50/50 border-b border-slate-200 text-[10px] text-slate-600">
+        <div className="px-4 py-1 bg-blue-50/50 border-b border-slate-200 text-[10px] text-slate-600 flex-shrink-0">
           Click anywhere on the document to place a red circle. Click an existing circle to remove it.
+          {imageMode && <span className="ml-2 text-slate-400">Zoom in to place dots more precisely.</span>}
         </div>
 
-        {/* Preview area */}
-        <div className="flex-1 overflow-auto bg-slate-100 p-4">
+        {/* Preview area — fills remaining space */}
+        <div className="flex-1 overflow-auto bg-slate-100 p-4 min-h-0">
           {loadingUrl ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
@@ -139,33 +165,40 @@ export function DocumentAnnotator({ evidence, onClose, onSave }: Props) {
           ) : !previewUrl ? (
             <div className="text-center py-20 text-sm text-slate-400">Failed to load preview</div>
           ) : imageMode ? (
-            /* Image mode — click overlay on top of the img */
-            <div ref={containerRef} onClick={handleClick}
-              className="relative inline-block cursor-crosshair shadow-lg mx-auto">
-              <img src={previewUrl} alt={evidence.name}
-                className="max-w-full max-h-[70vh] block select-none pointer-events-none" draggable={false} />
-              {annotations.map((a, i) => (
-                <button key={i} onClick={(e) => { e.stopPropagation(); removeAnnotation(i); }}
-                  className="absolute -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-4 border-red-500 bg-red-500/20 hover:bg-red-500/40 transition-colors"
-                  style={{ left: `${a.x}%`, top: `${a.y}%` }}
-                  title={`Annotation ${i + 1} — click to remove`} />
-              ))}
+            /* Image mode — fills the whole modal body. Zoom is applied via
+               width style on the wrapper so percent-based annotation
+               coordinates stay correct. */
+            <div className="flex items-start justify-center min-h-full">
+              <div ref={containerRef} onClick={handleClick}
+                className="relative cursor-crosshair shadow-lg"
+                style={{ width: `${zoom * 100}%`, maxWidth: 'none' }}>
+                <img src={previewUrl} alt={evidence.name}
+                  className="block w-full h-auto select-none pointer-events-none" draggable={false} />
+                {annotations.map((a, i) => (
+                  <button key={i} onClick={(e) => { e.stopPropagation(); removeAnnotation(i); }}
+                    className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-red-500 bg-red-500/20 hover:bg-red-500/40 transition-colors"
+                    style={{ left: `${a.x}%`, top: `${a.y}%`, width: circleSize, height: circleSize, borderWidth: circleBorder, borderStyle: 'solid' }}
+                    title={`Annotation ${i + 1} — click to remove`} />
+                ))}
+              </div>
             </div>
           ) : pdfMode ? (
-            /* PDF mode — iframe with click overlay. Overlay captures clicks; iframe is pointer-events: none so the overlay receives them. */
-            <div className="relative mx-auto" style={{ width: '100%', maxWidth: 900 }}>
-              <iframe src={previewUrl} className="w-full h-[70vh] border-0 bg-white shadow-lg" title={evidence.name} />
+            /* PDF mode — iframe fills the modal body. Browser's native PDF
+               viewer handles its own zoom/scroll; our overlay captures clicks
+               at the iframe's *visible* coordinates. */
+            <div className="relative w-full h-full" style={{ minHeight: '100%' }}>
+              <iframe src={previewUrl} className="w-full h-full border-0 bg-white shadow-lg" title={evidence.name} />
               <div ref={containerRef} onClick={handleClick}
                 className="absolute inset-0 cursor-crosshair">
                 {annotations.map((a, i) => (
                   <button key={i} onClick={(e) => { e.stopPropagation(); removeAnnotation(i); }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full border-4 border-red-500 bg-red-500/20 hover:bg-red-500/40 transition-colors"
-                    style={{ left: `${a.x}%`, top: `${a.y}%` }}
+                    className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-red-500 bg-red-500/20 hover:bg-red-500/40 transition-colors"
+                    style={{ left: `${a.x}%`, top: `${a.y}%`, width: 48, height: 48, borderWidth: 5, borderStyle: 'solid' }}
                     title={`Annotation ${i + 1} — click to remove`} />
                 ))}
               </div>
-              <p className="text-[10px] text-slate-500 text-center mt-2">
-                Note: Annotations are placed relative to this frame. For precise placement on scrollable PDFs, use &quot;Open&quot; to view the full document.
+              <p className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-slate-500 bg-white/80 px-2 py-1 rounded">
+                Annotations are placed relative to this frame. Use the iframe&apos;s own zoom controls to enlarge the PDF.
               </p>
             </div>
           ) : (

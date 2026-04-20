@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { X, Pencil, Square, RotateCcw, Check, Loader2, Scissors, Camera } from 'lucide-react';
+import { X, Pencil, Square, RotateCcw, Check, Loader2, Scissors, Camera, Upload, Monitor, Image as ImageIcon } from 'lucide-react';
 
 interface Props {
   engagementId: string;
@@ -173,6 +173,84 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
   const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent);
   const shortcutKey = isMac ? 'Cmd+Shift+4' : 'Win+Shift+S';
 
+  // Load from a File (drag-drop or file input)
+  const loadFromFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) {
+      alert('Please choose an image file (PNG, JPG, etc).');
+      return;
+    }
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+    loadImage(URL.createObjectURL(file));
+  }, [loadImage]);
+
+  // One-click capture using the browser's screen-share API.  Asks the user to
+  // pick a window/tab/screen, grabs ONE frame, then closes the stream.  This
+  // bypasses the OS snipping tool entirely on browsers that support it
+  // (Chrome, Edge, Safari 17+, Firefox 100+).
+  const captureViaDisplayMedia = useCallback(async () => {
+    const md = (typeof navigator !== 'undefined' ? navigator.mediaDevices : null) as MediaDevices | null;
+    if (!md || typeof md.getDisplayMedia !== 'function') {
+      alert('Your browser does not support in-app screen capture. Use the snipping tool (Win+Shift+S / Cmd+Shift+4) and paste, or upload a file.');
+      return;
+    }
+    try {
+      const stream = await md.getDisplayMedia({ video: true, audio: false } as DisplayMediaStreamOptions);
+      const track = stream.getVideoTracks()[0];
+      if (!track) throw new Error('No video track');
+
+      // Use ImageCapture if available (Chrome / Edge); otherwise fall back to
+      // drawing the first video frame to a canvas.
+      let blob: Blob | null = null;
+      if (typeof (window as any).ImageCapture === 'function') {
+        try {
+          const ic = new (window as any).ImageCapture(track);
+          blob = await ic.grabFrame().then((bm: ImageBitmap) => {
+            const c = document.createElement('canvas');
+            c.width = bm.width; c.height = bm.height;
+            c.getContext('2d')!.drawImage(bm, 0, 0);
+            return new Promise<Blob | null>(res => c.toBlob(res, 'image/png'));
+          });
+        } catch {
+          blob = null;
+        }
+      }
+      if (!blob) {
+        // Fallback: render frame to canvas via video element
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        await video.play();
+        await new Promise(r => setTimeout(r, 200)); // settle
+        const c = document.createElement('canvas');
+        c.width = video.videoWidth; c.height = video.videoHeight;
+        c.getContext('2d')!.drawImage(video, 0, 0);
+        blob = await new Promise<Blob | null>(res => c.toBlob(res, 'image/png'));
+      }
+
+      // Stop the stream immediately so the user isn't left "sharing"
+      track.stop();
+      stream.getTracks().forEach(t => t.stop());
+
+      if (blob) loadImage(URL.createObjectURL(blob));
+    } catch (err: any) {
+      // User cancelled the picker — silent
+      if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') return;
+      console.error('getDisplayMedia capture failed:', err);
+      alert(`Capture failed: ${err?.message || 'unknown'}`);
+    }
+  }, [loadImage]);
+
+  // Drag-and-drop on the picker
+  const [dragOver, setDragOver] = useState(false);
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) loadFromFile(file);
+  }, [loadFromFile]);
+
+  // File input ref for the upload-image button
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Read clipboard on user click (always allowed as user gesture)
   const pasteFromClipboard = useCallback(async () => {
     try {
@@ -192,28 +270,106 @@ export function ScreenCaptureModal({ engagementId, stepId, onCapture, onClose }:
     }
   }, [loadImage]);
 
-  // Waiting phase — snip prompt
+  // Waiting phase — four ways to provide a screenshot
   if (phase === 'waiting') {
     return (
-      <div className="fixed inset-0 z-[9999] bg-black/70 flex items-center justify-center" onClick={onClose}>
-        <div className="bg-slate-900 rounded-2xl shadow-2xl w-[420px] overflow-hidden text-center" onClick={e => e.stopPropagation()}>
-          <div className="p-8">
-            <div className="w-16 h-16 rounded-full bg-blue-500/20 flex items-center justify-center mx-auto mb-4">
-              <Scissors className="h-8 w-8 text-blue-400" />
-            </div>
-            <p className="text-white text-lg font-semibold mb-3">Snip your screen</p>
-            <p className="text-slate-400 text-sm mb-5">Press <kbd className="px-2 py-1 bg-slate-700 rounded text-xs font-mono text-white">{shortcutKey}</kbd> and select the area, then:</p>
-            <button onClick={pasteFromClipboard} className="w-full px-6 py-3 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-500 transition-colors inline-flex items-center justify-center gap-2">
-              <Camera className="h-5 w-5" /> Grab Screenshot
+      <div className="fixed inset-0 z-[9999] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+        <div
+          className="bg-slate-900 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden"
+          onClick={e => e.stopPropagation()}
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+        >
+          <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+            <h3 className="text-white text-base font-semibold">Add a screenshot</h3>
+            <button onClick={onClose} className="text-slate-400 hover:text-white">
+              <X className="h-5 w-5" />
             </button>
-            <p className="text-slate-500 text-[10px] mt-3">or press <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-[9px] font-mono text-slate-300">Ctrl+V</kbd></p>
-            <div className="flex items-center justify-center gap-2 text-blue-400/60 mt-3">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span className="text-[10px]">Also listening for clipboard changes...</span>
+          </div>
+
+          {/* Drag-drop zone — visually highlights when something is dragged over */}
+          <div className={`mx-6 mt-5 border-2 border-dashed rounded-xl px-6 py-5 text-center transition-colors ${
+            dragOver ? 'border-blue-400 bg-blue-500/10' : 'border-slate-700 bg-slate-800/40'
+          }`}>
+            <ImageIcon className={`h-7 w-7 mx-auto mb-2 ${dragOver ? 'text-blue-300' : 'text-slate-500'}`} />
+            <p className="text-slate-300 text-sm font-medium">
+              {dragOver ? 'Drop the image to add it' : 'Drag & drop an image here'}
+            </p>
+            <p className="text-slate-500 text-[11px] mt-1">PNG, JPG, GIF, WebP</p>
+          </div>
+
+          {/* Four explicit ways to provide an image */}
+          <div className="px-6 py-5 grid grid-cols-2 gap-3">
+            {/* 1. Capture this tab/window/screen */}
+            <button
+              onClick={captureViaDisplayMedia}
+              className="flex items-start gap-3 p-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-left transition-colors"
+            >
+              <div className="w-9 h-9 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center flex-shrink-0">
+                <Monitor className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-sm font-semibold">Capture screen</p>
+                <p className="text-slate-400 text-[11px] mt-0.5">Pick a window or tab to grab. No external tool needed.</p>
+              </div>
+            </button>
+
+            {/* 2. Upload an image file */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-start gap-3 p-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-left transition-colors"
+            >
+              <div className="w-9 h-9 rounded-lg bg-blue-500/20 text-blue-300 flex items-center justify-center flex-shrink-0">
+                <Upload className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-sm font-semibold">Upload image</p>
+                <p className="text-slate-400 text-[11px] mt-0.5">Choose a saved screenshot from your computer.</p>
+              </div>
+            </button>
+
+            {/* 3. Paste from clipboard */}
+            <button
+              onClick={pasteFromClipboard}
+              className="flex items-start gap-3 p-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-left transition-colors"
+            >
+              <div className="w-9 h-9 rounded-lg bg-violet-500/20 text-violet-300 flex items-center justify-center flex-shrink-0">
+                <Camera className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-sm font-semibold">Paste from clipboard</p>
+                <p className="text-slate-400 text-[11px] mt-0.5">If you&apos;ve already copied an image somewhere.</p>
+              </div>
+            </button>
+
+            {/* 4. OS snipping tool */}
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-800/50 text-left">
+              <div className="w-9 h-9 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center flex-shrink-0">
+                <Scissors className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-sm font-semibold">Snipping tool</p>
+                <p className="text-slate-400 text-[11px] mt-0.5">
+                  Press <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-[9px] font-mono text-white">{shortcutKey}</kbd> then <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-[9px] font-mono text-white">Ctrl+V</kbd> here.
+                </p>
+              </div>
             </div>
           </div>
-          <div className="px-6 py-3 bg-slate-800/50 border-t border-slate-700">
-            <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-300">Cancel</button>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) loadFromFile(f); }}
+          />
+
+          <div className="px-6 py-3 bg-slate-800/50 border-t border-slate-700 flex items-center justify-between">
+            <span className="text-slate-500 text-[10px] inline-flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" /> Listening for clipboard changes...
+            </span>
+            <button onClick={onClose} className="text-xs text-slate-400 hover:text-white">Cancel</button>
           </div>
         </div>
       </div>

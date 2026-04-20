@@ -150,7 +150,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
 CRITICAL: You must ONLY use information explicitly stated in the client's documentation. Do NOT invent, assume, or fabricate any steps, controls, or details that are not in the provided text. If the documentation is insufficient, return fewer steps rather than making things up.
 
 Return ONLY a valid JSON array of steps (no markdown, no explanation, no preamble). Each step has:
-- id: unique string (e.g. "step_1", "decision_1")
+- id: unique string (e.g. "step_1", "decision_1", "control_1")
 - label: short description of the step (max 50 words) — must be derived from the provided text
 - type: one of "start", "action", "decision", "end"
 - next: array of step IDs this connects to
@@ -158,12 +158,28 @@ Return ONLY a valid JSON array of steps (no markdown, no explanation, no preambl
 - sourceDoc: (optional) the input document, form, or trigger for this step (e.g. "Purchase Order", "Customer Email")
 - outputDoc: (optional) the document, report, or output produced by this step (e.g. "Invoice", "Approval Form")
 - responsible: (optional) the person, role, or department responsible (e.g. "Accounts Payable Clerk", "Finance Manager")
+- isSignificantControl: (boolean, optional) true ONLY for steps that represent a control (preventative, detective, manual review, system validation, segregation of duties, authorisation, reconciliation, etc.)
 
-Rules:
+────────────────────────────────────────
+ONE SHAPE PER CONTROL — MANDATORY
+────────────────────────────────────────
+Every control mentioned in the documentation OR listed in the "Controls identified" section MUST become its own dedicated flowchart shape with isSignificantControl: true. NEVER merge two controls into one shape, even when they happen at the same point in the process. Two controls = two shapes. Three controls = three shapes.
+
+If a control is a decision (e.g. "approver checks the value is below £10,000"), use type: "decision" with the condition. If it is an action (e.g. "manager signs the invoice"), use type: "action". Either way, set isSignificantControl: true.
+
+Example — documentation says: "When the invoice is received, the AP clerk matches it to the PO (Control A) and the Finance Manager approves invoices over £5,000 (Control B), then it is posted." This must produce THREE shapes for the control area:
+  1. action "AP clerk matches invoice to PO" (isSignificantControl: true, responsible "AP Clerk")
+  2. decision "Finance Manager approves" with condition "Invoice value > £5,000" (isSignificantControl: true, responsible "Finance Manager")
+  3. action "Post invoice to ledger" (regular action, not a control)
+
+NOT one combined shape "match invoice and approve". NOT a merged "Controls A and B" step.
+
+────────────────────────────────────────
+
+Other rules:
 - Always start with exactly one "start" step
 - Always end with at least one "end" step
 - Decisions must have 2+ next steps with conditions
-- Include controls as actions where they occur in the process
 - ONLY include steps that are described in the client documentation
 - If the documentation is vague, include only what is explicitly stated
 - Extract sourceDoc, outputDoc, and responsible where mentioned in the documentation
@@ -176,7 +192,7 @@ Rules:
 Documentation:
 ${documentText}
 
-${controlsText ? `Controls identified:\n${controlsText}` : ''}
+${controlsText ? `Controls identified (${(controls || []).length} total — each must have its own flowchart shape with isSignificantControl: true):\n${controlsText}\n\nReminder: produce at least ${(controls || []).length} shape(s) marked isSignificantControl: true. Do NOT combine any of these controls into a single step.\n` : ''}
 
 Generate a structured flowchart JSON array for this process.`,
         },

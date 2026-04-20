@@ -157,11 +157,11 @@ function StepAttachmentButtons({ data, nodeId }: { data: any; nodeId: string }) 
     <div className="flex items-center gap-0.5 mt-1 relative">
       {!readOnly && (
         <>
-          <button onClick={(e) => { e.stopPropagation(); setShowCapture(true); }} title="Capture screen" className="w-4 h-4 rounded bg-blue-50 text-blue-500 hover:bg-blue-100 flex items-center justify-center">
-            <Camera className="h-2.5 w-2.5" />
+          <button onClick={(e) => { e.stopPropagation(); setShowCapture(true); }} title="Add screenshot — paste, upload an image, or capture this tab" className="px-1.5 h-5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 inline-flex items-center justify-center gap-0.5 text-[9px] font-medium">
+            <Camera className="h-3 w-3" /> Snip
           </button>
-          <button onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} title="Upload file" className="w-4 h-4 rounded bg-slate-50 text-slate-500 hover:bg-slate-100 flex items-center justify-center">
-            <Upload className="h-2.5 w-2.5" />
+          <button onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} title="Upload any file (PDF, doc, image, zip)" className="px-1.5 h-5 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 inline-flex items-center justify-center gap-0.5 text-[9px] font-medium">
+            <Upload className="h-3 w-3" /> File
           </button>
           <input ref={fileInputRef} type="file" className="hidden" accept="image/*,.pdf,.doc,.docx,.zip" onChange={handleFileUpload} />
         </>
