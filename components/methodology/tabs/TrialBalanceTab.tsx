@@ -5,6 +5,28 @@ import { useAutoSave } from '@/hooks/useAutoSave';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 
 const FixedAssetRegisterPopup = lazy(() => import('../FixedAssetRegisterPopup').then(m => ({ default: m.FixedAssetRegisterPopup })));
+const GeneralLedgerModal = lazy(() => import('../GeneralLedgerModal').then(m => ({ default: m.GeneralLedgerModal })));
+
+interface GlCheckResult {
+  rowId: string;
+  accountCode: string;
+  status: 'green' | 'red' | 'no-data';
+  priorYear: number;
+  glMovement: number;
+  pnlAdjustment: number;
+  expected: number;
+  actual: number;
+  difference: number;
+  message: string;
+}
+
+interface GlMetadata {
+  storagePath?: string;
+  fileName?: string;
+  uploadedAt?: string;
+  uploadedByName?: string;
+  parsedSummary?: { inPeriodCount?: number; outOfPeriodCount?: number };
+}
 
 interface Props {
   engagementId: string;
@@ -926,6 +948,27 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [backfilling, setBackfilling] = useState(false);
   const [backfillResult, setBackfillResult] = useState<string | null>(null);
 
+  // General Ledger upload + per-row reconciliation
+  const [showGlModal, setShowGlModal] = useState(false);
+  const [glMetadata, setGlMetadata] = useState<GlMetadata | null>(null);
+  const [glDownloadUrl, setGlDownloadUrl] = useState<string | null>(null);
+  const [glChecks, setGlChecks] = useState<Map<string, GlCheckResult>>(new Map());
+
+  const loadGl = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/general-ledger`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setGlMetadata(data.metadata || null);
+      setGlDownloadUrl(data.downloadUrl || null);
+      const map = new Map<string, GlCheckResult>();
+      for (const c of (data.checks || [])) map.set(c.rowId, c);
+      setGlChecks(map);
+    } catch {}
+  }, [engagementId]);
+
+  useEffect(() => { loadGl(); }, [loadGl]);
+
   async function handleBackfillFsLineIds() {
     if (backfilling) return;
     setBackfilling(true);
@@ -1327,6 +1370,25 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             {backfilling ? '⏳ Backfilling...' : '🔗 Backfill FS Line IDs'}
           </button>
           <button
+            onClick={() => setShowGlModal(true)}
+            className="text-xs px-3 py-1 bg-violet-50 text-violet-700 border border-violet-200 rounded hover:bg-violet-100 font-medium"
+            title="Upload the General Ledger or send a request to the client. Used to verify each TB row by reconciling PY + period movements vs CY."
+          >
+            📒 Obtain G/L
+          </button>
+          {glMetadata?.fileName && (
+            <a
+              href={glDownloadUrl || '#'}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => { if (!glDownloadUrl) e.preventDefault(); }}
+              className="inline-flex items-center gap-1 text-[10px] px-2 py-1 bg-violet-50 text-violet-600 border border-violet-200 rounded hover:bg-violet-100"
+              title={`Uploaded ${glMetadata.uploadedAt ? new Date(glMetadata.uploadedAt).toLocaleDateString('en-GB') : ''}${glMetadata.uploadedByName ? ' by ' + glMetadata.uploadedByName : ''}`}
+            >
+              📎 {glMetadata.fileName}
+            </a>
+          )}
+          <button
             onClick={exportCSV}
             className="text-xs px-3 py-1 bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 font-medium"
           >
@@ -1558,6 +1620,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                         />
                       </th>
                     ))}
+                    {glChecks.size > 0 && (
+                      <th className="px-2 py-2 text-center text-slate-500 font-medium text-[10px]" title="GL Check: green = PY + GL movements equals CY; red = disagrees; grey = no GL data for this account.">
+                        GL ✓
+                      </th>
+                    )}
                     <th className="w-8"></th>
                   </tr>
                   {/* Column-select checkbox row — tick a column to include
@@ -1584,6 +1651,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                         />
                       </th>
                     ))}
+                    {glChecks.size > 0 && <th></th>}
                     <th></th>
                   </tr>
                 </>
@@ -1628,6 +1696,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                   </th>
                 );
               })}
+              {glChecks.size > 0 && <th className="px-1 py-0.5"></th>}
               <th className="px-1 py-0.5">
                 {hasActiveFilters && (
                   <button onClick={() => { setFilters({}); setOpenFilter(null); }} className="text-[9px] text-red-400 hover:text-red-600" title="Clear all filters">✕</button>
@@ -1839,6 +1908,19 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                     <input type="text" value={row.groupName || ''} onChange={e => updateRow(i, 'groupName', e.target.value || null)} className={txtCls} data-tb-cell={`${fi}-groupName`} />
                   </td>
                 )}
+                {/* GL Check dot — green if PY+GL movements = CY, red if not, grey if no GL data */}
+                {row.id && glChecks.size > 0 && (() => {
+                  const check = glChecks.get(row.id);
+                  if (!check) return <td className="px-2 py-0.5 text-center"><span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-200" title="No GL data" /></td>;
+                  const colour = check.status === 'green' ? 'bg-green-500'
+                    : check.status === 'red' ? 'bg-red-500'
+                    : 'bg-slate-300';
+                  return (
+                    <td className="px-2 py-0.5 text-center">
+                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${colour} cursor-help`} title={check.message} />
+                    </td>
+                  );
+                })()}
                 {canDeleteRows && (
                   <td className="px-2 py-0.5">
                     <button onClick={() => removeRow(i)} className="text-red-400 hover:text-red-600">×</button>
@@ -1876,6 +1958,16 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       {farOpen && (
         <Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-500" /></div>}>
           <FixedAssetRegisterPopup engagementId={engagementId} onClose={() => setFarOpen(false)} />
+        </Suspense>
+      )}
+
+      {showGlModal && (
+        <Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-500" /></div>}>
+          <GeneralLedgerModal
+            engagementId={engagementId}
+            onClose={() => setShowGlModal(false)}
+            onSuccess={loadGl}
+          />
         </Suspense>
       )}
     </div>
