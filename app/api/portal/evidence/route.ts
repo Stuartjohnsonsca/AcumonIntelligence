@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { resolvePortalUserFromToken } from '@/lib/portal-session';
+import { resolvePortalUserFromTokenDetailed } from '@/lib/portal-session';
 
 /**
  * GET /api/portal/evidence?token=X
@@ -13,8 +13,8 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const token = searchParams.get('token');
-    const me = await resolvePortalUserFromToken(token);
-    if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+    const { user: me, reason } = await resolvePortalUserFromTokenDetailed(token);
+    if (!me) return NextResponse.json({ error: 'Invalid or expired session', reason }, { status: 401 });
 
     // Every ClientPortalUser row is (clientId, email). The same person
     // accessing multiple clients has one row per client, sharing the

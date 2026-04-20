@@ -26,12 +26,22 @@ export interface ResolvedPortalUser {
  *  deploying the schema change and running the SQL, we fall back to
  *  denying every request rather than leaking data. */
 export async function resolvePortalUserFromToken(token: string | null | undefined): Promise<ResolvedPortalUser | null> {
-  if (!token || typeof token !== 'string' || token.length < 16) return null;
+  const result = await resolvePortalUserFromTokenDetailed(token);
+  return result.user;
+}
 
-  // Try the full query first (session token + expiry) and fall back to
-  // token-only if the expiry column is missing. Bypasses the
-  // columnExists cache so a negative entry can't permanently break
-  // things on a serverless instance after the SQL has landed.
+/** Diagnostic variant — returns both the resolved user (if any) and a
+ *  human-readable reason string so 401 responses can tell the caller
+ *  *why* the session didn't resolve. */
+export interface ResolvePortalUserResult { user: ResolvedPortalUser | null; reason: string; }
+
+export async function resolvePortalUserFromTokenDetailed(token: string | null | undefined): Promise<ResolvePortalUserResult> {
+  if (!token || typeof token !== 'string') return { user: null, reason: 'token-missing' };
+  if (token.length < 16) return { user: null, reason: 'token-too-short' };
+
+  // Full query: session token + not-expired. If Prisma fires P2022
+  // (typically because session_expires_at isn't in the DB yet) we
+  // fall through to a token-only search.
   try {
     const user = await prisma.clientPortalUser.findFirst({
       where: {
@@ -41,28 +51,43 @@ export async function resolvePortalUserFromToken(token: string | null | undefine
       },
       select: { id: true, clientId: true, email: true, name: true, isActive: true, isClientAdmin: true },
     });
-    return user || null;
+    if (user) return { user, reason: 'ok' };
+
+    // No active+unexpired match — check whether *any* row has this
+    // token to distinguish "never persisted" from "persisted but
+    // inactive/expired" so the 401 can tell the caller.
+    try {
+      const anyMatch = await prisma.clientPortalUser.findFirst({
+        where: { sessionToken: token },
+        select: { id: true, isActive: true, sessionExpiresAt: true },
+      });
+      if (!anyMatch) return { user: null, reason: 'token-not-in-db' };
+      if (!anyMatch.isActive) return { user: null, reason: 'user-inactive' };
+      if (anyMatch.sessionExpiresAt && anyMatch.sessionExpiresAt < new Date()) return { user: null, reason: 'session-expired' };
+      return { user: null, reason: 'unknown-mismatch' };
+    } catch {
+      return { user: null, reason: 'token-not-in-db' };
+    }
   } catch (err) {
     const msg = String((err as any)?.message || '');
-    // Prisma P2022 fires when Prisma's generated SQL references a
-    // column the DB doesn't have — typical partial-migration symptom.
     if (!/sessionExpiresAt|session_expires_at|sessionToken|session_token|P2022/i.test(msg)) {
       console.error('[portal-session] resolvePortalUserFromToken failed:', msg);
-      return null;
+      return { user: null, reason: 'db-error' };
     }
+    // Fall through to the token-only path.
   }
 
-  // Fallback: session_expires_at missing. Validate on token alone.
+  // Fallback: session_expires_at column missing.
   try {
     const user = await prisma.clientPortalUser.findFirst({
       where: { sessionToken: token, isActive: true },
       select: { id: true, clientId: true, email: true, name: true, isActive: true, isClientAdmin: true },
     });
-    return user || null;
+    if (user) return { user, reason: 'ok-no-expiry-column' };
+    return { user: null, reason: 'token-not-in-db-no-expiry-column' };
   } catch (err) {
-    // session_token column also missing — pre-migration. Deny safely.
     console.error('[portal-session] resolvePortalUserFromToken token-only fallback also failed:', (err as any)?.message || err);
-    return null;
+    return { user: null, reason: 'session-token-column-missing' };
   }
 }
 

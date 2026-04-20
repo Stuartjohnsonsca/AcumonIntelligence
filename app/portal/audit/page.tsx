@@ -181,7 +181,7 @@ export default function PortalAuditPage() {
       const res = await fetch(`/api/portal/evidence?token=${token}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        const serverDetail = body?.detail || body?.error || `HTTP ${res.status}`;
+        const serverDetail = body?.reason || body?.detail || body?.error || `HTTP ${res.status}`;
         throw new Error(`Failed to load requests: ${serverDetail}`);
       }
       const data = await res.json();

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
-import { resolvePortalUserFromToken } from '@/lib/portal-session';
+import { resolvePortalUserFromToken, resolvePortalUserFromTokenDetailed } from '@/lib/portal-session';
 
 /**
  * GET /api/portal/my-details?token=X
@@ -15,8 +15,8 @@ import { resolvePortalUserFromToken } from '@/lib/portal-session';
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const token = searchParams.get('token');
-  const me = await resolvePortalUserFromToken(token);
-  if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+  const { user: me, reason } = await resolvePortalUserFromTokenDetailed(token);
+  if (!me) return NextResponse.json({ error: 'Invalid or expired session', reason }, { status: 401 });
 
   // Every ClientPortalUser row is scoped to one (clientId, email) pair.
   // A real person with access to multiple clients has multiple rows —
