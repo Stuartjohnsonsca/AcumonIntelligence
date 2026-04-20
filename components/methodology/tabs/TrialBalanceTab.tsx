@@ -956,6 +956,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
   const [glDownloadUrl, setGlDownloadUrl] = useState<string | null>(null);
   const [glChecks, setGlChecks] = useState<Map<string, GlCheckResult>>(new Map());
   const [glByAccount, setGlByAccount] = useState<Record<string, number>>({});
+  const [glToleranceError, setGlToleranceError] = useState(0);
 
   const loadGl = useCallback(async () => {
     try {
@@ -965,6 +966,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       setGlMetadata(data.metadata || null);
       setGlDownloadUrl(data.downloadUrl || null);
       setGlByAccount(data.byAccount || {});
+      setGlToleranceError(Number(data.toleranceError) || 0);
       const map = new Map<string, GlCheckResult>();
       for (const c of (data.checks || [])) map.set(c.rowId, c);
       setGlChecks(map);
@@ -1397,15 +1399,28 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             // is only meaningful when there's something to resolve.
             let outstanding = 0;
             glChecks.forEach(c => { if (c.status !== 'green') outstanding++; });
-            if (outstanding === 0) return null;
+            const hasTolerance = glToleranceError > 0.005;
+            if (outstanding === 0 && !hasTolerance) return null;
             return (
-              <button
-                onClick={() => setShowGlReconcile(true)}
-                className="text-xs px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 font-medium"
-                title="Group TB rows and GL codes to reconcile grey / red dots. Commit flips them green."
-              >
-                🧩 Reconcile G/L ({outstanding})
-              </button>
+              <>
+                {outstanding > 0 && (
+                  <button
+                    onClick={() => setShowGlReconcile(true)}
+                    className="text-xs px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 font-medium"
+                    title="Group TB rows and GL codes to reconcile grey / red dots. Commit flips them green."
+                  >
+                    🧩 Reconcile G/L ({outstanding})
+                  </button>
+                )}
+                {hasTolerance && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] px-2 py-1 bg-amber-100 text-amber-800 border border-amber-300 rounded-full font-medium"
+                    title={`Cumulative absolute £ tolerance used across committed GL reconciliations on this engagement. Click Reconcile G/L to see the breakdown.`}
+                  >
+                    Tolerance: £{glToleranceError.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                )}
+              </>
             );
           })()}
           <button
@@ -2005,6 +2020,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             }))}
             checks={Array.from(glChecks.values())}
             byAccount={glByAccount}
+            toleranceError={glToleranceError}
             onClose={() => setShowGlReconcile(false)}
             onCommitted={() => loadGl()}
           />

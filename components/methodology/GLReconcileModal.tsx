@@ -47,11 +47,14 @@ interface Props {
   tbRows: TbRowForReconcile[];
   checks: GlCheck[];
   byAccount: Record<string, number>;
+  /** Cumulative absolute tolerance error already used on this
+   *  engagement (sum of |delta| across prior commits). Shown in the
+   *  footer so the reviewer sees how many £'s they've let through
+   *  under tolerance overall. */
+  toleranceError: number;
   onClose: () => void;
   onCommitted: () => void;
 }
-
-const TOLERANCE = 0.01;
 
 function fmt(n: number): string {
   const abs = Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -72,11 +75,17 @@ function movementToExplain(row: TbRowForReconcile): number {
   return isPnlStatement(row.fsStatement) ? cy : cy - py;
 }
 
-export function GLReconcileModal({ engagementId, tbRows, checks, byAccount, onClose, onCommitted }: Props) {
+export function GLReconcileModal({ engagementId, tbRows, checks, byAccount, toleranceError, onClose, onCommitted }: Props) {
   const [selectedTbIds, setSelectedTbIds] = useState<Set<string>>(new Set());
   const [selectedGlCodes, setSelectedGlCodes] = useState<Set<string>>(new Set());
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // User-editable absolute tolerance (in £). Defaults to 0.01 to match
+  // the validator's rounding-tolerance baseline, but the reviewer can
+  // raise it to accept larger timing / rounding differences as
+  // "agrees" — each such commit adds |delta| to the cumulative
+  // tolerance total so it stays visible.
+  const [toleranceInput, setToleranceInput] = useState('0.01');
 
   // Only rows the auditor still needs to look at — green dots are
   // filtered out (including those already reconciled), leaving grey
@@ -144,7 +153,14 @@ export function GLReconcileModal({ engagementId, tbRows, checks, byAccount, onCl
   }, [selectedGlCodes, byAccount]);
 
   const delta = tbSelectedTotal - glSelectedTotal;
-  const agrees = Math.abs(delta) < TOLERANCE && selectedTbIds.size > 0;
+  const parsedTolerance = (() => {
+    const n = Number(String(toleranceInput).replace(/[£,\s]/g, ''));
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  })();
+  // "Agrees" once the delta falls within (or at) the reviewer's
+  // chosen absolute tolerance. Strict equality isn't useful — GL /
+  // TB rounding virtually always leaves sub-penny scraps.
+  const agrees = Math.abs(delta) <= parsedTolerance + 1e-9 && selectedTbIds.size > 0;
 
   function toggleTb(id: string) {
     setSelectedTbIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -161,7 +177,12 @@ export function GLReconcileModal({ engagementId, tbRows, checks, byAccount, onCl
       const res = await fetch(`/api/engagements/${engagementId}/general-ledger`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reconcile', rowIds: Array.from(selectedTbIds) }),
+        body: JSON.stringify({
+          action: 'reconcile',
+          rowIds: Array.from(selectedTbIds),
+          delta,
+          tolerance: parsedTolerance,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -316,26 +337,48 @@ export function GLReconcileModal({ engagementId, tbRows, checks, byAccount, onCl
               </div>
             </div>
 
-            {/* Footer: delta + commit */}
-            <div className="px-5 py-3 border-t border-slate-200 bg-white flex items-center gap-3">
-              <div className="flex-1 flex items-center gap-3">
+            {/* Footer: tolerance control, delta, cumulative errors, commit */}
+            <div className="px-5 py-3 border-t border-slate-200 bg-white flex flex-col gap-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="inline-flex items-center gap-1 text-xs text-slate-500">
+                  Tolerance £
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={toleranceInput}
+                    onChange={e => setToleranceInput(e.target.value)}
+                    className="ml-1 w-24 border border-slate-200 rounded px-2 py-1 text-xs text-right font-mono focus:outline-none focus:border-blue-400"
+                    placeholder="0.01"
+                    title="Absolute £ tolerance — when |delta| ≤ this, Commit activates and the delta is recorded as a tolerance error."
+                  />
+                </label>
                 <span className="text-xs text-slate-500">Delta</span>
-                <span className={`font-mono text-sm font-semibold ${agrees ? 'text-green-600' : Math.abs(delta) > 0.01 ? 'text-red-600' : 'text-slate-500'}`}>
+                <span className={`font-mono text-sm font-semibold ${agrees ? 'text-green-600' : selectedTbIds.size > 0 ? 'text-amber-600' : 'text-slate-500'}`}>
                   {fmt(delta)}
                 </span>
-                {agrees && <span className="inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200"><CheckCircle2 className="h-3 w-3" /> Agrees</span>}
-                {!agrees && selectedTbIds.size > 0 && <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200"><AlertTriangle className="h-3 w-3" /> Not yet agreeing</span>}
+                {agrees && <span className="inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200"><CheckCircle2 className="h-3 w-3" /> Within tolerance</span>}
+                {!agrees && selectedTbIds.size > 0 && <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200"><AlertTriangle className="h-3 w-3" /> Outside tolerance</span>}
+                <span className="flex-1" />
+                <span className="text-[11px] text-slate-500" title="Cumulative |delta| across all committed reconciliations on this engagement.">
+                  Tolerance errors to date: <span className="font-mono font-semibold text-slate-700">{fmt(toleranceError + (agrees && selectedTbIds.size ? Math.abs(delta) : 0))}</span>
+                  {agrees && selectedTbIds.size > 0 && (
+                    <span className="text-slate-400"> (→ after this commit)</span>
+                  )}
+                </span>
               </div>
-              {error && <span className="text-xs text-red-600">{error}</span>}
-              <button onClick={onClose} disabled={committing} className="text-xs px-4 py-1.5 bg-slate-100 text-slate-700 rounded hover:bg-slate-200">Close</button>
-              <button
-                onClick={commit}
-                disabled={!agrees || committing}
-                className="text-xs px-4 py-1.5 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-slate-200 disabled:text-slate-400 inline-flex items-center gap-1.5"
-              >
-                {committing ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-                {committing ? 'Committing…' : `Commit (${selectedTbIds.size})`}
-              </button>
+              <div className="flex items-center gap-3">
+                {error && <span className="text-xs text-red-600 flex-1">{error}</span>}
+                {!error && <span className="flex-1" />}
+                <button onClick={onClose} disabled={committing} className="text-xs px-4 py-1.5 bg-slate-100 text-slate-700 rounded hover:bg-slate-200">Close</button>
+                <button
+                  onClick={commit}
+                  disabled={!agrees || committing}
+                  className="text-xs px-4 py-1.5 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-slate-200 disabled:text-slate-400 inline-flex items-center gap-1.5"
+                >
+                  {committing ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                  {committing ? 'Committing…' : `Commit (${selectedTbIds.size})`}
+                </button>
+              </div>
             </div>
           </>
         )}
