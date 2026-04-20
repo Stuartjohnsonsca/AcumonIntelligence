@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getFinancialStatementStructure, getLineItems, getTaxonomyIdForFramework } from '@/lib/xbrl-taxonomy';
+import { columnExists } from '@/lib/prisma-column-exists';
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -42,15 +43,37 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Default: list FS lines
-  const fsLines = await prisma.methodologyFsLine.findMany({
-    where: { firmId: session.user.firmId },
-    include: {
-      industryMappings: { select: { industryId: true } },
-      parent: { select: { id: true, name: true } },
-    },
-    orderBy: [{ isMandatory: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
-  });
+  // Default: list FS lines — tolerate a not-yet-migrated DB by
+  // selecting only pre-migration columns when the new fs_level_name /
+  // fs_statement_name columns aren't there yet.
+  const [hasLevelName, hasStatementName] = await Promise.all([
+    columnExists('methodology_fs_lines', 'fs_level_name'),
+    columnExists('methodology_fs_lines', 'fs_statement_name'),
+  ]);
+  const rawFsLines = (hasLevelName && hasStatementName)
+    ? await prisma.methodologyFsLine.findMany({
+        where: { firmId: session.user.firmId },
+        include: {
+          industryMappings: { select: { industryId: true } },
+          parent: { select: { id: true, name: true } },
+        },
+        orderBy: [{ isMandatory: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+      })
+    : await prisma.methodologyFsLine.findMany({
+        where: { firmId: session.user.firmId },
+        select: {
+          id: true, firmId: true, name: true, lineType: true, fsCategory: true,
+          sortOrder: true, isActive: true, isMandatory: true, parentFsLineId: true,
+          industryMappings: { select: { industryId: true } },
+          parent: { select: { id: true, name: true } },
+        },
+        orderBy: [{ isMandatory: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+      });
+  const fsLines = rawFsLines.map(l => ({
+    ...(l as Record<string, unknown>),
+    fsLevelName: (l as Record<string, unknown>).fsLevelName ?? null,
+    fsStatementName: (l as Record<string, unknown>).fsStatementName ?? null,
+  }));
 
   return NextResponse.json({ fsLines });
 }
@@ -180,14 +203,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'name, lineType, and fsCategory are required' }, { status: 400 });
   }
 
+  const [hasLevelName, hasStatementName] = await Promise.all([
+    columnExists('methodology_fs_lines', 'fs_level_name'),
+    columnExists('methodology_fs_lines', 'fs_statement_name'),
+  ]);
+
   const fsLine = await prisma.methodologyFsLine.create({
     data: {
       firmId: session.user.firmId,
       name,
       lineType,
       fsCategory,
-      fsLevelName: fsLevelName || null,
-      fsStatementName: fsStatementName || null,
+      ...(hasLevelName ? { fsLevelName: fsLevelName || null } : {}),
+      ...(hasStatementName ? { fsStatementName: fsStatementName || null } : {}),
       sortOrder: sortOrder || 0,
       isMandatory: isMandatory || false,
       ...(parentFsLineId && { parentFsLineId }),
@@ -256,6 +284,11 @@ export async function PUT(req: Request) {
   const { id, name, lineType, fsCategory, sortOrder, isActive, isMandatory, parentFsLineId, fsLevelName, fsStatementName } = await req.json();
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
+  const [hasLevelName, hasStatementName] = await Promise.all([
+    columnExists('methodology_fs_lines', 'fs_level_name'),
+    columnExists('methodology_fs_lines', 'fs_statement_name'),
+  ]);
+
   const fsLine = await prisma.methodologyFsLine.update({
     where: { id },
     data: {
@@ -266,8 +299,8 @@ export async function PUT(req: Request) {
       ...(isActive !== undefined && { isActive }),
       ...(isMandatory !== undefined && { isMandatory }),
       ...(parentFsLineId !== undefined && { parentFsLineId: parentFsLineId || null }),
-      ...(fsLevelName !== undefined && { fsLevelName: fsLevelName || null }),
-      ...(fsStatementName !== undefined && { fsStatementName: fsStatementName || null }),
+      ...(hasLevelName && fsLevelName !== undefined && { fsLevelName: fsLevelName || null }),
+      ...(hasStatementName && fsStatementName !== undefined && { fsStatementName: fsStatementName || null }),
     },
     include: {
       industryMappings: { select: { industryId: true } },

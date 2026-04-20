@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { columnExists } from '@/lib/prisma-column-exists';
 
 const CATEGORY_TO_STATEMENT: Record<string, string> = {
   pnl: 'Profit & Loss',
@@ -43,11 +44,30 @@ export async function GET(
   // picklists managed in the admin FS Options modal). We fall back to
   // the legacy parent hierarchy + fsCategory for rows that haven't
   // been migrated yet.
-  const fsLines = await prisma.methodologyFsLine.findMany({
-    where: { firmId, isActive: true },
-    include: { parent: { select: { id: true, name: true, fsCategory: true } } },
-    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-  });
+  const [hasLevelName, hasStatementName] = await Promise.all([
+    columnExists('methodology_fs_lines', 'fs_level_name'),
+    columnExists('methodology_fs_lines', 'fs_statement_name'),
+  ]);
+  const rawFsLines = (hasLevelName && hasStatementName)
+    ? await prisma.methodologyFsLine.findMany({
+        where: { firmId, isActive: true },
+        include: { parent: { select: { id: true, name: true, fsCategory: true } } },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      })
+    : await prisma.methodologyFsLine.findMany({
+        where: { firmId, isActive: true },
+        select: {
+          id: true, name: true, lineType: true, fsCategory: true,
+          sortOrder: true, isActive: true, isMandatory: true, parentFsLineId: true,
+          parent: { select: { id: true, name: true, fsCategory: true } },
+        },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      });
+  const fsLines = rawFsLines.map(l => ({
+    ...(l as Record<string, unknown>),
+    fsLevelName: (l as Record<string, unknown>).fsLevelName ?? null,
+    fsStatementName: (l as Record<string, unknown>).fsStatementName ?? null,
+  })) as unknown as Array<typeof rawFsLines[number] & { fsLevelName: string | null; fsStatementName: string | null }>;
 
   // Load firm-wide option lists so the dropdowns include admin-defined
   // values even if no FS Line has been tagged with them yet.

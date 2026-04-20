@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { columnExists } from '@/lib/prisma-column-exists';
 
 /**
  * POST /api/engagements/[engagementId]/par/send-rmm
@@ -96,6 +97,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       updated++;
       updatedLineItems.push(lineItem);
     } else {
+      const hasSource = await columnExists('audit_rmm_rows', 'source');
       await prisma.auditRMMRow.create({
         data: {
           engagementId,
@@ -107,7 +109,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           fsStatement,
           fsLevel,
           fsNote,
-          source: 'par',
+          ...(hasSource ? { source: 'par' } : {}),
         },
       });
       created++;

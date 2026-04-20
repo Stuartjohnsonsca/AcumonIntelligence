@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import OpenAI from 'openai';
 import { buildCorpusForFirm, findCanonical, topExamples, normaliseDescription } from '@/lib/tb-ai-corpus';
+import { columnExists } from '@/lib/prisma-column-exists';
 
 export const maxDuration = 120; // Allow up to 2 minutes for large TB classification
 
@@ -184,11 +185,30 @@ export async function POST(
       // Statement are looked up from the matched row's fsLevelName +
       // fsStatementName fields, so the model never needs to guess
       // those (and can't drift from the firm's configured hierarchy).
-      const fsLines = await prisma.methodologyFsLine.findMany({
-        where: { firmId, isActive: true },
-        include: { parent: { select: { id: true, name: true, fsCategory: true } } },
-        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-      });
+      const [hasLevelName, hasStatementName] = await Promise.all([
+        columnExists('methodology_fs_lines', 'fs_level_name'),
+        columnExists('methodology_fs_lines', 'fs_statement_name'),
+      ]);
+      const rawFsLines = (hasLevelName && hasStatementName)
+        ? await prisma.methodologyFsLine.findMany({
+            where: { firmId, isActive: true },
+            include: { parent: { select: { id: true, name: true, fsCategory: true } } },
+            orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+          })
+        : await prisma.methodologyFsLine.findMany({
+            where: { firmId, isActive: true },
+            select: {
+              id: true, name: true, lineType: true, fsCategory: true,
+              sortOrder: true, isActive: true, isMandatory: true, parentFsLineId: true,
+              parent: { select: { id: true, name: true, fsCategory: true } },
+            },
+            orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+          });
+      const fsLines = rawFsLines.map(l => ({
+        ...(l as Record<string, unknown>),
+        fsLevelName: (l as Record<string, unknown>).fsLevelName ?? null,
+        fsStatementName: (l as Record<string, unknown>).fsStatementName ?? null,
+      })) as unknown as Array<typeof rawFsLines[number] & { fsLevelName: string | null; fsStatementName: string | null }>;
 
       // Render the candidate list with each note level's parent FS
       // Level + FS Statement so the model has enough context to pick
