@@ -98,12 +98,26 @@ export function GLReconcileModal({ engagementId, tbRows, checks, byAccount, onCl
     return claimed;
   }, [checks]);
 
+  // Map account code → TB description so the GL column can show the
+  // human-readable account name alongside the code. TB is the canonical
+  // source — if the GL has a code that isn't in TB (often the reason
+  // for a grey dot) we leave the description blank.
+  const codeToDescription = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of tbRows) {
+      if (r.accountCode && r.description && !m.has(r.accountCode)) {
+        m.set(r.accountCode, r.description);
+      }
+    }
+    return m;
+  }, [tbRows]);
+
   const glRows = useMemo(() => {
     return Object.entries(byAccount)
       .filter(([code, amt]) => !claimedGlCodes.has(code) && Math.abs(amt) > 0.005)
-      .map(([code, amt]) => ({ code, amount: amt }))
+      .map(([code, amt]) => ({ code, amount: amt, description: codeToDescription.get(code) || '' }))
       .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
-  }, [byAccount, claimedGlCodes]);
+  }, [byAccount, claimedGlCodes, codeToDescription]);
 
   // Auto-close when no outstanding rows remain
   useEffect(() => {
@@ -262,12 +276,13 @@ export function GLReconcileModal({ engagementId, tbRows, checks, byAccount, onCl
                     <thead className="sticky top-0 bg-white border-b border-slate-200">
                       <tr className="text-[10px] text-slate-500">
                         <th className="w-8 px-1 py-1"></th>
-                        <th className="text-left px-2 py-1">GL Code</th>
+                        <th className="text-left px-2 py-1">Code</th>
+                        <th className="text-left px-2 py-1">Description</th>
                         <th className="text-right px-2 py-1">Net movement</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {glRows.map(({ code, amount }) => {
+                      {glRows.map(({ code, amount, description }) => {
                         const selected = selectedGlCodes.has(code);
                         return (
                           <tr
@@ -279,13 +294,16 @@ export function GLReconcileModal({ engagementId, tbRows, checks, byAccount, onCl
                               <input type="checkbox" checked={selected} onChange={() => toggleGl(code)} className="w-3.5 h-3.5" />
                             </td>
                             <td className="px-2 py-1 font-mono text-slate-700">{code}</td>
+                            <td className="px-2 py-1 text-slate-600 truncate max-w-[220px]" title={description || 'Not in TB'}>
+                              {description || <span className="text-slate-300 italic">Not in TB</span>}
+                            </td>
                             <td className="px-2 py-1 text-right font-mono text-slate-700">{fmt(amount)}</td>
                           </tr>
                         );
                       })}
                       {glRows.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="px-4 py-6 text-center text-slate-400 italic">No unmatched GL codes.</td>
+                          <td colSpan={4} className="px-4 py-6 text-center text-slate-400 italic">No unmatched GL codes.</td>
                         </tr>
                       )}
                     </tbody>
