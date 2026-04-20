@@ -116,6 +116,15 @@ export default function PortalLoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to reset password');
+      // The email-based reset code has already proven possession of
+      // the account's inbox — that's the same signal the login 2FA
+      // code would re-establish. So if the server returned a session
+      // token, sign the user straight in rather than sending them
+      // back to re-type the password + wait for another email code.
+      if (data.token) {
+        window.location.href = `/portal/dashboard?token=${data.token}`;
+        return;
+      }
       setStep('reset_done');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reset password');

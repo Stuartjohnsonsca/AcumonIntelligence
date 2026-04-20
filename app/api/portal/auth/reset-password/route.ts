@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { sendPortalPasswordResetCode } from '@/lib/email-portal';
+import { issuePortalSessionToken } from '@/lib/portal-session';
 
 /**
  * POST /api/portal/auth/reset-password
@@ -142,7 +143,21 @@ export async function POST(req: Request) {
         data: { passwordHash },
       });
 
-      return NextResponse.json({ success: true, message: 'Password reset successfully' });
+      // The 6-digit reset code (step 1) was delivered to the user's
+      // email, and completing step 2 proved they received it. That's
+      // the same proof-of-email the login 2FA flow provides, so there
+      // is no incremental security in making the user re-authenticate
+      // with a fresh code. Issue a session token here so the reset
+      // page can redirect straight to the portal — single round-trip
+      // instead of email → reset → email → verify → portal.
+      const issued = await issuePortalSessionToken(user.id);
+
+      return NextResponse.json({
+        success: true,
+        message: 'Password reset successfully',
+        token: issued?.token,
+        user: { id: user.id, email: user.email, name: user.name, clientId: user.clientId },
+      });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
