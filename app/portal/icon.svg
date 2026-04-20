@@ -1,11 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="20 25 40 40">
-  <!-- Portal-specific favicon: three dark rounded squares arranged
-       top-left, top-right, bottom-left — giving a "P"-ish silhouette
-       so the client portal tab is visually distinguishable from the
-       other Acumon apps (which use only the top-right + bottom-left
-       pair). Bottom-right is intentionally left empty as the
-       "counter" that makes the P-shape read. -->
-  <path fill="#1e3a5f" d="M27.6,29.8h11.2c1.1,0,2.1.9,2.1,2.1v11.3c0,1.1-.9,2.1-2.1,2.1h-11.2c-1.1,0-2.1-.9-2.1-2.1v-11.3c0-1.1.9-2.1,2.1-2.1Z"/>
+  <!-- Portal-specific favicon. Same 2×2 grid geometry as the other
+       Acumon favicons, just with an extra dark rounded square in the
+       top-left position so three of the four quadrants are filled —
+       forming a P-ish silhouette. Each square is written in the same
+       counter-clockwise style (M<top-right> h-11.2 …) as the existing
+       two so the corner radii, gaps, and rounded-meeting-points align
+       exactly with the main favicon. -->
+  <path fill="#1e3a5f" d="M38.8,29.8h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
   <path fill="#1e3a5f" d="M38.8,45.2h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
   <path fill="#1e3a5f" d="M54.1,29.8h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
 </svg>

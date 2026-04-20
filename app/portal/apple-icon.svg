@@ -1,6 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="20 25 40 40">
-  <!-- Portal-specific apple touch icon. See icon.svg for the rationale. -->
-  <path fill="#1e3a5f" d="M27.6,29.8h11.2c1.1,0,2.1.9,2.1,2.1v11.3c0,1.1-.9,2.1-2.1,2.1h-11.2c-1.1,0-2.1-.9-2.1-2.1v-11.3c0-1.1.9-2.1,2.1-2.1Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="15 22 48 45">
+  <!-- Portal apple-touch icon. Matches app/apple-icon.svg's viewBox +
+       background rect so aspect and padding are identical, just with
+       three dark squares instead of two. Paths use the same
+       counter-clockwise style as the main Acumon icons so the
+       corner radii and gaps render identically. -->
+  <rect width="78" height="89" rx="12" fill="#ffffff" x="15" y="22"/>
+  <path fill="#1e3a5f" d="M38.8,29.8h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
   <path fill="#1e3a5f" d="M38.8,45.2h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
   <path fill="#1e3a5f" d="M54.1,29.8h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
 </svg>
