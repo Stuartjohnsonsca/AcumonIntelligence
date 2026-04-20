@@ -57,29 +57,42 @@ export async function resolvePortalUserFromToken(token: string | null | undefine
   return user || null;
 }
 
-/** Generate a new opaque session token and persist it on the user. */
+/** Generate a new opaque session token and persist it on the user.
+ *  Robust to a partially-applied migration: checks both new columns
+ *  independently and only writes the ones that exist. If neither
+ *  exists, the token is returned without a DB write (client still gets
+ *  the token; resolvePortalUserFromToken will deny until migration
+ *  completes). A DB error on the write is swallowed — we still return
+ *  the token so the login/reset flow doesn't fail on a partial DB state. */
 export async function issuePortalSessionToken(userId: string): Promise<{ token: string; expiresAt: Date } | null> {
   const token = crypto.randomBytes(48).toString('hex');
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
-  const hasSessionToken = await columnExists('client_portal_users', 'session_token');
-  if (!hasSessionToken) {
-    // Migration not yet run — return the token anyway so the login
-    // flow completes (client stores it, 2FA mail still goes out), but
-    // don't attempt to write columns that don't exist. The
-    // resolvePortalUserFromToken path will deny all authenticated
-    // requests until the SQL is applied — login is rate-limited by
-    // 2FA so there's no security regression.
+  const [hasSessionToken, hasSessionExpires] = await Promise.all([
+    columnExists('client_portal_users', 'session_token'),
+    columnExists('client_portal_users', 'session_expires_at'),
+  ]);
+
+  if (!hasSessionToken && !hasSessionExpires) {
     return { token, expiresAt };
   }
+
+  // Build the update payload from whichever new columns actually exist
+  // in the DB. lastLoginAt is part of the original schema and always
+  // safe to write — it doubles as a "reset happened" signal in the
+  // rare case neither session column is present yet.
+  const data: Record<string, unknown> = { lastLoginAt: new Date() };
+  if (hasSessionToken) data.sessionToken = token;
+  if (hasSessionExpires) data.sessionExpiresAt = expiresAt;
+
   try {
-    await prisma.clientPortalUser.update({
-      where: { id: userId },
-      data: { sessionToken: token, sessionExpiresAt: expiresAt, lastLoginAt: new Date() },
-    });
-    return { token, expiresAt };
-  } catch {
-    return null;
+    await prisma.clientPortalUser.update({ where: { id: userId }, data: data as any });
+  } catch (err) {
+    console.error('[portal-session] issuePortalSessionToken update failed:', (err as any)?.message || err);
+    // Deliberately swallow — we don't want a DB hiccup to break
+    // login / reset flows. The caller will decide what to do with
+    // the returned token.
   }
+  return { token, expiresAt };
 }
 
 /** Revoke the current session token for a user (log-off). Best-effort. */

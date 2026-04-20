@@ -144,25 +144,44 @@ export async function POST(req: Request) {
       });
 
       // The 6-digit reset code (step 1) was delivered to the user's
-      // email, and completing step 2 proved they received it. That's
-      // the same proof-of-email the login 2FA flow provides, so there
-      // is no incremental security in making the user re-authenticate
-      // with a fresh code. Issue a session token here so the reset
-      // page can redirect straight to the portal — single round-trip
-      // instead of email → reset → email → verify → portal.
-      const issued = await issuePortalSessionToken(user.id);
+      // email, and completing step 2 proved they received it. That
+      // gives the same proof-of-email the login 2FA flow provides,
+      // so there's no security value in making the user re-authenticate
+      // with a fresh code — we issue a session token here so the
+      // reset page can redirect straight to the portal.
+      //
+      // The attempt is wrapped in its OWN try/catch so a DB hiccup
+      // issuing the token never rolls back the successful password
+      // reset; in that case the client just falls back to the normal
+      // login flow, which is the prior behaviour.
+      let issuedToken: string | undefined;
+      try {
+        const issued = await issuePortalSessionToken(user.id);
+        issuedToken = issued?.token;
+      } catch (tokenErr) {
+        console.error('[Portal Reset] issuePortalSessionToken failed after successful password reset:', tokenErr);
+      }
 
       return NextResponse.json({
         success: true,
         message: 'Password reset successfully',
-        token: issued?.token,
+        token: issuedToken,
         user: { id: user.id, email: user.email, name: user.name, clientId: user.clientId },
       });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
-  } catch (error) {
-    console.error('Password reset error:', error);
-    return NextResponse.json({ error: 'Password reset failed' }, { status: 500 });
+  } catch (error: any) {
+    console.error('[Portal Reset] error in action handler:', {
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta,
+      stack: error?.stack,
+    });
+    return NextResponse.json({
+      error: 'Password reset failed',
+      detail: error?.message || 'unknown error',
+      code: error?.code || null,
+    }, { status: 500 });
   }
 }
