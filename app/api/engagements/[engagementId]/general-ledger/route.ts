@@ -6,6 +6,34 @@ import { parseGlCsv, parseGlExcel, aggregateGlByAccount, type GlLine } from '@/l
 import { validateTbAgainstGl, type TbRowForValidation } from '@/lib/general-ledger-validator';
 
 const SECTION_KEY = 'general_ledger';
+// Reviewer-asserted agreement overrides — a set of TB row IDs that the
+// auditor has manually reconciled via the GL Reconcile modal. Stored
+// separately from the main GL metadata so we can wipe it cleanly when
+// a fresh G/L is uploaded (a new GL invalidates prior reconciliations).
+const OVERRIDES_SECTION_KEY = 'general_ledger_overrides';
+
+async function loadOverrides(engagementId: string): Promise<Set<string>> {
+  const row = await prisma.auditPermanentFile.findUnique({
+    where: { engagementId_sectionKey: { engagementId, sectionKey: OVERRIDES_SECTION_KEY } },
+  }).catch(() => null);
+  const data = (row?.data as any) || {};
+  const ids = Array.isArray(data?.rowIds) ? data.rowIds as string[] : [];
+  return new Set(ids);
+}
+
+async function saveOverrides(engagementId: string, overrides: Set<string>, byName?: string | null, byId?: string | null) {
+  const data = {
+    rowIds: Array.from(overrides),
+    updatedAt: new Date().toISOString(),
+    updatedByName: byName || null,
+    updatedById: byId || null,
+  };
+  await prisma.auditPermanentFile.upsert({
+    where: { engagementId_sectionKey: { engagementId, sectionKey: OVERRIDES_SECTION_KEY } },
+    create: { engagementId, sectionKey: OVERRIDES_SECTION_KEY, data: data as object },
+    update: { data: data as object },
+  });
+}
 
 interface GlMetadata {
   storagePath?: string;
@@ -67,20 +95,32 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     }
   } catch { /* ignore — download URL is optional */ }
 
-  // Validate TB against the stored GL summary, if present
+  // Validate TB against the stored GL summary, if present. Any row IDs
+  // in the overrides set have been manually reconciled by the auditor
+  // and are force-marked green — the raw calculation stays in the
+  // tooltip so reviewers can see what was asserted.
   let checks: ReturnType<typeof validateTbAgainstGl> = [];
+  const overrides = await loadOverrides(engagementId);
   if (meta.parsedSummary?.byAccount) {
     const tbRows = await prisma.auditTBRow.findMany({
       where: { engagementId },
       select: { id: true, accountCode: true, description: true, fsStatement: true, fsLevel: true, currentYear: true, priorYear: true },
     });
     checks = validateTbAgainstGl(tbRows as TbRowForValidation[], meta.parsedSummary.byAccount);
+    for (const c of checks) {
+      if (overrides.has(c.rowId) && c.status !== 'green') {
+        c.status = 'green';
+        c.message = `Reconciled by auditor — original check: ${c.message}`;
+      }
+    }
   }
 
   return NextResponse.json({
     metadata: meta,
     downloadUrl,
     checks,
+    byAccount: meta.parsedSummary?.byAccount || {},
+    overrides: Array.from(overrides),
     period: engagement.period,
   });
 }
@@ -163,6 +203,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       },
     };
     await saveMetadata(engagementId, meta);
+    // A new GL invalidates all prior reconciliations — the auditor's
+    // "agreed" assertion was made against old numbers.
+    await saveOverrides(engagementId, new Set(), session.user.name, session.user.id);
 
     // Run validation immediately so the response has fresh dots
     const tbRows = await prisma.auditTBRow.findMany({
@@ -207,7 +250,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   if (body.action === 'clear') {
     await saveMetadata(engagementId, {});
+    await saveOverrides(engagementId, new Set(), session.user.name, session.user.id);
     return NextResponse.json({ success: true });
+  }
+
+  // Reconcile — record that the auditor has asserted a group of TB
+  // rows agrees to the GL (after manually grouping/tagging across the
+  // Reconcile modal). The rowIds are added to the override set and
+  // their dots flip to green on the next GET / refresh.
+  if (body.action === 'reconcile') {
+    const rowIds = Array.isArray(body.rowIds) ? (body.rowIds as string[]).filter(id => typeof id === 'string' && id) : [];
+    if (rowIds.length === 0) return NextResponse.json({ error: 'rowIds required' }, { status: 400 });
+    const current = await loadOverrides(engagementId);
+    for (const id of rowIds) current.add(id);
+    await saveOverrides(engagementId, current, session.user.name, session.user.id);
+    return NextResponse.json({ success: true, overrides: Array.from(current) });
+  }
+
+  if (body.action === 'unreconcile') {
+    const rowIds = Array.isArray(body.rowIds) ? (body.rowIds as string[]).filter(id => typeof id === 'string' && id) : [];
+    if (rowIds.length === 0) return NextResponse.json({ error: 'rowIds required' }, { status: 400 });
+    const current = await loadOverrides(engagementId);
+    for (const id of rowIds) current.delete(id);
+    await saveOverrides(engagementId, current, session.user.name, session.user.id);
+    return NextResponse.json({ success: true, overrides: Array.from(current) });
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

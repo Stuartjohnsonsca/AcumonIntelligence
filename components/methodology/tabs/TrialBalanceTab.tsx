@@ -6,6 +6,7 @@ import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 
 const FixedAssetRegisterPopup = lazy(() => import('../FixedAssetRegisterPopup').then(m => ({ default: m.FixedAssetRegisterPopup })));
 const GeneralLedgerModal = lazy(() => import('../GeneralLedgerModal').then(m => ({ default: m.GeneralLedgerModal })));
+const GLReconcileModal = lazy(() => import('../GLReconcileModal').then(m => ({ default: m.GLReconcileModal })));
 
 interface GlCheckResult {
   rowId: string;
@@ -950,9 +951,11 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
 
   // General Ledger upload + per-row reconciliation
   const [showGlModal, setShowGlModal] = useState(false);
+  const [showGlReconcile, setShowGlReconcile] = useState(false);
   const [glMetadata, setGlMetadata] = useState<GlMetadata | null>(null);
   const [glDownloadUrl, setGlDownloadUrl] = useState<string | null>(null);
   const [glChecks, setGlChecks] = useState<Map<string, GlCheckResult>>(new Map());
+  const [glByAccount, setGlByAccount] = useState<Record<string, number>>({});
 
   const loadGl = useCallback(async () => {
     try {
@@ -961,6 +964,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       const data = await res.json();
       setGlMetadata(data.metadata || null);
       setGlDownloadUrl(data.downloadUrl || null);
+      setGlByAccount(data.byAccount || {});
       const map = new Map<string, GlCheckResult>();
       for (const c of (data.checks || [])) map.set(c.rowId, c);
       setGlChecks(map);
@@ -1388,6 +1392,22 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
               📎 {glMetadata.fileName}
             </a>
           )}
+          {(() => {
+            // Count outstanding (red + grey) dots — the Reconcile modal
+            // is only meaningful when there's something to resolve.
+            let outstanding = 0;
+            glChecks.forEach(c => { if (c.status !== 'green') outstanding++; });
+            if (outstanding === 0) return null;
+            return (
+              <button
+                onClick={() => setShowGlReconcile(true)}
+                className="text-xs px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 font-medium"
+                title="Group TB rows and GL codes to reconcile grey / red dots. Commit flips them green."
+              >
+                🧩 Reconcile G/L ({outstanding})
+              </button>
+            );
+          })()}
           <button
             onClick={exportCSV}
             className="text-xs px-3 py-1 bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 font-medium"
@@ -1967,6 +1987,26 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             engagementId={engagementId}
             onClose={() => setShowGlModal(false)}
             onSuccess={loadGl}
+          />
+        </Suspense>
+      )}
+
+      {showGlReconcile && (
+        <Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-blue-500" /></div>}>
+          <GLReconcileModal
+            engagementId={engagementId}
+            tbRows={rows.map(r => ({
+              id: r.id,
+              accountCode: r.accountCode || '',
+              description: r.description || '',
+              fsStatement: r.fsStatement || null,
+              currentYear: r.currentYear,
+              priorYear: r.priorYear,
+            }))}
+            checks={Array.from(glChecks.values())}
+            byAccount={glByAccount}
+            onClose={() => setShowGlReconcile(false)}
+            onCommitted={() => loadGl()}
           />
         </Suspense>
       )}
