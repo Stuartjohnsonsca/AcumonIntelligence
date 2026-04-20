@@ -16,7 +16,47 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const token = searchParams.get('token');
   const { user: me, reason } = await resolvePortalUserFromTokenDetailed(token);
-  if (!me) return NextResponse.json({ error: 'Invalid or expired session', reason }, { status: 401 });
+  if (!me) {
+    // Extra diagnostic — why couldn't we resolve the token?
+    // Surface the DB-side signal so the root cause is visible in the
+    // browser network tab. Only revealed on 401, so no user data leaks.
+    const diag: Record<string, unknown> = { reason };
+    try {
+      const colCheck = await prisma.$queryRaw<Array<{ session_token_exists: boolean; session_expires_at_exists: boolean }>>`
+        SELECT
+          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name = 'client_portal_users' AND column_name = 'session_token') AS session_token_exists,
+          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name = 'client_portal_users' AND column_name = 'session_expires_at') AS session_expires_at_exists
+      `;
+      diag.sessionTokenColumn = colCheck[0]?.session_token_exists ?? null;
+      diag.sessionExpiresAtColumn = colCheck[0]?.session_expires_at_exists ?? null;
+    } catch (e) {
+      diag.columnCheckError = (e as any)?.message || 'unknown';
+    }
+    if (diag.sessionTokenColumn) {
+      try {
+        // How many rows have ANY non-null session_token? Non-zero
+        // means persistence is working for somebody even if not for
+        // this caller.
+        const withToken = await prisma.clientPortalUser.count({ where: { sessionToken: { not: null } } });
+        diag.rowsWithAnyToken = withToken;
+        // Is THIS token in the DB (without the isActive filter)?
+        if (token && typeof token === 'string' && token.length >= 16) {
+          const thisToken = await prisma.clientPortalUser.findFirst({
+            where: { sessionToken: token },
+            select: { id: true, isActive: true, sessionExpiresAt: true },
+          });
+          diag.thisTokenFound = !!thisToken;
+          if (thisToken) {
+            diag.thisTokenUserActive = thisToken.isActive;
+            diag.thisTokenExpiresAt = thisToken.sessionExpiresAt?.toISOString() || null;
+          }
+        }
+      } catch (e) {
+        diag.rowQueryError = (e as any)?.message || 'unknown';
+      }
+    }
+    return NextResponse.json({ error: 'Invalid or expired session', ...diag }, { status: 401 });
+  }
 
   // Every ClientPortalUser row is scoped to one (clientId, email) pair.
   // A real person with access to multiple clients has multiple rows —
