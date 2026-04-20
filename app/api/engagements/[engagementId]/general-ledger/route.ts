@@ -164,13 +164,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
 
   if (body.action === 'request') {
     // Create a portal request that the client can respond to with the GL file
+    // section MUST be one of the portal's recognised section values
+    // (see components/portal/OutstandingTab.tsx SECTIONS). Anything else is
+    // silently dropped from the portal UI even though the row exists in DB.
+    // The G/L is evidence, so it lives in the Evidence section card; the
+    // 'general_ledger' evidenceTag categorises it within that card.
     const portalRequest = await prisma.portalRequest.create({
       data: {
         clientId: engagement.clientId,
         engagementId,
         requestedById: session.user.id,
         requestedByName: session.user.name || session.user.email || 'Audit Team',
-        section: 'trial_balance',
+        section: 'evidence',
         // Title-style prefix in question — surfaces in the portal as the request label.
         question: body.message || '[General Ledger] Please upload the General Ledger for the audit period — full transaction listing per account (date, account code, debit, credit).',
         evidenceTag: 'general_ledger',
