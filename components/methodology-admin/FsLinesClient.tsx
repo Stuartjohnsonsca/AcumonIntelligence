@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useMemo, useRef } from 'react';
-import { Download, Upload } from 'lucide-react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { Download, Upload, Settings } from 'lucide-react';
 
 interface FsLine {
   id: string;
   name: string;
   lineType: string;
   fsCategory: string;
+  fsLevelName: string | null;
+  fsStatementName: string | null;
   sortOrder: number;
   isActive: boolean;
   isMandatory: boolean;
@@ -64,6 +66,31 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
   const [loadingTaxonomy, setLoadingTaxonomy] = useState(false);
   const fsLineFileRef = useRef<HTMLInputElement>(null);
   const mappingFileRef = useRef<HTMLInputElement>(null);
+
+  // Firm-wide option lists that drive the FS Level + FS Statement
+  // dropdowns. Loaded from /api/methodology-admin/fs-options; admins
+  // manage the lists via the "Manage options" modal.
+  const [statementOptions, setStatementOptions] = useState<string[]>([]);
+  const [levelOptions, setLevelOptions] = useState<{ name: string; statementName: string }[]>([]);
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
+  const [savingOptions, setSavingOptions] = useState(false);
+  useEffect(() => {
+    fetch('/api/methodology-admin/fs-options').then(r => r.ok ? r.json() : null).then(d => {
+      if (d) {
+        setStatementOptions(Array.isArray(d.statementOptions) ? d.statementOptions : []);
+        setLevelOptions(Array.isArray(d.levelOptions) ? d.levelOptions : []);
+      }
+    }).catch(() => {});
+  }, []);
+  async function saveOptions(next: { statementOptions?: string[]; levelOptions?: { name: string; statementName: string }[] }) {
+    setSavingOptions(true);
+    try {
+      await fetch('/api/methodology-admin/fs-options', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next),
+      });
+    } finally { setSavingOptions(false); }
+  }
+
   const sortedNonMandatory = useMemo(() => {
     return fsLines.filter(f => !f.isMandatory);
   }, [fsLines]);
@@ -330,6 +357,11 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50">
                 {populating ? 'Populating...' : 'Populate from Taxonomy'}
               </button>
+              <button onClick={() => setShowOptionsModal(true)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50"
+                title="Manage the firm-wide FS Level + FS Statement option lists">
+                <Settings className="h-3.5 w-3.5" /> Manage options
+              </button>
               <button onClick={() => { setShowAdd(true); loadTaxonomyItems(); }} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                 + Add from Taxonomy
               </button>
@@ -434,17 +466,16 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
             <thead>
               <tr className="bg-slate-100 border-b border-slate-200">
                 <th className="text-center px-2 py-2.5 text-slate-600 font-semibold w-12">Order</th>
-                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold">Name</th>
-                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">Type</th>
-                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">
+                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold">FS Note Level Name</th>
+                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-48">FS Level</th>
+                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-44">
                   <button onClick={sortByCategory}
                     className="flex items-center gap-1 hover:text-blue-600 transition-colors"
-                    title="Sort by FS Category (P&L → Balance Sheet → Cashflow → Notes) and renumber">
-                    FS Category
+                    title="Sort by FS Statement and renumber">
+                    FS Statement
                     <span className="text-[10px] text-slate-400">⇅</span>
                   </button>
                 </th>
-                <th className="text-left px-4 py-2.5 text-slate-600 font-semibold w-36">Parent</th>
                 <th className="text-center px-4 py-2.5 text-slate-600 font-semibold w-24">Industries</th>
                 <th className="text-center px-4 py-2.5 text-slate-600 font-semibold w-20">Actions</th>
               </tr>
@@ -457,36 +488,35 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                       <td className="text-center px-2 py-2 text-slate-400 text-xs">{idx + 1}</td>
                       <td className="px-4 py-2">
                         <input value={editName} onChange={e => setEditName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveEdit()}
-                          className="w-full border border-blue-300 rounded px-2 py-1 text-sm" autoFocus />
+                          className="w-full border border-blue-300 rounded px-2 py-1 text-sm" autoFocus placeholder="FS Note Level name (e.g. Trade Debtors)" />
                       </td>
                       <td className="px-4 py-2">
-                        <select value={editLineType} onChange={e => setEditLineType(e.target.value)}
-                          className="border border-blue-300 rounded px-2 py-1 text-sm">
-                          {LINE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        <select
+                          value={line.fsLevelName || ''}
+                          onChange={async e => {
+                            const nextLevel = e.target.value || null;
+                            const mapped = levelOptions.find(l => l.name === nextLevel)?.statementName || null;
+                            await updateFsLine(line.id, { fsLevelName: nextLevel, ...(mapped ? { fsStatementName: mapped } : {}) } as any);
+                          }}
+                          className="border border-blue-300 rounded px-2 py-1 text-xs w-full">
+                          <option value="">— FS Level —</option>
+                          {levelOptions.map(l => <option key={l.name} value={l.name}>{l.name}</option>)}
+                          {line.fsLevelName && !levelOptions.some(l => l.name === line.fsLevelName) && (
+                            <option value={line.fsLevelName}>{line.fsLevelName} (legacy)</option>
+                          )}
                         </select>
                       </td>
                       <td className="px-4 py-2">
-                        <select value={editCategory} onChange={e => setEditCategory(e.target.value)}
-                          className="border border-blue-300 rounded px-2 py-1 text-sm">
-                          {FS_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                        <select
+                          value={line.fsStatementName || ''}
+                          onChange={async e => { await updateFsLine(line.id, { fsStatementName: e.target.value || null } as any); }}
+                          className="border border-blue-300 rounded px-2 py-1 text-xs w-full">
+                          <option value="">— FS Statement —</option>
+                          {statementOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                          {line.fsStatementName && !statementOptions.includes(line.fsStatementName) && (
+                            <option value={line.fsStatementName}>{line.fsStatementName} (legacy)</option>
+                          )}
                         </select>
-                      </td>
-                      <td className="px-4 py-2">
-                        {editLineType === 'note_item' ? (
-                          <select value={line.parentFsLineId || ''} onChange={async e => {
-                            const parentId = e.target.value || null;
-                            await fetch('/api/methodology-admin/fs-lines', {
-                              method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ id: line.id, parentFsLineId: parentId }),
-                            });
-                            setFsLines(prev => prev.map(l => l.id === line.id ? { ...l, parentFsLineId: parentId, parent: parentId ? fsLines.find(f => f.id === parentId) ? { id: parentId, name: fsLines.find(f => f.id === parentId)!.name } : null : null } : l));
-                          }} className="border border-blue-300 rounded px-2 py-1 text-xs w-full">
-                            <option value="">—</option>
-                            {fsLines.filter(l => l.lineType === 'fs_line_item' && l.isActive).map(l => (
-                              <option key={l.id} value={l.id}>{l.name}</option>
-                            ))}
-                          </select>
-                        ) : <span className="text-xs text-slate-300">—</span>}
                       </td>
                       <td className="text-center px-4 py-2">
                         <span className="text-xs text-slate-400">{line.industryMappings.length}</span>
@@ -511,25 +541,37 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                         {line.name}
                         {line.isMandatory && <span className="ml-2 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Mandatory</span>}
                       </td>
-                      <td className="px-4 py-2.5 text-slate-600">
-                        {LINE_TYPES.find(t => t.value === line.lineType)?.label || line.lineType}
+                      <td className="px-4 py-2.5">
+                        <select
+                          value={line.fsLevelName || ''}
+                          onChange={async e => {
+                            const nextLevel = e.target.value || null;
+                            const mapped = levelOptions.find(l => l.name === nextLevel)?.statementName || null;
+                            await updateFsLine(line.id, { fsLevelName: nextLevel, ...(mapped ? { fsStatementName: mapped } : {}) } as any);
+                          }}
+                          className="w-full border border-slate-200 rounded px-2 py-1 text-xs bg-white focus:border-blue-400 focus:outline-none">
+                          <option value="">—</option>
+                          {levelOptions.map(l => <option key={l.name} value={l.name}>{l.name}</option>)}
+                          {line.fsLevelName && !levelOptions.some(l => l.name === line.fsLevelName) && (
+                            <option value={line.fsLevelName}>{line.fsLevelName} (legacy)</option>
+                          )}
+                        </select>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-600">
-                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                          line.fsCategory === 'pnl' ? 'bg-green-50 text-green-700' :
-                          line.fsCategory === 'balance_sheet' ? 'bg-blue-50 text-blue-700' :
-                          line.fsCategory === 'cashflow' ? 'bg-purple-50 text-purple-700' :
-                          'bg-slate-100 text-slate-600'
-                        }`}>
-                          {FS_CATEGORIES.find(c => c.value === line.fsCategory)?.label || line.fsCategory}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-slate-500">
-                        {line.parent?.name || (line.lineType === 'note_item' ? <span className="text-slate-300 italic">Not set</span> : <span className="text-slate-300">—</span>)}
+                      <td className="px-4 py-2.5">
+                        <select
+                          value={line.fsStatementName || ''}
+                          onChange={async e => { await updateFsLine(line.id, { fsStatementName: e.target.value || null } as any); }}
+                          className="w-full border border-slate-200 rounded px-2 py-1 text-xs bg-white focus:border-blue-400 focus:outline-none">
+                          <option value="">—</option>
+                          {statementOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                          {line.fsStatementName && !statementOptions.includes(line.fsStatementName) && (
+                            <option value={line.fsStatementName}>{line.fsStatementName} (legacy)</option>
+                          )}
+                        </select>
                       </td>
                       <td className="text-center px-4 py-2.5 text-slate-500 text-xs">{line.industryMappings.length}</td>
                       <td className="text-center px-4 py-2.5">
-                        <button onClick={() => startEdit(line)} className="text-xs text-blue-500 hover:text-blue-700 mr-2" title="Edit">✏️</button>
+                        <button onClick={() => startEdit(line)} className="text-xs text-blue-500 hover:text-blue-700 mr-2" title="Edit name">✏️</button>
                         {!line.isMandatory && (
                           <button onClick={() => deleteFsLine(line.id)} className="text-xs text-red-400 hover:text-red-600" title="Delete">×</button>
                         )}
@@ -539,7 +581,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 </tr>
               ))}
               {fsLines.length === 0 && (
-                <tr><td colSpan={6} className="text-center py-8 text-slate-400 italic">No FS lines defined. Click &quot;+ Add FS Line&quot; to start.</td></tr>
+                <tr><td colSpan={6} className="text-center py-8 text-slate-400 italic">No FS Note Levels defined. Click &quot;+ Add from Taxonomy&quot; or upload a template to start.</td></tr>
               )}
             </tbody>
           </table>
@@ -613,6 +655,76 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
         ★ Mandatory lines (Going Concern, Management Override, Notes &amp; Disclosures) cannot be deleted.
         Green checkmarks in the Industry Mapping indicate the FS line is available for that industry.
       </p>
+
+      {/* Manage-options modal — edits the firm-wide FS Level + FS Statement
+          pick-lists that drive the dropdowns above. Stored in
+          MethodologyRiskTable (tableType: fs_statement_options / fs_level_options). */}
+      {showOptionsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4" onClick={() => !savingOptions && setShowOptionsModal(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                <Settings className="h-4 w-4 text-blue-600" /> FS Level &amp; FS Statement options
+              </h3>
+              <button onClick={() => setShowOptionsModal(false)} disabled={savingOptions} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div className="p-5 grid grid-cols-2 gap-4">
+              {/* FS Statement options */}
+              <div>
+                <p className="text-xs font-semibold text-slate-700 mb-2">FS Statements</p>
+                <div className="space-y-1">
+                  {statementOptions.map((s, i) => (
+                    <div key={i} className="flex items-center gap-1">
+                      <input value={s} onChange={e => {
+                        const next = [...statementOptions]; next[i] = e.target.value; setStatementOptions(next);
+                      }} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs" />
+                      <button onClick={() => setStatementOptions(statementOptions.filter((_, j) => j !== i))}
+                        className="text-red-400 hover:text-red-600 text-xs px-1" title="Remove">×</button>
+                    </div>
+                  ))}
+                  <button onClick={() => setStatementOptions([...statementOptions, ''])}
+                    className="text-[11px] text-blue-600 hover:text-blue-800 mt-1">+ Add statement</button>
+                </div>
+              </div>
+              {/* FS Level options (each with linked FS Statement) */}
+              <div>
+                <p className="text-xs font-semibold text-slate-700 mb-2">FS Levels</p>
+                <div className="space-y-1">
+                  {levelOptions.map((l, i) => (
+                    <div key={i} className="flex items-center gap-1">
+                      <input value={l.name} onChange={e => {
+                        const next = [...levelOptions]; next[i] = { ...next[i], name: e.target.value }; setLevelOptions(next);
+                      }} placeholder="Level name" className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs" />
+                      <select value={l.statementName || ''} onChange={e => {
+                        const next = [...levelOptions]; next[i] = { ...next[i], statementName: e.target.value }; setLevelOptions(next);
+                      }} className="border border-slate-200 rounded px-1 py-1 text-xs bg-white">
+                        <option value="">— Statement —</option>
+                        {statementOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <button onClick={() => setLevelOptions(levelOptions.filter((_, j) => j !== i))}
+                        className="text-red-400 hover:text-red-600 text-xs px-1" title="Remove">×</button>
+                    </div>
+                  ))}
+                  <button onClick={() => setLevelOptions([...levelOptions, { name: '', statementName: '' }])}
+                    className="text-[11px] text-blue-600 hover:text-blue-800 mt-1">+ Add level</button>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t flex justify-end gap-2">
+              <button onClick={() => setShowOptionsModal(false)} disabled={savingOptions} className="text-sm px-3 py-1.5 text-slate-600 hover:text-slate-800">Cancel</button>
+              <button onClick={async () => {
+                await saveOptions({
+                  statementOptions: statementOptions.map(s => s.trim()).filter(Boolean),
+                  levelOptions: levelOptions.map(l => ({ name: l.name.trim(), statementName: l.statementName.trim() })).filter(l => l.name),
+                });
+                setShowOptionsModal(false);
+              }} disabled={savingOptions} className="text-sm px-4 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                {savingOptions ? 'Saving…' : 'Save options'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -178,76 +178,57 @@ export async function POST(
   // Process in background — continues even if user navigates away
   after(async () => {
     try {
-      // Load the firm's FS Lines hierarchy for context
+      // Load the firm's FS Lines hierarchy for context. Every row in
+      // MethodologyFsLine is now treated as an FS Note Level — the
+      // AI's only job is to pick the correct one. FS Level and FS
+      // Statement are looked up from the matched row's fsLevelName +
+      // fsStatementName fields, so the model never needs to guess
+      // those (and can't drift from the firm's configured hierarchy).
       const fsLines = await prisma.methodologyFsLine.findMany({
         where: { firmId, isActive: true },
         include: { parent: { select: { id: true, name: true, fsCategory: true } } },
         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       });
 
-      const fsLineItems = fsLines
-        .filter(l => l.lineType === 'fs_line_item')
-        .map(l => `${l.name} (${CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory})`);
-
-      const noteItems = fsLines
-        .filter(l => l.lineType === 'note_item')
-        .map(l => {
-          const parent = l.parent;
-          return `${l.name} → parent: ${parent?.name || 'none'} (${parent ? CATEGORY_TO_STATEMENT[parent.fsCategory] || parent.fsCategory : l.fsCategory})`;
-        });
+      // Render the candidate list with each note level's parent FS
+      // Level + FS Statement so the model has enough context to pick
+      // the right row without inventing new labels.
+      const noteLevelCatalogue = fsLines.map(l => {
+        const levelName = l.fsLevelName || l.parent?.name || '';
+        const statement = l.fsStatementName
+          || (l.parent ? (CATEGORY_TO_STATEMENT[l.parent.fsCategory] || l.parent.fsCategory) : (CATEGORY_TO_STATEMENT[l.fsCategory] || l.fsCategory));
+        const suffix = [levelName, statement].filter(Boolean).join(' · ');
+        return suffix ? `${l.name}  (${suffix})` : l.name;
+      });
 
       const systemPrompt = `You are a financial statement classification expert for UK statutory audits.
 
-Given trial balance account descriptions, classify each into:
-- fsNoteLevel: The specific note disclosure item (e.g. "Trade Debtors", "Revenue", "Depreciation")
-- fsLevel: The aggregated FS line item it belongs to (e.g. "Debtors", "Revenue", "Fixed Assets")
-- fsStatement: Which financial statement (exactly one of: "Profit & Loss", "Balance Sheet", "Cash Flow Statement")
+For each trial balance row, pick the **fsNoteLevel** that best matches. The FS Note Level must be copied verbatim from the firm's configured list below — do NOT invent new labels. The FS Level and FS Statement are determined automatically from the firm's configuration and do not need to be returned.
 
 CRITICAL — Accounting System Type OVERRIDES description:
 When a "Type" field is provided from the accounting system, it is the AUTHORITATIVE classification.
 The account description/name may be misleading — always trust the Type over the description.
-Key Type mappings:
-- Type: BANK → ALWAYS "Cash at Bank", fsStatement "Balance Sheet"
-- Type: REVENUE → ALWAYS Revenue, fsStatement "Profit & Loss"
-- Type: DIRECTCOSTS → ALWAYS Cost of Sales, fsStatement "Profit & Loss"
-- Type: EXPENSE or OVERHEADS → ALWAYS Expenses/Administrative Expenses, fsStatement "Profit & Loss"
-- Type: FIXED → ALWAYS Fixed Assets, fsStatement "Balance Sheet"
-- Type: CURRENT → ALWAYS Current Assets (Debtors), fsStatement "Balance Sheet"
-- Type: CURRLIAB → ALWAYS Current Liabilities (Creditors), fsStatement "Balance Sheet"
-- Type: TERMLIAB → ALWAYS Non-Current Liabilities, fsStatement "Balance Sheet"
-- Type: EQUITY → ALWAYS Capital & Reserves, fsStatement "Balance Sheet"
-- Type: OTHERINCOME → ALWAYS Other Income, fsStatement "Profit & Loss"
-- Type: INVENTORY → ALWAYS Stock/Inventory, fsStatement "Balance Sheet"
-- Type: PREPAYMENT → ALWAYS Prepayments (Debtors), fsStatement "Balance Sheet"
-- Type: DEPRECIATN → ALWAYS Depreciation, fsStatement "Profit & Loss"
-Also: accounts with NO account code (null/empty) are typically bank accounts in Xero.
+Key Type → preferred FS Note Level cues:
+- Type: BANK → a "Cash at bank" / "Cash and cash equivalents" style note level
+- Type: REVENUE → a Revenue / Turnover note level
+- Type: DIRECTCOSTS → a Cost of Sales note level
+- Type: EXPENSE / OVERHEADS → Administrative / Other expenses
+- Type: FIXED → Tangible fixed assets
+- Type: CURRENT → Debtors
+- Type: CURRLIAB → Creditors (due within one year)
+- Type: TERMLIAB → Creditors (due after more than one year)
+- Type: EQUITY → Capital & reserves
+- Type: OTHERINCOME → Other operating income
+- Type: INVENTORY → Stock / Inventory
+- Type: PREPAYMENT → Prepayments (within Debtors)
+- Type: DEPRECIATN → Depreciation charge (within Admin expenses)
+Accounts with NO account code (null/empty) are typically bank accounts in Xero.
 
-Additional description-based rules (only when Type is not provided):
-- Sales, revenue, turnover, fees, commissions → fsLevel "Revenue", fsStatement "Profit & Loss"
-- Cost of sales, direct costs, materials → fsLevel "Cost of Sales", fsStatement "Profit & Loss"
-- Wages, salaries, NI, pensions, staff costs → fsLevel "Administrative Expenses", fsStatement "Profit & Loss"
-- Rent, utilities, insurance, repairs, office costs → fsLevel "Administrative Expenses", fsStatement "Profit & Loss"
-- Depreciation CHARGE → fsLevel "Depreciation", fsStatement "Profit & Loss"
-- ACCUMULATED depreciation (contra asset) → fsLevel "Tangible Fixed Assets", fsStatement "Balance Sheet"
-- Interest, bank charges → fsLevel "Interest", fsStatement "Profit & Loss"
-- Tax, corporation tax → fsLevel "Taxation", fsStatement "Profit & Loss"
-- Trade debtors, prepayments, other debtors, VAT recoverable → fsLevel "Debtors", fsStatement "Balance Sheet"
-- Cash, bank → fsLevel "Cash at Bank", fsStatement "Balance Sheet"
-- Trade creditors, accruals, other creditors, VAT payable → fsLevel "Creditors", fsStatement "Balance Sheet"
-- Loans, HP, mortgages → fsLevel "Loans & Borrowings", fsStatement "Balance Sheet"
-- Fixed assets, plant, equipment → fsLevel "Tangible Fixed Assets", fsStatement "Balance Sheet"
-- Share capital, reserves, retained earnings, dividends → fsLevel "Capital & Reserves", fsStatement "Balance Sheet"
-
-The firm has these FS Line Items configured:
-${fsLineItems.join('\n')}
-
-And these Note Items (with parents):
-${noteItems.join('\n')}
-
-Prefer matching to existing configured items where possible.
+The firm's configured FS Note Levels (pick the closest exact match):
+${noteLevelCatalogue.join('\n')}
 
 Respond with a JSON object of the form:
-{ "classifications": [ { "index": <number>, "fsNoteLevel": "<string>", "fsLevel": "<string>", "fsStatement": "<string>", "confidence": <number 0-100> }, ... ] }
+{ "classifications": [ { "index": <number>, "fsNoteLevel": "<string chosen from list above>", "confidence": <number 0-100> }, ... ] }
 Return exactly one entry per input row. No prose, no markdown.`;
 
       // Load all TB rows from DB for matching
@@ -440,26 +421,35 @@ Return exactly one entry per input row. No prose, no markdown.`;
             console.error(`[AI Classify] Batch ${i}–${i + 30}: could not parse LLM response. First 500 chars:`, responseText.slice(0, 500));
           }
 
-          // Save each classification directly to DB — resolve fsLineId from canonical FS Lines
+          // Save each classification directly to DB. The AI only
+          // chooses an fsNoteLevel; we then look up the firm's
+          // configured FS Line row to cascade fsLevel + fsStatement.
+          // This guarantees the three TB fields stay in lockstep with
+          // whatever the admin set up in Methodology → FS Lines.
           for (const c of classifications) {
             const sourceRow = batch.find((r: any) => r.index === c.index);
             if (!sourceRow) continue;
             const dbRow = tbRowsDb.find(r => r.accountCode === sourceRow.accountCode);
-            if (dbRow && (c.fsNoteLevel || c.fsLevel || c.fsStatement)) {
-              // Resolve fsLineId: match AI's fuzzy fsLevel to canonical MethodologyFsLine
-              const resolvedFsLineId = resolveFsLineId(fsLines, c.fsLevel, c.fsNoteLevel);
-              await prisma.auditTBRow.update({
-                where: { id: dbRow.id },
-                data: {
-                  fsNoteLevel: c.fsNoteLevel || undefined,
-                  fsLevel: c.fsLevel || undefined,
-                  fsLineId: resolvedFsLineId || undefined,
-                  fsStatement: c.fsStatement || undefined,
-                  aiConfidence: c.confidence ?? null,
-                },
-              });
-              totalClassified++;
-            }
+            if (!dbRow) continue;
+            const noteLevel = c.fsNoteLevel || null;
+            if (!noteLevel) continue;
+            const resolvedFsLineId = resolveFsLineId(fsLines, null, noteLevel);
+            const matchedLine = resolvedFsLineId ? fsLines.find(fl => fl.id === resolvedFsLineId) : null;
+            const cascadedLevel = matchedLine?.fsLevelName || matchedLine?.parent?.name || null;
+            const cascadedStatement = matchedLine?.fsStatementName
+              || (matchedLine?.parent ? (CATEGORY_TO_STATEMENT[matchedLine.parent.fsCategory] || matchedLine.parent.fsCategory) : null)
+              || (matchedLine ? (CATEGORY_TO_STATEMENT[matchedLine.fsCategory] || matchedLine.fsCategory) : null);
+            await prisma.auditTBRow.update({
+              where: { id: dbRow.id },
+              data: {
+                fsNoteLevel: noteLevel,
+                fsLevel: cascadedLevel || undefined,
+                fsStatement: cascadedStatement || undefined,
+                fsLineId: resolvedFsLineId || undefined,
+                aiConfidence: c.confidence ?? null,
+              },
+            });
+            totalClassified++;
           }
 
           // Log AI usage

@@ -53,6 +53,10 @@ interface RMMRow {
   fsStatement?: string | null;
   fsLevel?: string | null;
   fsNote?: string | null;
+  // Origin marker — 'par' for rows pushed over from the PAR tab via
+  // Send to RMM. Null for manually added / TB-imported rows. Drives
+  // the bottom-of-list grouping + shading.
+  source?: string | null;
 }
 
 const RISK_LEVELS = ['Remote', 'Low', 'Medium', 'High', 'Very High'] as const;
@@ -324,12 +328,24 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   }, []);
 
   const computedRows = useMemo(() => {
-    return rows.map(row => {
+    const withRisks = rows.map(row => {
       const finalRisk = row.relevance === 'N' ? 'N/A' : lookupInherentRisk(row.likelihood, row.magnitude);
       const overallRisk = finalRisk && finalRisk !== 'N/A' ? lookupOverallRisk(finalRisk, row.controlRisk) : null;
       return { ...row, finalRiskAssessment: finalRisk, overallRisk };
     });
+    // Partition PAR-sourced rows to the bottom so reviewers can see at a
+    // glance which items came from preliminary analytical review. Order
+    // within each group stays as the user arranged them (sortOrder).
+    const par: typeof withRisks = [];
+    const main: typeof withRisks = [];
+    for (const r of withRisks) (r.source === 'par' ? par : main).push(r);
+    return [...main, ...par];
   }, [rows]);
+
+  // Index of the first PAR-sourced row within computedRows, or -1 if
+  // none. Used to inject a section-header row before the group and to
+  // apply the light shading on each PAR row in the tbody.
+  const parGroupStartIndex = useMemo(() => computedRows.findIndex(r => r.source === 'par'), [computedRows]);
 
   // Get nature dropdown options for a given line item
   function getNatureOptions(lineItem: string): string[] | null {
@@ -643,12 +659,21 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               const reviewerStale = reviewerSO && row.lastEditedAt && new Date(row.lastEditedAt).getTime() > new Date(reviewerSO.timestamp).getTime();
               const partnerStale = partnerSO && row.lastEditedAt && new Date(row.lastEditedAt).getTime() > new Date(partnerSO.timestamp).getTime();
               const hasIRData = !!(row.complexityText || row.subjectivityText || row.changeText || row.uncertaintyText || row.susceptibilityText || row.inherentRiskLevel);
+              const isPar = row.source === 'par';
+              const isFirstPar = isPar && i === parGroupStartIndex;
 
               return (
                 <Fragment key={rowKey}>
+                  {isFirstPar && (
+                    <tr className="bg-indigo-50 border-t-2 border-indigo-200">
+                      <td colSpan={30} className="px-3 py-1.5 text-[10px] font-semibold tracking-wide uppercase text-indigo-700">
+                        From PAR — sent via Send to RMM ({computedRows.length - parGroupStartIndex})
+                      </td>
+                    </tr>
+                  )}
                   <tr
                     data-scroll-anchor={row.id ? `rmm-${row.id}` : undefined}
-                    className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.isMandatory ? 'bg-amber-50/20' : ''} ${outline}`}
+                    className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.isMandatory ? 'bg-amber-50/20' : ''} ${isPar ? 'bg-indigo-50/40' : ''} ${outline}`}
                   >
                     {/* Duplicate button */}
                     <td className="px-1 py-1 align-top text-center">

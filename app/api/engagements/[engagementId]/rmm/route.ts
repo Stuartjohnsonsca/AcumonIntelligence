@@ -88,6 +88,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
       controlRisk: row.controlRisk as string || null,
       overallRisk: row.overallRisk as string || null,
       rowCategory: (row.rowCategory as string) || null,
+      source: (row.source as string) || null,
       isHidden: (row.isHidden as boolean) ?? false,
       sortOrder: (row.sortOrder as number) ?? 0,
     };

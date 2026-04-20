@@ -2055,6 +2055,12 @@ model AuditRMMRow {
   isMandatory         Boolean @default(false) @map("is_mandatory")
   notes               String? @db.Text
   sortOrder           Int     @default(0) @map("sort_order")
+  // Origin of the row — null for manually added or TB-imported rows,
+  // 'par' when the row was created by the PAR → Send to RMM flow. Used
+  // by the RMM tab to group PAR-sourced rows at the bottom with light
+  // shading so reviewers can see at a glance which items originated
+  // from preliminary analytical review queries.
+  source              String? @map("source")
   // FS hierarchy — auto-populated when imported from TB/PAR
   fsStatement         String? @map("fs_statement") // e.g. "Profit & Loss"
   fsLevel             String? @map("fs_level") // e.g. "Revenue"
@@ -2281,9 +2287,17 @@ model MethodologyTestAllocation {
 model MethodologyFsLine {
   id             String  @id @default(uuid())
   firmId         String  @map("firm_id")
-  name           String // e.g. "Revenue", "Trade Debtors", "Going Concern"
-  lineType       String  @map("line_type") // fs_line_item | note_item
-  fsCategory     String  @map("fs_category") // pnl | balance_sheet | cashflow | notes
+  name           String // e.g. "Revenue", "Trade Debtors", "Going Concern" — treated as the FS Note Level name
+  lineType       String  @map("line_type") // fs_line_item | note_item (legacy classifier, kept for back-compat)
+  fsCategory     String  @map("fs_category") // pnl | balance_sheet | cashflow | notes (legacy, kept for back-compat)
+  // New firm-configurable FS hierarchy. Every FS Note Level (row in
+  // this table) may be tagged with a parent FS Level and FS Statement,
+  // both of which are free-form strings chosen from the firm's own
+  // option lists (stored in MethodologyRiskTable with tableType
+  // 'fs_level_options' / 'fs_statement_options'). Kept as denormalised
+  // strings rather than FKs so renaming an option doesn't orphan rows.
+  fsLevelName     String? @map("fs_level_name")
+  fsStatementName String? @map("fs_statement_name")
   sortOrder      Int     @default(0) @map("sort_order")
   isActive       Boolean @default(true) @map("is_active")
   isMandatory    Boolean @default(false) @map("is_mandatory")

@@ -175,7 +175,7 @@ export async function POST(req: Request) {
   }
 
   // ─── Standard create FS line ───
-  const { name, lineType, fsCategory, sortOrder, isMandatory, parentFsLineId } = body;
+  const { name, lineType, fsCategory, sortOrder, isMandatory, parentFsLineId, fsLevelName, fsStatementName } = body;
   if (!name || !lineType || !fsCategory) {
     return NextResponse.json({ error: 'name, lineType, and fsCategory are required' }, { status: 400 });
   }
@@ -186,6 +186,8 @@ export async function POST(req: Request) {
       name,
       lineType,
       fsCategory,
+      fsLevelName: fsLevelName || null,
+      fsStatementName: fsStatementName || null,
       sortOrder: sortOrder || 0,
       isMandatory: isMandatory || false,
       ...(parentFsLineId && { parentFsLineId }),
@@ -251,7 +253,7 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { id, name, lineType, fsCategory, sortOrder, isActive, isMandatory, parentFsLineId } = await req.json();
+  const { id, name, lineType, fsCategory, sortOrder, isActive, isMandatory, parentFsLineId, fsLevelName, fsStatementName } = await req.json();
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
   const fsLine = await prisma.methodologyFsLine.update({
@@ -264,6 +266,8 @@ export async function PUT(req: Request) {
       ...(isActive !== undefined && { isActive }),
       ...(isMandatory !== undefined && { isMandatory }),
       ...(parentFsLineId !== undefined && { parentFsLineId: parentFsLineId || null }),
+      ...(fsLevelName !== undefined && { fsLevelName: fsLevelName || null }),
+      ...(fsStatementName !== undefined && { fsStatementName: fsStatementName || null }),
     },
     include: {
       industryMappings: { select: { industryId: true } },
