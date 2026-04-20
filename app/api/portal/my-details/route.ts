@@ -46,6 +46,17 @@ export async function GET(req: Request) {
          WHERE table_name = 'client_portal_users'
       `;
       diag.tableSchemas = schemas.map(s => s.table_schema);
+
+      // Extract the Supabase project ref from the connection string so
+      // we can compare it against the project whose SQL editor was used
+      // to add the columns. Project refs aren't secrets (they show up
+      // in NEXT_PUBLIC_SUPABASE_URL) so this is safe to echo.
+      const dbUrl = process.env.DATABASE_URL || process.env.DIRECT_URL || '';
+      const urlMatch = dbUrl.match(/@db\.([a-z0-9]{16,})\.supabase\.co/i)
+        || dbUrl.match(/postgres\.([a-z0-9]{16,})[:@]/i)
+        || dbUrl.match(/@([a-z0-9]{16,})\.pooler\.supabase\.com/i);
+      diag.projectRef = urlMatch ? urlMatch[1] : null;
+      diag.supabaseUrlRef = ((process.env.NEXT_PUBLIC_SUPABASE_URL || '').match(/https?:\/\/([a-z0-9]{16,})\./i) || [])[1] || null;
     } catch (e) {
       diag.columnCheckError = (e as any)?.message || 'unknown';
     }
