@@ -2,14 +2,24 @@
  * Validates the Trial Balance current-period column against an aggregated
  * General Ledger summary.
  *
- * For each TB row:
+ * For Balance Sheet rows:
  *   expected CY = priorYear + sum(GL movements for accountCode in period)
+ *
+ * For P&L rows:
+ *   expected CY = sum(GL movements for accountCode in period)
+ *   (opening balance is always zero — P&L accounts reset each year)
  *
  * For the P&L Reserves row (heuristic match on description / fsLevel),
  * we also add the sum of all P&L items' currentYear values, to reflect
  * the year's net profit posted to retained earnings before the year-end
  * close journal hits the GL.
+ *
+ * Any difference with absolute value below TOLERANCE is treated as a
+ * match — rounding to the nearest penny in both the GL and the TB can
+ * leave sub-penny discrepancies that aren't real disagreements.
  */
+
+const TOLERANCE = 0.01;
 
 export interface TbRowForValidation {
   id: string;
@@ -94,6 +104,7 @@ export function validateTbAgainstGl(
     }
 
     const isReserves = isPnlReservesRow(row);
+    const isPnl = isPnlRow(row);
     const pnlAdjustment = isReserves ? pnlYearActivity : 0;
     // Note: P&L items in most GL exports represent debit-positive movements.
     // Retained earnings (a credit-balance equity account) is increased by
@@ -103,26 +114,39 @@ export function validateTbAgainstGl(
     // signed "amount = debit - credit" gives negative for revenues and
     // positive for expenses, so the *negation* of the P&L sum equals the
     // net profit credited to RE.
-    const expected = priorYear + rawMovement + (isReserves ? -pnlAdjustment : 0);
+    //
+    // For P&L rows themselves, the opening balance is always zero — P&L
+    // accounts reset at the start of each year — so the expected CY is
+    // simply the year's GL movement, independent of priorYear.
+    const openingForExpected = isPnl ? 0 : priorYear;
+    const expected = openingForExpected + rawMovement + (isReserves ? -pnlAdjustment : 0);
     const difference = currentYear - expected;
-    const status = difference === 0 ? 'green' : 'red';
+    const status = Math.abs(difference) < TOLERANCE ? 'green' : 'red';
 
     let message: string;
     if (status === 'green') {
-      message = isReserves
-        ? `Agrees: PY ${fmt(priorYear)} + GL ${fmt(rawMovement)} + P&L roll-up ${fmt(-pnlAdjustment)} = CY ${fmt(currentYear)}`
-        : `Agrees: PY ${fmt(priorYear)} + GL ${fmt(rawMovement)} = CY ${fmt(currentYear)}`;
+      if (isReserves) {
+        message = `Agrees: PY ${fmt(priorYear)} + GL ${fmt(rawMovement)} + P&L roll-up ${fmt(-pnlAdjustment)} = CY ${fmt(currentYear)}`;
+      } else if (isPnl) {
+        message = `Agrees: GL ${fmt(rawMovement)} = CY ${fmt(currentYear)} (P&L accounts open at zero)`;
+      } else {
+        message = `Agrees: PY ${fmt(priorYear)} + GL ${fmt(rawMovement)} = CY ${fmt(currentYear)}`;
+      }
     } else {
-      message = isReserves
-        ? `Disagrees by ${fmt(difference)}\nPY ${fmt(priorYear)} + GL ${fmt(rawMovement)} + P&L roll-up ${fmt(-pnlAdjustment)}\n= expected ${fmt(expected)}, actual CY ${fmt(currentYear)}`
-        : `Disagrees by ${fmt(difference)}\nPY ${fmt(priorYear)} + GL ${fmt(rawMovement)}\n= expected ${fmt(expected)}, actual CY ${fmt(currentYear)}`;
+      if (isReserves) {
+        message = `Disagrees by ${fmt(difference)}\nPY ${fmt(priorYear)} + GL ${fmt(rawMovement)} + P&L roll-up ${fmt(-pnlAdjustment)}\n= expected ${fmt(expected)}, actual CY ${fmt(currentYear)}`;
+      } else if (isPnl) {
+        message = `Disagrees by ${fmt(difference)}\nGL ${fmt(rawMovement)} (opening always 0 for P&L)\n= expected ${fmt(expected)}, actual CY ${fmt(currentYear)}`;
+      } else {
+        message = `Disagrees by ${fmt(difference)}\nPY ${fmt(priorYear)} + GL ${fmt(rawMovement)}\n= expected ${fmt(expected)}, actual CY ${fmt(currentYear)}`;
+      }
     }
 
     return {
       rowId: row.id,
       accountCode,
       status,
-      priorYear,
+      priorYear: isPnl ? 0 : priorYear,
       glMovement: rawMovement,
       pnlAdjustment: isReserves ? -pnlAdjustment : 0,
       expected,
