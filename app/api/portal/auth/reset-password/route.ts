@@ -22,6 +22,7 @@ export async function POST(req: Request) {
 
       const user = await prisma.clientPortalUser.findFirst({
         where: { email: email.toLowerCase(), isActive: true },
+        select: { id: true, clientId: true, email: true, name: true, passwordHash: true },
       });
 
       if (!user) {
@@ -66,6 +67,7 @@ export async function POST(req: Request) {
 
       const user = await prisma.clientPortalUser.findFirst({
         where: { email: email.toLowerCase(), isActive: true },
+        select: { id: true, clientId: true, email: true, name: true, passwordHash: true },
       });
       if (!user) {
         return NextResponse.json({ error: 'Invalid code' }, { status: 401 });
@@ -115,6 +117,7 @@ export async function POST(req: Request) {
 
       const user = await prisma.clientPortalUser.findFirst({
         where: { email: email.toLowerCase(), isActive: true },
+        select: { id: true, clientId: true, email: true, name: true, passwordHash: true },
       });
       if (!user) {
         return NextResponse.json({ error: 'Invalid request' }, { status: 401 });

@@ -17,9 +17,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
     }
 
+    // Use explicit select so Prisma doesn't include the 2026-04-20
+    // session_token / session_expires_at columns in the SELECT — that
+    // keeps login working across every state of the migration (not
+    // applied / partially applied / fully applied). The fields we
+    // actually need are always-present columns.
     const user = await prisma.clientPortalUser.findFirst({
       where: { email: email.toLowerCase(), isActive: true },
-      include: { client: { select: { clientName: true } } },
+      select: {
+        id: true,
+        clientId: true,
+        email: true,
+        name: true,
+        passwordHash: true,
+        isActive: true,
+        isClientAdmin: true,
+        client: { select: { clientName: true } },
+      },
     });
 
     if (!user) {
@@ -68,8 +82,17 @@ export async function POST(req: Request) {
       userId: user.id,
       message: 'Verification code sent to your email',
     });
-  } catch (error) {
-    console.error('Portal login error:', error);
-    return NextResponse.json({ error: 'Login failed' }, { status: 500 });
+  } catch (error: any) {
+    console.error('[Portal Login] error:', {
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta,
+      stack: error?.stack,
+    });
+    return NextResponse.json({
+      error: 'Login failed',
+      detail: error?.message || 'unknown error',
+      code: error?.code || null,
+    }, { status: 500 });
   }
 }

@@ -14,7 +14,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Session token and code are required' }, { status: 400 });
     }
 
-    // Find unused, unexpired code
+    // Find unused, unexpired code. Explicit select on the related user
+    // avoids pulling in the 2026-04-20 session_token / session_expires_at
+    // columns that may not yet be live in the DB.
     const twoFactor = await prisma.clientPortalTwoFactor.findFirst({
       where: {
         code,
@@ -23,7 +25,7 @@ export async function POST(req: Request) {
       },
       include: {
         user: {
-          select: { id: true, email: true, name: true, clientId: true },
+          select: { id: true, email: true, name: true, clientId: true, isActive: true },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -55,8 +57,17 @@ export async function POST(req: Request) {
         clientId: twoFactor.user.clientId,
       },
     });
-  } catch (error) {
-    console.error('Portal verify error:', error);
-    return NextResponse.json({ error: 'Verification failed' }, { status: 500 });
+  } catch (error: any) {
+    console.error('[Portal Verify] error:', {
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta,
+      stack: error?.stack,
+    });
+    return NextResponse.json({
+      error: 'Verification failed',
+      detail: error?.message || 'unknown error',
+      code: error?.code || null,
+    }, { status: 500 });
   }
 }

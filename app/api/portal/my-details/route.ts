@@ -25,7 +25,13 @@ export async function GET(req: Request) {
   // has access to.
   const siblingRows = await prisma.clientPortalUser.findMany({
     where: { email: me.email, isActive: true },
-    include: { client: { select: { id: true, clientName: true } } },
+    select: {
+      id: true,
+      clientId: true,
+      email: true,
+      isClientAdmin: true,
+      client: { select: { id: true, clientName: true } },
+    },
   });
 
   // Auto-promote to admin if they are the sole active user on a
@@ -82,8 +88,12 @@ export async function PUT(req: Request) {
 
     // Load the full user record — resolvePortalUserFromToken only
     // returns the safe subset; we need passwordHash to verify the
-    // current password.
-    const full = await prisma.clientPortalUser.findUnique({ where: { id: me.id } });
+    // current password. Explicit select keeps this safe across
+    // migration states (no accidental SELECTs on session_token).
+    const full = await prisma.clientPortalUser.findUnique({
+      where: { id: me.id },
+      select: { id: true, passwordHash: true },
+    });
     if (!full) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
     const valid = await bcrypt.compare(currentPassword, full.passwordHash);

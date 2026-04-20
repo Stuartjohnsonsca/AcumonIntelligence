@@ -28,33 +28,38 @@ export interface ResolvedPortalUser {
 export async function resolvePortalUserFromToken(token: string | null | undefined): Promise<ResolvedPortalUser | null> {
   if (!token || typeof token !== 'string' || token.length < 16) return null;
 
-  const hasSessionToken = await columnExists('client_portal_users', 'session_token');
+  const [hasSessionToken, hasSessionExpires] = await Promise.all([
+    columnExists('client_portal_users', 'session_token'),
+    columnExists('client_portal_users', 'session_expires_at'),
+  ]);
   if (!hasSessionToken) {
-    // Pre-migration — we cannot validate. Safer to deny than to keep
-    // the old "findFirst" behaviour which leaked data across tenants.
+    // Pre-migration / missing column — we cannot validate. Safer to
+    // deny than to keep the old "findFirst" behaviour which leaked
+    // data across tenants.
     return null;
   }
 
-  const user = await prisma.clientPortalUser.findFirst({
-    where: {
-      sessionToken: token,
-      isActive: true,
-      OR: [
-        { sessionExpiresAt: null },
-        { sessionExpiresAt: { gt: new Date() } },
-      ],
-    },
-    select: {
-      id: true,
-      clientId: true,
-      email: true,
-      name: true,
-      isActive: true,
-      isClientAdmin: true,
-    },
-  });
-
-  return user || null;
+  try {
+    const where: Record<string, unknown> = { sessionToken: token, isActive: true };
+    if (hasSessionExpires) {
+      where.OR = [{ sessionExpiresAt: null }, { sessionExpiresAt: { gt: new Date() } }];
+    }
+    const user = await prisma.clientPortalUser.findFirst({
+      where: where as any,
+      select: {
+        id: true,
+        clientId: true,
+        email: true,
+        name: true,
+        isActive: true,
+        isClientAdmin: true,
+      },
+    });
+    return user || null;
+  } catch (err) {
+    console.error('[portal-session] resolvePortalUserFromToken failed:', (err as any)?.message || err);
+    return null;
+  }
 }
 
 /** Generate a new opaque session token and persist it on the user.
