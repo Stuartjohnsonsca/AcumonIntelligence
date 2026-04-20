@@ -206,7 +206,16 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const isPreStart = engStatus === 'pre_start';
   const [isNewClient, setIsNewClient] = useState<boolean | null>(engagement.isNewClient ?? null);
 
-  // Auto-detect new client: check if prior engagement exists for same client
+  // Keep local state in sync when the engagement prop changes (e.g. when the
+  // user flips the First-year / Continuance / Auto toggle on the Opening tab —
+  // updateSetting() POSTs the change and the parent re-renders with the new
+  // engagement object).
+  useEffect(() => {
+    setIsNewClient(engagement.isNewClient ?? null);
+  }, [engagement.isNewClient]);
+
+  // Auto-detect new client: check if prior engagement exists for same client.
+  // Only runs when the manual override is null (Auto-detect mode).
   useEffect(() => {
     if (isNewClient !== null) return; // Manual override set, skip auto-detect
     fetch(`/api/engagements/${engagement.id}?checkPriorAuditor=true`)

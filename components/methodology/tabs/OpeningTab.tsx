@@ -38,6 +38,10 @@ interface Props {
 
 export function OpeningTab({ engagement, auditType, clientName, periodEndDate, onEngagementUpdate, onShowCategoryChange }: Props) {
   const [isGroupAudit, setIsGroupAudit] = useState(engagement.isGroupAudit);
+  // Tri-state: true = first-year (force New Client Take-On schedule),
+  //            false = continuance (force Continuance schedule),
+  //            null = auto-detect via prior-period engagement lookup.
+  const [isNewClient, setIsNewClient] = useState<boolean | null>(engagement.isNewClient ?? null);
   const [showCategory, setShowCategory] = useState(true);
   const [saving, setSaving] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus | null>(null);
@@ -50,6 +54,10 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   useEffect(() => {
     setIsGroupAudit(engagement.isGroupAudit);
   }, [engagement.isGroupAudit]);
+
+  useEffect(() => {
+    setIsNewClient(engagement.isNewClient ?? null);
+  }, [engagement.isNewClient]);
 
   // Load firm's enabled connectors
   useEffect(() => {
@@ -188,7 +196,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
       .finally(() => setConnLoading(false));
   }
 
-  async function updateSetting(field: string, value: boolean | string) {
+  async function updateSetting(field: string, value: boolean | string | null) {
     setSaving(true);
     try {
       const res = await fetch(`/api/engagements/${engagement.id}`, {
@@ -306,6 +314,42 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
       <div className="bg-white border border-slate-200 rounded-lg p-5">
         <h3 className="text-sm font-semibold text-slate-800 mb-4">Audit File Settings</h3>
         <div className="grid grid-cols-2 gap-6">
+          {/* First-Year vs Continuance — drives which schedule (New Client Take-On
+              vs Continuance) is shown in the engagement tab bar. */}
+          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg col-span-2">
+            <div>
+              <p className="text-sm font-medium text-slate-700">Engagement type</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Choose <strong>First-year audit</strong> to show the New Client Take-On schedule, or
+                <strong> Continuance</strong> to show the Continuance schedule. Leave on Auto to detect
+                from prior-period engagement records.
+              </p>
+            </div>
+            <div className="inline-flex items-center bg-white border border-slate-200 rounded-lg p-0.5 flex-shrink-0">
+              {([
+                { value: true, label: 'First-year audit' },
+                { value: false, label: 'Continuance' },
+                { value: null, label: 'Auto-detect' },
+              ] as const).map(opt => {
+                const active = isNewClient === opt.value;
+                return (
+                  <button
+                    key={String(opt.value)}
+                    onClick={() => {
+                      setIsNewClient(opt.value);
+                      updateSetting('isNewClient', opt.value);
+                    }}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                      active ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Group Audit Toggle */}
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
             <div>
