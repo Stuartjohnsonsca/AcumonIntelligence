@@ -22,13 +22,30 @@ export async function GET(req: Request) {
     // browser network tab. Only revealed on 401, so no user data leaks.
     const diag: Record<string, unknown> = { reason };
     try {
-      const colCheck = await prisma.$queryRaw<Array<{ session_token_exists: boolean; session_expires_at_exists: boolean }>>`
+      const colCheck = await prisma.$queryRaw<Array<{ session_token_exists: boolean; session_expires_at_exists: boolean; db_name: string; db_schema: string; db_user: string; db_host: string | null }>>`
         SELECT
           EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name = 'client_portal_users' AND column_name = 'session_token') AS session_token_exists,
-          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name = 'client_portal_users' AND column_name = 'session_expires_at') AS session_expires_at_exists
+          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name = 'client_portal_users' AND column_name = 'session_expires_at') AS session_expires_at_exists,
+          current_database() AS db_name,
+          current_schema() AS db_schema,
+          current_user AS db_user,
+          inet_server_addr()::text AS db_host
       `;
       diag.sessionTokenColumn = colCheck[0]?.session_token_exists ?? null;
       diag.sessionExpiresAtColumn = colCheck[0]?.session_expires_at_exists ?? null;
+      diag.dbName = colCheck[0]?.db_name ?? null;
+      diag.dbSchema = colCheck[0]?.db_schema ?? null;
+      diag.dbUser = colCheck[0]?.db_user ?? null;
+      diag.dbHost = colCheck[0]?.db_host ?? null;
+      // List every schema that has client_portal_users so we can
+      // spot search_path mismatches — Prisma with a pooled connection
+      // sometimes resolves an unqualified table against a schema
+      // that isn't `public` on Supabase.
+      const schemas = await prisma.$queryRaw<Array<{ table_schema: string }>>`
+        SELECT table_schema FROM information_schema.tables
+         WHERE table_name = 'client_portal_users'
+      `;
+      diag.tableSchemas = schemas.map(s => s.table_schema);
     } catch (e) {
       diag.columnCheckError = (e as any)?.message || 'unknown';
     }
