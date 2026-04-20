@@ -82,7 +82,7 @@ export async function resolvePortalUserFromToken(token: string | null | undefine
  *  cache entry from a probe done seconds before the admin ran the SQL
  *  would otherwise permanently break new logins on that serverless
  *  instance until a cold start. */
-export async function issuePortalSessionToken(userId: string): Promise<{ token: string; expiresAt: Date } | null> {
+export async function issuePortalSessionToken(userId: string): Promise<{ token: string; expiresAt: Date; persisted: boolean; error?: string } | null> {
   const token = crypto.randomBytes(48).toString('hex');
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
 
@@ -91,22 +91,24 @@ export async function issuePortalSessionToken(userId: string): Promise<{ token: 
       where: { id: userId },
       data: { sessionToken: token, sessionExpiresAt: expiresAt, lastLoginAt: new Date() },
     });
-    return { token, expiresAt };
+    console.log('[portal-session] session token persisted for user', userId);
+    return { token, expiresAt, persisted: true };
   } catch (err) {
-    console.error('[portal-session] full session-token write failed — falling back:', (err as any)?.message || err);
-  }
+    const errMsg = (err as any)?.message || String(err);
+    const errCode = (err as any)?.code;
+    console.error('[portal-session] full session-token write failed — falling back:', { userId, code: errCode, message: errMsg });
 
-  // Fallback — at minimum keep lastLoginAt fresh. Caller still gets a
-  // token, but protected endpoints will 401 until the migration lands.
-  try {
-    await prisma.clientPortalUser.update({
-      where: { id: userId },
-      data: { lastLoginAt: new Date() },
-    });
-  } catch (err) {
-    console.error('[portal-session] fallback lastLoginAt write also failed:', (err as any)?.message || err);
+    // Fallback — at minimum keep lastLoginAt fresh.
+    try {
+      await prisma.clientPortalUser.update({
+        where: { id: userId },
+        data: { lastLoginAt: new Date() },
+      });
+    } catch (err2) {
+      console.error('[portal-session] fallback lastLoginAt write also failed:', (err2 as any)?.message || err2);
+    }
+    return { token, expiresAt, persisted: false, error: `${errCode || 'ERR'}: ${errMsg.slice(0, 200)}` };
   }
-  return { token, expiresAt };
 }
 
 /** Revoke the current session token for a user (log-off). Best-effort. */

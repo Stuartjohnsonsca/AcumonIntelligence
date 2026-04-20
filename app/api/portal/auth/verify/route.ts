@@ -50,6 +50,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       token: issued?.token,
+      sessionPersisted: issued?.persisted ?? false,
+      sessionError: issued?.error || null,
       user: {
         id: twoFactor.user.id,
         email: twoFactor.user.email,
