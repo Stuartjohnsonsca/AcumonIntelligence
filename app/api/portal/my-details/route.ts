@@ -1,55 +1,71 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
+import { resolvePortalUserFromToken } from '@/lib/portal-session';
 
 /**
  * GET /api/portal/my-details?token=X
- * Get the portal user's details and their clients.
+ * Returns the *caller's* portal-user record and the list of clients
+ * they are directly a member of. The session token is validated
+ * server-side — an unknown / expired token returns 401. This replaces
+ * the prior MVP behaviour which ignored the token and returned the
+ * first active portal user in the database regardless of who was
+ * asking (a tenant-data leak).
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const token = searchParams.get('token');
-  if (!token) return NextResponse.json({ error: 'Token required' }, { status: 401 });
+  const me = await resolvePortalUserFromToken(token);
+  if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
 
-  // Find all active portal users (MVP — in production, validate token against session)
-  const portalUsers = await prisma.clientPortalUser.findMany({
-    where: { isActive: true },
-    include: {
-      client: { select: { id: true, clientName: true } },
-    },
+  // Every ClientPortalUser row is scoped to one (clientId, email) pair.
+  // A real person with access to multiple clients has multiple rows —
+  // one per client — all sharing the same email. Look them up by email
+  // so the "My Clients" list only shows clients the caller genuinely
+  // has access to.
+  const siblingRows = await prisma.clientPortalUser.findMany({
+    where: { email: me.email, isActive: true },
+    include: { client: { select: { id: true, clientName: true } } },
   });
 
-  if (portalUsers.length === 0) {
-    return NextResponse.json({ error: 'No portal users found' }, { status: 404 });
+  // Auto-promote to admin if they are the sole active user on a
+  // client — unchanged from prior behaviour, but scoped now to the
+  // clients they actually belong to.
+  const counts: Record<string, number> = {};
+  for (const row of siblingRows) {
+    counts[row.clientId] = (counts[row.clientId] || 0) + 1;
+  }
+  const clientsMap = new Map<string, { id: string; clientName: string; isClientAdmin: boolean }>();
+  for (const row of siblingRows) {
+    if (!clientsMap.has(row.clientId)) {
+      // We need a full count of active users on this client to decide
+      // the "sole user" promotion — can't rely on just my own rows.
+      clientsMap.set(row.clientId, {
+        id: row.client.id,
+        clientName: row.client.clientName,
+        isClientAdmin: row.isClientAdmin,
+      });
+    }
+  }
+  // Second pass: sole-active-user promotion.
+  for (const [clientId, info] of clientsMap) {
+    if (info.isClientAdmin) continue;
+    const total = await prisma.clientPortalUser.count({
+      where: { clientId, isActive: true },
+    });
+    if (total === 1) info.isClientAdmin = true;
   }
 
-  // Get the first user as the "current" user (MVP)
-  const currentUser = portalUsers[0];
-
-  // Get all clients this user has access to
-  // Auto-promote to admin if they're the only active user for a client
-  const clients = portalUsers.map(pu => ({
-    id: pu.client.id,
-    clientName: pu.client.clientName,
-    isClientAdmin: pu.isClientAdmin || portalUsers.filter(p => p.clientId === pu.clientId && p.isActive).length === 1,
-  }));
-
-  // Deduplicate
-  const uniqueClients = Array.from(new Map(clients.map(c => [c.id, c])).values());
-
   return NextResponse.json({
-    user: {
-      id: currentUser.id,
-      name: currentUser.name,
-      email: currentUser.email,
-    },
-    clients: uniqueClients,
+    user: { id: me.id, name: me.name, email: me.email },
+    clients: Array.from(clientsMap.values()),
   });
 }
 
 /**
  * PUT /api/portal/my-details
- * Change password for the portal user.
+ * Change password for the caller. Validates the token + current
+ * password before writing anything.
  */
 export async function PUT(req: Request) {
   try {
@@ -61,24 +77,21 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
     }
 
-    // Find portal user (MVP — validate token properly in production)
-    const portalUser = await prisma.clientPortalUser.findFirst({
-      where: { isActive: true },
-    });
-    if (!portalUser) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
+    const me = await resolvePortalUserFromToken(token);
+    if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
 
-    // Verify current password
-    const valid = await bcrypt.compare(currentPassword, portalUser.passwordHash);
-    if (!valid) {
-      return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 });
-    }
+    // Load the full user record — resolvePortalUserFromToken only
+    // returns the safe subset; we need passwordHash to verify the
+    // current password.
+    const full = await prisma.clientPortalUser.findUnique({ where: { id: me.id } });
+    if (!full) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-    // Update password
+    const valid = await bcrypt.compare(currentPassword, full.passwordHash);
+    if (!valid) return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 });
+
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await prisma.clientPortalUser.update({
-      where: { id: portalUser.id },
+      where: { id: full.id },
       data: { passwordHash },
     });
 

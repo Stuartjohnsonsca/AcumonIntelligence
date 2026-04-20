@@ -1046,6 +1046,13 @@ model ClientPortalUser {
   allocatedPeriodIds Json?     @map("allocated_period_ids") // Array of period IDs this user is allocated to
   allocatedServices  Json?     @map("allocated_services") // Array of service keys: audit, accounting, consulting, tax, technology
   lastLoginAt        DateTime? @map("last_login_at")
+  // Server-side session token. Set on successful login/2FA verify and
+  // required by every portal API endpoint so we can't answer with the
+  // wrong tenant's data — previous behaviour used a client-generated
+  // token that the server never checked, which let one portal user
+  // see another's details.
+  sessionToken       String?   @unique @map("session_token")
+  sessionExpiresAt   DateTime? @map("session_expires_at")
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
@@ -1054,6 +1061,7 @@ model ClientPortalUser {
   evidenceUploads EvidenceUpload[]
 
   @@unique([clientId, email])
+  @@index([sessionToken])
   @@map("client_portal_users")
 }
 

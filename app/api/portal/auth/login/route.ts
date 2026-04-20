@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { sendPortalVerificationCode } from '@/lib/email-portal';
+import { issuePortalSessionToken } from '@/lib/portal-session';
 
 /**
  * POST /api/portal/auth/login
@@ -32,14 +33,10 @@ export async function POST(req: Request) {
 
     // Check if 2FA is disabled (for testing)
     if (process.env.DISABLE_2FA === 'true') {
-      await prisma.clientPortalUser.update({
-        where: { id: user.id },
-        data: { lastLoginAt: new Date() },
-      });
-      const token = crypto.randomBytes(48).toString('hex');
+      const issued = await issuePortalSessionToken(user.id);
       return NextResponse.json({
         skipVerify: true,
-        token,
+        token: issued?.token,
         userId: user.id,
         user: { id: user.id, email: user.email, name: user.name, clientId: user.clientId },
         message: '2FA disabled — logged in directly',

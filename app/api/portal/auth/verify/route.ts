@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import crypto from 'crypto';
+import { issuePortalSessionToken } from '@/lib/portal-session';
 
 /**
  * POST /api/portal/auth/verify
@@ -39,19 +39,15 @@ export async function POST(req: Request) {
       data: { used: true },
     });
 
-    // Update last login
-    await prisma.clientPortalUser.update({
-      where: { id: twoFactor.user.id },
-      data: { lastLoginAt: new Date() },
-    });
+    // Issue a server-stamped session token — persisted on the user
+    // record so downstream endpoints can validate it. This replaces
+    // the previous "return a random string and hope" pattern, which
+    // let any request with any token be answered with the first
+    // active portal user's data.
+    const issued = await issuePortalSessionToken(twoFactor.user.id);
 
-    // Generate a portal session token (simple JWT-like token for now)
-    const token = crypto.randomBytes(48).toString('hex');
-
-    // In production, store this token in a session table or use JWT
-    // For now, encode user info in a signed cookie or query param
     return NextResponse.json({
-      token,
+      token: issued?.token,
       user: {
         id: twoFactor.user.id,
         email: twoFactor.user.email,
