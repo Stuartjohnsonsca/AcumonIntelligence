@@ -648,7 +648,16 @@ export function htmlToDocxBody(html: string): string {
               const pct = widthStyle.match(/(\d+)\s*%/);
               if (pct) tblW = `<w:tblW w:w="${parseInt(pct[1], 10) * 50}" w:type="pct"/>`;
             }
-            const tblPr = `<w:tblPr>${tblW}${border}</w:tblPr>`;
+            // <w:tblLook> describes which parts of the table style to
+            // apply. Word auto-adds it if missing, but the auto-add
+            // triggers the "We found a problem with some of the
+            // content" repair dialog. Emit a minimal tblLook so Word
+            // opens the document cleanly without recovery.
+            // firstRow/firstColumn = 1 applies header styling to the
+            // top row / leftmost column; noHBand/noVBand disable the
+            // table's own banded-row formatting (we don't emit any).
+            const tblLook = '<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>';
+            const tblPr = `<w:tblPr>${tblW}${border}${tblLook}</w:tblPr>`;
 
             // <w:tblGrid> is REQUIRED per OOXML schema — every table
             // MUST declare its column widths, otherwise Word flags
