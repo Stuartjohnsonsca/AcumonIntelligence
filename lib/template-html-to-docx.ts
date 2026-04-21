@@ -114,16 +114,175 @@ function isPageBreakAttrs(attrs: Record<string, string> | undefined): boolean {
     || /page-break-(before|after)\s*:\s*always/.test(style);
 }
 
+// ─── CSS style parsing ─────────────────────────────────────────────────────
+/** Parse a `style="color:#123; font-size:14pt; font-weight:bold"` blob
+ *  into a map of lowercase property → lowercase value. Trims both sides
+ *  and strips the optional trailing semicolon. Silent on malformed
+ *  declarations — they just get dropped. */
+function parseStyle(raw: string | undefined | null): Record<string, string> {
+  if (!raw) return {};
+  const out: Record<string, string> = {};
+  for (const decl of String(raw).split(';')) {
+    const idx = decl.indexOf(':');
+    if (idx <= 0) continue;
+    const prop = decl.slice(0, idx).trim().toLowerCase();
+    const val = decl.slice(idx + 1).trim();
+    if (prop && val) out[prop] = val;
+  }
+  return out;
+}
+
+/** Normalise CSS colour values to an OOXML hex-6. Accepts #abc /
+ *  #aabbcc / rgb(r,g,b) / named colours we can resolve. Returns
+ *  null when the input isn't something we can safely emit. */
+const NAMED_COLOURS: Record<string, string> = {
+  black: '000000', white: 'FFFFFF', red: 'FF0000', green: '008000',
+  blue: '0000FF', yellow: 'FFFF00', gray: '808080', grey: '808080',
+  silver: 'C0C0C0', maroon: '800000', olive: '808000', lime: '00FF00',
+  aqua: '00FFFF', teal: '008080', navy: '000080', fuchsia: 'FF00FF',
+  purple: '800080',
+};
+function parseColour(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (!s || s === 'transparent' || s === 'inherit' || s === 'initial') return null;
+  if (s.startsWith('#')) {
+    const hex = s.slice(1);
+    if (/^[0-9a-f]{6}$/.test(hex)) return hex.toUpperCase();
+    if (/^[0-9a-f]{3}$/.test(hex)) return (hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2]).toUpperCase();
+  }
+  const rgbMatch = s.match(/^rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (rgbMatch) {
+    const [, r, g, b] = rgbMatch;
+    const toHex = (n: string) => Math.max(0, Math.min(255, parseInt(n, 10))).toString(16).padStart(2, '0').toUpperCase();
+    return `${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+  if (NAMED_COLOURS[s]) return NAMED_COLOURS[s];
+  return null;
+}
+
+/** Parse `font-size: 14pt` / `font-size: 14px` / `font-size: 1.2em` into
+ *  Word's half-point unit used by `<w:sz w:val="...">`. Returns null for
+ *  unrecognised inputs. 12pt = 24 half-points. */
+function parseFontSizeHalfPoints(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const s = String(raw).trim().toLowerCase();
+  const m = s.match(/^(-?\d+(?:\.\d+)?)(pt|px|em|rem)?$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unit = m[2] || 'pt';
+  let pt: number;
+  if (unit === 'pt') pt = n;
+  else if (unit === 'px') pt = n * 0.75;           // 96px = 72pt
+  else if (unit === 'em' || unit === 'rem') pt = n * 11; // assume 11pt base
+  else return null;
+  return Math.max(2, Math.round(pt * 2)); // half-points, floor 1pt
+}
+
+/** Parse `border: 1px solid #ccc` / `border: 2pt dotted black` into a
+ *  Word border descriptor. We only use the size + colour + style. Returns
+ *  null if nothing meaningful can be extracted. Border sizes in Word are
+ *  measured in eighths of a point; 1px ≈ 0.75pt ≈ 6 eighths. */
+function parseBorderShorthand(raw: string | null | undefined): { size: number; color: string; style: string } | null {
+  if (!raw) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (!s || s === 'none' || s === '0') return null;
+  const sizeMatch = s.match(/(\d+(?:\.\d+)?)\s*(px|pt)?/);
+  const colourHex = parseColour(s.match(/#[0-9a-f]{3,6}|rgb\([^)]+\)|[a-z]+/g)?.find(t => parseColour(t) !== null) || null) || 'auto';
+  let size = 4; // default 0.5pt in eighths = 4
+  if (sizeMatch) {
+    const n = parseFloat(sizeMatch[1]);
+    const unit = sizeMatch[2] || 'px';
+    const pt = unit === 'pt' ? n : n * 0.75;
+    size = Math.max(2, Math.min(96, Math.round(pt * 8)));
+  }
+  let style = 'single';
+  if (/dashed/.test(s)) style = 'dashed';
+  else if (/dotted/.test(s)) style = 'dotted';
+  else if (/double/.test(s)) style = 'double';
+  return { size, color: colourHex, style };
+}
+
+/** Force a run to render bold — used for `<th>` cells when the template
+ *  author didn't explicitly style them. If the run already has an <w:rPr>
+ *  we splice <w:b/> in; otherwise we insert a new <w:rPr>. */
+function injectHeaderBold(run: string): string {
+  if (/<w:rPr>/.test(run)) {
+    return run.replace(/<w:rPr>/, '<w:rPr><w:b/><w:bCs/>');
+  }
+  return run.replace(/<w:r>/, '<w:r><w:rPr><w:b/><w:bCs/></w:rPr>');
+}
+
 // ─── Inline run state ──────────────────────────────────────────────────────
-interface InlineState { bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; hyperlink?: string | null; }
+interface InlineState {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  hyperlink?: string | null;
+  /** 6-hex colour without the leading #, e.g. "FF0000". */
+  color?: string | null;
+  /** 6-hex background / highlight colour for the text. */
+  backgroundColor?: string | null;
+  /** Half-points (Word's unit). 24 = 12pt body. */
+  fontSizeHalfPt?: number | null;
+  /** Font family name, verbatim. */
+  fontFamily?: string | null;
+  /** Stack of inline styling pushed by `<span style="…">` elements so a
+   *  closing `</span>` reverts exactly what the opening span applied,
+   *  rather than clobbering state that was already set by a parent. */
+  spanStack?: Array<Partial<InlineState>>;
+}
+
+/** Apply a `style="…"` blob to the inline state, returning the previous
+ *  values of every key touched so the caller can restore them on the
+ *  matching close tag. */
+function applyInlineStyles(state: InlineState, style: Record<string, string>): Partial<InlineState> {
+  const before: Partial<InlineState> = {};
+  if (style.color) {
+    const c = parseColour(style.color);
+    if (c) { before.color = state.color; state.color = c; }
+  }
+  if (style['background-color']) {
+    const c = parseColour(style['background-color']);
+    if (c) { before.backgroundColor = state.backgroundColor; state.backgroundColor = c; }
+  }
+  if (style['font-size']) {
+    const sz = parseFontSizeHalfPoints(style['font-size']);
+    if (sz) { before.fontSizeHalfPt = state.fontSizeHalfPt; state.fontSizeHalfPt = sz; }
+  }
+  if (style['font-family']) {
+    const f = style['font-family'].replace(/^['"]|['"]$/g, '').split(',')[0]?.trim();
+    if (f) { before.fontFamily = state.fontFamily; state.fontFamily = f; }
+  }
+  if (/(^|\s)bold(\s|$)|^[6-9]00$/.test(style['font-weight'] || '')) {
+    before.bold = state.bold; state.bold = true;
+  }
+  if (style['font-style'] === 'italic' || style['font-style'] === 'oblique') {
+    before.italic = state.italic; state.italic = true;
+  }
+  if ((style['text-decoration'] || '').includes('underline')) {
+    before.underline = state.underline; state.underline = true;
+  }
+  if ((style['text-decoration'] || '').includes('line-through')) {
+    before.strike = state.strike; state.strike = true;
+  }
+  return before;
+}
 
 function runXml(state: InlineState, text: string): string {
   if (!text) return '';
   const rpr: string[] = [];
-  if (state.bold) rpr.push('<w:b/>');
-  if (state.italic) rpr.push('<w:i/>');
-  if (state.underline) rpr.push('<w:u w:val="single"/>');
+  // Font family first — Word expects rFonts before other run formatting.
+  if (state.fontFamily) rpr.push(`<w:rFonts w:ascii="${xmlEscape(state.fontFamily)}" w:hAnsi="${xmlEscape(state.fontFamily)}" w:cs="${xmlEscape(state.fontFamily)}"/>`);
+  if (state.bold) rpr.push('<w:b/><w:bCs/>');
+  if (state.italic) rpr.push('<w:i/><w:iCs/>');
   if (state.strike) rpr.push('<w:strike/>');
+  if (state.color) rpr.push(`<w:color w:val="${state.color}"/>`);
+  if (state.fontSizeHalfPt) rpr.push(`<w:sz w:val="${state.fontSizeHalfPt}"/><w:szCs w:val="${state.fontSizeHalfPt}"/>`);
+  if (state.backgroundColor) rpr.push(`<w:shd w:val="clear" w:color="auto" w:fill="${state.backgroundColor}"/>`);
+  if (state.underline) rpr.push('<w:u w:val="single"/>');
   const rprXml = rpr.length > 0 ? `<w:rPr>${rpr.join('')}</w:rPr>` : '';
   const preserve = /^\s|\s$/.test(text) ? ' xml:space="preserve"' : '';
   const t = `<w:t${preserve}>${xmlEscape(text)}</w:t>`;
@@ -159,8 +318,11 @@ export function htmlToDocxBody(html: string): string {
   let pendingParaJc: 'left' | 'center' | 'right' | 'both' | null = null;
   const listStack: ListState[] = [];
   // Table state — only one level of table is supported in v1.
+  let tableAttrs: Record<string, string> | null = null;
   let tableRows: string[] | null = null;
+  let currentRowAttrs: Record<string, string> | null = null;
   let currentRowCells: string[] | null = null;
+  let currentCellAttrs: Record<string, string> | null = null;
   let currentCellRuns: string[] | null = null;
   let inTableHeader = false;
 
@@ -265,6 +427,17 @@ export function htmlToDocxBody(html: string): string {
           paragraphPending = true;
           const jc = parseAlignment(tok.attrs);
           if (jc) pendingParaJc = jc;
+          // Paragraph-level inline styles (colour, font-size on the
+          // <p> itself) apply to runs inside the paragraph. Push them
+          // onto the span stack so every child run picks them up and
+          // the closing </p> restores the surrounding state.
+          const style = parseStyle(tok.attrs?.style);
+          if (Object.keys(style).length > 0) {
+            const before = applyInlineStyles(inline, style);
+            (inline.spanStack ||= []).push({ ...before, _paraSpan: true } as any);
+          } else {
+            (inline.spanStack ||= []).push({ _paraSpan: true } as any);
+          }
           break;
         }
         // Heading paragraphs — map to Word's built-in Heading N styles.
@@ -283,7 +456,16 @@ export function htmlToDocxBody(html: string): string {
         case 'em': case 'i': inline.italic = true; break;
         case 'u': inline.underline = true; break;
         case 's': case 'strike': case 'del': inline.strike = true; break;
-        case 'a': inline.hyperlink = tok.attrs?.href || null; break;
+        case 'a': {
+          inline.hyperlink = tok.attrs?.href || null;
+          // Default to the typical hyperlink look so links are visible
+          // in the output even without an explicit colour in the
+          // source HTML.
+          (inline.spanStack ||= []).push({ color: inline.color, underline: inline.underline });
+          inline.color = '0563C1';
+          inline.underline = true;
+          break;
+        }
         case 'ul': listStack.push({ kind: 'ul', level: listStack.length }); break;
         case 'ol': listStack.push({ kind: 'ol', level: listStack.length }); break;
         case 'li': {
@@ -294,29 +476,57 @@ export function htmlToDocxBody(html: string): string {
         }
         case 'table':
           flushParagraph();
+          tableAttrs = tok.attrs || {};
           tableRows = [];
           break;
         case 'tr':
-          if (tableRows) currentRowCells = [];
+          if (tableRows) {
+            currentRowAttrs = tok.attrs || {};
+            currentRowCells = [];
+          }
           break;
         case 'th':
         case 'td':
           if (currentRowCells) {
+            currentCellAttrs = tok.attrs || {};
             currentCellRuns = [];
             inTableHeader = tag === 'th';
           }
           break;
-        // <span> is a transparent inline wrapper — the editor uses it
-        // to render merge-field pills. We don't need special handling
-        // since the children carry the text; just let it pass.
-        case 'span':
+        // <span style="…"> is the contentEditable editor's primary
+        // vehicle for inline styling — colour, font size, bold from
+        // the toolbar, etc. Parse the style, apply to the inline
+        // state, and push what we changed onto a stack so the matching
+        // </span> can restore it.
+        case 'span': {
+          const style = parseStyle(tok.attrs?.style);
+          if (Object.keys(style).length === 0) {
+            (inline.spanStack ||= []).push({});
+            break;
+          }
+          const before = applyInlineStyles(inline, style);
+          (inline.spanStack ||= []).push(before);
           break;
+        }
         default: /* unknown open tag — ignore */ break;
       }
     } else if (tok.type === 'close') {
       switch (tag) {
         case 'p':
-        case 'div': flushParagraph(); break;
+        case 'div': {
+          flushParagraph();
+          // Pop the paragraph-level span we pushed on open so
+          // inline styles set on the <p>/<div> don't leak into
+          // subsequent content.
+          const before = (inline.spanStack || []).pop();
+          if (before) {
+            for (const key of Object.keys(before) as Array<keyof InlineState>) {
+              if (key === ('_paraSpan' as any)) continue;
+              (inline as any)[key] = (before as any)[key];
+            }
+          }
+          break;
+        }
         case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6':
           flushParagraph();
           break;
@@ -324,9 +534,28 @@ export function htmlToDocxBody(html: string): string {
         case 'em': case 'i': inline.italic = false; break;
         case 'u': inline.underline = false; break;
         case 's': case 'strike': case 'del': inline.strike = false; break;
-        case 'a': inline.hyperlink = null; break;
+        case 'a': {
+          inline.hyperlink = null;
+          const before = (inline.spanStack || []).pop();
+          if (before) {
+            if ('color' in before) inline.color = before.color ?? null;
+            if ('underline' in before) inline.underline = before.underline;
+          }
+          break;
+        }
         case 'ul': case 'ol': listStack.pop(); break;
-        case 'span': break;
+        case 'span': {
+          // Pop the styling the matching <span open> pushed. Each
+          // key that was changed is restored; keys that weren't
+          // touched are left alone.
+          const before = (inline.spanStack || []).pop();
+          if (before) {
+            for (const key of Object.keys(before) as Array<keyof InlineState>) {
+              (inline as any)[key] = before[key];
+            }
+          }
+          break;
+        }
         case 'li': {
           const list = listStack[listStack.length - 1];
           // Minimal list rendering: use `ListBullet` / `ListNumber`
@@ -337,33 +566,76 @@ export function htmlToDocxBody(html: string): string {
         }
         case 'table': {
           if (tableRows) {
-            // A modest default: full-width auto, single 4-point border.
-            const border = `<w:tblBorders>
-              <w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>
-              <w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>
-              <w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>
-              <w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>
-              <w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>
-              <w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>
-            </w:tblBorders>`;
-            const tblPr = `<w:tblPr><w:tblW w:w="5000" w:type="pct"/>${border}</w:tblPr>`;
+            // Borders — honour the table's inline `border-color` /
+            // `border-width` / `border-style` when present, otherwise
+            // fall back to a thin single-line border on all edges.
+            const tStyle = parseStyle(tableAttrs?.style);
+            const borderSpec = parseBorderShorthand(tStyle.border)
+              || (tStyle['border-color'] || tStyle['border-width']
+                  ? parseBorderShorthand(`${tStyle['border-width'] || '1px'} solid ${tStyle['border-color'] || '#000'}`)
+                  : null)
+              || { size: 4, color: 'auto', style: 'single' };
+            const b = (pos: string) => `<w:${pos} w:val="${borderSpec.style}" w:sz="${borderSpec.size}" w:space="0" w:color="${borderSpec.color}"/>`;
+            const border = `<w:tblBorders>${b('top')}${b('left')}${b('bottom')}${b('right')}${b('insideH')}${b('insideV')}</w:tblBorders>`;
+            // Width — honour `width:Xpx` inline, default to 100%.
+            let tblW = '<w:tblW w:w="5000" w:type="pct"/>';
+            const widthStyle = tStyle.width;
+            if (widthStyle) {
+              const pct = widthStyle.match(/(\d+)\s*%/);
+              if (pct) tblW = `<w:tblW w:w="${parseInt(pct[1], 10) * 50}" w:type="pct"/>`;
+            }
+            const tblPr = `<w:tblPr>${tblW}${border}</w:tblPr>`;
             out.push(`<w:tbl>${tblPr}${tableRows.join('')}</w:tbl>`);
           }
+          tableAttrs = null;
           tableRows = null;
           break;
         }
         case 'tr':
           if (tableRows && currentRowCells) tableRows.push(`<w:tr>${currentRowCells.join('')}</w:tr>`);
+          currentRowAttrs = null;
           currentRowCells = null;
           break;
         case 'th':
         case 'td':
           if (currentRowCells && currentCellRuns) {
-            const cellPara = currentCellRuns.length > 0
-              ? `<w:p>${inTableHeader ? '<w:pPr><w:rPr><w:b/></w:rPr></w:pPr>' : ''}${currentCellRuns.join('')}</w:p>`
-              : '<w:p/>';
-            currentRowCells.push(`<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>${cellPara}</w:tc>`);
+            // Cell styling — resolve bg colour from cell, row, or
+            // header-is-a-th fallback (light grey). Resolve width from
+            // `width:Npx` / `Npt` / `N%` on the cell.
+            const cellStyle = parseStyle(currentCellAttrs?.style);
+            const rowStyle = parseStyle(currentRowAttrs?.style);
+            const bg = parseColour(cellStyle['background-color']) || parseColour(rowStyle['background-color']);
+            const shd = bg ? `<w:shd w:val="clear" w:color="auto" w:fill="${bg}"/>` : '';
+            // Width — twips (1pt = 20 twips; 1px ≈ 15 twips).
+            let tcW = '<w:tcW w:w="0" w:type="auto"/>';
+            const w = cellStyle.width;
+            if (w) {
+              const pxMatch = w.match(/(\d+)\s*px/);
+              const ptMatch = w.match(/(\d+)\s*pt/);
+              const pctMatch = w.match(/(\d+)\s*%/);
+              if (pxMatch) tcW = `<w:tcW w:w="${parseInt(pxMatch[1], 10) * 15}" w:type="dxa"/>`;
+              else if (ptMatch) tcW = `<w:tcW w:w="${parseInt(ptMatch[1], 10) * 20}" w:type="dxa"/>`;
+              else if (pctMatch) tcW = `<w:tcW w:w="${parseInt(pctMatch[1], 10) * 50}" w:type="pct"/>`;
+            }
+            const tcPr = `<w:tcPr>${tcW}${shd}</w:tcPr>`;
+            // Paragraph inside the cell. Headers get bold via the rPr
+            // on every run; we also centre header text so the default
+            // table header pattern reads cleanly.
+            let cellPara: string;
+            if (currentCellRuns.length > 0) {
+              const pPr = inTableHeader
+                ? '<w:pPr><w:spacing w:before="40" w:after="40"/><w:jc w:val="center"/></w:pPr>'
+                : '<w:pPr><w:spacing w:before="40" w:after="40"/></w:pPr>';
+              const runs = inTableHeader
+                ? currentCellRuns.map(r => injectHeaderBold(r)).join('')
+                : currentCellRuns.join('');
+              cellPara = `<w:p>${pPr}${runs}</w:p>`;
+            } else {
+              cellPara = '<w:p/>';
+            }
+            currentRowCells.push(`<w:tc>${tcPr}${cellPara}</w:tc>`);
           }
+          currentCellAttrs = null;
           currentCellRuns = null;
           inTableHeader = false;
           break;
