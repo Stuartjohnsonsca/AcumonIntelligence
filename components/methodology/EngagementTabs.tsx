@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
 import { SignOffHeader } from './SignOffHeader';
+import { ScheduleSpecialistReviewsPanel } from './ScheduleSpecialistReviewsPanel';
 import { PermanentFileTab } from './tabs/PermanentFileTab';
 import { EthicsTab } from './tabs/EthicsTab';
 import { ContinuanceTab } from './tabs/ContinuanceTab';
@@ -764,7 +765,18 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               endpoint={signOffEndpoint}
               title={signOffTitle}
               teamMembers={teamMembers}
-              headerActions={undefined}
+              // Specialist-review control sits next to the sign-off dots
+              // in the header so auditors can trigger reviews and see
+              // history without scrolling. Self-hides when there are no
+              // reviews AND Reviewer hasn't signed off. Receives the
+              // schedule key (= sign-off endpoint) so each tab's reviews
+              // stay scoped to that tab.
+              headerActions={
+                <ScheduleSpecialistReviewsPanel
+                  engagementId={engagement.id}
+                  scheduleKey={signOffEndpoint}
+                />
+              }
               onSignOffChange={(signOffs) => handleTabSignOffChange(activeTab, signOffs)}
             >
               <TabErrorBoundary tabName={signOffTitle} engagementId={engagement.id}>{renderTabContent()}</TabErrorBoundary>
