@@ -161,6 +161,25 @@ function parseColour(raw: string | null | undefined): string | null {
   return null;
 }
 
+/** A near-black colour is indistinguishable from the skeleton's default
+ *  text colour for the reader, but stamping it explicitly on every run
+ *  OVERRIDES the skeleton's own styling (e.g. blue heading text). We
+ *  strip such colours so the skeleton's Normal / Heading styles take
+ *  effect. Threshold chosen to cover Tailwind's slate-950 (#020817)
+ *  and similar "just about black" colours the contentEditable editor
+ *  emits by default, without accidentally catching intentional dark
+ *  blues / greens. */
+function isEffectivelyDefaultTextColour(hex: string | null | undefined): boolean {
+  if (!hex || hex.length !== 6) return false;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  // Anything with every channel ≤ 0x24 (36) is visually black/very
+  // dark grey — safe to drop. Tailwind slate-950 = (2,8,23); slate-900
+  // = (15,23,42) — we want to catch both.
+  return r <= 0x24 && g <= 0x24 && b <= 0x30;
+}
+
 /** Parse `font-size: 14pt` / `font-size: 14px` / `font-size: 1.2em` into
  *  Word's half-point unit used by `<w:sz w:val="...">`. Returns null for
  *  unrecognised inputs. 12pt = 24 half-points. */
@@ -279,7 +298,11 @@ function runXml(state: InlineState, text: string): string {
   if (state.bold) rpr.push('<w:b/><w:bCs/>');
   if (state.italic) rpr.push('<w:i/><w:iCs/>');
   if (state.strike) rpr.push('<w:strike/>');
-  if (state.color) rpr.push(`<w:color w:val="${state.color}"/>`);
+  // Skip near-black colours — they're what the contentEditable editor
+  // emits as its default text colour (Tailwind slate-950 etc.) and
+  // stamping them on every run overrides the skeleton's own heading /
+  // link / emphasis colours. Leave the Normal style to own "dark text".
+  if (state.color && !isEffectivelyDefaultTextColour(state.color)) rpr.push(`<w:color w:val="${state.color}"/>`);
   if (state.fontSizeHalfPt) rpr.push(`<w:sz w:val="${state.fontSizeHalfPt}"/><w:szCs w:val="${state.fontSizeHalfPt}"/>`);
   if (state.backgroundColor) rpr.push(`<w:shd w:val="clear" w:color="auto" w:fill="${state.backgroundColor}"/>`);
   if (state.underline) rpr.push('<w:u w:val="single"/>');
@@ -342,28 +365,56 @@ export function htmlToDocxBody(html: string): string {
     const pprParts: string[] = [];
     if (pendingParaStyle) pprParts.push(`<w:pStyle w:val="${pendingParaStyle}"/>`);
     if (extraPpr) pprParts.push(extraPpr);
-    // Only apply our spacing override to body paragraphs — headings
-    // carry their own spacing from the skeleton's Heading styles,
-    // which we leave alone so the firm's typography decisions stand.
-    if (!pendingParaStyle) pprParts.push(PARAGRAPH_SPACING_PPR);
+    // Only apply our spacing override to unstyled body paragraphs.
+    // Headings carry their own typography from the skeleton's Heading
+    // N styles; list items from ListBullet / ListNumber. Stamping our
+    // 12pt-after spacing on top of those would flatten the intended
+    // hierarchy.
+    const hasExplicitStyle = !!pendingParaStyle || (extraPpr || '').includes('w:pStyle');
+    if (!hasExplicitStyle) pprParts.push(PARAGRAPH_SPACING_PPR);
     if (pendingParaJc) pprParts.push(`<w:jc w:val="${pendingParaJc}"/>`);
     const ppr = pprParts.length > 0 ? `<w:pPr>${pprParts.join('')}</w:pPr>` : '';
 
-    if (paragraphRuns.length === 0) {
+    // Strip leading / trailing break-only and whitespace-only runs.
+    // The contentEditable editor routinely emits <p>&nbsp;<br>text</p>
+    // when the admin presses Enter at the top of a line — shipping
+    // those as-is adds blank lines at the top / bottom of every
+    // paragraph, one of the big visual issues in the Kanova letter.
+    const trimmed = trimEdgeBreakRuns(paragraphRuns);
+
+    if (trimmed.length === 0) {
       if (paragraphPending || pprParts.length > 0) out.push(`<w:p>${ppr}</w:p>`);
-    } else if (!paragraphHasTextContent(paragraphRuns)) {
-      // The paragraph contains only line-break runs (from `<p><br></p>`
-      // spacer markup in the source HTML). Emit a single empty
-      // paragraph — post-processing will strip it and rely on the
-      // explicit after-spacing on the surrounding text paragraphs.
+    } else if (!paragraphHasTextContent(trimmed)) {
       out.push(`<w:p>${ppr}</w:p>`);
     } else {
-      out.push(`<w:p>${ppr}${paragraphRuns.join('')}</w:p>`);
+      out.push(`<w:p>${ppr}${trimmed.join('')}</w:p>`);
     }
     paragraphRuns = [];
     paragraphPending = false;
     pendingParaStyle = null;
     pendingParaJc = null;
+  }
+
+  /** Trim runs at the start and end of a paragraph that are either
+   *  pure <w:br/> carriers or contain only whitespace text. Leaves the
+   *  middle of the paragraph untouched so an intentional line break
+   *  between words (from a standalone <br> in the source) survives. */
+  function trimEdgeBreakRuns(runs: string[]): string[] {
+    const isEdgeDroppable = (run: string): boolean => {
+      // <w:br/> present AND no text with real content → droppable.
+      if (!/<w:t[ >]/.test(run)) return /<w:br/.test(run);
+      // Text present — droppable only if ALL text is whitespace.
+      const texts = run.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || [];
+      return texts.every(t => {
+        const inner = t.replace(/^<w:t[^>]*>/, '').replace(/<\/w:t>$/, '');
+        return inner.replace(/[\s\u00A0]/g, '').length === 0;
+      });
+    };
+    let start = 0;
+    while (start < runs.length && isEdgeDroppable(runs[start])) start++;
+    let end = runs.length;
+    while (end > start && isEdgeDroppable(runs[end - 1])) end--;
+    return runs.slice(start, end);
   }
 
   function appendText(text: string) {
