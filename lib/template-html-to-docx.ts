@@ -629,7 +629,7 @@ export function htmlToDocxBody(html: string): string {
           break;
         }
         case 'table': {
-          if (tableRows) {
+          if (tableRows && tableRows.length > 0) {
             // Borders — honour the table's inline `border-color` /
             // `border-width` / `border-style` when present, otherwise
             // fall back to a thin single-line border on all edges.
@@ -649,7 +649,21 @@ export function htmlToDocxBody(html: string): string {
               if (pct) tblW = `<w:tblW w:w="${parseInt(pct[1], 10) * 50}" w:type="pct"/>`;
             }
             const tblPr = `<w:tblPr>${tblW}${border}</w:tblPr>`;
-            out.push(`<w:tbl>${tblPr}${tableRows.join('')}</w:tbl>`);
+
+            // <w:tblGrid> is REQUIRED per OOXML schema — every table
+            // MUST declare its column widths, otherwise Word flags
+            // the file as unreadable content and offers to repair.
+            // Count cells in the first row to pick the column count;
+            // distribute the total table width evenly across columns.
+            const firstRow = tableRows[0] || '';
+            const cellCount = (firstRow.match(/<w:tc\b/g) || []).length || 1;
+            // 9638 twips ≈ A4 portrait content width (pre-margin). Word
+            // treats these as hints when tblW is 'auto' / 'pct'.
+            const colWidth = Math.floor(9638 / cellCount);
+            const gridCols = Array.from({ length: cellCount }).map(() => `<w:gridCol w:w="${colWidth}"/>`).join('');
+            const tblGrid = `<w:tblGrid>${gridCols}</w:tblGrid>`;
+
+            out.push(`<w:tbl>${tblPr}${tblGrid}${tableRows.join('')}</w:tbl>`);
           }
           tableAttrs = null;
           tableRows = null;
@@ -814,6 +828,13 @@ export function htmlToDocxBody(html: string): string {
     if (cells.length === 0) return full; // malformed — leave alone
     const hasAnyText = cells.some(cell => /<w:t[ >]/.test(cell));
     return hasAnyText ? full : '';
+  });
+
+  // If ghost-row stripping left a <w:tbl> with zero <w:tr>s, drop
+  // the whole table. OOXML requires at least one row; an empty
+  // <w:tbl> triggers Word's "We found a problem" repair dialog.
+  xml = xml.replace(/<w:tbl\b[^>]*>[\s\S]*?<\/w:tbl>/g, table => {
+    return /<w:tr\b/.test(table) ? table : '';
   });
 
   return xml;
