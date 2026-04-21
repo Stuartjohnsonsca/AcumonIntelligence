@@ -164,13 +164,26 @@ export function htmlToDocxBody(html: string): string {
   let currentCellRuns: string[] | null = null;
   let inTableHeader = false;
 
+  // Consistent paragraph spacing for every text paragraph we emit —
+  // 12pt after, no before, 1.15 line spacing. This overrides whatever
+  // the firm skeleton's Normal style has configured so the visual
+  // output is predictable across every skeleton: one clean blank-
+  // line-sized gap between paragraphs, exactly matching the preview.
+  // `w:after` is in twentieths of a point (240 = 12pt).
+  const PARAGRAPH_SPACING_PPR = '<w:spacing w:before="0" w:after="240" w:line="276" w:lineRule="auto"/>';
+
   function flushParagraph(extraPpr?: string) {
     // Compose <w:pPr> from both the caller-supplied fragment (list
     // styles, etc.) and the pending-style state (heading, alignment).
-    // Order inside <w:pPr> matters: pStyle must come first, jc later.
+    // Order inside <w:pPr> matters: pStyle → spacing → jc (w:jc must
+    // come after spacing per ECMA-376).
     const pprParts: string[] = [];
     if (pendingParaStyle) pprParts.push(`<w:pStyle w:val="${pendingParaStyle}"/>`);
     if (extraPpr) pprParts.push(extraPpr);
+    // Only apply our spacing override to body paragraphs — headings
+    // carry their own spacing from the skeleton's Heading styles,
+    // which we leave alone so the firm's typography decisions stand.
+    if (!pendingParaStyle) pprParts.push(PARAGRAPH_SPACING_PPR);
     if (pendingParaJc) pprParts.push(`<w:jc w:val="${pendingParaJc}"/>`);
     const ppr = pprParts.length > 0 ? `<w:pPr>${pprParts.join('')}</w:pPr>` : '';
 
@@ -179,9 +192,8 @@ export function htmlToDocxBody(html: string): string {
     } else if (!paragraphHasTextContent(paragraphRuns)) {
       // The paragraph contains only line-break runs (from `<p><br></p>`
       // spacer markup in the source HTML). Emit a single empty
-      // paragraph instead — Word's default paragraph-after spacing is
-      // already ~1 blank line, so keeping the inner <w:br/> would
-      // render as TWO blank lines and stretch the document out.
+      // paragraph — post-processing will strip it and rely on the
+      // explicit after-spacing on the surrounding text paragraphs.
       out.push(`<w:p>${ppr}</w:p>`);
     } else {
       out.push(`<w:p>${ppr}${paragraphRuns.join('')}</w:p>`);
