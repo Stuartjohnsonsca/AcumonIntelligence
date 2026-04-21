@@ -425,9 +425,20 @@ export function htmlToDocxBody(html: string): string {
   xml = xml.replace(/<w:p(?:\s[^>]*)?\s*\/>/g, '<w:p/>');
   // Then walk paired <w:p>…</w:p> paragraphs and normalise the empties.
   xml = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, normaliseEmptyParagraph);
-  // Collapse consecutive canonical empty paragraphs to a single one —
-  // Word's built-in paragraph spacing handles vertical rhythm.
-  xml = xml.replace(/(<w:p\/>){2,}/g, '<w:p/>');
+  // Drop canonical empty paragraphs entirely. Word applies
+  // paragraph-after spacing to EVERY paragraph (typically ~8pt in the
+  // Normal style), so keeping even a single `<w:p/>` between two
+  // text paragraphs renders as TWO visible blank lines: one for the
+  // after-spacing above the empty, one for the empty paragraph
+  // itself. Removing the empties leaves Word's default paragraph
+  // spacing to produce exactly one visual blank line between blocks,
+  // matching the preview. Intentional large gaps can be added back
+  // later via explicit <w:spacing> in a future pass if needed.
+  xml = xml.replace(/<w:p\/>/g, '');
+  // Safety net — if every paragraph got stripped (rare, but possible
+  // on an entirely blank body) inject a single empty paragraph so
+  // docxtemplater has something to substitute.
+  if (!/<w:p\b/.test(xml)) xml = '<w:p/>';
 
   // 2. Drop table rows where every cell is empty. This catches the
   //    common "Handlebars {{#each}} block produced no iterations but
