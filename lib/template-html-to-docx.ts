@@ -846,5 +846,17 @@ export function htmlToDocxBody(html: string): string {
     return /<w:tr\b/.test(table) ? table : '';
   });
 
+  // 3. Every <w:tc> must contain at least one <w:p> per OOXML. The
+  //    empty-paragraph strip above happily removes <w:p/> from
+  //    otherwise-empty cells — source HTML with blank `<td></td>`
+  //    cells therefore ships cells with only a <w:tcPr>, which fires
+  //    Word's "We found a problem with some of the content" repair
+  //    dialog on every open. Re-inject a minimal paragraph into any
+  //    cell that ended up without one. Run AFTER the table/row strip
+  //    passes so we don't waste work on cells in rows we're dropping.
+  xml = xml.replace(/<w:tc\b([^>]*)>([\s\S]*?)<\/w:tc>/g, (full, attrs: string, inner: string) => {
+    return /<w:p\b/.test(inner) ? full : `<w:tc${attrs}>${inner}<w:p/></w:tc>`;
+  });
+
   return xml;
 }
