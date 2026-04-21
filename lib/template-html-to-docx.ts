@@ -16,7 +16,16 @@
  *
  * Everything else falls through as plain text inside a paragraph —
  * safer than silently dropping content.
+ *
+ * A final validation pass (see `docx-xml-validator.ts`) runs after all
+ * auto-repair to catch any remaining OOXML schema defects before the
+ * XML ships to Word. Any defect at that point indicates a new pattern
+ * of input HTML producing bad output — log it, investigate, teach the
+ * repairer. This is how we avoid regressing on "unreadable content"
+ * dialogs after every edit to this file.
  */
+
+import { validateAndLogDocxBodyXml } from './docx-xml-validator';
 
 // ─── XML helpers ───────────────────────────────────────────────────────────
 function xmlEscape(s: string): string {
@@ -857,6 +866,17 @@ export function htmlToDocxBody(html: string): string {
   xml = xml.replace(/<w:tc\b([^>]*)>([\s\S]*?)<\/w:tc>/g, (full, attrs: string, inner: string) => {
     return /<w:p\b/.test(inner) ? full : `<w:tc${attrs}>${inner}<w:p/></w:tc>`;
   });
+
+  // 4. Final integrity check. Every defect that reaches this point is
+  //    a NEW pattern the auto-repair passes don't know about — we want
+  //    to know immediately rather than learn about it when a user
+  //    sees Word's repair dialog in production. Logs in production,
+  //    throws in dev / staging / CI (strict mode when NODE_ENV !==
+  //    'production'). Set AUDIT_DOCX_STRICT=1 to force strict mode in
+  //    production too (the render endpoint can then turn the issue
+  //    list into a 500 rather than shipping broken output).
+  const forceStrict = process.env.AUDIT_DOCX_STRICT === '1';
+  validateAndLogDocxBodyXml(xml, 'htmlToDocxBody', forceStrict ? { strict: true } : {});
 
   return xml;
 }
