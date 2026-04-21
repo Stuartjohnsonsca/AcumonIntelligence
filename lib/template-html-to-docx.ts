@@ -176,6 +176,13 @@ export function htmlToDocxBody(html: string): string {
 
     if (paragraphRuns.length === 0) {
       if (paragraphPending || pprParts.length > 0) out.push(`<w:p>${ppr}</w:p>`);
+    } else if (!paragraphHasTextContent(paragraphRuns)) {
+      // The paragraph contains only line-break runs (from `<p><br></p>`
+      // spacer markup in the source HTML). Emit a single empty
+      // paragraph instead — Word's default paragraph-after spacing is
+      // already ~1 blank line, so keeping the inner <w:br/> would
+      // render as TWO blank lines and stretch the document out.
+      out.push(`<w:p>${ppr}</w:p>`);
     } else {
       out.push(`<w:p>${ppr}${paragraphRuns.join('')}</w:p>`);
     }
@@ -193,6 +200,23 @@ export function htmlToDocxBody(html: string): string {
       paragraphPending = true;
       paragraphRuns.push(runXml(inline, text));
     }
+  }
+
+  /**
+   * Does a paragraph's accumulated run list contain any real text, or
+   * is it a collection of `<w:br/>`-only runs (i.e. a paragraph whose
+   * visible output is nothing but blank lines)? Used by flushParagraph
+   * to avoid emitting `<w:p><w:r><w:br/></w:r></w:p>` — which Word
+   * renders as TWO blank lines (the paragraph itself plus the inner
+   * break) — when the admin's HTML had `<p><br></p>` as a spacer.
+   */
+  function paragraphHasTextContent(runs: string[]): boolean {
+    for (const run of runs) {
+      // A run with a <w:t> element contains text; a run with ONLY
+      // <w:br/> (possibly multiple) does not.
+      if (/<w:t[ >]/.test(run)) return true;
+    }
+    return false;
   }
 
   for (const tok of tokens) {
@@ -352,5 +376,41 @@ export function htmlToDocxBody(html: string): string {
   // Guarantee at least one body element — an entirely empty fragment
   // would leave `{@body}` unreplaced in some docxtemplater versions.
   if (out.length === 0) out.push('<w:p/>');
-  return out.join('');
+
+  // ── Post-processing passes ────────────────────────────────────────
+  // Apply against the joined XML string rather than the element array
+  // so patterns that span multiple emitted fragments (e.g. a row we
+  // may drop consists of multiple `<w:tc>`s) can be matched in one go.
+  let xml = out.join('');
+
+  // 1. Collapse runs of 3+ empty paragraphs into 1.
+  //    Contenteditable editors love producing `<p><br></p><p><br></p>...`
+  //    as vertical spacers — each one renders as a blank line in Word.
+  //    Two in a row is usually intentional (blank line between
+  //    sections); three+ is almost always the editor's over-enthusiasm.
+  //    `<w:p/>` and `<w:p></w:p>` (the self-closing and empty forms)
+  //    are both matched. We intentionally keep 2 consecutive breaks
+  //    intact so deliberate section gaps still render.
+  const EMPTY_PARA = /<w:p(?:\s[^>]*)?\s*\/>|<w:p(?:\s[^>]*)?>\s*(?:<w:pPr>\s*<\/w:pPr>\s*)?<\/w:p>/g;
+  // First, normalise every empty paragraph (with or without a trivial
+  // pPr) to a single canonical `<w:p/>` so we can then collapse runs.
+  xml = xml.replace(EMPTY_PARA, '<w:p/>');
+  // Then collapse any run of 3+ canonical empty paragraphs to 2.
+  xml = xml.replace(/(<w:p\/>){3,}/g, '<w:p/><w:p/>');
+
+  // 2. Drop table rows where every cell is empty. This catches the
+  //    common "Handlebars {{#each}} block produced no iterations but
+  //    the admin left a static empty placeholder row in the table"
+  //    failure mode — the output otherwise ships with a ghost row
+  //    that reviewers have to delete by hand.
+  xml = xml.replace(/<w:tr\b[^>]*>([\s\S]*?)<\/w:tr>/g, (full, inner: string) => {
+    // Every `<w:tc>` in this row — does ANY of them contain a run
+    // with a `<w:t>` (real text)?  If not, drop the row.
+    const cells = inner.match(/<w:tc\b[^>]*>[\s\S]*?<\/w:tc>/g) || [];
+    if (cells.length === 0) return full; // malformed — leave alone
+    const hasAnyText = cells.some(cell => /<w:t[ >]/.test(cell));
+    return hasAnyText ? full : '';
+  });
+
+  return xml;
 }
