@@ -310,16 +310,27 @@ function runXml(state: InlineState, text: string): string {
   if (state.backgroundColor) rpr.push(`<w:shd w:val="clear" w:color="auto" w:fill="${state.backgroundColor}"/>`);
   const rprXml = rpr.length > 0 ? `<w:rPr>${rpr.join('')}</w:rPr>` : '';
   const preserve = /^\s|\s$/.test(text) ? ' xml:space="preserve"' : '';
-  const t = `<w:t${preserve}>${xmlEscape(text)}</w:t>`;
-  // Split on newlines so `\n` inside editor output produces line
-  // breaks within the paragraph, not a lost character.
+  // Single-segment case (no embedded newlines) — always has text.
   const segments = text.split('\n');
-  if (segments.length === 1) return `<w:r>${rprXml}${t}</w:r>`;
-  const chunks = segments.map((seg, i) => {
-    const tt = `<w:t xml:space="preserve">${xmlEscape(seg)}</w:t>`;
-    const br = i < segments.length - 1 ? '<w:br/>' : '';
-    return `<w:r>${rprXml}${tt}${br}</w:r>`;
-  });
+  if (segments.length === 1) {
+    return `<w:r>${rprXml}<w:t${preserve}>${xmlEscape(text)}</w:t></w:r>`;
+  }
+  // Multi-segment case (newlines embed line breaks in-paragraph).
+  // Critical: never emit <w:t></w:t> — empty text elements make
+  // Word flag the file as unreadable content. Runs that would have
+  // only a break and no text collapse to <w:r><w:br/></w:r>;
+  // trailing empty segments are dropped entirely.
+  const chunks: string[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const needsBr = i < segments.length - 1;
+    const hasText = seg.length > 0;
+    if (!hasText && !needsBr) continue;
+    const segPreserve = /^\s|\s$/.test(seg) ? ' xml:space="preserve"' : '';
+    const tt = hasText ? `<w:t${segPreserve}>${xmlEscape(seg)}</w:t>` : '';
+    const br = needsBr ? '<w:br/>' : '';
+    chunks.push(`<w:r>${rprXml}${tt}${br}</w:r>`);
+  }
   return chunks.join('');
 }
 
@@ -758,6 +769,20 @@ export function htmlToDocxBody(html: string): string {
     }
     return '<w:p/>';
   };
+  // Defensive: strip any empty <w:t>…</w:t> or empty <w:r>…</w:r>
+  // elements before they reach Word. Empty <w:t> is technically
+  // valid per OOXML XSD but Word's strict parser pops the "We found
+  // a problem with some of the content" repair dialog when it sees
+  // them. runXml is now careful not to produce these, but other
+  // code paths (and any future additions) could still slip through,
+  // so we sweep once more here.
+  xml = xml.replace(/<w:t\b[^>]*>\s*<\/w:t>/g, '');
+  xml = xml.replace(/<w:r>\s*<\/w:r>/g, '');
+  // Also drop runs that contain ONLY an rPr (styling with no text
+  // or break) — they render nothing visible but can confuse strict
+  // validators by appearing to be "styled empty content".
+  xml = xml.replace(/<w:r>\s*<w:rPr>[\s\S]*?<\/w:rPr>\s*<\/w:r>/g, '');
+
   // Canonicalise self-closing + attribute-bearing self-closing first.
   xml = xml.replace(/<w:p(?:\s[^>]*)?\s*\/>/g, '<w:p/>');
   // Then walk paired <w:p>…</w:p> paragraphs and normalise the empties.
