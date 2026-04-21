@@ -293,19 +293,21 @@ function applyInlineStyles(state: InlineState, style: Record<string, string>): P
 function runXml(state: InlineState, text: string): string {
   if (!text) return '';
   const rpr: string[] = [];
-  // Font family first — Word expects rFonts before other run formatting.
+  // Child order inside <w:rPr> is defined by ECMA-376 and is strict —
+  // Word's "recover contents" repair dialog will fire if the order is
+  // wrong. The sequence is (subset we use):
+  //   rFonts → b/bCs → i/iCs → strike → color → sz/szCs → u → shd
   if (state.fontFamily) rpr.push(`<w:rFonts w:ascii="${xmlEscape(state.fontFamily)}" w:hAnsi="${xmlEscape(state.fontFamily)}" w:cs="${xmlEscape(state.fontFamily)}"/>`);
   if (state.bold) rpr.push('<w:b/><w:bCs/>');
   if (state.italic) rpr.push('<w:i/><w:iCs/>');
   if (state.strike) rpr.push('<w:strike/>');
   // Skip near-black colours — they're what the contentEditable editor
-  // emits as its default text colour (Tailwind slate-950 etc.) and
-  // stamping them on every run overrides the skeleton's own heading /
-  // link / emphasis colours. Leave the Normal style to own "dark text".
+  // emits as its default text colour (Tailwind slate-950 etc.). Leave
+  // the Normal style to own "dark text".
   if (state.color && !isEffectivelyDefaultTextColour(state.color)) rpr.push(`<w:color w:val="${state.color}"/>`);
   if (state.fontSizeHalfPt) rpr.push(`<w:sz w:val="${state.fontSizeHalfPt}"/><w:szCs w:val="${state.fontSizeHalfPt}"/>`);
-  if (state.backgroundColor) rpr.push(`<w:shd w:val="clear" w:color="auto" w:fill="${state.backgroundColor}"/>`);
   if (state.underline) rpr.push('<w:u w:val="single"/>');
+  if (state.backgroundColor) rpr.push(`<w:shd w:val="clear" w:color="auto" w:fill="${state.backgroundColor}"/>`);
   const rprXml = rpr.length > 0 ? `<w:rPr>${rpr.join('')}</w:rPr>` : '';
   const preserve = /^\s|\s$/.test(text) ? ' xml:space="preserve"' : '';
   const t = `<w:t${preserve}>${xmlEscape(text)}</w:t>`;
