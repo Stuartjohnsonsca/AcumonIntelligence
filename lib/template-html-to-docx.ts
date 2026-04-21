@@ -203,18 +203,27 @@ export function htmlToDocxBody(html: string): string {
   }
 
   /**
-   * Does a paragraph's accumulated run list contain any real text, or
-   * is it a collection of `<w:br/>`-only runs (i.e. a paragraph whose
-   * visible output is nothing but blank lines)? Used by flushParagraph
-   * to avoid emitting `<w:p><w:r><w:br/></w:r></w:p>` — which Word
-   * renders as TWO blank lines (the paragraph itself plus the inner
-   * break) — when the admin's HTML had `<p><br></p>` as a spacer.
+   * Does a paragraph's accumulated run list contain any real, visible
+   * text?  Returns false for:
+   *   - runs with only <w:br/>  (from `<p><br></p>` spacers)
+   *   - runs with <w:t> but only whitespace inside (from `<p>&nbsp;</p>`)
+   *   - runs with no text elements at all
+   *
+   * Used by flushParagraph to avoid emitting paragraphs that render
+   * as extra blank lines alongside Word's default paragraph spacing.
    */
   function paragraphHasTextContent(runs: string[]): boolean {
     for (const run of runs) {
-      // A run with a <w:t> element contains text; a run with ONLY
-      // <w:br/> (possibly multiple) does not.
-      if (/<w:t[ >]/.test(run)) return true;
+      const matches = run.match(/<w:t[^>]*>([^<]*)<\/w:t>/g);
+      if (!matches) continue;
+      for (const m of matches) {
+        // Extract the text inside <w:t>…</w:t>.
+        const text = m.replace(/^<w:t[^>]*>/, '').replace(/<\/w:t>$/, '');
+        // Treat &nbsp; (xA0), regular whitespace, etc. as empty —
+        // admins using contentEditable routinely hit <space> inside a
+        // "blank" paragraph without realising.
+        if (text.replace(/[\s\u00A0]/g, '').length > 0) return true;
+      }
     }
     return false;
   }
@@ -383,20 +392,42 @@ export function htmlToDocxBody(html: string): string {
   // may drop consists of multiple `<w:tc>`s) can be matched in one go.
   let xml = out.join('');
 
-  // 1. Collapse runs of 3+ empty paragraphs into 1.
-  //    Contenteditable editors love producing `<p><br></p><p><br></p>...`
-  //    as vertical spacers — each one renders as a blank line in Word.
-  //    Two in a row is usually intentional (blank line between
-  //    sections); three+ is almost always the editor's over-enthusiasm.
-  //    `<w:p/>` and `<w:p></w:p>` (the self-closing and empty forms)
-  //    are both matched. We intentionally keep 2 consecutive breaks
-  //    intact so deliberate section gaps still render.
-  const EMPTY_PARA = /<w:p(?:\s[^>]*)?\s*\/>|<w:p(?:\s[^>]*)?>\s*(?:<w:pPr>\s*<\/w:pPr>\s*)?<\/w:p>/g;
-  // First, normalise every empty paragraph (with or without a trivial
-  // pPr) to a single canonical `<w:p/>` so we can then collapse runs.
-  xml = xml.replace(EMPTY_PARA, '<w:p/>');
-  // Then collapse any run of 3+ canonical empty paragraphs to 2.
-  xml = xml.replace(/(<w:p\/>){3,}/g, '<w:p/><w:p/>');
+  // 1. Normalise every "effectively empty" paragraph to a single
+  //    canonical `<w:p/>`, then collapse consecutive canonical empties
+  //    down to 1. "Effectively empty" covers:
+  //      <w:p/>                                  self-closing
+  //      <w:p></w:p>                             open/close, nothing inside
+  //      <w:p><w:pPr>…</w:pPr></w:p>             pPr only, no runs
+  //      <w:p>…runs with only <w:br/>…</w:p>     line-break-only runs
+  //      <w:p>…runs with only whitespace <w:t>…</w:p>
+  //                                              from <p>&nbsp;</p> etc.
+  //    Word's default paragraph-after spacing already provides one
+  //    blank line between paragraphs, so a single `<w:p/>` is all
+  //    we need to separate sections. Anything more than that is
+  //    almost always contentEditable enthusiasm producing stacks of
+  //    spacer paragraphs — we strip them out.
+  const normaliseEmptyParagraph = (full: string): string => {
+    // Extract the inner content between the paragraph's open and close tags.
+    const opened = full.match(/^<w:p(?:\s[^>]*)?>/);
+    if (!opened) return full; // self-closing — already canonical enough
+    const inner = full.slice(opened[0].length, full.length - '</w:p>'.length);
+    // Drop <w:pPr>…</w:pPr> — that's paragraph formatting, not content.
+    const withoutPpr = inner.replace(/<w:pPr>[\s\S]*?<\/w:pPr>/g, '');
+    // Any <w:t> with non-whitespace text? Keep the paragraph as-is.
+    const textMatches = withoutPpr.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || [];
+    for (const tm of textMatches) {
+      const text = tm.replace(/^<w:t[^>]*>/, '').replace(/<\/w:t>$/, '');
+      if (text.replace(/[\s\u00A0]/g, '').length > 0) return full;
+    }
+    return '<w:p/>';
+  };
+  // Canonicalise self-closing + attribute-bearing self-closing first.
+  xml = xml.replace(/<w:p(?:\s[^>]*)?\s*\/>/g, '<w:p/>');
+  // Then walk paired <w:p>…</w:p> paragraphs and normalise the empties.
+  xml = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, normaliseEmptyParagraph);
+  // Collapse consecutive canonical empty paragraphs to a single one —
+  // Word's built-in paragraph spacing handles vertical rhythm.
+  xml = xml.replace(/(<w:p\/>){2,}/g, '<w:p/>');
 
   // 2. Drop table rows where every cell is empty. This catches the
   //    common "Handlebars {{#each}} block produced no iterations but
