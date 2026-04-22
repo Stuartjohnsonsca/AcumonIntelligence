@@ -72,19 +72,25 @@ export const MERGE_FIELDS: MergeField[] = [
   { group: 'Firm', key: 'firm.address', label: 'Firm address', type: 'scalar', sampleValue: '100 King Street, Manchester, M2 4WU' },
 
   // ─── Team ────────────────────────────────────────────────────────────────
-  { group: 'Team', key: 'ri.name', label: 'Responsible Individual (RI) name', type: 'scalar', sampleValue: 'Stuart Thomson' },
-  { group: 'Team', key: 'ri.email', label: 'RI email', type: 'scalar', sampleValue: 'stuart@johnsonsca.com' },
-  { group: 'Team', key: 'reviewer.name', label: 'Reviewer name', type: 'scalar', sampleValue: 'Jane Patel' },
-  { group: 'Team', key: 'reviewer.email', label: 'Reviewer email', type: 'scalar', sampleValue: 'jane@johnsonsca.com' },
-  { group: 'Team', key: 'preparer.name', label: 'Preparer name', type: 'scalar', sampleValue: 'Alex Brown' },
+  // Sample values deliberately use role-labelled placeholders rather
+  // than fabricated names. Synthetic names (e.g. "Jane Patel") had
+  // been appearing in generated letters when an engagement's team
+  // wasn't fully populated, looking indistinguishable from real
+  // people. The wrapped [] make it visibly a placeholder so the
+  // auditor notices the gap and fills it in on the Opening tab.
+  { group: 'Team', key: 'ri.name', label: 'Responsible Individual (RI) name', type: 'scalar', sampleValue: '[RI name]' },
+  { group: 'Team', key: 'ri.email', label: 'RI email', type: 'scalar', sampleValue: '[ri-email]' },
+  { group: 'Team', key: 'reviewer.name', label: 'Reviewer name', type: 'scalar', sampleValue: '[Reviewer name]' },
+  { group: 'Team', key: 'reviewer.email', label: 'Reviewer email', type: 'scalar', sampleValue: '[reviewer-email]' },
+  { group: 'Team', key: 'preparer.name', label: 'Preparer name', type: 'scalar', sampleValue: '[Preparer name]' },
   { group: 'Team', key: 'team', label: 'Engagement team (array)', type: 'array', sampleValue: [
-    { name: 'Stuart Thomson', role: 'RI', email: 'stuart@johnsonsca.com' },
-    { name: 'Jane Patel', role: 'Reviewer', email: 'jane@johnsonsca.com' },
-    { name: 'Alex Brown', role: 'Preparer', email: 'alex@johnsonsca.com' },
+    { name: '[RI name]', role: 'RI', email: '[ri-email]' },
+    { name: '[Reviewer name]', role: 'Reviewer', email: '[reviewer-email]' },
+    { name: '[Preparer name]', role: 'Preparer', email: '[preparer-email]' },
   ], itemFields: [
-    { key: 'name', label: 'Name', type: 'scalar', sampleValue: 'Stuart Thomson' },
+    { key: 'name', label: 'Name', type: 'scalar', sampleValue: '[Team member name]' },
     { key: 'role', label: 'Role', type: 'scalar', sampleValue: 'RI' },
-    { key: 'email', label: 'Email', type: 'scalar', sampleValue: 'stuart@johnsonsca.com' },
+    { key: 'email', label: 'Email', type: 'scalar', sampleValue: '[team-email]' },
   ]},
 
   // ─── Materiality ─────────────────────────────────────────────────────────
