@@ -41,15 +41,39 @@ export async function GET(req: Request) {
     if (!eng || (eng.firmId !== session.user.firmId && !session.user.isSuperAdmin)) {
       return NextResponse.json({ error: 'Engagement not found' }, { status: 404 });
     }
-    const candidates = await prisma.methodologyTemplate.findMany({
+
+    // Exact-match first. If nothing's there, try variant spellings —
+    // firms have historically created schedules with inconsistent
+    // naming (e.g. 'new_client_takeon_questions' vs
+    // 'new_client_take_on_questions' vs 'new_client_take_on'), and
+    // the engagement tab's hardcoded templateType doesn't always
+    // agree with what the admin saved. Rather than returning zero
+    // rows and surfacing a blank tab, normalise both sides
+    // (lowercase, strip all non-alphanumerics, strip trailing
+    // 'questions'/'categories' suffix) and match. Typical case
+    // this catches: the admin built their questions under a
+    // master-schedule key that had underscores the tab's key
+    // doesn't expect.
+    let candidates = await prisma.methodologyTemplate.findMany({
       where: { firmId: session.user.firmId, templateType },
     });
+    if (candidates.length === 0) {
+      const all = await prisma.methodologyTemplate.findMany({ where: { firmId: session.user.firmId } });
+      const target = normaliseTemplateType(templateType);
+      candidates = all.filter(t => normaliseTemplateType(t.templateType) === target);
+    }
+
     const template =
       candidates.find(t => t.auditType === eng.auditType)
       ?? candidates.find(t => t.auditType === 'ALL')
       ?? candidates[0]
       ?? null;
-    return NextResponse.json({ template, templates: candidates, resolvedAuditType: template?.auditType ?? null });
+    return NextResponse.json({
+      template,
+      templates: candidates,
+      resolvedAuditType: template?.auditType ?? null,
+      resolvedTemplateType: template?.templateType ?? null,
+    });
   }
 
   if (auditType) where.auditType = auditType;
@@ -103,4 +127,26 @@ export async function PUT(req: Request) {
   });
 
   return NextResponse.json({ template });
+}
+
+/**
+ * Compare two templateType strings while tolerating the real-world
+ * inconsistencies firms accumulate over time:
+ *
+ *   new_client_takeon_questions
+ *   new_client_take_on_questions
+ *   new_client_take_on
+ *   NewClientTakeOn
+ *   new-client-take-on
+ *
+ * All collapse to the same normalised form (lowercase, alphanumerics
+ * only, trailing 'questions' / 'categories' suffix stripped) so
+ * exact-match lookups don't return empty just because the admin UI
+ * and the tab code disagree on a single underscore.
+ */
+function normaliseTemplateType(s: string): string {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .replace(/(questions|categories)$/, '');
 }

@@ -107,10 +107,29 @@ async function loadScheduleSnapshot(
     // Template questions are firm-wide. Unique constraint is
     // (firmId, templateType, auditType), so both the specific auditType
     // template and the ALL fallback can exist; pick the more-specific.
-    const templates = await prisma.methodologyTemplate.findMany({
+    //
+    // Exact-match first. If nothing's there, fall back to a normalised
+    // lookup that tolerates the real-world inconsistencies firms
+    // accumulate — e.g. 'new_client_takeon_questions' vs
+    // 'new_client_take_on_questions'. Matches whatever the admin
+    // actually saved under rather than returning a blank preview.
+    let templates = await prisma.methodologyTemplate.findMany({
       where: { firmId, templateType: src.templateType, auditType: { in: [auditType, 'ALL'] } },
     });
-    const template = templates.find(t => t.auditType === auditType) ?? templates.find(t => t.auditType === 'ALL');
+    if (templates.length === 0) {
+      const all = await prisma.methodologyTemplate.findMany({ where: { firmId } });
+      const target = normaliseTemplateType(src.templateType);
+      templates = all.filter(t =>
+        normaliseTemplateType(t.templateType) === target
+        && (t.auditType === auditType || t.auditType === 'ALL')
+      );
+      // Still nothing? Drop the auditType constraint entirely — better
+      // to render SOMETHING than leave the specialist blind.
+      if (templates.length === 0) {
+        templates = all.filter(t => normaliseTemplateType(t.templateType) === target);
+      }
+    }
+    const template = templates.find(t => t.auditType === auditType) ?? templates.find(t => t.auditType === 'ALL') ?? templates[0];
     const rawItems = Array.isArray((template?.items as any)) ? (template!.items as any[]) : [];
 
     // Normalise every template item into a stable, frontend-friendly
@@ -235,6 +254,19 @@ function flattenTemplateItems(items: any[]): Array<{ id: string; label: string; 
  * already in Title Case pass through unchanged so we don't mangle
  * deliberately-styled section labels.
  */
+/**
+ * Same idea as the helper in /api/methodology-admin/templates — fold
+ * templateType strings down to a comparable form so exact-spelling
+ * mismatches ('new_client_takeon_questions' vs 'new_client_take_on_questions')
+ * don't produce a blank specialist-review preview.
+ */
+function normaliseTemplateType(s: string): string {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .replace(/(questions|categories)$/, '');
+}
+
 function humaniseSectionName(s: string): string {
   const trimmed = s.trim();
   if (!trimmed) return '';
