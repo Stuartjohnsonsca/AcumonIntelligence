@@ -409,6 +409,33 @@ function decodeEntitiesInToken(s: string): string {
 
 export function sanitiseHandlebarsInHtml(html: string): string {
   if (typeof html !== 'string' || html.length === 0) return html;
+
+  // ── First pass: unwrap HTML-comment-wrapped Handlebars tokens ─────
+  //
+  // Background: HTML parsers apply "foster parenting" — stray text
+  // inside <table>, <tbody>, <thead>, <tfoot>, <tr>, <colgroup> is
+  // illegal, so the parser moves it BEFORE the table. For templates
+  // that want a {{#each}} around a <tr>, this is fatal — the block
+  // tokens end up outside the table and the row becomes an orphan.
+  //
+  // HTML comments, in contrast, ARE allowed between those elements.
+  // So the convention for any template with Handlebars inside table
+  // structure is to wrap the block tokens in comments:
+  //
+  //   <tbody>
+  //     <!--{{#each (filterBySection foo "Bar")}}-->
+  //     <tr>…</tr>
+  //     <!--{{/each}}-->
+  //   </tbody>
+  //
+  // At render time we strip the comment wrappers so Handlebars sees
+  // the plain tokens. Works even when the comment wraps a whole
+  // multi-line block because `[\s\S]*?` matches newlines. Templates
+  // written without comment wrappers (e.g. inside a <p>, <div>,
+  // <li>) keep working unchanged — the regex only matches actual
+  // `<!--…-->` sequences.
+  html = html.replace(/<!--\s*(\{\{[\s\S]*?\}\})\s*-->/g, '$1');
+
   let out = '';
   let i = 0;
   const n = html.length;

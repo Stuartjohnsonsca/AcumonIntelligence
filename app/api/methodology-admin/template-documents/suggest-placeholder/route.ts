@@ -253,6 +253,16 @@ Example B — "Non Audit Services table with service name and threats":
   service name / Y-or-N flag / threats text. Loop every row where the
   Y/N answer is "Y" and use previousAnswer (service name) and
   nextAnswer (threats) to fill the two cells.
+
+  CRITICAL — when {{#each}} / {{/each}} / {{#if}} / {{/if}} sit
+  DIRECTLY inside <table>, <tbody>, <thead>, <tr>, <tfoot>, or
+  <colgroup>, they MUST be wrapped in HTML comments (<!--…-->).
+  Without the wrappers the browser's HTML parser foster-parents the
+  stray text out of the table and the loop breaks. The renderer
+  strips the comments before compiling the Handlebars, so the
+  template works correctly. Inside <td>, <p>, <div>, <li>, <span>
+  — no wrapper is needed.
+
     <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
       <thead>
         <tr>
@@ -261,12 +271,12 @@ Example B — "Non Audit Services table with service name and threats":
         </tr>
       </thead>
       <tbody>
-        {{#each (filterWhere (filterBySection questionnaires.ethics.asList "Non Audit Services") "answer" "eq" "Y")}}
+        <!--{{#each (filterWhere (filterBySection questionnaires.ethics.asList "Non Audit Services") "answer" "eq" "Y")}}-->
         <tr>
           <td>{{previousAnswer}}</td>
           <td>{{nextAnswer}}</td>
         </tr>
-        {{/each}}
+        <!--{{/each}}-->
       </tbody>
     </table>
 

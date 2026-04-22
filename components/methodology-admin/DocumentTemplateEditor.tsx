@@ -1343,10 +1343,17 @@ export function DocumentTemplateEditor({
               </button>
             </div>
             <div className="px-4 pt-3 space-y-2">
+              {/* Example uses HTML-comment-wrapped Handlebars for the
+                  {{#each}}/{{/each}} that sit directly inside <tbody>.
+                  HTML parsers foster-parent stray text out of table
+                  structure, which would break the loop; comments are
+                  allowed between <tbody>/<tr> so they survive parsing.
+                  The renderer strips the comment wrappers before
+                  compiling the Handlebars. */}
               <textarea
                 value={htmlDraft}
                 onChange={e => setHtmlDraft(e.target.value)}
-                placeholder={`Example:\n\n<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">\n  <thead>\n    <tr><th>Service Provided</th><th>Threats &amp; Safeguards</th></tr>\n  </thead>\n  <tbody>\n    {{#each (filterWhere (filterBySection questionnaires.ethics.asList "Non Audit Services") "answer" "eq" "Y")}}\n    <tr><td>{{previousAnswer}}</td><td>{{nextAnswer}}</td></tr>\n    {{/each}}\n  </tbody>\n</table>`}
+                placeholder={`Example — Non Audit Services table:\n\n<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">\n  <thead>\n    <tr><th>Service Provided</th><th>Threats &amp; Safeguards</th></tr>\n  </thead>\n  <tbody>\n    <!--{{#each (filterWhere (filterBySection questionnaires.ethics.asList "Non Audit Services") "answer" "eq" "Y")}}-->\n    <tr><td>{{previousAnswer}}</td><td>{{nextAnswer}}</td></tr>\n    <!--{{/each}}-->\n  </tbody>\n</table>\n\nTip: when {{#each}} / {{/each}} / {{#if}} / {{/if}} sit directly\ninside a <table>, <tbody>, <thead>, <tr>, or <tfoot>, wrap them in\nHTML comments like <!--{{…}}--> so the browser doesn't move them\nout of the table. Inside <td>, <p>, <div>, <li> — no wrapper needed.`}
                 className="w-full border border-slate-200 rounded px-3 py-2 text-[11px] font-mono min-h-[220px] focus:outline-none focus:border-slate-400"
                 autoFocus
               />
