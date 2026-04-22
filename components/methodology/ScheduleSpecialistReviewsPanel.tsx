@@ -176,10 +176,14 @@ export function ScheduleSpecialistReviewsPanel({ engagementId, scheduleKey }: { 
         counts.rejected && `${counts.rejected} ✗`,
       ].filter(Boolean).join('  ')}`;
 
-  // Hide entirely when there's nothing to do AND nothing to show.
-  // Matches the old behaviour so quiet schedules stay quiet.
+  // Show the pill whenever specialist roles are configured or there's
+  // any review history — i.e. always, on any firm that actually uses
+  // the feature. Reviewer sign-off used to gate this as a process
+  // check, but auditors want to kick off a specialist review at any
+  // stage (e.g. Ethics Partner looks over the Ethics schedule as
+  // it's being drafted), so the gate was pointless friction.
   if (loading) return null;
-  if (!hasAny && !reviewerSigned) return null;
+  if (!hasAny && roles.length === 0) return null;
 
   return (
     <div ref={popoverRef} className="relative">
@@ -245,37 +249,45 @@ export function ScheduleSpecialistReviewsPanel({ engagementId, scheduleKey }: { 
               <h4 className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                 <UserCheck className="h-3.5 w-3.5 text-indigo-500" /> Specialist Reviews
               </h4>
-              {reviewerSigned && roles.length > 0 && (
+              {roles.length > 0 && (
                 <button
                   onClick={() => { setModalOpen(true); setSendError(null); }}
                   className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium"
+                  title="Send this schedule for specialist review"
                 >
-                  <Send className="h-3 w-3" /> Send
+                  <Send className="h-3 w-3" /> Send to Specialist
                 </button>
               )}
             </div>
 
             {!hasAny ? (
               // Empty state — no master-detail needed. Just a short
-              // note so the auditor knows the panel is live.
+              // note + direct prompt to Send.
               <div className="p-4">
-                {!reviewerSigned ? (
+                {roles.length === 0 ? (
                   <p className="text-[11px] text-slate-400 italic">
-                    Reviewer sign-off required before a specialist can be asked to review.
+                    No specialist roles configured for this firm yet. Ask the Methodology Admin to add
+                    at least one role under <strong>Methodology Admin &rarr; Specialist Roles</strong>
+                    before sending this schedule for review.
                   </p>
                 ) : (
                   <p className="text-[11px] text-slate-500">
-                    No specialist reviews requested yet. Click <strong>Send</strong> to refer this schedule.
+                    No specialist reviews requested yet. Click <strong>Send to Specialist</strong> above to refer this schedule.
                   </p>
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-[180px_1fr] max-h-[55vh]">
-                {/* Left pane — role list. Click a role to drill into its
-                    reviews on the right. Each row shows role label +
-                    total count + per-status mini-tally so the auditor
-                    can spot a rejection without drilling in. */}
-                <div className="border-r border-slate-100 overflow-y-auto">
+              <div className="grid grid-cols-[200px_1fr] max-h-[55vh]">
+                {/* Left pane — role list styled as a visible tree so it's
+                    obvious each specialist type has its own branch. A
+                    section header sits above the list so a single role
+                    still reads as "one branch" rather than a flat row;
+                    multiple roles stack as distinct branches with
+                    counts and status tally per type. */}
+                <div className="border-r border-slate-100 overflow-y-auto bg-slate-50/60">
+                  <div className="px-3 pt-2.5 pb-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                    Specialist type
+                  </div>
                   {roleKeys.map(roleKey => {
                     const rs = groupsMap.get(roleKey)!;
                     const c = roleCounts(rs);
@@ -284,15 +296,26 @@ export function ScheduleSpecialistReviewsPanel({ engagementId, scheduleKey }: { 
                       <button
                         key={roleKey}
                         onClick={() => setSelectedRole(roleKey)}
-                        className={`w-full text-left px-3 py-2 border-b border-slate-50 transition-colors ${
-                          isSelected ? 'bg-indigo-50' : 'hover:bg-slate-50'
+                        className={`w-full text-left pl-4 pr-3 py-2 border-l-2 transition-colors relative ${
+                          isSelected
+                            ? 'bg-white border-l-indigo-500 shadow-sm'
+                            : 'border-l-transparent hover:bg-white hover:border-l-slate-300'
                         }`}
                       >
+                        {/* Small tree-branch indicator to make "this is a
+                            branch per specialist type" visually obvious
+                            even when there's only one role. */}
+                        <span
+                          aria-hidden
+                          className={`absolute left-1 top-3 text-[10px] font-mono ${isSelected ? 'text-indigo-400' : 'text-slate-300'}`}
+                        >└</span>
                         <div className="flex items-center justify-between gap-2">
                           <span className={`text-xs font-semibold truncate ${isSelected ? 'text-indigo-800' : 'text-slate-800'}`}>
                             {roleLabel(roleKey)}
                           </span>
-                          <span className="text-[10px] text-slate-500 flex-shrink-0">×{rs.length}</span>
+                          <span className={`text-[10px] font-semibold flex-shrink-0 px-1.5 py-0.5 rounded ${
+                            isSelected ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'
+                          }`}>{rs.length}</span>
                         </div>
                         <div className={`text-[10px] mt-0.5 ${roleTone(rs)}`}>
                           {[
