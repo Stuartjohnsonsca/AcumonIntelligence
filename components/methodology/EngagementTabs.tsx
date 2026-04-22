@@ -739,6 +739,49 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         </div>
       ) : (
         <>
+          {/* Tab-order diagnostic — only renders when ?debug=tabs is in
+              the URL. Shows EXACTLY what order the admin's
+              configurator saved vs. what the tab bar ends up
+              displaying, so we can spot mismatches (e.g. a key that
+              never resolves, stage-boundary override, or a cache
+              miss). Zero impact without the URL flag. */}
+          {typeof window !== 'undefined' && new URL(window.location.href).searchParams.get('debug') === 'tabs' && (
+            <div className="border border-amber-300 bg-amber-50 rounded p-3 my-2 text-[10px] font-mono leading-relaxed overflow-x-auto">
+              <div className="font-sans font-bold text-amber-800 mb-1 text-xs">Tab-order debug ({auditType})</div>
+              <div><span className="text-slate-500">scheduleOrder (from API mappings[{auditType}]):</span></div>
+              <div className="pl-3 mb-2">
+                {scheduleOrder
+                  ? scheduleOrder.length > 0
+                    ? scheduleOrder.map((k, i) => (
+                      <span key={i} className="inline-block bg-white border border-slate-200 rounded px-1.5 py-0.5 mr-1 mb-1">
+                        <span className="text-slate-400">{i}:</span> {k}
+                      </span>
+                    ))
+                    : <span className="text-red-600">EMPTY — admin config not loaded or no mapping for this audit type</span>
+                  : <span className="text-red-600">NOT LOADED</span>}
+              </div>
+              <div><span className="text-slate-500">Computed visibleTabs order (after sort):</span></div>
+              <div className="pl-3 mb-2">
+                {visibleTabs.map((t, i) => {
+                  const ck = TAB_TO_SCHEDULE[t.key];
+                  const nck = ck && orderIndex ? orderIndex.get(normaliseScheduleKey(ck)) : undefined;
+                  return (
+                    <span key={i} className="inline-block bg-white border border-slate-200 rounded px-1.5 py-0.5 mr-1 mb-1">
+                      <span className="text-slate-400">{i}:</span> {t.key}
+                      <span className="text-slate-400"> → {ck || '(no TAB_TO_SCHEDULE entry)'}</span>
+                      {nck === undefined
+                        ? <span className="text-red-600 ml-1">✗ no order match</span>
+                        : <span className="text-green-700 ml-1">✓ idx={nck}</span>}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="text-[10px] text-amber-700 font-sans">
+                Append <span className="font-mono">?debug=tabs</span> to any engagement URL to see this. Remove to hide.
+              </div>
+            </div>
+          )}
+
           {/* Normal horizontal tab bar */}
           <div className="border-x border-slate-200 bg-white overflow-x-auto">
             <nav className="flex -mb-px" aria-label="Engagement tabs">
