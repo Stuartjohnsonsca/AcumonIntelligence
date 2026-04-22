@@ -254,11 +254,19 @@ function placeholderAnswerFor(item: any): string | number | boolean {
   // Date — today, ISO yyyy-mm-dd, so {{formatDate}} handles it.
   if (inputType === 'date') return new Date().toISOString().slice(0, 10);
 
-  // Long-text / free-text / anything else — reuse the question text
-  // so each row in a looped table reads as something distinct. If the
-  // question has no text, fall through to a neutral placeholder.
+  // Long-text / free-text / anything else — emit a clearly-labelled
+  // placeholder rather than reusing the question text. Previously the
+  // preview was pulling question text into {{previousAnswer}} /
+  // {{nextAnswer}} cells, which read as "the template is returning
+  // questions, not answers". Square brackets make it visibly a
+  // sample, and including the question key (or the question text when
+  // there's no key) lets the auditor trace each placeholder back to
+  // its source row at a glance.
+  const key = String(item?.key ?? '').trim();
   const qtext = String(item?.questionText ?? item?.label ?? '').trim();
-  return qtext || '(sample answer)';
+  if (key) return `[sample: ${key}]`;
+  if (qtext) return `[sample answer for "${qtext.slice(0, 60)}${qtext.length > 60 ? '…' : ''}"]`;
+  return '[sample answer]';
 }
 
 /** Turn `permanent_file_questions` into `permanentFile`. Mirrors the

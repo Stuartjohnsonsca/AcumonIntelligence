@@ -137,6 +137,14 @@ export function DocumentTemplateEditor({
   // so the editor treats it as structure rather than content.
   const [htmlOpen, setHtmlOpen] = useState(false);
   const [htmlDraft, setHtmlDraft] = useState('');
+  // Source-mode: swap the WYSIWYG contentEditable for a plain
+  // textarea showing the raw HTML of the template. Lets the admin
+  // hand-edit the whole template — adjust a comment-wrapped
+  // Handlebars block, fix a `<table>` by hand, etc. — without
+  // fighting the browser's contentEditable normalisation. Toggling
+  // back flushes the textarea content back into the contentEditable.
+  const [sourceMode, setSourceMode] = useState(false);
+  const [sourceDraft, setSourceDraft] = useState('');
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestDescription, setSuggestDescription] = useState('');
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -274,7 +282,11 @@ export function DocumentTemplateEditor({
    *  HTML entities inside every `{{...}}` token. Also drops the
    *  trailing `<br>` contentEditable loves to leave at the end. */
   function readBody(): string {
-    const raw = editorRef.current?.innerHTML ?? '';
+    // In source mode the textarea is the source of truth — the
+    // contentEditable's innerHTML hasn't been updated yet (that
+    // happens only when the admin clicks "exit source"). Use the
+    // draft directly so save / preview see the admin's latest edits.
+    const raw = sourceMode ? sourceDraft : (editorRef.current?.innerHTML ?? '');
     let html = sanitiseHandlebarsInEditorHtml(raw);
     html = html.replace(/(<br\s*\/?>\s*)+$/i, '');
     return html;
@@ -947,6 +959,38 @@ export function DocumentTemplateEditor({
         >
           <Code className="h-3 w-3" /> insert HTML
         </button>
+        <button
+          // Toggle between WYSIWYG and raw-HTML editing. When turning
+          // source mode ON we capture the editor's current innerHTML
+          // into the textarea draft; when turning it OFF we write the
+          // (possibly edited) draft back into the contentEditable so
+          // the save path picks it up. Both directions run the draft
+          // through the same sanitiser the server uses so tokens that
+          // were split across tags get recombined automatically.
+          onClick={() => {
+            if (sourceMode) {
+              // Leaving source mode — write draft back into the editor.
+              if (editorRef.current) {
+                editorRef.current.innerHTML = sanitiseHandlebarsInEditorHtml(sourceDraft);
+              }
+              setSourceMode(false);
+              setDirtyTick(t => t + 1);
+            } else {
+              // Entering source mode — snapshot current innerHTML.
+              const current = editorRef.current?.innerHTML ?? '';
+              setSourceDraft(current);
+              setSourceMode(true);
+            }
+          }}
+          title={sourceMode ? 'Switch back to visual editor' : 'Edit the raw HTML source of this template'}
+          className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border ${
+            sourceMode
+              ? 'bg-amber-100 border-amber-300 text-amber-800 hover:bg-amber-200'
+              : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+          }`}
+        >
+          <Code className="h-3 w-3" /> {sourceMode ? 'exit source' : 'source'}
+        </button>
 
         <ToolbarDiv />
 
@@ -1482,6 +1526,10 @@ export function DocumentTemplateEditor({
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200 min-h-0">
         {/* Left: editor + merge-field palette */}
         <div className="flex flex-col min-h-0">
+          {/* Keep the contentEditable MOUNTED at all times (hidden via
+              display:none in source mode) so its innerHTML and the
+              captured selection range stay intact when toggling. Mount/
+              unmount would drop the innerHTML on every toggle. */}
           <div
             ref={editorRef}
             contentEditable
@@ -1491,7 +1539,17 @@ export function DocumentTemplateEditor({
             onBlur={normaliseEditorInPlace}
             className="flex-1 min-h-[320px] overflow-auto outline-none px-6 py-4 bg-white prose prose-sm max-w-none focus:bg-slate-50/20"
             spellCheck={true}
+            style={sourceMode ? { display: 'none' } : undefined}
           />
+          {sourceMode && (
+            <textarea
+              value={sourceDraft}
+              onChange={e => { setSourceDraft(e.target.value); setDirtyTick(t => t + 1); }}
+              spellCheck={false}
+              className="flex-1 min-h-[320px] overflow-auto outline-none px-6 py-4 bg-slate-50 font-mono text-[11px] text-slate-800 border-l-4 border-amber-400"
+              placeholder="Raw HTML + Handlebars source. Changes here overwrite the visual editor when you click 'exit source'."
+            />
+          )}
           {/* Merge-field palette */}
           <div className="border-t border-slate-200 bg-slate-50/60 max-h-64 overflow-y-auto">
             <div className="px-4 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wide sticky top-0 bg-slate-50/90 backdrop-blur border-b border-slate-200">Merge fields (click to insert)</div>
