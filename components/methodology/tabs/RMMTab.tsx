@@ -189,6 +189,27 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
     try { window.localStorage.setItem(widthsStorageKey, JSON.stringify(columnWidths)); } catch { /* ignore */ }
   }, [columnWidths, widthsStorageKey]);
 
+  // Performance materiality — used to shade the Amount cell grey when
+  // a row's amount is BELOW PM. Signals at a glance which line items
+  // don't individually clear the materiality threshold. Fetched once
+  // on mount; re-fetched when the engagement changes. Zero if the
+  // materiality schedule hasn't been populated yet — in which case we
+  // don't shade anything.
+  const [performanceMateriality, setPerformanceMateriality] = useState<number>(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/materiality`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const pm = Number(json?.data?.performanceMateriality);
+        if (!cancelled && Number.isFinite(pm) && pm > 0) setPerformanceMateriality(pm);
+      } catch { /* quiet — shading is non-critical */ }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId]);
+
   function startColumnResize(field: string, startX: number, startWidth: number) {
     const onMove = (e: MouseEvent) => {
       const dx = e.clientX - startX;
@@ -850,15 +871,39 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         );
                       })()}
                     </td>
-                    <td className={`px-2 py-1 align-top ${row.isMandatory ? 'bg-slate-100' : ''}`}>
-                      {row.isMandatory ? (
-                        <span className="text-xs text-slate-300 px-1">—</span>
-                      ) : (
-                        <span className="text-xs text-right block px-1 py-0.5 text-slate-700">
-                          {row.amount != null ? (() => { const n = Number(row.amount); return isNaN(n) ? '' : `£${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${n < 0 ? ' Cr' : ' Dr'}`; })() : ''}
-                        </span>
-                      )}
-                    </td>
+                    {(() => {
+                      // Shade the Amount cell grey when the row's
+                      // absolute amount is below performance materiality
+                      // — i.e. this FS line on its own wouldn't move
+                      // the audit's materiality threshold. Helps the
+                      // reviewer spot de-minimis items at a glance.
+                      // Mandatory rows keep their own slate-100 shade
+                      // (takes precedence); untouched rows (no amount
+                      // OR PM not configured) render as normal.
+                      const n = row.amount != null ? Number(row.amount) : NaN;
+                      const belowPm = Number.isFinite(n)
+                        && performanceMateriality > 0
+                        && Math.abs(n) < performanceMateriality;
+                      const bgClass = row.isMandatory
+                        ? 'bg-slate-100'
+                        : belowPm ? 'bg-slate-100/70' : '';
+                      return (
+                        <td
+                          className={`px-2 py-1 align-top ${bgClass}`}
+                          title={belowPm
+                            ? `Below performance materiality (£${performanceMateriality.toLocaleString('en-GB', { minimumFractionDigits: 2 })})`
+                            : undefined}
+                        >
+                          {row.isMandatory ? (
+                            <span className="text-xs text-slate-300 px-1">—</span>
+                          ) : (
+                            <span className="text-xs text-right block px-1 py-0.5 text-slate-700">
+                              {row.amount != null ? (() => { const nn = Number(row.amount); return isNaN(nn) ? '' : `£${Math.abs(nn).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${nn < 0 ? ' Cr' : ' Dr'}`; })() : ''}
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })()}
                     <td className="px-2 py-1 align-top">
                       <div className="flex flex-wrap gap-0.5 justify-center">
                         {applicableAssertionsFor(row).map(a => {
