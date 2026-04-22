@@ -2,12 +2,19 @@ import { NextResponse } from 'next/server';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { columnExists } from '@/lib/prisma-column-exists';
 
 /**
  * POST /api/engagements/[engagementId]/par/send-rmm
  * Creates RMM rows from PAR items flagged for RMM.
  * Looks up amounts from TBCYvPY aggregated by FS Level.
+ *
+ * Every row this endpoint creates OR updates is marked
+ * `source = 'par'` so the RMM tab can segregate PAR-sourced rows to
+ * the bottom of the schedule with distinct shading. A bulk backfill
+ * at the top of the handler also retroactively marks any existing
+ * RMM row whose lineItem matches a PAR row with addedToRmm=true but
+ * where `source` is still NULL — catches rows that were pushed from
+ * PAR before the `source` column was deployed.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
@@ -35,6 +42,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     if (level) {
       amountsByLevel[level] = (amountsByLevel[level] || 0) + (tb.currentYear || 0);
     }
+  }
+
+  // Retroactive backfill: any RMM row whose lineItem matches a PAR row
+  // flagged addedToRmm=true but whose `source` is still NULL is almost
+  // certainly a row that was pushed from PAR BEFORE the `source`
+  // column existed (or before this endpoint started setting it).
+  // Mark them so the RMM tab segregates them alongside new pushes.
+  // Runs on every send-rmm request — cheap and idempotent.
+  const parPushedRows = await prisma.auditPARRow.findMany({
+    where: { engagementId, addedToRmm: true },
+    select: { particulars: true },
+  });
+  const parLineItems = Array.from(new Set(parPushedRows.map(p => p.particulars).filter(Boolean)));
+  if (parLineItems.length > 0) {
+    await prisma.auditRMMRow.updateMany({
+      where: { engagementId, source: null, lineItem: { in: parLineItems } },
+      data: { source: 'par' },
+    }).catch(err => {
+      // If the `source` column doesn't exist yet (migration not applied
+      // to this environment), log but don't fail the whole push — the
+      // PAR rows still get into RMM, just without the bottom grouping.
+      console.warn('[send-rmm] source backfill skipped (column missing?):', err?.message);
+    });
   }
 
   // Get existing RMM rows so we can update-in-place instead of silently
@@ -82,6 +112,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     if (existing) {
       // Refresh the amount + keep the narrative up to date without
       // trampling any manual RMM enrichments the user may have added.
+      // Setting source='par' on update is important too: if the row
+      // existed BEFORE the `source` column was added, the backfill at
+      // the top already covered it; if it existed but was manually
+      // created and a PAR push now lands on it, the user expectation
+      // is that it's now PAR-sourced (they explicitly chose to push
+      // this PAR row to RMM).
       await prisma.auditRMMRow.update({
         where: { id: existing.id },
         data: {
@@ -92,12 +128,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           fsStatement: fsStatement ?? undefined,
           fsLevel: fsLevel ?? undefined,
           fsNote: fsNote ?? undefined,
+          source: 'par',
         },
       });
       updated++;
       updatedLineItems.push(lineItem);
     } else {
-      const hasSource = await columnExists('audit_rmm_rows', 'source');
       await prisma.auditRMMRow.create({
         data: {
           engagementId,
@@ -109,7 +145,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           fsStatement,
           fsLevel,
           fsNote,
-          ...(hasSource ? { source: 'par' } : {}),
+          source: 'par',
         },
       });
       created++;
