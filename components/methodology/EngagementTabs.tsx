@@ -326,6 +326,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           const orderedKeys = data.mappings[auditType] as string[];
           setEnabledSchedules(new Set(orderedKeys));
           setScheduleOrder(orderedKeys);
+          // Dump to DevTools so the tab order is always diagnosable
+          // without needing the visible overlay. Filter noise in prod
+          // consoles by using `debug` level (hidden by default unless
+          // the user enables verbose logging).
+          // eslint-disable-next-line no-console
+          console.debug('[EngagementTabs] scheduleOrder for', auditType, ':', orderedKeys);
+        } else {
+          // eslint-disable-next-line no-console
+          console.debug('[EngagementTabs] no scheduleOrder mapping for', auditType, '— full response:', data);
         }
 
         const sk = data?.stageKeyedMappings?.[auditType];
@@ -739,13 +748,22 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         </div>
       ) : (
         <>
-          {/* Tab-order diagnostic — only renders when ?debug=tabs is in
-              the URL. Shows EXACTLY what order the admin's
-              configurator saved vs. what the tab bar ends up
-              displaying, so we can spot mismatches (e.g. a key that
-              never resolves, stage-boundary override, or a cache
-              miss). Zero impact without the URL flag. */}
-          {typeof window !== 'undefined' && new URL(window.location.href).searchParams.get('debug') === 'tabs' && (
+          {/* Tab-order diagnostic — renders when any `debug` query param
+              is present (e.g. ?debug=tabs, ?debug=1, &debug=true) OR
+              when localStorage key 'acumon-debug-tabs' is set. Second
+              path survives client/period re-selection which strips
+              URL params. Shows EXACTLY what the admin's configurator
+              saved vs. what the tab bar renders, so we can spot
+              mismatches (key that never resolves, stage-boundary
+              override, cache miss). Zero impact without either flag. */}
+          {(() => {
+            if (typeof window === 'undefined') return false;
+            const hasDebugParam = !!new URL(window.location.href).searchParams.get('debug');
+            const hasDebugFlag = (() => {
+              try { return window.localStorage.getItem('acumon-debug-tabs') === '1'; } catch { return false; }
+            })();
+            return hasDebugParam || hasDebugFlag;
+          })() && (
             <div className="border border-amber-300 bg-amber-50 rounded p-3 my-2 text-[10px] font-mono leading-relaxed overflow-x-auto">
               <div className="font-sans font-bold text-amber-800 mb-1 text-xs">Tab-order debug ({auditType})</div>
               <div><span className="text-slate-500">scheduleOrder (from API mappings[{auditType}]):</span></div>
@@ -777,7 +795,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 })}
               </div>
               <div className="text-[10px] text-amber-700 font-sans">
-                Append <span className="font-mono">?debug=tabs</span> to any engagement URL to see this. Remove to hide.
+                Enable via any <span className="font-mono">?debug=...</span> URL param or by running
+                <span className="font-mono bg-white border border-amber-200 rounded px-1 mx-1">localStorage.setItem(&apos;acumon-debug-tabs&apos;,&apos;1&apos;)</span>
+                in DevTools. To hide: clear the param or run
+                <span className="font-mono bg-white border border-amber-200 rounded px-1 mx-1">localStorage.removeItem(&apos;acumon-debug-tabs&apos;)</span>.
               </div>
             </div>
           )}
