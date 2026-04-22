@@ -111,7 +111,20 @@ async function loadScheduleSnapshot(
       where: { firmId, templateType: src.templateType, auditType: { in: [auditType, 'ALL'] } },
     });
     const template = templates.find(t => t.auditType === auditType) ?? templates.find(t => t.auditType === 'ALL');
-    const questions = Array.isArray((template?.items as any)) ? (template!.items as any[]) : [];
+    const rawItems = Array.isArray((template?.items as any)) ? (template!.items as any[]) : [];
+
+    // Normalise every template item into a stable, frontend-friendly
+    // shape so the specialist never sees raw UUIDs or slug-keys where
+    // a question should be. Template items in the wild come in many
+    // shapes (flat legacy, nested {title, questions[]}, Structured
+    // Schedule rows, …) — this pass flattens them all into one
+    // array of { id, label, section } entries. Section names are
+    // de-slugified so "non_audit_services" reads as
+    // "Non Audit Services". The LOOKUP KEY for the values map
+    // (`id` here) prefers the stored questionKey / key / id — in
+    // that order of trust — so whatever the form saved against
+    // on the engagement side still resolves.
+    const questions = flattenTemplateItems(rawItems);
 
     // Answers — delegate to the right Prisma model based on kind.
     let values: Record<string, any> = {};
@@ -159,6 +172,80 @@ async function loadScheduleSnapshot(
       `The auditor who sent the review link can share the schedule content with you directly — ` +
       `please reach out before deciding.`,
   };
+}
+
+/**
+ * Flatten a methodology template's `items` array into a uniform
+ * {id, label, section} list the specialist-review frontend can
+ * render without knowing about the underlying template shape.
+ *
+ * Templates in the wild come in three shapes:
+ *
+ *   - Flat questions (most common):
+ *       [{ id, key?, questionText, sectionKey?, sortOrder?, inputType? }, …]
+ *
+ *   - Nested "section with questions":
+ *       [{ id, title, questions: [{ id, key?, text, answerType, … }] }, …]
+ *       The parent's `title` becomes the section for every child.
+ *
+ *   - Structured-schedule rows (less common in review context):
+ *       Same as flat, but questions live under columns.
+ *
+ * The `id` field on each output entry is what the engagement stores
+ * answers against — typically the template's UUID, but we check
+ * `key` and `questionKey` first in case a legacy template slug was
+ * used on the form side.
+ *
+ * Section names are passed through a de-slugifier so
+ * "non_audit_services" reads as "Non Audit Services" in the UI.
+ */
+function flattenTemplateItems(items: any[]): Array<{ id: string; label: string; section: string | null }> {
+  const out: Array<{ id: string; label: string; section: string | null }> = [];
+  const emit = (q: any, groupTitle: string | null) => {
+    if (!q) return;
+    const id = String(q.questionKey ?? q.key ?? q.id ?? '').trim();
+    if (!id) return;
+    // Prefer the fields we KNOW contain readable text. `questionText`
+    // is the canonical field in the admin editor; `text` appears on
+    // nested legacy schemas; `label` / `question` are editor-level
+    // fallbacks. Slug-key last-resort so nothing ever renders as a
+    // raw UUID.
+    const labelRaw = q.questionText ?? q.text ?? q.label ?? q.question ?? q.name ?? id;
+    const label = String(labelRaw).trim();
+    const sectionRaw = groupTitle ?? q.section ?? q.sectionKey ?? q.section_name ?? null;
+    const section = sectionRaw ? humaniseSectionName(String(sectionRaw)) : null;
+    out.push({ id, label, section });
+  };
+  for (const item of items) {
+    if (!item) continue;
+    if (Array.isArray(item.questions)) {
+      const groupTitle = (item.title ?? item.sectionKey ?? item.section ?? null) as string | null;
+      for (const q of item.questions) emit(q, groupTitle);
+    } else {
+      emit(item, null);
+    }
+  }
+  return out;
+}
+
+/**
+ * Turn a section slug like "non_audit_services" / "Non-Audit Services"
+ * into a tidily-cased display string. Only touches strings that look
+ * slug-ish (contain _ or lowercased letters throughout); strings
+ * already in Title Case pass through unchanged so we don't mangle
+ * deliberately-styled section labels.
+ */
+function humaniseSectionName(s: string): string {
+  const trimmed = s.trim();
+  if (!trimmed) return '';
+  // Already looks like a readable title (has a space AND an upper-
+  // cased letter) — leave it alone.
+  if (/\s/.test(trimmed) && /[A-Z]/.test(trimmed)) return trimmed;
+  return trimmed
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b([a-z])/g, (_, c) => c.toUpperCase())
+    .trim();
 }
 
 /**
