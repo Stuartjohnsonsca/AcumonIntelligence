@@ -36,10 +36,19 @@ interface ScheduleQuestion {
   dropdownOptions?: string[];
 }
 
-interface ScheduleSnapshot {
-  questions: ScheduleQuestion[];
-  values: Record<string, string | number | boolean | null>;
-}
+/**
+ * Discriminated-union content shape returned by the server.
+ *   - 'questions': Q&A template (most schedules: ethics, continuance,
+ *     materiality, new client take-on, subsequent events, permanent file)
+ *   - 'rows':      tabular schedules (PAR, RMM, TB)
+ *   - 'note':      last-resort explanatory message when the schedule
+ *                  type isn't otherwise renderable — always human-readable,
+ *                  never a "preview not available" dead end.
+ */
+type ScheduleSnapshot =
+  | { kind: 'questions'; questions: ScheduleQuestion[]; values: Record<string, string | number | boolean | null> }
+  | { kind: 'rows'; columns: { key: string; label: string }[]; rows: Record<string, any>[] }
+  | { kind: 'note'; message: string };
 
 /** Friendly-format whatever the audit team answered so the specialist
  *  can scan values at a glance. Blank / null renders as "—" so unset
@@ -181,10 +190,10 @@ export function SpecialistReviewClient({ token }: { token: string }) {
         </p>
       </div>
 
-      {/* Collapsible read-only snapshot of the schedule content. When
-          the server couldn't produce a preview (scheduleKey not in the
-          supported set) we still render the card — collapsed — with a
-          note telling the specialist where to find the content. */}
+      {/* Collapsible read-only snapshot of the schedule content. The
+          server guarantees a non-null `schedule` so the specialist
+          always sees something here — Q&A, rows, or an explanatory
+          note inviting them to request the content from the auditor. */}
       <div className="bg-white rounded-lg border border-slate-200">
         <button
           type="button"
@@ -194,9 +203,14 @@ export function SpecialistReviewClient({ token }: { token: string }) {
           <span className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-slate-500" />
             Schedule content
-            {schedule && schedule.questions.length > 0 && (
+            {schedule?.kind === 'questions' && schedule.questions.length > 0 && (
               <span className="text-[11px] font-normal text-slate-500">
                 &middot; {schedule.questions.length} question{schedule.questions.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {schedule?.kind === 'rows' && (
+              <span className="text-[11px] font-normal text-slate-500">
+                &middot; {schedule.rows.length} row{schedule.rows.length === 1 ? '' : 's'}
               </span>
             )}
           </span>
@@ -204,45 +218,84 @@ export function SpecialistReviewClient({ token }: { token: string }) {
         </button>
         {scheduleOpen && (
           <div className="px-6 pb-5 pt-1 border-t border-slate-100">
-            {!schedule || schedule.questions.length === 0 ? (
+            {/* ── Note-only content ── */}
+            {schedule?.kind === 'note' && (
+              <p className="text-xs text-slate-500 italic mt-3">{schedule.message}</p>
+            )}
+
+            {/* ── Q&A content ── */}
+            {schedule?.kind === 'questions' && schedule.questions.length === 0 && (
               <p className="text-xs text-slate-500 italic mt-3">
-                A preview of the schedule isn&rsquo;t available for this type. Ask the auditor who sent
-                the link ({review?.sentByName || '—'}) to share the content directly so you can review it.
+                This schedule hasn&rsquo;t been configured with questions yet.
+                Ask the auditor who sent the link ({review?.sentByName || '—'}) to share the content directly.
               </p>
-            ) : (
-              (() => {
-                // Group questions by section for readability. Questions
-                // without a section fall into a single "General" group
-                // so we don't scatter answers across fake groups.
-                const groups = new Map<string, ScheduleQuestion[]>();
-                for (const q of schedule.questions) {
-                  const key = q.section?.trim() || 'General';
-                  const arr = groups.get(key) ?? [];
-                  arr.push(q);
-                  groups.set(key, arr);
-                }
-                return (
-                  <div className="mt-3 space-y-5">
-                    {Array.from(groups.entries()).map(([section, questions]) => (
-                      <div key={section}>
-                        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">{section}</h4>
-                        <dl className="divide-y divide-slate-100 border border-slate-100 rounded">
-                          {questions.map(q => {
-                            const v = schedule.values[q.id];
-                            const label = q.label || q.question || q.id;
-                            return (
-                              <div key={q.id} className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-3 px-3 py-2">
-                                <dt className="text-xs text-slate-600">{label}</dt>
-                                <dd className="text-xs text-slate-800 whitespace-pre-wrap">{formatValue(v)}</dd>
-                              </div>
-                            );
-                          })}
-                        </dl>
-                      </div>
+            )}
+            {schedule?.kind === 'questions' && schedule.questions.length > 0 && (() => {
+              // Group questions by section for readability. Questions
+              // without a section fall into a single "General" group
+              // so we don't scatter answers across fake groups.
+              const groups = new Map<string, ScheduleQuestion[]>();
+              for (const q of schedule.questions) {
+                const key = q.section?.trim() || 'General';
+                const arr = groups.get(key) ?? [];
+                arr.push(q);
+                groups.set(key, arr);
+              }
+              return (
+                <div className="mt-3 space-y-5">
+                  {Array.from(groups.entries()).map(([section, questions]) => (
+                    <div key={section}>
+                      <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">{section}</h4>
+                      <dl className="divide-y divide-slate-100 border border-slate-100 rounded">
+                        {questions.map(q => {
+                          const v = schedule.values[q.id];
+                          const label = q.label || q.question || q.id;
+                          return (
+                            <div key={q.id} className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-3 px-3 py-2">
+                              <dt className="text-xs text-slate-600">{label}</dt>
+                              <dd className="text-xs text-slate-800 whitespace-pre-wrap">{formatValue(v)}</dd>
+                            </div>
+                          );
+                        })}
+                      </dl>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* ── Row-based content ── */}
+            {schedule?.kind === 'rows' && schedule.rows.length === 0 && (
+              <p className="text-xs text-slate-500 italic mt-3">
+                This schedule has no rows yet — there&rsquo;s nothing for the specialist to review.
+                If that seems wrong, ask the auditor ({review?.sentByName || '—'}) to double-check.
+              </p>
+            )}
+            {schedule?.kind === 'rows' && schedule.rows.length > 0 && (
+              <div className="mt-3 overflow-x-auto border border-slate-100 rounded">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      {schedule.columns.map(c => (
+                        <th key={c.key} className="text-left px-3 py-2 font-semibold text-slate-700 border-b border-slate-200 whitespace-nowrap">
+                          {c.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {schedule.rows.map((row, i) => (
+                      <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}>
+                        {schedule.columns.map(c => (
+                          <td key={c.key} className="px-3 py-2 align-top text-slate-800 whitespace-pre-wrap border-b border-slate-100">
+                            {formatValue(row[c.key])}
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </div>
-                );
-              })()
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}

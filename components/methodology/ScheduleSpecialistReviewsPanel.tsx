@@ -335,7 +335,7 @@ export function ScheduleSpecialistReviewsPanel({ engagementId, scheduleKey }: { 
                                   "Round 3 of 3" when newest, counts
                                   down chronologically. */}
                               <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-500">
-                                Round {selectedReviews.length - idx} of {selectedReviews.length}
+                                {selectedReviews.length - idx} of {selectedReviews.length}
                               </span>
                               <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide ${
                                 r.status === 'accepted' ? 'bg-green-100 text-green-700'
