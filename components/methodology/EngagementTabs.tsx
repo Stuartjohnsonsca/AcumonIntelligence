@@ -420,6 +420,28 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   };
   const scheduleConditionsPass = buildVisibilityChecker(scheduleTriggers, triggerCtx);
 
+  // Collapse a schedule key to a comparable form so exact-spelling
+  // variations don't break the enabled / order lookups. Same rule
+  // the template resolver uses: lowercase + strip non-alphanumerics
+  // + strip trailing 'questions'/'categories'. With this, TAB_TO_SCHEDULE's
+  // `new_client_takeon_questions` matches the admin's
+  // `new_client_take_on_questions` (or even `new-client-take-on`).
+  const normaliseScheduleKey = (s: string | undefined) =>
+    String(s ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '')
+      .replace(/(questions|categories)$/, '');
+  // Build a set of enabled-normalised keys once — avoids re-normalising
+  // every entry on every filter iteration.
+  const enabledNormalised = enabledSchedules
+    ? new Set(Array.from(enabledSchedules).map(k => normaliseScheduleKey(k)))
+    : null;
+  // Positional map — scheduleKey (normalised) → index, so the sort
+  // below is O(1) per comparison instead of O(n) indexOf scans.
+  const orderIndex: Map<string, number> | null = scheduleOrder
+    ? new Map(scheduleOrder.map((k, i) => [normaliseScheduleKey(k), i]))
+    : null;
+
   // Filter tabs based on engagement status, audit type schedule config, and continuance/new-client
   // Then sort by configured order
   const visibleTabs = TABS.filter(tab => {
@@ -430,20 +452,33 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     if (tab.key === 'continuance' && isNewClient === true) return false;
     if (tab.key === 'new-client' && isNewClient !== true) return false;
 
-    if (!enabledSchedules) return true; // Not loaded yet or no config = show all
+    if (!enabledNormalised) return true; // Not loaded yet or no config = show all
     const scheduleKey = TAB_TO_SCHEDULE[tab.key];
     if (!scheduleKey) return true;
-    if (!enabledSchedules.has(scheduleKey)) return false;
+    // Try exact match first (fast path), then normalised fallback —
+    // handles firms whose audit-type-schedules config saved keys with
+    // slightly different spellings than TAB_TO_SCHEDULE expects.
+    if (!enabledSchedules!.has(scheduleKey) && !enabledNormalised.has(normaliseScheduleKey(scheduleKey))) {
+      return false;
+    }
     // Visibility conditions (Part G)
     return scheduleConditionsPass(scheduleKey);
   }).sort((a, b) => {
-    if (!scheduleOrder) return 0; // No order config = keep hardcoded order
+    if (!orderIndex) return 0; // No order config = keep hardcoded order
     if (a.key === 'opening') return -1; // Opening always first
     if (b.key === 'opening') return 1;
     const aKey = TAB_TO_SCHEDULE[a.key];
     const bKey = TAB_TO_SCHEDULE[b.key];
-    const aIdx = aKey ? scheduleOrder.indexOf(aKey) : -1;
-    const bIdx = bKey ? scheduleOrder.indexOf(bKey) : -1;
+    // Normalised lookup so the admin's reordering DOES flow through
+    // when their saved schedule keys aren't identical to TAB_TO_SCHEDULE
+    // (e.g. extra underscore). Fall back to exact if normalisation
+    // somehow collides — unlikely but cheap to be safe.
+    const aIdx = aKey
+      ? (orderIndex.get(normaliseScheduleKey(aKey)) ?? (scheduleOrder!.indexOf(aKey)))
+      : -1;
+    const bIdx = bKey
+      ? (orderIndex.get(normaliseScheduleKey(bKey)) ?? (scheduleOrder!.indexOf(bKey)))
+      : -1;
     // Tabs in config sort by their position; tabs not in config go to end
     if (aIdx >= 0 && bIdx >= 0) return aIdx - bIdx;
     if (aIdx >= 0) return -1;
