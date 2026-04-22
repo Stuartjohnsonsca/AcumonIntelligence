@@ -168,6 +168,20 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const initialTab = urlTab || savedState.tab || 'opening';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [tbShowCategory, setTbShowCategory] = useState(true);
+  // Debug-overlay enable flag. Read from ?debug=... URL param AND
+  // localStorage on mount — either path activates the tab-order
+  // diagnostic. Kept as state so React re-renders once the client-
+  // side hydration has resolved the source of truth; the SSR pass
+  // starts with `false` and gets upgraded in the effect below.
+  const [debugTabsEnabled, setDebugTabsEnabled] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const viaUrl = !!new URL(window.location.href).searchParams.get('debug');
+      const viaStorage = window.localStorage.getItem('acumon-debug-tabs') === '1';
+      setDebugTabsEnabled(viaUrl || viaStorage);
+    } catch { /* ignore */ }
+  }, []);
   const [showAuditPlan, setShowAuditPlan] = useState(!!savedState.auditPlan);
   const [showCompletion, setShowCompletion] = useState(!!savedState.completion);
   const [tabSignOffs, setTabSignOffs] = useState<Record<string, TabSignOffStatus>>({});
@@ -647,6 +661,52 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         <RIMattersPanel engagementId={engagement.id} userId={currentUserId} onClose={() => setOpenPanel(null)} />
       )}
 
+      {/* Debug overlay — rendered outside the showCompletion /
+          showAuditPlan / normal-tabs branching so it shows regardless
+          of which view is active. Sourced from state, which is
+          populated from URL ?debug=... or localStorage
+          acumon-debug-tabs=1 via the useEffect at the top of this
+          component. Zero impact when the flag is off. */}
+      {debugTabsEnabled && (
+        <div className="border border-amber-300 bg-amber-50 rounded p-3 my-2 text-[10px] font-mono leading-relaxed overflow-x-auto">
+          <div className="font-sans font-bold text-amber-800 mb-1 text-xs">Tab-order debug ({auditType})</div>
+          <div><span className="text-slate-500">scheduleOrder (from API mappings[{auditType}]):</span></div>
+          <div className="pl-3 mb-2">
+            {scheduleOrder
+              ? scheduleOrder.length > 0
+                ? scheduleOrder.map((k, i) => (
+                  <span key={i} className="inline-block bg-white border border-slate-200 rounded px-1.5 py-0.5 mr-1 mb-1">
+                    <span className="text-slate-400">{i}:</span> {k}
+                  </span>
+                ))
+                : <span className="text-red-600">EMPTY — admin config not loaded or no mapping for this audit type</span>
+              : <span className="text-red-600">NOT LOADED</span>}
+          </div>
+          <div><span className="text-slate-500">Computed visibleTabs order (after sort):</span></div>
+          <div className="pl-3 mb-2">
+            {visibleTabs.map((t, i) => {
+              const ck = TAB_TO_SCHEDULE[t.key];
+              const nck = ck && orderIndex ? orderIndex.get(normaliseScheduleKey(ck)) : undefined;
+              return (
+                <span key={i} className="inline-block bg-white border border-slate-200 rounded px-1.5 py-0.5 mr-1 mb-1">
+                  <span className="text-slate-400">{i}:</span> {t.key}
+                  <span className="text-slate-400"> → {ck || '(no TAB_TO_SCHEDULE entry)'}</span>
+                  {nck === undefined
+                    ? <span className="text-red-600 ml-1">✗ no order match</span>
+                    : <span className="text-green-700 ml-1">✓ idx={nck}</span>}
+                </span>
+              );
+            })}
+          </div>
+          <div className="text-[10px] text-amber-700 font-sans">
+            Enable via any <span className="font-mono">?debug=...</span> URL param or by running
+            <span className="font-mono bg-white border border-amber-200 rounded px-1 mx-1">localStorage.setItem(&apos;acumon-debug-tabs&apos;,&apos;1&apos;)</span>
+            in DevTools. To hide: clear the param or run
+            <span className="font-mono bg-white border border-amber-200 rounded px-1 mx-1">localStorage.removeItem(&apos;acumon-debug-tabs&apos;)</span>.
+          </div>
+        </div>
+      )}
+
       {/* When Completion is open: split layout with vertical sidebar (left) + completion tabs (right) */}
       {showCompletion ? (
         <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px] overflow-hidden">
@@ -748,61 +808,6 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         </div>
       ) : (
         <>
-          {/* Tab-order diagnostic — renders when any `debug` query param
-              is present (e.g. ?debug=tabs, ?debug=1, &debug=true) OR
-              when localStorage key 'acumon-debug-tabs' is set. Second
-              path survives client/period re-selection which strips
-              URL params. Shows EXACTLY what the admin's configurator
-              saved vs. what the tab bar renders, so we can spot
-              mismatches (key that never resolves, stage-boundary
-              override, cache miss). Zero impact without either flag. */}
-          {(() => {
-            if (typeof window === 'undefined') return false;
-            const hasDebugParam = !!new URL(window.location.href).searchParams.get('debug');
-            const hasDebugFlag = (() => {
-              try { return window.localStorage.getItem('acumon-debug-tabs') === '1'; } catch { return false; }
-            })();
-            return hasDebugParam || hasDebugFlag;
-          })() && (
-            <div className="border border-amber-300 bg-amber-50 rounded p-3 my-2 text-[10px] font-mono leading-relaxed overflow-x-auto">
-              <div className="font-sans font-bold text-amber-800 mb-1 text-xs">Tab-order debug ({auditType})</div>
-              <div><span className="text-slate-500">scheduleOrder (from API mappings[{auditType}]):</span></div>
-              <div className="pl-3 mb-2">
-                {scheduleOrder
-                  ? scheduleOrder.length > 0
-                    ? scheduleOrder.map((k, i) => (
-                      <span key={i} className="inline-block bg-white border border-slate-200 rounded px-1.5 py-0.5 mr-1 mb-1">
-                        <span className="text-slate-400">{i}:</span> {k}
-                      </span>
-                    ))
-                    : <span className="text-red-600">EMPTY — admin config not loaded or no mapping for this audit type</span>
-                  : <span className="text-red-600">NOT LOADED</span>}
-              </div>
-              <div><span className="text-slate-500">Computed visibleTabs order (after sort):</span></div>
-              <div className="pl-3 mb-2">
-                {visibleTabs.map((t, i) => {
-                  const ck = TAB_TO_SCHEDULE[t.key];
-                  const nck = ck && orderIndex ? orderIndex.get(normaliseScheduleKey(ck)) : undefined;
-                  return (
-                    <span key={i} className="inline-block bg-white border border-slate-200 rounded px-1.5 py-0.5 mr-1 mb-1">
-                      <span className="text-slate-400">{i}:</span> {t.key}
-                      <span className="text-slate-400"> → {ck || '(no TAB_TO_SCHEDULE entry)'}</span>
-                      {nck === undefined
-                        ? <span className="text-red-600 ml-1">✗ no order match</span>
-                        : <span className="text-green-700 ml-1">✓ idx={nck}</span>}
-                    </span>
-                  );
-                })}
-              </div>
-              <div className="text-[10px] text-amber-700 font-sans">
-                Enable via any <span className="font-mono">?debug=...</span> URL param or by running
-                <span className="font-mono bg-white border border-amber-200 rounded px-1 mx-1">localStorage.setItem(&apos;acumon-debug-tabs&apos;,&apos;1&apos;)</span>
-                in DevTools. To hide: clear the param or run
-                <span className="font-mono bg-white border border-amber-200 rounded px-1 mx-1">localStorage.removeItem(&apos;acumon-debug-tabs&apos;)</span>.
-              </div>
-            </div>
-          )}
-
           {/* Normal horizontal tab bar */}
           <div className="border-x border-slate-200 bg-white overflow-x-auto">
             <nav className="flex -mb-px" aria-label="Engagement tabs">
