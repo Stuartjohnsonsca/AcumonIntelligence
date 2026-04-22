@@ -309,22 +309,8 @@ export const MERGE_FIELDS: MergeField[] = [
     ]},
   { group: 'Questionnaires', key: 'questionnaires.ethics.asList', label: 'Ethics Q&A (array)', type: 'array',
     description: 'Use with {{#each}} to render every answered ethics question.',
-    // The sample intentionally includes a "Non Audit Services" triplet
-    // (service name, Y/N flag, threats text) so the preview actually
-    // renders data when the admin uses the common
-    //   {{#each (filterWhere (filterBySection … "Non Audit Services") "answer" "eq" "Y")}}
-    // pattern. Without this, the filter returned [] on sample context
-    // and the preview was blank even though the template was correct.
-    // Other sections get a single item each so examples across groups
-    // also render a row.
     sampleValue: [
-      { question: 'Is independence confirmed?', key: 'independence_confirmed', answer: 'Yes', section: 'Independence', sortOrder: 1, previousAnswer: null, nextAnswer: 'Preparation of accounts', itemIndex: 0, isEmpty: false },
-      { question: 'Preparation of accounts', key: 'nas_prep_accounts_name', answer: 'Preparation of accounts', section: 'Non Audit Services', sortOrder: 10, previousAnswer: 'Yes', nextAnswer: 'Y', itemIndex: 1, isEmpty: false },
-      { question: 'Service provided? (Y/N)', key: 'nas_prep_accounts_flag', answer: 'Y', section: 'Non Audit Services', sortOrder: 11, previousAnswer: 'Preparation of accounts', nextAnswer: 'Self-review threat mitigated by an independent technical review before the audit file is issued.', itemIndex: 2, isEmpty: false },
-      { question: 'Threats & safeguards', key: 'nas_prep_accounts_threats', answer: 'Self-review threat mitigated by an independent technical review before the audit file is issued.', section: 'Non Audit Services', sortOrder: 12, previousAnswer: 'Y', nextAnswer: 'Payroll', itemIndex: 3, isEmpty: false },
-      { question: 'Payroll', key: 'nas_payroll_name', answer: 'Payroll', section: 'Non Audit Services', sortOrder: 13, previousAnswer: 'Self-review threat mitigated by an independent technical review before the audit file is issued.', nextAnswer: 'Y', itemIndex: 4, isEmpty: false },
-      { question: 'Service provided? (Y/N)', key: 'nas_payroll_flag', answer: 'Y', section: 'Non Audit Services', sortOrder: 14, previousAnswer: 'Payroll', nextAnswer: 'Management threat mitigated by the client signing off all statutory submissions.', itemIndex: 5, isEmpty: false },
-      { question: 'Threats & safeguards', key: 'nas_payroll_threats', answer: 'Management threat mitigated by the client signing off all statutory submissions.', section: 'Non Audit Services', sortOrder: 15, previousAnswer: 'Y', nextAnswer: null, itemIndex: 6, isEmpty: false },
+      { question: 'Is independence confirmed?', key: 'independence_confirmed', answer: 'Yes', section: 'Independence', sortOrder: 1 },
     ], itemFields: [
       { key: 'question', label: 'Question text', type: 'scalar', sampleValue: 'Is independence confirmed?' },
       { key: 'answer', label: 'Answer', type: 'scalar', sampleValue: 'Yes' },

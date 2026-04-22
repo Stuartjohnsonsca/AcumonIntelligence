@@ -112,10 +112,10 @@ export async function previewTemplate(
       context = await buildTemplateContext(engagementId);
       usedLiveContext = true;
     } catch {
-      context = buildSampleContext();
+      context = await buildDynamicSampleContext(template.firmId);
     }
   } else {
-    context = buildSampleContext();
+    context = await buildDynamicSampleContext(template.firmId);
   }
 
   const bodyHtml = template.content || '';
@@ -123,6 +123,163 @@ export async function previewTemplate(
   const missing = referenced.filter(p => !contextHasPath(context, p));
   const { html, error } = renderBody(bodyHtml, context);
   return { html, error, missingPlaceholders: missing, usedLiveContext };
+}
+
+/**
+ * Build a preview context whose `questionnaires.*` branches reflect the
+ * firm's ACTUAL methodology templates, not a hardcoded sample. For each
+ * `*_questions` template defined by the firm, we emit one `asList`
+ * entry per question with a placeholder answer chosen to make the most
+ * common template patterns actually render:
+ *
+ *   - Y/N-style questions (inputType 'yesno' or dropdown options
+ *     containing "Y"/"N" or "Yes"/"No") → answered "Y" / "Yes" so
+ *     filterWhere(… "answer" "eq" "Y") actually matches in preview.
+ *   - Dropdown with other options → the first option, so preview sees
+ *     a realistic value rather than the sample literal.
+ *   - Numeric / currency / date → sensible defaults (0, today).
+ *   - Everything else → the question text reused as the answer, which
+ *     makes templates that show (service name | threats) patterns
+ *     render visibly distinct rows even without a real engagement.
+ *
+ * Falls back to the static buildSampleContext (everything else) when
+ * the firm has no `*_questions` templates — better than rendering
+ * nothing in an otherwise-valid template.
+ */
+async function buildDynamicSampleContext(firmId: string): Promise<Record<string, any>> {
+  // Start from the static sample for every non-questionnaire branch
+  // (engagement / client / period / materiality figures / etc.). We
+  // only overwrite the `questionnaires` branch so preview still shows
+  // realistic values for merge fields that don't live inside a
+  // questionnaire schema.
+  const base: Record<string, any> = buildSampleContext();
+
+  try {
+    const schemas = await prisma.methodologyTemplate.findMany({
+      where: { firmId, templateType: { endsWith: '_questions' } },
+    });
+    if (schemas.length === 0) return base;
+
+    const questionnaires: Record<string, any> = { ...(base.questionnaires || {}) };
+    for (const schema of schemas) {
+      const ctxKey = templateTypeToCtxKey(schema.templateType);
+      const items = Array.isArray(schema.items) ? (schema.items as any[]) : [];
+      if (items.length === 0) { questionnaires[ctxKey] = questionnaires[ctxKey] || { asList: [] }; continue; }
+
+      // Stable sort by sortOrder so previousAnswer / nextAnswer
+      // pointers reflect the order the admin sees in the schedule.
+      const sorted = [...items].sort((a, b) => (Number(a?.sortOrder) || 0) - (Number(b?.sortOrder) || 0));
+
+      interface SampleItem {
+        question: string; key: string; answer: any; section: string | null; sortOrder: number;
+        previousKey: string | null; previousQuestion: string | null; previousAnswer: any;
+        nextKey: string | null; nextQuestion: string | null; nextAnswer: any;
+        itemIndex: number; isEmpty: boolean;
+      }
+      const asList: SampleItem[] = sorted.map((item, i) => ({
+        question: String(item?.questionText ?? item?.label ?? item?.key ?? `Question ${i + 1}`),
+        key: String(item?.key ?? `q_${i + 1}`),
+        answer: placeholderAnswerFor(item),
+        section: item?.sectionKey ? String(item.sectionKey) : null,
+        sortOrder: Number(item?.sortOrder) || i,
+        previousKey: null, previousQuestion: null, previousAnswer: null,
+        nextKey: null, nextQuestion: null, nextAnswer: null,
+        itemIndex: i, isEmpty: false,
+      }));
+      // Neighbour pointers — same post-pass as the real
+      // `enrichQuestionnaire`, so templates that use
+      // previousAnswer / nextAnswer behave identically in preview
+      // and in the generated document.
+      for (let i = 0; i < asList.length; i++) {
+        const prev = i > 0 ? asList[i - 1] : null;
+        const next = i < asList.length - 1 ? asList[i + 1] : null;
+        asList[i].previousKey = prev?.key ?? null;
+        asList[i].previousQuestion = prev?.question ?? null;
+        asList[i].previousAnswer = prev?.answer ?? null;
+        asList[i].nextKey = next?.key ?? null;
+        asList[i].nextQuestion = next?.question ?? null;
+        asList[i].nextAnswer = next?.answer ?? null;
+      }
+
+      // Flat key → answer map and per-section grouping. Matches the
+      // shape `enrichQuestionnaire` returns so {{questionnaires.ethics.threat_identified}}
+      // works in preview as well as live.
+      const flat: Record<string, any> = {};
+      const bySection: Record<string, Record<string, any>> = {};
+      for (const e of asList) {
+        flat[e.key] = e.answer;
+        if (e.section) {
+          const sec = slugifySection(e.section);
+          if (!bySection[sec]) bySection[sec] = {};
+          bySection[sec][e.key] = e.answer;
+        }
+      }
+      questionnaires[ctxKey] = { ...flat, asList, bySection };
+    }
+    base.questionnaires = questionnaires;
+  } catch (err) {
+    // Dynamic build is best-effort — never fail the preview over it.
+    // eslint-disable-next-line no-console
+    console.warn('[previewTemplate] dynamic sample context failed, falling back to static:', err);
+  }
+  return base;
+}
+
+/**
+ * Pick a plausible placeholder answer for a single template question
+ * so preview renders MEANINGFUL data rather than "(sample)" stubs.
+ * The heuristics are deliberately simple — the goal is visible-but-
+ * unambiguous, not a perfect stand-in for real answers.
+ */
+function placeholderAnswerFor(item: any): string | number | boolean {
+  const inputType = String(item?.inputType || '').toLowerCase();
+  const options: string[] = Array.isArray(item?.dropdownOptions) ? item.dropdownOptions : [];
+
+  // Y/N question — pick the "Yes" value so templates that filter on
+  // =="Y" or =="Yes" actually render rows in preview.
+  const isYesNoLike = inputType === 'yesno' || inputType === 'boolean'
+    || options.some(o => /^y(es)?$/i.test(o));
+  if (isYesNoLike) {
+    const ys = options.find(o => /^y(es)?$/i.test(o));
+    return ys ?? 'Y';
+  }
+
+  // Explicit dropdown with options — take the first one. Gives the
+  // preview a realistic value rather than the sample literal.
+  if (options.length > 0) return options[0];
+
+  // Numeric family — zero is safer than a magic number.
+  if (['number', 'currency', 'percentage', 'decimal'].includes(inputType)) return 0;
+
+  // Date — today, ISO yyyy-mm-dd, so {{formatDate}} handles it.
+  if (inputType === 'date') return new Date().toISOString().slice(0, 10);
+
+  // Long-text / free-text / anything else — reuse the question text
+  // so each row in a looped table reads as something distinct. If the
+  // question has no text, fall through to a neutral placeholder.
+  const qtext = String(item?.questionText ?? item?.label ?? '').trim();
+  return qtext || '(sample answer)';
+}
+
+/** Turn `permanent_file_questions` into `permanentFile`. Mirrors the
+ *  canonical mapping in template-context.ts so the preview exposes
+ *  the same `questionnaires.<key>` keys the live path uses. */
+function templateTypeToCtxKey(templateType: string): string {
+  const canonical: Record<string, string> = {
+    permanent_file_questions: 'permanentFile',
+    ethics_questions: 'ethics',
+    continuance_questions: 'continuance',
+    materiality_questions: 'materiality',
+    new_client_takeon_questions: 'newClientTakeOn',
+    subsequent_events_questions: 'subsequentEvents',
+  };
+  if (canonical[templateType]) return canonical[templateType];
+  const stem = templateType.replace(/_questions$/, '');
+  return stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+}
+
+function slugifySection(s: string): string {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'section';
 }
 
 /**
