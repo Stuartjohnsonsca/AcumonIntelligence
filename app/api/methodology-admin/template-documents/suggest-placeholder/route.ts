@@ -161,13 +161,37 @@ export async function POST(req: NextRequest) {
     ? '  (no firm-specific questionnaire questions found)'
     : dynamicEntries.map(e => `- ${e.path} (${e.type}, group=${e.group})${e.description ? ' — ' + e.description : ''} — QUESTION: "${e.label.replace(/"/g, '\\"').slice(0, 200)}"`).join('\n');
 
-  const menu = `Static catalog (fixed paths):\n${staticMenu}\n\nFirm-specific questionnaire questions (match on QUESTION text — these are LIVE questions in this firm's questionnaire schemas, always prefer one of these when the admin describes a specific question):\n${dynamicMenu}`;
+  // Sections known on each of this firm's questionnaires — derived from
+  // the dynamic entries above. Feeding these to the AI explicitly helps
+  // it produce `filterBySection` calls with the RIGHT section name
+  // rather than guessing. Kept compact: one line per (questionnaire,
+  // section-name) pair.
+  const sectionsByCtxKey = new Map<string, Set<string>>();
+  for (const e of dynamicEntries) {
+    if (e.path.startsWith('priorPeriod.')) continue;
+    const m = e.path.match(/^questionnaires\.([^.]+)\./);
+    if (!m) continue;
+    // group format: "<Type Label> · <Section Name>"
+    const parts = e.group.split('·').map(s => s.trim());
+    const sectionName = parts[1];
+    if (!sectionName) continue;
+    if (!sectionsByCtxKey.has(m[1])) sectionsByCtxKey.set(m[1], new Set());
+    sectionsByCtxKey.get(m[1])!.add(sectionName);
+  }
+  const sectionsCatalog = sectionsByCtxKey.size === 0
+    ? '  (no sections discovered yet — admin hasn\'t added grouped questions)'
+    : Array.from(sectionsByCtxKey.entries())
+        .map(([ck, set]) => `- questionnaires.${ck}: [${Array.from(set).map(s => `"${s}"`).join(', ')}]`)
+        .join('\n');
 
-  const systemPrompt = `You are a merge-field matcher for a UK audit platform's document template editor. The admin types a natural-language description of what they want to appear in the template. Your job is to pick the best Handlebars placeholder snippet from the catalog below (or say NO_MATCH if the catalog doesn't cover it).
+  const menu = `Static catalog (fixed paths):\n${staticMenu}\n\nFirm-specific questionnaire questions (match on QUESTION text — these are LIVE questions in this firm's questionnaire schemas, always prefer one of these when the admin describes a specific question):\n${dynamicMenu}\n\nQuestionnaire sections available for filterBySection:\n${sectionsCatalog}`;
 
-The catalog has TWO parts:
+  const systemPrompt = `You are a merge-field matcher AND Handlebars-snippet generator for a UK audit platform's document template editor. The admin types a natural-language description of what they want to appear in the template. Your job is to return a snippet they can paste directly into the editor.
+
+The catalog has THREE parts:
   1. A STATIC catalog of known paths that always exist (engagement metadata, TB figures, error schedule, etc.).
   2. A DYNAMIC list of the firm's actual questionnaire questions — these have a QUESTION text to match the admin's description against. PREFER a dynamic entry when the admin describes a specific question (e.g. "key judgements in setting materiality" should match a question labelled along those lines).
+  3. A list of SECTIONS within each questionnaire — use these as the second argument to \`filterBySection\` when the admin asks for "each <section-name>" or "table of <section-name>".
 
 When matching a questionnaire question, use semantic similarity on the QUESTION text, not just keyword overlap.
 
@@ -187,14 +211,86 @@ Formatter helpers you can wrap scalars in:
 - formatNumber <path>                    → 1,234
 - formatPercent <path>                   → 42.0%
 
-For ARRAY fields (type=array), wrap in a {{#each <path>}}…{{/each}} block and reference the loop's item fields inside (e.g. {{fsLine}}, {{description}}). If the admin asks for "each <thing>" produce a short bulleted loop; if they ask for a "table", produce an inline <table> with a header row.
+Collection / filter helpers you can use inside \`{{#each …}}\` sub-expressions:
+- (filterBySection <asList> "<Section Name>")
+    Keep only questionnaire items from the named section. Case- and
+    punctuation-tolerant. USE THIS when the admin wants "each X from
+    <section>".
+- (filterWhere <arr> "<field>" "<op>" <value>)
+    General filter. Ops: eq / ne / gt / lt / gte / lte / contains /
+    isEmpty / isNotEmpty. Compose with filterBySection for "each Y=yes
+    item in <section>" patterns.
+- (sumField <arr> "<field>") / (sumFieldWhere <arr> "<sum-field>" "<filter-field>" "<op>" <value>)
+    For totals rows.
+- (length <arr>) / (isEmpty <v>) / (isNotEmpty <v>) / (join <arr> "<sep>")
+
+Every questionnaire's \`asList\` entry has these fields you can use inside the loop:
+  {{question}}          question text
+  {{answer}}            user's answer
+  {{key}}               question key
+  {{section}}           section name (verbatim, not slugified)
+  {{sortOrder}}         integer
+  {{previousAnswer}}    answer to the item immediately before this one in asList
+  {{nextAnswer}}        answer to the item immediately after this one in asList
+  {{previousKey}} / {{previousQuestion}} / {{nextKey}} / {{nextQuestion}}
+  {{itemIndex}}         0-based index
+  {{isEmpty}}           boolean
+
+For ARRAY fields (type=array) the admin can also just say "list each X" — emit a short {{#each <path>}}…{{/each}} block referencing item fields. For a "table" request emit an inline <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%"> with a <thead> header row and {{#each}} inside <tbody> producing one <tr> per item.
+
+============================================================
+WORKED EXAMPLES (mirror these shapes)
+
+Example A — "Each ethics question" (plain list):
+  <ul>
+    {{#each questionnaires.ethics.asList}}
+      <li>{{question}} — {{answer}}</li>
+    {{/each}}
+  </ul>
+
+Example B — "Non Audit Services table with service name and threats":
+  The Non Audit Services section typically has triplets of questions:
+  service name / Y-or-N flag / threats text. Loop every row where the
+  Y/N answer is "Y" and use previousAnswer (service name) and
+  nextAnswer (threats) to fill the two cells.
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+      <thead>
+        <tr>
+          <th style="text-align:left;background:#f1f5f9">Service Provided</th>
+          <th style="text-align:left;background:#f1f5f9">Threats to objectivity and Safeguard implemented</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#each (filterWhere (filterBySection questionnaires.ethics.asList "Non Audit Services") "answer" "eq" "Y")}}
+        <tr>
+          <td>{{previousAnswer}}</td>
+          <td>{{nextAnswer}}</td>
+        </tr>
+        {{/each}}
+      </tbody>
+    </table>
+
+Example C — "Every error on the error schedule as a table":
+  {{{errorScheduleTable errorSchedule}}}
+  (the helper emits the full table including header row; triple-braces stop escaping)
+
+Example D — "Total of the current-year TB movements only":
+  {{formatCurrency (sumFieldWhere tbRows "currentYear" "fsStatement" "eq" "Profit & Loss")}}
+============================================================
+
+Choose the right idiom:
+- Admin says "table of <section name>" → Example B shape (filterBySection, sometimes filterWhere for Y-only items).
+- Admin says "list each …" → Example A shape (<ul><li>).
+- Admin says "each section's …" (across all sections) → plain {{#each asList}}.
+- Admin describes a single value/question → a single {{placeholder}}, wrapped in a formatter when useful.
+- Admin asks for a total / sum → sumField / sumFieldWhere.
 
 Return ONLY JSON:
 {
-  "snippet": "the Handlebars text to drop into the editor — valid, balanced, ready to paste",
-  "path": "the primary dotted path chosen (the path without Handlebars braces)",
-  "label": "the catalog label for the chosen field",
-  "rationale": "short (<=20 words) explanation of why this path matches",
+  "snippet": "the Handlebars text to drop into the editor — valid, balanced, ready to paste. May contain HTML (<table>, <ul>, <tr>, etc.) when appropriate.",
+  "path": "the primary dotted path chosen (the path without Handlebars braces). For a looped snippet, this is the array path that feeds the loop.",
+  "label": "a short human label describing the chosen field or pattern",
+  "rationale": "short (<=20 words) explanation of why this shape matches",
   "confidence": 0.0-1.0,
   "alternatives": [{"path": "...", "label": "...", "snippet": "..."}]   // up to 2 runners-up, or []
 }
