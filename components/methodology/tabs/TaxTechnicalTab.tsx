@@ -47,7 +47,7 @@ export function TaxTechnicalTab({ engagementId, clientName }: Props) {
 
   // Load tax categories from methodology template
   useEffect(() => {
-    fetch(`/api/methodology-admin/templates?templateType=tax_technical_categories&auditType=ALL`)
+    fetch(`/api/methodology-admin/templates?templateType=tax_technical_categories&engagementId=${encodeURIComponent(engagementId)}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         const items = data?.template?.items;

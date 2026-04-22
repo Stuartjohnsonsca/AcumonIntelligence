@@ -19,7 +19,7 @@ export function SubsequentEventsTab({ engagementId }: Props) {
     try {
       const [dataRes, templateRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/subsequent-events`),
-        fetch(`/api/methodology-admin/templates?templateType=subsequent_events_questions&auditType=ALL`),
+        fetch(`/api/methodology-admin/templates?templateType=subsequent_events_questions&engagementId=${encodeURIComponent(engagementId)}`),
       ]);
 
       if (dataRes.ok) {

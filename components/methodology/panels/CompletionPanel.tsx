@@ -226,7 +226,10 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     (async () => {
       try {
         // Load template
-        const tplRes = await fetch(`/api/methodology-admin/templates?templateType=${templateType}&auditType=ALL`);
+        // engagementId resolves the template for this engagement's
+        // audit type, falling back to ALL. Prevents blank schedules
+        // when the admin saved questions under SME/GRANT/CASS/GROUP.
+        const tplRes = await fetch(`/api/methodology-admin/templates?templateType=${templateType}&engagementId=${encodeURIComponent(engagementId)}`);
         if (tplRes.ok) {
           const tplData = await tplRes.json();
           const items = tplData.template?.items || tplData.items || {};

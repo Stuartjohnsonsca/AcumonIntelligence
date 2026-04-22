@@ -19,7 +19,7 @@ export function EthicsTab({ engagementId }: Props) {
     try {
       const [dataRes, templateRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/ethics`),
-        fetch(`/api/methodology-admin/templates?templateType=ethics_questions&auditType=ALL`),
+        fetch(`/api/methodology-admin/templates?templateType=ethics_questions&engagementId=${encodeURIComponent(engagementId)}`),
       ]);
 
       if (dataRes.ok) {

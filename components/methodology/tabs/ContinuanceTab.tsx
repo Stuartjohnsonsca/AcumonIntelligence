@@ -19,7 +19,7 @@ export function ContinuanceTab({ engagementId }: Props) {
     try {
       const [dataRes, templateRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/continuance`),
-        fetch(`/api/methodology-admin/templates?templateType=continuance_questions&auditType=ALL`),
+        fetch(`/api/methodology-admin/templates?templateType=continuance_questions&engagementId=${encodeURIComponent(engagementId)}`),
       ]);
 
       if (dataRes.ok) {

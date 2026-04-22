@@ -19,7 +19,12 @@ export function NewClientTab({ engagementId }: Props) {
     try {
       const [dataRes, templateRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/new-client-takeon`),
-        fetch(`/api/methodology-admin/templates?templateType=new_client_takeon_questions&auditType=ALL`),
+        // Pass engagementId so the server picks the template for this
+        // engagement's audit type (SME / GRANT / …), falling back to
+        // ALL when no specific template exists. Avoids the old blank
+        // tab when the admin saved questions against a specific
+        // audit type rather than ALL.
+        fetch(`/api/methodology-admin/templates?templateType=new_client_takeon_questions&engagementId=${encodeURIComponent(engagementId)}`),
       ]);
 
       if (dataRes.ok) {

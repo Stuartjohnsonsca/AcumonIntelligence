@@ -20,7 +20,7 @@ export function PermanentFileTab({ engagementId }: Props) {
       // Load form data and methodology template questions in parallel
       const [dataRes, templateRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/permanent-file`),
-        fetch(`/api/methodology-admin/templates?templateType=permanent_file_questions&auditType=ALL`),
+        fetch(`/api/methodology-admin/templates?templateType=permanent_file_questions&engagementId=${encodeURIComponent(engagementId)}`),
       ]);
 
       if (dataRes.ok) {

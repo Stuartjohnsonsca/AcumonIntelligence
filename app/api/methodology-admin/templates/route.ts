@@ -12,9 +12,46 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const templateType = searchParams.get('type') || searchParams.get('templateType');
   const auditType = searchParams.get('auditType');
+  const engagementId = searchParams.get('engagementId');
 
   const where: Record<string, unknown> = { firmId: session.user.firmId };
   if (templateType) where.templateType = templateType;
+
+  // ── engagementId-based resolution ──────────────────────────────────
+  // Engagement tabs hit this endpoint to load their Q&A template. They
+  // used to hardcode `auditType=ALL`, which silently dropped any
+  // template saved against a specific audit type (SME / GRANT / CASS /
+  // GROUP) — those tabs then rendered as "no questions configured"
+  // even when the admin clearly configured them.
+  //
+  // Now: if engagementId is supplied, look up the engagement's audit
+  // type and pick the most-specific match. Preference order:
+  //   1. templateType + engagement's auditType
+  //   2. templateType + 'ALL'
+  //   3. templateType + any auditType (last resort — don't leave the
+  //      tab blank when SOME template clearly exists)
+  //
+  // Also enforces firm scope — the engagement must belong to the
+  // caller's firm. Cross-firm access returns 404.
+  if (engagementId && templateType) {
+    const eng = await prisma.auditEngagement.findUnique({
+      where: { id: engagementId },
+      select: { firmId: true, auditType: true },
+    });
+    if (!eng || (eng.firmId !== session.user.firmId && !session.user.isSuperAdmin)) {
+      return NextResponse.json({ error: 'Engagement not found' }, { status: 404 });
+    }
+    const candidates = await prisma.methodologyTemplate.findMany({
+      where: { firmId: session.user.firmId, templateType },
+    });
+    const template =
+      candidates.find(t => t.auditType === eng.auditType)
+      ?? candidates.find(t => t.auditType === 'ALL')
+      ?? candidates[0]
+      ?? null;
+    return NextResponse.json({ template, templates: candidates, resolvedAuditType: template?.auditType ?? null });
+  }
+
   if (auditType) where.auditType = auditType;
 
   const templates = await prisma.methodologyTemplate.findMany({ where: where as any });
