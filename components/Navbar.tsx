@@ -213,18 +213,22 @@ export function Navbar() {
               )}
             </div>
 
-            {/* Connections Link */}
+            {/* Connections Link — prefetch disabled because the route
+                doesn't exist yet; without this Next.js auto-prefetches
+                on hover and floods DevTools with 404 noise. */}
             <Link
               href="/connections"
+              prefetch={false}
               className="px-4 py-2 text-sm font-medium text-slate-400 rounded-md transition-colors cursor-default"
               onClick={e => e.preventDefault()}
             >
               Connections <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span>
             </Link>
 
-            {/* Deal Portal Link */}
+            {/* Deal Portal Link — same "Coming Soon" treatment. */}
             <Link
               href="/deal-portal"
+              prefetch={false}
               className="px-4 py-2 text-sm font-medium text-slate-400 rounded-md transition-colors cursor-default"
               onClick={e => e.preventDefault()}
             >
