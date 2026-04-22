@@ -95,7 +95,13 @@ const TAB_ENDPOINTS: Record<string, string> = {
   'rmm': 'rmm',
 };
 
-// Map tab key → schedule config key (used in audit type → schedule mapping)
+// Map tab key → schedule config key (used in audit type → schedule mapping).
+//
+// Every tab declared in TABS must also have an entry here — otherwise it's
+// invisible to the admin configurator's order and drops to the end of the
+// tab bar regardless of where the admin placed it. Added walkthroughs /
+// outstanding / communication 2026-04-22 after a debug overlay revealed
+// they were silently failing every indexOf lookup.
 const TAB_TO_SCHEDULE: Record<string, string> = {
   'opening': 'opening', // Opening always shown
   'prior-period': 'prior_period',
@@ -109,8 +115,11 @@ const TAB_TO_SCHEDULE: Record<string, string> = {
   'materiality': 'materiality_questions',
   'par': 'par',
   'rmm': 'rmm',
+  'walkthroughs': 'walkthroughs',
   'documents': 'documents',
+  'outstanding': 'outstanding',
   'portal': 'portal',
+  'communication': 'communication',
 };
 
 type TabKey = typeof TABS[number]['key'];
@@ -461,9 +470,24 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     : null;
   // Positional map — scheduleKey (normalised) → index, so the sort
   // below is O(1) per comparison instead of O(n) indexOf scans.
-  const orderIndex: Map<string, number> | null = scheduleOrder
-    ? new Map(scheduleOrder.map((k, i) => [normaliseScheduleKey(k), i]))
-    : null;
+  // `mappings[auditType]` on the server concatenates planning +
+  // fieldwork + completion, so schedules that the admin configured
+  // across multiple stages (portal / documents / outstanding) appear
+  // more than once. Using `new Map([...entries])` keeps the LAST
+  // occurrence, which dumps those tabs to the very end of the tab
+  // bar (e.g. portal → idx=30 instead of the intended idx=12).
+  // Fix: build the map manually and only set each normalised key on
+  // its FIRST appearance — that reflects where the admin first
+  // scheduled it in the workflow.
+  const orderIndex: Map<string, number> | null = (() => {
+    if (!scheduleOrder) return null;
+    const m = new Map<string, number>();
+    for (let i = 0; i < scheduleOrder.length; i++) {
+      const nk = normaliseScheduleKey(scheduleOrder[i]);
+      if (!m.has(nk)) m.set(nk, i);
+    }
+    return m;
+  })();
 
   // Filter tabs based on engagement status, audit type schedule config, and continuance/new-client
   // Then sort by configured order
