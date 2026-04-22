@@ -81,6 +81,50 @@ function AutoTextarea({ value, onChange, className, readOnly, placeholder }: {
   );
 }
 
+/**
+ * Resizable table header cell. Renders a <th> plus a thin drag-handle
+ * on the right edge; mousedown on the handle kicks off a global
+ * mousemove/mouseup listener (installed by the parent's
+ * `startColumnResize`) that streams the new width back into the
+ * parent's `columnWidths` state. Widths are pixel values; the parent
+ * persists them in localStorage.
+ *
+ * Kept as a local component rather than a shared hook because each
+ * tab that wants this (PAR / TBCYvPY / RMM …) has its own set of
+ * column keys and alignment rules — centralising would mean threading
+ * a config object through that's bigger than the component itself.
+ */
+function ResizableTh({
+  colKey, widths, onResizeStart, align = 'left', title, children,
+}: {
+  colKey: string;
+  widths: Record<string, number>;
+  onResizeStart: (field: string, startX: number, startWidth: number) => void;
+  align?: 'left' | 'center' | 'right';
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <th
+      className="relative px-2 py-2 text-slate-500 font-medium whitespace-nowrap"
+      style={{ textAlign: align }}
+      title={title}
+    >
+      {children}
+      <span
+        onMouseDown={e => {
+          e.preventDefault();
+          e.stopPropagation();
+          onResizeStart(colKey, e.clientX, widths[colKey] ?? 120);
+        }}
+        title="Drag to resize column"
+        className="absolute top-0 bottom-0 right-0 w-1.5 cursor-col-resize hover:bg-blue-300/60 active:bg-blue-500/60 transition-colors"
+        style={{ zIndex: 5 }}
+      />
+    </th>
+  );
+}
+
 export function RMMTab({ engagementId, auditType, teamMembers = [], showCategoryOption = false }: Props) {
   const { data: session } = useSession();
   const [rows, setRows] = useState<RMMRow[]>([]);
@@ -106,6 +150,61 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   const [natureDropdowns, setNatureDropdowns] = useState<Record<string, string[]>>({});
   // FS Line → category mapping to determine which lines get dropdowns
   const [fsLineCategories, setFsLineCategories] = useState<Record<string, string>>({});
+
+  // ── Resizable column widths (mirrors the PAR / TBCYvPY pattern) ───
+  // Persisted per engagement in localStorage so a reviewer's layout
+  // choices stick across reloads. Width values are pixels. Action
+  // columns (duplicate / delete) stay hardcoded — they're icons that
+  // need no stretching. Re-hydrates from storage on mount, falling
+  // back to the defaults below on any parse failure or first visit.
+  const DEFAULT_COL_WIDTHS: Record<string, number> = {
+    category: 112,
+    lineItem: 160,
+    nature: 160,
+    amount: 112,
+    assertions: 112,
+    relevance: 56,
+    inherentRisk: 64,
+    riskSummation: 144,
+    likelihood: 80,
+    magnitude: 80,
+    finalRisk: 80,
+    controlRisk: 96,
+    overall: 80,
+    sigRisk: 56,
+    notes: 200,
+    signOffs: 112,
+  };
+  const widthsStorageKey = `rmm:widths:${engagementId}`;
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
+    if (typeof window === 'undefined') return DEFAULT_COL_WIDTHS;
+    try {
+      const raw = window.localStorage.getItem(widthsStorageKey);
+      if (raw) return { ...DEFAULT_COL_WIDTHS, ...JSON.parse(raw) };
+    } catch { /* ignore */ }
+    return DEFAULT_COL_WIDTHS;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { window.localStorage.setItem(widthsStorageKey, JSON.stringify(columnWidths)); } catch { /* ignore */ }
+  }, [columnWidths, widthsStorageKey]);
+
+  function startColumnResize(field: string, startX: number, startWidth: number) {
+    const onMove = (e: MouseEvent) => {
+      const dx = e.clientX - startX;
+      setColumnWidths(prev => ({ ...prev, [field]: Math.max(40, startWidth + dx) }));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
 
   const { saving, lastSaved, error } = useAutoSave(
     `/api/engagements/${engagementId}/rmm`,
@@ -619,34 +718,71 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
         </div>
       </div>
 
-      {/* Table — max height with frozen header */}
+      {/* Table — max height with frozen header. `tableLayout: fixed`
+          makes the <colgroup> widths authoritative so drag-to-resize
+          actually moves the column edge instead of fighting with
+          auto-sizing from cell content. `width: max-content` lets the
+          whole table grow wider than its container when the user
+          drags columns out — horizontal scroll picks up the slack. */}
       <div className="border border-slate-200 rounded-lg overflow-auto max-h-[calc(100vh-280px)]">
-        <table className="w-full text-xs">
+        <table className="text-xs border-collapse" style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
+          <colgroup>
+            <col style={{ width: 32 }} />
+            {showCategory && <col style={{ width: columnWidths.category }} />}
+            <col style={{ width: columnWidths.lineItem }} />
+            <col style={{ width: columnWidths.nature }} />
+            <col style={{ width: columnWidths.amount }} />
+            <col style={{ width: columnWidths.assertions }} />
+            <col style={{ width: columnWidths.relevance }} />
+            <col style={{ width: columnWidths.inherentRisk }} />
+            <col style={{ width: columnWidths.riskSummation }} />
+            <col style={{ width: columnWidths.likelihood }} />
+            <col style={{ width: columnWidths.magnitude }} />
+            <col style={{ width: columnWidths.finalRisk }} />
+            <col style={{ width: columnWidths.controlRisk }} />
+            <col style={{ width: columnWidths.overall }} />
+            <col style={{ width: columnWidths.sigRisk }} />
+            <col style={{ width: columnWidths.notes }} />
+            <col style={{ width: columnWidths.signOffs }} />
+            <col style={{ width: 24 }} />
+          </colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100 border-b border-slate-200">
-              <th className="w-8 px-1 py-2"></th>
-              {showCategory && <th className="text-left px-2 py-2 text-slate-500 font-medium w-28">Category</th>}
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">{viewMode === 'fs_line' ? 'FS Line Item' : 'TB Account'}</th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-40">Nature</th>
-              <th className="text-right px-2 py-2 text-slate-500 font-medium w-28">Amount</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-28">Assertions</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-14" title="Relevant?">Rel. <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span></th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-16" title="Inherent Risk">IR <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span></th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium w-36">Risk Summation</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Likelihood</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Magnitude</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Final Risk</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-24">Control Risk</th>
-              <th className="text-center px-2 py-2 text-slate-500 font-medium w-20">Overall</th>
-              <th className="text-center px-1 py-2 text-slate-500 font-medium w-14" title="Significant Risk">Sig.Risk <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span></th>
-              <th className="text-left px-2 py-2 text-slate-500 font-medium min-w-[150px]">Notes</th>
-              <th className="text-center px-1 py-2 text-slate-500 font-medium w-28">
+              <th className="px-1 py-2"></th>
+              {showCategory && (
+                <ResizableTh colKey="category" widths={columnWidths} onResizeStart={startColumnResize} align="left">
+                  Category
+                </ResizableTh>
+              )}
+              <ResizableTh colKey="lineItem" widths={columnWidths} onResizeStart={startColumnResize} align="left">
+                {viewMode === 'fs_line' ? 'FS Line Item' : 'TB Account'}
+              </ResizableTh>
+              <ResizableTh colKey="nature" widths={columnWidths} onResizeStart={startColumnResize} align="left">Nature</ResizableTh>
+              <ResizableTh colKey="amount" widths={columnWidths} onResizeStart={startColumnResize} align="right">Amount</ResizableTh>
+              <ResizableTh colKey="assertions" widths={columnWidths} onResizeStart={startColumnResize} align="center">Assertions</ResizableTh>
+              <ResizableTh colKey="relevance" widths={columnWidths} onResizeStart={startColumnResize} align="center" title="Relevant?">
+                Rel. <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span>
+              </ResizableTh>
+              <ResizableTh colKey="inherentRisk" widths={columnWidths} onResizeStart={startColumnResize} align="center" title="Inherent Risk">
+                IR <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span>
+              </ResizableTh>
+              <ResizableTh colKey="riskSummation" widths={columnWidths} onResizeStart={startColumnResize} align="left">Risk Summation</ResizableTh>
+              <ResizableTh colKey="likelihood" widths={columnWidths} onResizeStart={startColumnResize} align="center">Likelihood</ResizableTh>
+              <ResizableTh colKey="magnitude" widths={columnWidths} onResizeStart={startColumnResize} align="center">Magnitude</ResizableTh>
+              <ResizableTh colKey="finalRisk" widths={columnWidths} onResizeStart={startColumnResize} align="center">Final Risk</ResizableTh>
+              <ResizableTh colKey="controlRisk" widths={columnWidths} onResizeStart={startColumnResize} align="center">Control Risk</ResizableTh>
+              <ResizableTh colKey="overall" widths={columnWidths} onResizeStart={startColumnResize} align="center">Overall</ResizableTh>
+              <ResizableTh colKey="sigRisk" widths={columnWidths} onResizeStart={startColumnResize} align="center" title="Significant Risk">
+                Sig.Risk <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span>
+              </ResizableTh>
+              <ResizableTh colKey="notes" widths={columnWidths} onResizeStart={startColumnResize} align="left">Notes</ResizableTh>
+              <ResizableTh colKey="signOffs" widths={columnWidths} onResizeStart={startColumnResize} align="center">
                 <div className="flex gap-2 justify-center">
                   <span className="text-[7px]">Reviewer</span>
                   <span className="text-[7px]">Partner</span>
                 </div>
-              </th>
-              <th className="w-6"></th>
+              </ResizableTh>
+              <th></th>
             </tr>
           </thead>
           <tbody>
