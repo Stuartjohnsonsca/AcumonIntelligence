@@ -8,7 +8,7 @@ import {
   List, ListOrdered, Table, FileDown, Minus,
   SquareDashedBottom, Repeat, Variable, Sparkles, X, Check,
   ArrowUpToLine, ArrowDownToLine, ArrowLeftToLine, ArrowRightToLine,
-  Trash2, Merge, Split,
+  Trash2, Merge, Split, Code,
 } from 'lucide-react';
 import { mergeFieldsByGroup, MERGE_FIELDS, type MergeField } from '@/lib/template-merge-fields';
 import type { Skeleton } from './FirmSkeletonManager';
@@ -128,6 +128,15 @@ export function DocumentTemplateEditor({
   // description and asks the server (which in turn asks Llama 3.3)
   // to pick the best snippet out of the merge-field catalog, add a
   // formatter where useful, and wrap arrays in {{#each}} scaffolding.
+  // "Insert HTML / Handlebars" modal state. The editor's default paste
+  // handler strips HTML to plain text (so Word pastes don't drag in
+  // <font> tags and inline styles). That makes it impossible to paste
+  // a hand-written template snippet like a looping <table> — it just
+  // renders as literal text. This modal is the escape hatch: paste
+  // raw HTML + Handlebars, click Insert, it goes through insertRawHtml
+  // so the editor treats it as structure rather than content.
+  const [htmlOpen, setHtmlOpen] = useState(false);
+  const [htmlDraft, setHtmlDraft] = useState('');
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestDescription, setSuggestDescription] = useState('');
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -814,6 +823,74 @@ export function DocumentTemplateEditor({
         <ToolbarBtn title="Underline" onClick={() => exec('underline')}><Underline className="h-3.5 w-3.5" /></ToolbarBtn>
         <ToolbarBtn title="Strikethrough" onClick={() => exec('strikeThrough')}><Strikethrough className="h-3.5 w-3.5" /></ToolbarBtn>
 
+        {/* Text colour — native colour picker wrapped as a tiny button.
+            Works against the current selection via execCommand('foreColor').
+            Writing raw hex means the HTML→DOCX converter can pick it up
+            as a w:color run property. Changing the input fires onChange
+            with the new value. */}
+        <label
+          title="Text colour"
+          className="relative inline-flex items-center justify-center w-6 h-6 rounded border border-slate-200 hover:bg-slate-100 cursor-pointer"
+        >
+          <span className="text-[10px] font-bold text-slate-700">A</span>
+          <span className="absolute bottom-0.5 left-1 right-1 h-1 rounded-sm" style={{ background: '#1e3a5f' }} />
+          <input
+            type="color"
+            className="absolute inset-0 opacity-0 cursor-pointer"
+            onChange={e => exec('foreColor', e.target.value)}
+            onMouseDown={captureSelection}
+            aria-label="Text colour"
+          />
+        </label>
+
+        {/* Highlight / background colour for the current selection.
+            Mapped to the `hiliteColor` execCommand in modern browsers
+            with `backColor` as a fallback for older ones. Renders as
+            a <w:shd> on the run during the DOCX conversion. */}
+        <label
+          title="Highlight colour"
+          className="relative inline-flex items-center justify-center w-6 h-6 rounded border border-slate-200 hover:bg-slate-100 cursor-pointer"
+        >
+          <span className="text-[10px] font-bold text-slate-700" style={{ background: '#fef08a', padding: '0 2px' }}>A</span>
+          <input
+            type="color"
+            className="absolute inset-0 opacity-0 cursor-pointer"
+            onChange={e => {
+              // hiliteColor is the standards-leaning name; older
+              // browsers recognise backColor. Try the modern one first.
+              try { document.execCommand('hiliteColor', false, e.target.value); }
+              catch { document.execCommand('backColor', false, e.target.value); }
+              setDirtyTick(t => t + 1);
+            }}
+            onMouseDown={captureSelection}
+            aria-label="Highlight colour"
+          />
+        </label>
+
+        {/* Table cell shading — applies a background colour to the
+            <td>/<th> the caret is currently inside. Looks for the
+            nearest cell via findAncestor; no-op if the selection isn't
+            in a table (so the button is safe to click anywhere). */}
+        <label
+          title="Shade the current table cell"
+          className="relative inline-flex items-center justify-center w-6 h-6 rounded border border-slate-200 hover:bg-slate-100 cursor-pointer"
+        >
+          <span className="text-[10px] text-slate-700">▥</span>
+          <input
+            type="color"
+            className="absolute inset-0 opacity-0 cursor-pointer"
+            onChange={e => {
+              const cell = (findAncestor('TD') || findAncestor('TH')) as HTMLElement | null;
+              if (cell) {
+                cell.style.backgroundColor = e.target.value;
+                setDirtyTick(t => t + 1);
+              }
+            }}
+            onMouseDown={captureSelection}
+            aria-label="Table cell shading"
+          />
+        </label>
+
         <ToolbarDiv />
 
         <ToolbarBtn title="Bulleted list" onClick={() => exec('insertUnorderedList')}><List className="h-3.5 w-3.5" /></ToolbarBtn>
@@ -858,6 +935,17 @@ export function DocumentTemplateEditor({
           className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-teal-50 border border-teal-200 text-teal-700 rounded hover:bg-teal-100"
         >
           <Table className="h-3 w-3" /> dynamic table
+        </button>
+        <button
+          // Capture the caret selection on mousedown — the contentEditable
+          // loses focus the moment the modal opens, so without this the
+          // eventual insert would happen at the document start.
+          onMouseDown={e => { e.preventDefault(); captureSelection(); }}
+          onClick={() => { setHtmlOpen(true); setHtmlDraft(''); }}
+          title="Paste raw HTML / Handlebars — the editor's normal paste strips HTML, this keeps it as structure"
+          className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-slate-100 border border-slate-200 text-slate-700 rounded hover:bg-slate-200"
+        >
+          <Code className="h-3 w-3" /> insert HTML
         </button>
 
         <ToolbarDiv />
@@ -1218,6 +1306,69 @@ export function DocumentTemplateEditor({
                 }
                 className="inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-teal-600 text-white rounded disabled:opacity-50"
               ><Check className="h-3 w-3" /> Insert table at cursor</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Insert raw HTML / Handlebars modal ────────────────────────────
+          Workaround for the onPaste handler that strips pasted HTML to
+          plain text (so Word pastes stay clean). When the admin needs
+          to paste a hand-written looping table, conditional, or any
+          other structured snippet, they open this modal, paste, and
+          click Insert — it goes through insertRawHtml which uses
+          execCommand('insertHTML') so the editor interprets it as
+          structure rather than content. Caret position is preserved
+          via savedRangeRef (set when the toolbar button is
+          mousedown'd). */}
+      {htmlOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
+          onClick={() => setHtmlOpen(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-2xl flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b flex items-start justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Code className="h-4 w-4 text-slate-600" /> Insert HTML / Handlebars</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Paste any HTML or a Handlebars snippet (loops, conditionals, colored tables, etc.).
+                  The normal paste strips HTML — this doesn't.
+                </p>
+              </div>
+              <button onClick={() => setHtmlOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-4 pt-3 space-y-2">
+              <textarea
+                value={htmlDraft}
+                onChange={e => setHtmlDraft(e.target.value)}
+                placeholder={`Example:\n\n<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">\n  <thead>\n    <tr><th>Service Provided</th><th>Threats &amp; Safeguards</th></tr>\n  </thead>\n  <tbody>\n    {{#each (filterWhere (filterBySection questionnaires.ethics.asList "Non Audit Services") "answer" "eq" "Y")}}\n    <tr><td>{{previousAnswer}}</td><td>{{nextAnswer}}</td></tr>\n    {{/each}}\n  </tbody>\n</table>`}
+                className="w-full border border-slate-200 rounded px-3 py-2 text-[11px] font-mono min-h-[220px] focus:outline-none focus:border-slate-400"
+                autoFocus
+              />
+            </div>
+            <div className="px-4 py-3 border-t flex justify-end gap-2">
+              <button
+                onClick={() => setHtmlOpen(false)}
+                className="text-[11px] px-3 py-1 text-slate-600 hover:text-slate-800"
+              >Cancel</button>
+              <button
+                onClick={() => {
+                  // Restore caret so the insert lands where the admin
+                  // was working when they opened the modal.
+                  restoreSelection();
+                  insertRawHtml(htmlDraft);
+                  setHtmlOpen(false);
+                }}
+                disabled={!htmlDraft.trim()}
+                className="inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-slate-700 text-white rounded disabled:opacity-50 hover:bg-slate-800"
+              >
+                <Check className="h-3 w-3" /> Insert
+              </button>
             </div>
           </div>
         </div>
