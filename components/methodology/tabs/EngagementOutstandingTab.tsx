@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import {
   MapPin, FileCheck, MessageSquare, CheckCircle2, Loader2, X,
   ArrowUpRight, MessageCircle, ChevronUp, UserPlus, Send,
+  History, ChevronDown, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { expandZipFiles } from '@/lib/client-unzip';
@@ -70,11 +71,53 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
   const [assignOpen, setAssignOpen] = useState<string | null>(null);
   const [assignNote, setAssignNote] = useState('');
 
+  // Audit-trail panel state. The log captures every button-triggered
+  // decision on the engagement (send to RMM, send for specialist
+  // review, specialist accept/reject, etc.) — specifically those that
+  // bypass the green-dot sign-off flow — so the firm has a record of
+  // who did what. See /api/engagements/[id]/action-log for the source.
+  interface ActionLogEntry {
+    id: string;
+    actorUserId: string | null;
+    actorName: string;
+    action: string;
+    summary: string;
+    targetType: string | null;
+    targetId: string | null;
+    occurredAt: string;
+    metadata?: Record<string, unknown> | null;
+  }
+  const [auditEntries, setAuditEntries] = useState<ActionLogEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [auditMigrationPending, setAuditMigrationPending] = useState(false);
+  const [auditExpanded, setAuditExpanded] = useState(true);
+  const [auditFilter, setAuditFilter] = useState<string>('');
+
   // Keep backward compat — items = teamItems for action handlers
   const items = teamItems;
   const setItems = setTeamItems;
 
   useEffect(() => { loadItems(); }, [engagementId, clientId]);
+
+  // Load the engagement's audit trail once on mount and whenever we
+  // refresh the outstanding lists. Runs in parallel with loadItems —
+  // audit-trail data has no dependency on portal requests.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setAuditLoading(true);
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/action-log?limit=500`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setAuditEntries(Array.isArray(data.entries) ? data.entries : []);
+        setAuditMigrationPending(!!data.migrationPending);
+      } catch { /* silent — log isn't critical */ }
+      finally { if (!cancelled) setAuditLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId]);
 
   async function loadItems() {
     setLoading(true);
@@ -218,7 +261,25 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
     return <div className="flex items-center justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-slate-400 mr-2" /><span className="text-sm text-slate-500">Loading...</span></div>;
   }
 
+  // Action-slug → human label mapping for the audit-trail filter
+  // dropdown and per-row icon. Keep in sync with the `action` strings
+  // written in lib/engagement-action-log.ts's call sites.
+  const ACTION_LABELS: Record<string, string> = {
+    'rmm.send-from-par': 'PAR → RMM',
+    'specialist.send': 'Specialist review sent',
+    'specialist.decide': 'Specialist decision',
+    'signoff.sign': 'Sign-off',
+    'signoff.unsign': 'Unsign-off',
+    'template.generate': 'Template generated',
+    'portal.publish': 'Portal publish',
+  };
+  const filteredAuditEntries = auditFilter
+    ? auditEntries.filter(e => e.action === auditFilter)
+    : auditEntries;
+  const auditActionsInUse = Array.from(new Set(auditEntries.map(e => e.action)));
+
   return (
+    <div className="space-y-6">
     <div className="grid grid-cols-2 gap-4">
       {/* LEFT: Team Action Required — client responses waiting for verification */}
       <div>
@@ -518,6 +579,122 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
           </div>
         )}
       </div>
+    </div>
+
+    {/* ── Audit trail ─────────────────────────────────────────────────
+        Full history of button-triggered actions on this engagement,
+        newest first. Captures the decisions that bypass the green-dot
+        sign-off flow (send to RMM, send for specialist review,
+        specialist accept/reject, etc.) so the firm has a "who did
+        what, when" record. Collapsible but open by default — this is
+        the primary audit artefact the outstanding tab surfaces. */}
+    <div className="border border-slate-200 rounded-lg bg-white overflow-hidden">
+      <button
+        onClick={() => setAuditExpanded(e => !e)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50"
+      >
+        <div className="flex items-center gap-2">
+          <History className="h-4 w-4 text-indigo-500" />
+          <h3 className="text-sm font-semibold text-slate-800">Audit trail</h3>
+          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+            {auditEntries.length}
+          </span>
+          {auditMigrationPending && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700">
+              <AlertTriangle className="h-3 w-3" />
+              migration pending
+            </span>
+          )}
+        </div>
+        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${auditExpanded ? 'rotate-180' : ''}`} />
+      </button>
+      {auditExpanded && (
+        <div className="border-t border-slate-100">
+          {/* Action filter dropdown — scoped to the set of actions
+              that have actually been recorded so empty categories
+              don't appear. */}
+          {auditActionsInUse.length > 1 && (
+            <div className="px-4 py-2 flex items-center gap-2 border-b border-slate-100 bg-slate-50/60">
+              <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Filter</span>
+              <select
+                value={auditFilter}
+                onChange={e => setAuditFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded px-2 py-1 bg-white"
+              >
+                <option value="">All actions ({auditEntries.length})</option>
+                {auditActionsInUse.map(a => {
+                  const count = auditEntries.filter(e => e.action === a).length;
+                  const label = ACTION_LABELS[a] || a;
+                  return <option key={a} value={a}>{label} ({count})</option>;
+                })}
+              </select>
+              {auditFilter && (
+                <button
+                  onClick={() => setAuditFilter('')}
+                  className="text-[10px] text-blue-600 hover:underline"
+                >Clear</button>
+              )}
+            </div>
+          )}
+
+          {auditLoading ? (
+            <div className="px-4 py-6 text-center text-xs text-slate-400">
+              <Loader2 className="h-4 w-4 animate-spin mx-auto mb-1" />
+              Loading audit trail…
+            </div>
+          ) : auditMigrationPending ? (
+            <div className="px-4 py-6 text-xs text-amber-700 bg-amber-50/40">
+              The audit-trail table doesn&rsquo;t exist on this environment yet.
+              Apply the <code className="font-mono text-[11px] bg-amber-100 px-1 rounded">2026-04-22-engagement-action-log.sql</code>
+              migration and refresh.
+            </div>
+          ) : filteredAuditEntries.length === 0 ? (
+            <div className="px-4 py-6 text-center text-xs text-slate-400 italic">
+              No actions recorded yet. Things like &ldquo;Send to RMM&rdquo;, &ldquo;Send for specialist review&rdquo;,
+              and the specialist&rsquo;s accept/reject decision will appear here.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 max-h-[60vh] overflow-y-auto">
+              {filteredAuditEntries.map(entry => {
+                const actionLabel = ACTION_LABELS[entry.action] || entry.action;
+                // Colour the left rail by the broad action family so
+                // reviewers can scan the log. Specialist decisions get
+                // a distinctive indigo; RMM / PAR handoffs get blue.
+                const railClass =
+                  entry.action === 'specialist.decide' ? 'border-l-indigo-500'
+                  : entry.action === 'specialist.send' ? 'border-l-indigo-300'
+                  : entry.action.startsWith('rmm.') ? 'border-l-blue-400'
+                  : entry.action.startsWith('signoff.') ? 'border-l-green-400'
+                  : 'border-l-slate-300';
+                return (
+                  <div key={entry.id} className={`px-4 py-2 border-l-2 ${railClass} hover:bg-slate-50/60`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-500">
+                            {actionLabel}
+                          </span>
+                          <span className="text-xs font-medium text-slate-800">{entry.actorName}</span>
+                          {entry.actorUserId === null && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              external
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-700 mt-0.5 whitespace-pre-wrap">{entry.summary}</p>
+                      </div>
+                      <span className="text-[10px] text-slate-400 whitespace-nowrap flex-shrink-0">
+                        {formatDate(entry.occurredAt)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
     </div>
   );
 }

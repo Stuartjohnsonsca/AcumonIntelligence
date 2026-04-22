@@ -754,6 +754,43 @@ model ActivityLog {
   @@map("activity_logs")
 }
 
+/// Engagement-scoped audit trail. Every meaningful user action that
+/// touches an engagement (send-to-RMM, sign-off, specialist review,
+/// template generation, etc.) lands here so the Outstanding tab can
+/// show a running "who did what, when" history. Distinct from
+/// ActivityLog which is tool-centric and firm-global.
+///
+/// `action` is a short dotted slug like 'rmm.send-from-par',
+/// 'specialist.send', 'specialist.decide', 'signoff.sign',
+/// 'signoff.unsign', 'template.generate'. Keep these stable so the
+/// UI can group / label them consistently.
+///
+/// `actorUserId` may be null for automated actions (triggers firing
+/// asynchronously) or for external specialists deciding via magic link.
+/// In both cases `actorName` carries a readable label.
+///
+/// `metadata` is a small JSON blob for action-specific context.
+model EngagementActionLog {
+  id           String   @id @default(uuid())
+  engagementId String   @map("engagement_id")
+  firmId       String   @map("firm_id")
+  actorUserId  String?  @map("actor_user_id")
+  actorName    String   @map("actor_name")
+  action       String
+  summary      String   @db.Text
+  targetType   String?  @map("target_type")
+  targetId     String?  @map("target_id")
+  metadata     Json?
+  occurredAt   DateTime @default(now()) @map("occurred_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId, occurredAt])
+  @@index([firmId, occurredAt])
+  @@index([action])
+  @@map("engagement_action_logs")
+}
+
 model ErrorLog {
   id           String    @id @default(uuid())
   userId       String?   @map("user_id")
@@ -1828,6 +1865,7 @@ model AuditEngagement {
   taxChats              AuditTaxChat[]
   journalRiskRuns       JournalRiskRun[]
   meetings              AuditMeeting[]
+  actionLogs            EngagementActionLog[]
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])

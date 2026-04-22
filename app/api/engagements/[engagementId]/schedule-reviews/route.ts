@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import crypto from 'crypto';
 import { sendEmail } from '@/lib/email';
+import { logEngagementAction } from '@/lib/engagement-action-log';
 
 /**
  * Schedule specialist reviews — list + create.
@@ -171,6 +172,22 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     console.error(`[schedule-reviews] Specialist review email FAILED — to=${assigneeEmail} — ${detail}`);
     return NextResponse.json({ error: `Email failed: ${detail}` }, { status: 500 });
   }
+
+  // Audit trail — capture WHO sent WHICH schedule to WHICH specialist.
+  // Bypasses green-dot sign-off entirely (the whole point of specialist
+  // review is to bring in an extra pair of eyes before/without that
+  // sign-off), so this log is the primary record of the decision.
+  await logEngagementAction({
+    engagementId,
+    firmId: engagement.firmId,
+    actorUserId: session.user.id,
+    actorName: session.user.name || session.user.email || 'unknown',
+    action: 'specialist.send',
+    summary: `Sent "${scheduleKey}" for ${role.replace(/_/g, ' ')} specialist review — assigned to ${assigneeName || assigneeEmail}`,
+    targetType: 'schedule',
+    targetId: scheduleKey,
+    metadata: { role, assigneeEmail, scheduleReviewId: created.id, messageId },
+  });
 
   return NextResponse.json({
     ok: true,

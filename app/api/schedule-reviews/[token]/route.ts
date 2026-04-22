@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { logEngagementAction } from '@/lib/engagement-action-log';
 
 /**
  * Token-auth'd specialist review endpoints.
@@ -338,6 +339,26 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     where: { id: review.id },
     data: { status, comments: comments || null, decidedAt: new Date() },
   });
+
+  // Audit trail — the specialist's accept/reject is a pivotal decision
+  // that lives entirely outside the normal sign-off flow. Record it
+  // against the engagement with actorUserId=null (the specialist is
+  // external, authenticated only by the magic-link token) and
+  // actorName = the specialist's assigneeName so the Outstanding
+  // tab's audit panel can show who decided and what they said.
+  const commentsSnippet = (comments || '').trim().slice(0, 180);
+  await logEngagementAction({
+    engagementId: review.engagementId,
+    firmId: review.firmId,
+    actorUserId: null,
+    actorName: review.assigneeName || review.assigneeEmail || 'specialist',
+    action: 'specialist.decide',
+    summary: `${review.assigneeName || 'Specialist'} ${status === 'accepted' ? 'ACCEPTED' : 'REJECTED'} "${review.scheduleKey}" (${review.role.replace(/_/g, ' ')})${commentsSnippet ? ` — ${commentsSnippet}${(comments || '').length > 180 ? '…' : ''}` : ''}`,
+    targetType: 'schedule',
+    targetId: review.scheduleKey,
+    metadata: { status, role: review.role, scheduleReviewId: review.id, assigneeEmail: review.assigneeEmail },
+  });
+
   return NextResponse.json({
     ok: true,
     review: {

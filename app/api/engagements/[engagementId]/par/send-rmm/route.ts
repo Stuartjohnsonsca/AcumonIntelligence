@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { logEngagementAction, resolveActor } from '@/lib/engagement-action-log';
 
 /**
  * POST /api/engagements/[engagementId]/par/send-rmm
@@ -151,6 +152,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       created++;
       createdLineItems.push(lineItem);
       existingByLineItem.set(lineItem, { id: 'new', lineItem, sortOrder: maxSort, riskIdentified, amount: roundedAmount });
+    }
+  }
+
+  // Audit trail — captures WHO sent WHAT from PAR to RMM, and when.
+  // Bypasses the green-dot flow, so the log is the only record of
+  // this decision until someone signs the RMM tab off. Fire-and-
+  // forget; logging failures never block the response.
+  if (created > 0 || updated > 0) {
+    const actor = await resolveActor(engagementId, session);
+    if (actor) {
+      const changed = [...createdLineItems, ...updatedLineItems].slice(0, 6).join(', ');
+      const more = createdLineItems.length + updatedLineItems.length > 6 ? ', …' : '';
+      await logEngagementAction({
+        engagementId,
+        firmId: actor.firmId,
+        actorUserId: actor.actorUserId,
+        actorName: actor.actorName,
+        action: 'rmm.send-from-par',
+        summary: `Sent ${created + updated} PAR row${created + updated === 1 ? '' : 's'} to RMM — ${changed}${more}`,
+        targetType: 'schedule',
+        targetId: 'rmm',
+        metadata: { created, updated, createdLineItems, updatedLineItems },
+      });
     }
   }
 
