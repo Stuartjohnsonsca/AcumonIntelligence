@@ -2976,11 +2976,20 @@ model AuditErrorSchedule {
   resolvedByName     String?   @map("resolved_by_name")
   resolvedAt         DateTime? @map("resolved_at")
 
+  // Cross-link back to the source record that triggered this error.
+  // Populated by the "Raise as Error" flow on RI Matters (and any
+  // similar raise-from-source action in future). linkedFromType lets
+  // the UI render "from RI matter #N" on the error row. Nullable —
+  // most errors are booked directly.
+  linkedFromType String? @map("linked_from_type")
+  linkedFromId   String? @map("linked_from_id")
+
   engagement       AuditEngagement   @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   sampleItemMarker SampleItemMarker? @relation(fields: [sampleItemMarkerId], references: [id], onDelete: SetNull)
 
   @@index([engagementId])
   @@index([sampleItemMarkerId])
+  @@index([linkedFromId])
   @@map("audit_error_schedules")
 }
 
@@ -3032,7 +3041,12 @@ model AuditPoint {
   engagementId String @map("engagement_id")
   pointType    String @map("point_type") // review_point | management | representation | ri_matter
   chatNumber   Int    @map("chat_number")
-  status       String @default("open") // open | closed | committed | cancelled
+  status       String @default("new") // new | open | closed | committed | cancelled
+  // Traffic-light colour set by the user. null = no colour picked.
+  // Kept as a free-text string rather than an enum so firms can add
+  // their own tones later without a migration. Canonical values the
+  // UI emits: 'green' | 'amber' | 'red'.
+  colour       String?
 
   // Content
   description String  @db.Text
@@ -3057,10 +3071,20 @@ model AuditPoint {
   // Attachments on main point: [{name, url, type, size}]
   attachments Json?
 
+  // Cross-link back-pointer for "Raise as …" flows.
+  // When an RI matter is raised as an Error / Management / Representation
+  // point, the NEW record gets linkedFromId = <this RI matter's id> and
+  // linkedFromType = 'ri_matter'. Flows the other way too so the UI can
+  // surface "originated from RI matter #N" on the target and "raised as
+  // Error #M" on the source.
+  linkedFromType String? @map("linked_from_type")
+  linkedFromId   String? @map("linked_from_id")
+
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@index([engagementId, pointType])
   @@index([engagementId, pointType, status])
+  @@index([linkedFromId])
   @@map("audit_points")
 }
 
