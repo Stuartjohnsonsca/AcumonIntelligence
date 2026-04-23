@@ -107,6 +107,54 @@ export function DynamicAppendixForm({
     return () => { cancelled = true; };
   }, []);
 
+  // ── Cross-schedule answers (for `crossRef` fields) ────────────────
+  // Pulled once on mount so questions whose `crossRef` points to another
+  // schedule (e.g. "ethics.independence_confirmed" or the letter alias
+  // "appendix_b.independence_confirmed") display the live cross-ref value
+  // here rather than the admin having to re-type it. Only needed when at
+  // least one question has a non-empty crossRef — we skip the fetch
+  // otherwise.
+  const [crossSchedules, setCrossSchedules] = useState<{
+    questionnaires: Record<string, Record<string, any>>;
+    aliases: Record<string, string>;
+  } | null>(null);
+  const hasCrossRefs = useMemo(() => questions.some(q => typeof (q as any).crossRef === 'string' && (q as any).crossRef.trim()), [questions]);
+  useEffect(() => {
+    if (!hasCrossRefs || !engagementId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/questionnaires`);
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && data?.questionnaires) setCrossSchedules({ questionnaires: data.questionnaires, aliases: data.aliases || {} });
+      } catch { /* tolerant — crossRef fields will just render empty */ }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId, hasCrossRefs]);
+
+  /** Resolve a `<appendix>.<field>` cross-ref against the loaded map.
+   *  Returns null when the reference can't be resolved — the UI treats
+   *  that as an empty value. */
+  function resolveCrossRef(ref: string | undefined | null): any {
+    if (!ref || !crossSchedules) return null;
+    const trimmed = ref.trim();
+    const dotIdx = trimmed.indexOf('.');
+    if (dotIdx <= 0 || dotIdx >= trimmed.length - 1) return null;
+    const appendix = trimmed.slice(0, dotIdx).trim();
+    const field = trimmed.slice(dotIdx + 1).trim();
+    // Apply alphabetic alias (appendix_b → ethics etc.) when present.
+    const scheduleKey = crossSchedules.aliases[appendix] || appendix;
+    const bucket = crossSchedules.questionnaires[scheduleKey];
+    if (!bucket) return null;
+    // Try the enriched key first; fall back to UUID lookup via _byId for
+    // questions that haven't been given an explicit `.key`.
+    if (field in bucket) return bucket[field];
+    const byId = (bucket as any)._byId;
+    if (byId && field in byId) return byId[field];
+    return null;
+  }
+
   const saveEndpoint = `/api/engagements/${engagementId}/${endpoint}`;
   // Merge trigger values into save payload
   const saveData = useMemo(() => {
@@ -156,6 +204,15 @@ export function DynamicAppendixForm({
     const withAliases = buildFormulaValues(questions, merged);
     const computed: FormValues = {};
     for (const q of questions) {
+      // crossRef questions: value comes from another schedule. Wins over
+      // formula/raw — if the admin pointed this cell at another appendix,
+      // the cell IS that other answer. Rendered read-only below.
+      const qCrossRef = (q as any).crossRef as string | undefined;
+      if (qCrossRef && qCrossRef.trim()) {
+        const resolved = resolveCrossRef(qCrossRef);
+        computed[q.id] = resolved === null || resolved === undefined ? '' : resolved;
+        continue;
+      }
       // Formula-typed questions: always evaluate via the template's formulaExpression.
       if (q.inputType === 'formula' && q.formulaExpression) {
         computed[q.id] = evaluateFormula(q.formulaExpression, withAliases, crossRefData);
@@ -171,7 +228,8 @@ export function DynamicAppendixForm({
       }
     }
     return computed;
-  }, [questions, values, externalValues, firmVariablesMap, crossRefData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questions, values, externalValues, firmVariablesMap, crossRefData, crossSchedules]);
 
   function handleChange(questionId: string, value: string | number | boolean | null) {
     setValues(prev => ({ ...prev, [questionId]: value }));
@@ -354,11 +412,17 @@ export function DynamicAppendixForm({
                         onChange={v => handleChange(q.id, v)}
                         dropdownOptions={q.dropdownOptions}
                         computedValue={computedValues[q.id]}
-                        // Treat as formula when the question is configured
-                        // that way OR the saved answer starts with '=' —
-                        // both paths hide the raw formula and display the
-                        // computed result.
-                        isFormula={q.inputType === 'formula' || (typeof values[q.id] === 'string' && (values[q.id] as string).trim().startsWith('='))}
+                        // Treat as formula (read-only, computed value shown)
+                        // when any of:
+                        //   - question type is 'formula'
+                        //   - answer is an ad-hoc '= ...' expression
+                        //   - question has a crossRef to another schedule
+                        //     (the value is owned by the other schedule)
+                        isFormula={
+                          q.inputType === 'formula'
+                          || (typeof values[q.id] === 'string' && (values[q.id] as string).trim().startsWith('='))
+                          || Boolean((q as any).crossRef && (q as any).crossRef.trim())
+                        }
                         validationMin={q.validationMin}
                         validationMax={q.validationMax}
                       />

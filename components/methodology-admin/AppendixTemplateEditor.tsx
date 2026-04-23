@@ -661,10 +661,20 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 <input type="checkbox" checked={q.isRequired || false} onChange={e => updateQuestion(q.id, { isRequired: e.target.checked })} className="w-3.5 h-3.5 rounded" />
                                 Required
                               </label>
-                              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                              <label
+                                className="flex items-center gap-1.5 text-xs text-slate-500"
+                                title={
+                                  'Cross-reference this question to another schedule, so its value is pulled live from there (read-only here). Format: <schedule>.<questionKey> — e.g.\n' +
+                                  '  ethics.independence_confirmed\n' +
+                                  '  continuance.engagement_letter_date\n' +
+                                  '  permanentFile.entity_address\n' +
+                                  '  materiality.benchmark\n' +
+                                  'Letter aliases also work: appendix_a = permanentFile, appendix_b = ethics, appendix_c = continuance, appendix_e = materiality.'
+                                }
+                              >
                                 Cross-ref:
                                 <input type="text" value={q.crossRef || ''} onChange={e => updateQuestion(q.id, { crossRef: e.target.value || undefined })}
-                                  className="border border-slate-200 rounded px-2 py-1 text-xs w-44" placeholder="appendix_b.field_id" />
+                                  className="border border-slate-200 rounded px-2 py-1 text-xs w-56 font-mono" placeholder="ethics.independence_confirmed" />
                               </label>
                               {/* Conditional on: only show this question when ANOTHER
                                   question on this schedule satisfies an operator-based
