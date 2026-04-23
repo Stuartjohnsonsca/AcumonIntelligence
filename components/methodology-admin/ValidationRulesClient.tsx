@@ -9,7 +9,7 @@ interface AiSuggestion {
   slug: string;
   label: string;
   description: string;
-  isExisting: boolean;
+  source: 'real' | 'ai';
 }
 
 /**
@@ -62,17 +62,12 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
     setAiHelpError(null);
     try {
       const scheduleLabel = scheduleKeys.find(s => s.key === rule.scheduleKey)?.label || rule.scheduleKey;
-      // Best-effort list of existing slugs, sniffed from the draft expression —
-      // the server doesn't know the schedule's question list, but showing the
-      // AI what the admin has already typed is enough context for it to build on.
-      const existingSlugs = extractIdentifiers(rule.expression);
       const res = await fetch('/api/methodology-admin/validation-rules/ai-field-help', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           scheduleKey: rule.scheduleKey,
           scheduleLabel,
-          existingSlugs,
           existingExpression: rule.expression,
           userHint: aiHelpHint,
         }),
@@ -83,7 +78,18 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
         return;
       }
       const data = await res.json();
-      setAiHelpSuggestions(prev => ({ ...prev, [rule.id]: data.suggestions || [] }));
+      // Server returns { verified: [], proposed: [] } — both tagged with
+      // `source: 'real' | 'ai'`. We merge for display but the chip render
+      // differentiates them visually so the admin can always tell which
+      // suggestions are grounded in their actual schedule questions.
+      const merged: AiSuggestion[] = [
+        ...(Array.isArray(data.verified) ? data.verified : []),
+        ...(Array.isArray(data.proposed) ? data.proposed : []),
+      ];
+      setAiHelpSuggestions(prev => ({ ...prev, [rule.id]: merged }));
+      if ((data.realSlugCount ?? 0) === 0 && merged.length === 0) {
+        setAiHelpError('No questions found on this schedule, and the AI had nothing to suggest. Add questions to the schedule first.');
+      }
     } catch (err: any) {
       setAiHelpError(err?.message || 'AI request failed');
     } finally {
@@ -311,9 +317,10 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
                       </button>
                     </div>
                     <p className="text-[10px] text-slate-600 mb-2">
-                      Ask AI to suggest field names (question slugs) for this schedule. Suggestions include common slugs for
-                      this schedule type and additional fields the AI thinks would be useful — you can use slugs that
-                      don&rsquo;t yet exist and add the matching question later.
+                      The list below comes straight from this schedule&rsquo;s real questions (green = verified). The AI
+                      may additionally propose slugs for questions that don&rsquo;t exist yet (amber = proposed). Only
+                      green slugs will resolve at evaluation time — amber proposals need a matching question added to
+                      the schedule first. The AI is never allowed to tag its own inventions as verified.
                     </p>
                     <div className="flex items-center gap-2 mb-2">
                       <input
@@ -335,29 +342,64 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
                     {aiHelpError && (
                       <div className="text-[11px] text-red-600 mb-2">⚠ {aiHelpError}</div>
                     )}
-                    {(aiHelpSuggestions[rule.id] || []).length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {(aiHelpSuggestions[rule.id] || []).map(s => (
-                          <button
-                            key={s.slug}
-                            onClick={() => insertFieldIntoExpression(rule, s.slug)}
-                            title={s.description + (s.isExisting ? ' — exists on schedule' : ' — not yet on schedule; add it as a question')}
-                            className={`group text-left text-[11px] px-2 py-1 rounded border transition-colors ${
-                              s.isExisting
-                                ? 'bg-green-50 border-green-200 text-green-800 hover:bg-green-100'
-                                : 'bg-white border-indigo-200 text-indigo-800 hover:bg-indigo-100'
-                            }`}
-                          >
-                            <span className="font-mono">{s.slug}</span>
-                            <span className="text-slate-500 ml-1.5">— {s.label}</span>
-                            {!s.isExisting && <span className="ml-1.5 text-[9px] uppercase tracking-wide text-indigo-500">new</span>}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    {(aiHelpSuggestions[rule.id] || []).length > 0 && (() => {
+                      const all = aiHelpSuggestions[rule.id] || [];
+                      const verified = all.filter(s => s.source === 'real');
+                      const proposed = all.filter(s => s.source === 'ai');
+                      return (
+                        <div className="space-y-2">
+                          {verified.length > 0 && (
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wide text-green-700 font-semibold mb-1 flex items-center gap-1">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" />
+                                Verified — exist on this schedule
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {verified.map(s => (
+                                  <button
+                                    key={s.slug}
+                                    onClick={() => insertFieldIntoExpression(rule, s.slug)}
+                                    title={(s.description || s.label) + ' — exists on schedule, safe to use'}
+                                    className="text-left text-[11px] px-2 py-1 rounded border bg-green-50 border-green-200 text-green-800 hover:bg-green-100 transition-colors"
+                                  >
+                                    <span className="font-mono">{s.slug}</span>
+                                    {s.label && s.label !== s.slug && <span className="text-slate-500 ml-1.5">— {s.label}</span>}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {proposed.length > 0 && (
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wide text-amber-700 font-semibold mb-1 flex items-center gap-1">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                AI proposed — NOT yet on your schedule
+                              </div>
+                              <p className="text-[10px] text-amber-700 mb-1">
+                                These slugs don&rsquo;t exist on this schedule. Using one in a rule will always evaluate to a missing value until you add a matching question first.
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {proposed.map(s => (
+                                  <button
+                                    key={s.slug}
+                                    onClick={() => insertFieldIntoExpression(rule, s.slug)}
+                                    title={(s.description || s.label) + ' — AI suggestion, not yet on schedule'}
+                                    className="text-left text-[11px] px-2 py-1 rounded border bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100 transition-colors"
+                                  >
+                                    <span className="font-mono">{s.slug}</span>
+                                    {s.label && s.label !== s.slug && <span className="text-slate-500 ml-1.5">— {s.label}</span>}
+                                    <span className="ml-1.5 text-[9px] uppercase tracking-wide text-amber-700">proposed</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {(aiHelpSuggestions[rule.id] || []).length === 0 && !aiHelpLoading && !aiHelpError && (
                       <p className="text-[10px] text-slate-400 italic">
-                        Click <strong>Suggest</strong> to get field-name ideas from the AI.
+                        Click <strong>Suggest</strong> to see the schedule&rsquo;s real question slugs plus any AI proposals for new fields you might need.
                       </p>
                     )}
                   </div>
