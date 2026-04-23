@@ -32,6 +32,23 @@ export interface RenderResult {
   fileName: string;
   skeletonName: string;
   templateName: string;
+  /** True when the render used the live engagement context; false when it
+   *  fell back to (or started from) the firm's sample context. */
+  usedLiveContext: boolean;
+  /** Placeholder dotted paths the template referenced but that aren't in
+   *  the merge-field catalogue. Typos or paths for fields that were
+   *  removed from the data model. */
+  missingPlaceholders: string[];
+  /** Placeholder dotted paths that DO exist in the context but resolved
+   *  to null / undefined / empty string / empty array. Most common cause
+   *  of "the Word doc has a blank where a value should be" — the admin
+   *  usually just needs to fill in the missing data on the source form
+   *  (e.g. a client address that's never been entered). */
+  emptyPlaceholders: string[];
+  /** The resolved client name + period, surfaced so the UI can confirm
+   *  which engagement the render ran against. */
+  resolvedClientName: string;
+  resolvedPeriodEnd: string | null;
 }
 
 /**
@@ -50,15 +67,23 @@ export async function renderTemplateToDocx(templateId: string, engagementId: str
   if (!skeleton) throw new Error('No firm skeleton attached to this template and no default skeleton exists for this firm / audit type. Upload one first.');
 
   // 1. Build context — live from the engagement if supplied, otherwise
-  //    the firm's dynamic sample context (same thing preview uses). This
-  //    lets SuperAdmin / MethodologyAdmin generate a Word preview of a
-  //    template without needing a real engagement — handy for template
-  //    authoring.
-  let context: Awaited<ReturnType<typeof buildTemplateContext>>;
+  //    the firm's dynamic sample context (same thing preview uses).
+  //    On live-context failure we also fall back to sample so a single
+  //    missing column / FK bug doesn't block the admin getting a Word
+  //    file out. usedLiveContext tracks which path we landed on so the
+  //    caller can warn the user when the download isn't real data.
+  let context: any;
+  let usedLiveContext = false;
   if (engagementId) {
-    context = await buildTemplateContext(engagementId);
+    try {
+      context = await buildTemplateContext(engagementId);
+      usedLiveContext = true;
+    } catch (err) {
+      console.error('[template-render] live context failed, falling back to sample:', err);
+      context = await buildDynamicSampleContext(template.firmId);
+    }
   } else {
-    context = (await buildDynamicSampleContext(template.firmId)) as any;
+    context = await buildDynamicSampleContext(template.firmId);
   }
 
   // 2. Handlebars render the body.
@@ -94,7 +119,48 @@ export async function renderTemplateToDocx(templateId: string, engagementId: str
   const clientNamePart = (context as any)?.client?.name || 'sample';
   const periodPart = (context as any)?.period?.periodEnd || 'sample';
   const fileNameSafe = `${slugify(template.name)}__${slugify(clientNamePart)}__${periodPart}.docx`;
-  return { buffer, fileName: fileNameSafe, skeletonName: skeleton.name, templateName: template.name };
+
+  // Diagnostics — which placeholders the template body referenced but
+  // came back empty. Same semantics as previewTemplate:
+  //   - missing: path isn't in the context at all (typo / removed field)
+  //   - empty:   path resolves to null / undefined / "" / []
+  // Admins surface these so they can tell apart "Word doc is blank
+  // because the data hasn't been entered" from "blank because my
+  // placeholder is misspelt".
+  const referenced = extractReferencedPaths(bodyHtml);
+  const missingPlaceholders = referenced.filter(p => !contextHasPath(context, p));
+  const emptyPlaceholders = referenced.filter(p => {
+    if (!contextHasPath(context, p)) return false; // reported in missing
+    const v = resolvePath(context, p);
+    if (v === null || v === undefined) return true;
+    if (typeof v === 'string' && v.trim() === '') return true;
+    if (Array.isArray(v) && v.length === 0) return true;
+    return false;
+  });
+
+  return {
+    buffer,
+    fileName: fileNameSafe,
+    skeletonName: skeleton.name,
+    templateName: template.name,
+    usedLiveContext,
+    missingPlaceholders,
+    emptyPlaceholders,
+    resolvedClientName: String(clientNamePart),
+    resolvedPeriodEnd: (context as any)?.period?.periodEnd || null,
+  };
+}
+
+/** Walk a dotted path to a value. Returns undefined when any segment
+ *  can't be resolved. Matches contextHasPath semantics. */
+function resolvePath(ctx: any, path: string): any {
+  const parts = path.split('.');
+  let cur: any = ctx;
+  for (const p of parts) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[p];
+  }
+  return cur;
 }
 
 /**

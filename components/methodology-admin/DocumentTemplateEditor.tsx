@@ -121,6 +121,14 @@ export function DocumentTemplateEditor({
   const [skeletonId, setSkeletonId] = useState<string | null>(template.skeletonId);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  interface GenerateDiagnostics {
+    usedLiveContext: boolean;
+    resolvedClientName: string;
+    resolvedPeriodEnd: string | null;
+    emptyPlaceholders: string[];
+    missingPlaceholders: string[];
+  }
+  const [generateInfo, setGenerateInfo] = useState<GenerateDiagnostics | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<{ html: string; missing: string[]; error: string | null; usedLive: boolean } | null>(null);
   const [engagementId, setEngagementId] = useState<string>(engagements[0]?.id || '');
@@ -752,6 +760,7 @@ export function DocumentTemplateEditor({
 
   async function generate() {
     setGenerating(true);
+    setGenerateInfo(null);
     try {
       await save();
       // When engagementId is set, hit the per-engagement render route so
@@ -764,8 +773,6 @@ export function DocumentTemplateEditor({
         ? `/api/engagements/${engagementId}/render-template`
         : `/api/methodology-admin/template-documents/generate`;
       const payload: Record<string, string> = { templateId: template.id };
-      // The admin route also accepts templateId only; engagement route
-      // gets it from the URL path so we don't double-send it.
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -785,6 +792,24 @@ export function DocumentTemplateEditor({
       a.href = dlUrl; a.download = fileName;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(dlUrl);
+
+      // Parse the diagnostics the server attached and surface them to the
+      // admin in an info banner. This is the key to debugging "the Word
+      // doc came out blank" — usually it means a referenced field is
+      // empty in the live data, and we now say exactly which one.
+      try {
+        const rawHeader = res.headers.get('X-Template-Diagnostics');
+        if (rawHeader) {
+          const parsed = JSON.parse(decodeURIComponent(rawHeader));
+          setGenerateInfo({
+            usedLiveContext: Boolean(parsed.usedLiveContext),
+            resolvedClientName: String(parsed.resolvedClientName || 'Sample'),
+            resolvedPeriodEnd: parsed.resolvedPeriodEnd || null,
+            emptyPlaceholders: Array.isArray(parsed.emptyPlaceholders) ? parsed.emptyPlaceholders : [],
+            missingPlaceholders: Array.isArray(parsed.missingPlaceholders) ? parsed.missingPlaceholders : [],
+          });
+        }
+      } catch { /* diagnostics optional */ }
     } finally {
       setGenerating(false);
     }
@@ -823,6 +848,45 @@ export function DocumentTemplateEditor({
       <div className="border-b border-slate-200 px-4 py-2 bg-white">
         <input type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="Description (what this template is used for)…" className="w-full text-[11px] border border-slate-200 rounded px-2 py-1" />
       </div>
+
+      {/* ── Generate diagnostics banner ────────────────────────────────
+          Shown immediately after Generate Word completes. Tells the admin
+          which context was used, which client / period resolved, and which
+          placeholders came back blank — so "why is this field empty in my
+          Word doc?" turns into a one-line answer (e.g. missing client
+          address on the Client admin page). */}
+      {generateInfo && (
+        <div className={`border-b px-4 py-2 text-[11px] ${generateInfo.usedLiveContext ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1">
+              <div className="font-semibold">
+                Generated {generateInfo.usedLiveContext ? 'with live engagement data' : 'with sample data'}
+                {' '}— {generateInfo.resolvedClientName}
+                {generateInfo.resolvedPeriodEnd ? ` · period end ${generateInfo.resolvedPeriodEnd}` : ''}
+              </div>
+              {generateInfo.emptyPlaceholders.length > 0 && (
+                <div className="mt-1">
+                  <strong>{generateInfo.emptyPlaceholders.length} placeholder{generateInfo.emptyPlaceholders.length === 1 ? '' : 's'} came back empty:</strong>{' '}
+                  <span className="font-mono text-[10px]">{generateInfo.emptyPlaceholders.join(', ')}</span>
+                  <div className="text-[10px] mt-0.5 opacity-80">
+                    These paths exist in the context but the referenced data hasn&rsquo;t been entered yet (or is null). Fill in the source form to populate them.
+                  </div>
+                </div>
+              )}
+              {generateInfo.missingPlaceholders.length > 0 && (
+                <div className="mt-1">
+                  <strong className="text-red-700">{generateInfo.missingPlaceholders.length} unknown placeholder{generateInfo.missingPlaceholders.length === 1 ? '' : 's'} (typo?):</strong>{' '}
+                  <span className="font-mono text-[10px]">{generateInfo.missingPlaceholders.join(', ')}</span>
+                </div>
+              )}
+              {generateInfo.emptyPlaceholders.length === 0 && generateInfo.missingPlaceholders.length === 0 && (
+                <div className="text-[10px] opacity-80 mt-0.5">All referenced placeholders resolved to a value.</div>
+              )}
+            </div>
+            <button onClick={() => setGenerateInfo(null)} className="text-slate-400 hover:text-slate-700" title="Dismiss">✕</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Formatting toolbar ─────────────────────────────────────────── */}
       <div className="border-b border-slate-200 bg-slate-50 px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">

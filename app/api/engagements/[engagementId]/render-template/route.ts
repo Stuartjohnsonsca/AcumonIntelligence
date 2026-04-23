@@ -37,15 +37,20 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   }
 
   try {
-    const { buffer, fileName } = await renderTemplateToDocx(templateId, engagementId);
-    // NextResponse accepts a Uint8Array via BodyInit; Node's Buffer is
-    // a Uint8Array so we cast to silence the TS lib type narrowing
-    // which sometimes disallows Buffer directly.
-    return new NextResponse(new Uint8Array(buffer), {
+    const result = await renderTemplateToDocx(templateId, engagementId);
+    return new NextResponse(new Uint8Array(result.buffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'Content-Disposition': `attachment; filename="${fileName}"`,
+        'Content-Disposition': `attachment; filename="${result.fileName}"`,
+        'Access-Control-Expose-Headers': 'X-Template-Diagnostics',
+        'X-Template-Diagnostics': encodeURIComponent(JSON.stringify({
+          usedLiveContext: result.usedLiveContext,
+          missingPlaceholders: result.missingPlaceholders,
+          emptyPlaceholders: result.emptyPlaceholders,
+          resolvedClientName: result.resolvedClientName,
+          resolvedPeriodEnd: result.resolvedPeriodEnd,
+        })),
       },
     });
   } catch (err: any) {

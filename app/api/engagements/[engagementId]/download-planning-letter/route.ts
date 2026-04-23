@@ -39,7 +39,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   }
 
   try {
-    const { buffer, fileName } = await renderTemplateToDocx(templateId, engagementId);
+    const result = await renderTemplateToDocx(templateId, engagementId);
 
     // Fire-and-forget audit log — don't block the download on it.
     (prisma as any).activityLog?.create?.({
@@ -49,15 +49,23 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         clientId: engagement.clientId,
         action: 'download_planning_letter',
         tool: 'rmm',
-        detail: { engagementId, templateId, fileName },
+        detail: { engagementId, templateId, fileName: result.fileName },
       },
     }).catch(() => { /* tolerant */ });
 
-    return new NextResponse(new Uint8Array(buffer), {
+    return new NextResponse(new Uint8Array(result.buffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'Content-Disposition': `attachment; filename="${fileName}"`,
+        'Content-Disposition': `attachment; filename="${result.fileName}"`,
+        'Access-Control-Expose-Headers': 'X-Template-Diagnostics',
+        'X-Template-Diagnostics': encodeURIComponent(JSON.stringify({
+          usedLiveContext: result.usedLiveContext,
+          missingPlaceholders: result.missingPlaceholders,
+          emptyPlaceholders: result.emptyPlaceholders,
+          resolvedClientName: result.resolvedClientName,
+          resolvedPeriodEnd: result.resolvedPeriodEnd,
+        })),
       },
     });
   } catch (err: any) {
