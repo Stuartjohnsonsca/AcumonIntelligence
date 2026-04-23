@@ -580,6 +580,10 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
     'upper','lower','titleCase','default',
     'errorScheduleTable','testConclusionsTable',
     'sumField','sumFieldWhere','countItems',
+    // Array filters — the #each block wraps an array result and passes
+    // item fields via LOOP_ITEM_FIELDS below. These helpers themselves
+    // must not appear as "missing placeholders".
+    'filterWhere','filterBySection',
     'paragraph','else',
   ]);
 

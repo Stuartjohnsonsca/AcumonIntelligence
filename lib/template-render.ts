@@ -120,23 +120,44 @@ export async function renderTemplateToDocx(templateId: string, engagementId: str
   const periodPart = (context as any)?.period?.periodEnd || 'sample';
   const fileNameSafe = `${slugify(template.name)}__${slugify(clientNamePart)}__${periodPart}.docx`;
 
-  // Diagnostics — which placeholders the template body referenced but
-  // came back empty. Same semantics as previewTemplate:
-  //   - missing: path isn't in the context at all (typo / removed field)
-  //   - empty:   path resolves to null / undefined / "" / []
-  // Admins surface these so they can tell apart "Word doc is blank
-  // because the data hasn't been entered" from "blank because my
-  // placeholder is misspelt".
+  // Diagnostics — which placeholders the template body referenced and
+  // what happened to them.
+  //   - missing: path isn't in the context at all AND can't plausibly be
+  //     one (typo / removed field). For questionnaire sub-paths we're
+  //     generous: if the top-level `questionnaires.<type>` exists we
+  //     treat unknown sub-keys as empty rather than typos, because the
+  //     valid sub-keys depend on the firm's schema — and that's data
+  //     missing, not a catalog error.
+  //   - empty: path resolves to null / undefined / "" / [], OR is an
+  //     expected-shape questionnaire/… sub-path with no answer supplied.
   const referenced = extractReferencedPaths(bodyHtml);
-  const missingPlaceholders = referenced.filter(p => !contextHasPath(context, p));
-  const emptyPlaceholders = referenced.filter(p => {
-    if (!contextHasPath(context, p)) return false; // reported in missing
-    const v = resolvePath(context, p);
-    if (v === null || v === undefined) return true;
-    if (typeof v === 'string' && v.trim() === '') return true;
-    if (Array.isArray(v) && v.length === 0) return true;
-    return false;
-  });
+  const missingPlaceholders: string[] = [];
+  const emptyPlaceholders: string[] = [];
+  for (const p of referenced) {
+    if (contextHasPath(context, p)) {
+      const v = resolvePath(context, p);
+      if (v === null || v === undefined
+          || (typeof v === 'string' && v.trim() === '')
+          || (Array.isArray(v) && v.length === 0)) {
+        emptyPlaceholders.push(p);
+      }
+      continue;
+    }
+    // Sub-path of an existing top-level branch — likely an unpopulated
+    // answer or a section key we haven't filled, not a catalog typo.
+    // Applies to questionnaires specifically (most common case) but we
+    // extend the rule to any dotted path whose first segment resolves.
+    const dotIdx = p.indexOf('.');
+    if (dotIdx > 0) {
+      const top = p.slice(0, dotIdx);
+      const rest = p.slice(dotIdx + 1);
+      if ((top === 'questionnaires' || contextHasPath(context, top)) && rest.length) {
+        emptyPlaceholders.push(p);
+        continue;
+      }
+    }
+    missingPlaceholders.push(p);
+  }
 
   return {
     buffer,

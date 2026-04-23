@@ -835,8 +835,15 @@ export function DocumentTemplateEditor({
         <button onClick={() => runPreview()} disabled={previewing} className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100">
           {previewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Eye className="h-3 w-3" />} Preview
         </button>
-        <select value={engagementId} onChange={e => setEngagementId(e.target.value)} className="text-[11px] border border-slate-200 rounded px-2 py-1 max-w-[180px]" title="Engagement to preview/generate against">
-          <option value="">— Sample data —</option>
+        <select
+          value={engagementId}
+          onChange={e => setEngagementId(e.target.value)}
+          className="text-[11px] border border-slate-200 rounded px-2 py-1 max-w-[220px]"
+          title={engagements.length > 0
+            ? 'Pick an engagement to preview / Generate Word against that engagement\'s real data. The "Canned sample" option uses fabricated Acme data — useful when no engagement exists yet.'
+            : 'No engagements found on this firm yet — Generate Word will use canned sample (Acme) data until you create one.'}
+        >
+          <option value="">— Canned sample (Acme) —</option>
           {engagements.map(e => <option key={e.id} value={e.id}>{e.clientName}{e.periodEnd ? ` · ${e.periodEnd}` : ''}</option>)}
         </select>
         <button onClick={generate} disabled={generating} className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-indigo-600 text-white rounded disabled:opacity-50">
@@ -860,10 +867,15 @@ export function DocumentTemplateEditor({
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1">
               <div className="font-semibold">
-                Generated {generateInfo.usedLiveContext ? 'with live engagement data' : 'with sample data'}
+                Generated {generateInfo.usedLiveContext ? 'with live engagement data' : 'with canned sample (Acme)'}
                 {' '}— {generateInfo.resolvedClientName}
                 {generateInfo.resolvedPeriodEnd ? ` · period end ${generateInfo.resolvedPeriodEnd}` : ''}
               </div>
+              {!generateInfo.usedLiveContext && (
+                <div className="text-[10px] mt-0.5 opacity-85">
+                  Pick a real engagement from the dropdown above to generate against live client data instead of fabricated Acme values.
+                </div>
+              )}
               {generateInfo.emptyPlaceholders.length > 0 && (
                 <div className="mt-1">
                   <strong>{generateInfo.emptyPlaceholders.length} placeholder{generateInfo.emptyPlaceholders.length === 1 ? '' : 's'} came back empty:</strong>{' '}
