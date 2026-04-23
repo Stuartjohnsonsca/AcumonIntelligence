@@ -328,7 +328,23 @@ hb.registerHelper('countItems', (arr: any) => Array.isArray(arr) ? arr.length : 
 hb.registerHelper('upper', (v: any) => String(v ?? '').toUpperCase());
 hb.registerHelper('lower', (v: any) => String(v ?? '').toLowerCase());
 hb.registerHelper('titleCase', (v: any) => String(v ?? '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()));
-hb.registerHelper('default', (v: any, fallback: any) => (v == null || v === '' ? fallback : v));
+// `default` returns the first argument that is not null / undefined /
+// empty string. Variadic — admins can chain any number of fallbacks in
+// a template (e.g. when the same conceptual value is stored in
+// different places depending on the firm's data discipline):
+//   {{default client.registeredAddress questionnaires.permanentFile.entity_address}}
+//   {{default questionnaires.ethics.contact questionnaires.continuance.contact client.contactName}}
+// The last arg passed by Handlebars is an options object and must be
+// dropped before checking.
+hb.registerHelper('default', function (...args: any[]) {
+  args.pop(); // Handlebars options object
+  for (const v of args) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    return v;
+  }
+  return '';
+});
 
 // ─── Table rendering helpers ───────────────────────────────────────────────
 /**

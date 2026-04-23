@@ -678,22 +678,13 @@ export async function buildTemplateContext(engagementId: string, opts: { include
       id: engagement.client.id,
       name: engagement.client.clientName,
       companyNumber: (engagement.client as any).companyNumber ?? null,
-      // registeredAddress resolves in priority order so admins aren't
-      // forced to duplicate data:
-      //   1. Client record's Postal Address (Clients admin → edit client)
-      //   2. Permanent File's Entity Address Block — firms commonly
-      //      capture the statutory address on the engagement's Permanent
-      //      File schedule rather than on the master Client record.
-      //      Tolerant of whatever key the firm's template uses (we've
-      //      seen entity_address, entity_address_block, registered_address
-      //      in seeded + customised templates).
-      registeredAddress:
-        engagement.client.address
-        ?? (pfData as any)?.entity_address
-        ?? (pfData as any)?.entity_address_block
-        ?? (pfData as any)?.registered_address
-        ?? (pfData as any)?.address
-        ?? null,
+      // registeredAddress reads the Client record's Postal Address. If
+      // your firm keeps the statutory address on the Permanent File's
+      // Entity Address Block instead, chain the two paths in your
+      // template via the `default` helper — e.g.
+      //   {{default client.registeredAddress questionnaires.permanentFile.entity_address}}
+      // No code change required; the admin picks which sources apply.
+      registeredAddress: engagement.client.address ?? null,
       sector: engagement.client.sector,
       contactName: [engagement.client.contactFirstName, engagement.client.contactSurname].filter(Boolean).join(' ') || null,
       contactEmail: engagement.client.contactEmail,
