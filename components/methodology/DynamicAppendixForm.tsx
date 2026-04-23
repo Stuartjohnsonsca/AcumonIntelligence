@@ -293,10 +293,20 @@ export function DynamicAppendixForm({
                 }
                 const outline = getFieldOutline(q.id);
                 // Admin-only placeholder path — what the template editor
-                // would use to reference this answer. Falls back to the
-                // canonical slug of the question text; if the admin sees
-                // a wrong path they can adjust.
-                const questionSlug = slugifyQuestionText(q.questionText) || q.id;
+                // would use to reference this answer. Priority:
+                //   1. The question's explicit `.key` from the schema
+                //      (seeded templates set snake_case keys like
+                //      `entity_address` that may NOT match a slug of the
+                //      question text like `entity_address_block`).
+                //   2. slugifyQuestionText(questionText) — works for
+                //      admin-created questions without an explicit key.
+                //   3. The raw UUID id as a last resort.
+                // lib/template-context.ts keys the questionnaires branch
+                // by the same `.key` field, so option 1 is the canonical
+                // placeholder path — matching it here keeps the chip
+                // honest.
+                const qKey = (q as any).key as string | undefined;
+                const questionSlug = (qKey && qKey.trim()) || slugifyQuestionText(q.questionText) || q.id;
                 const placeholderPath = `questionnaires.${questionnaireKey}.${questionSlug}`;
                 return (
                   <div key={q.id} className={`group flex gap-0 ${idx > 0 ? 'border-t border-slate-100' : ''}`}>
