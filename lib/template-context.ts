@@ -321,13 +321,27 @@ export async function buildTemplateContext(engagementId: string, opts: { include
   };
 
   // Error schedule. Using an explicit select because production Supabase
-  // is missing the `linked_from_type` / `linked_from_id` columns that
-  // the Prisma schema declares — unbounded findMany would 500. Remove
-  // once scripts/sql/raise-as-linked-from.sql has been applied.
-  const errorRows = await prisma.auditErrorSchedule.findMany({
-    where: { engagementId },
-    select: ERROR_SCHEDULE_SAFE_SELECT,
-  });
+  // may be missing the `linked_from_type` / `linked_from_id` columns that
+  // the Prisma schema declares — unbounded findMany would 500. The
+  // try/catch is a belt-and-braces fallback: if some OTHER column has
+  // drifted, we still render the Planning Letter with an empty error
+  // schedule rather than failing the whole download. Remove once
+  // scripts/sql/raise-as-linked-from.sql is applied.
+  type ErrorRow = {
+    id: string; fsLine: string; accountCode: string | null; description: string;
+    errorAmount: number; errorType: string; explanation: string | null;
+    resolution: string | null; isFraud: boolean;
+  };
+  let errorRows: ErrorRow[] = [];
+  try {
+    errorRows = await prisma.auditErrorSchedule.findMany({
+      where: { engagementId },
+      select: ERROR_SCHEDULE_SAFE_SELECT,
+    }) as unknown as ErrorRow[];
+  } catch (err: any) {
+    console.error('[template-context] auditErrorSchedule.findMany failed — continuing with empty error schedule:', err?.message || err);
+    errorRows = [];
+  }
   const errorSchedule = errorRows.map(e => ({
     id: e.id,
     fsLine: e.fsLine,
