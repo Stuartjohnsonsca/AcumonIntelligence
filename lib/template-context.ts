@@ -11,6 +11,7 @@
 
 import { prisma } from '@/lib/db';
 import { ERROR_SCHEDULE_SAFE_SELECT } from '@/lib/error-schedule-select';
+import { slugifyQuestionText } from '@/lib/formula-engine';
 
 /** A single RMM row rendered into template context — every useful
  *  field from AuditRMMRow. Templates can show a minimal view (just
@@ -599,22 +600,35 @@ export async function buildTemplateContext(engagementId: string, opts: { include
     }
     const asList: ListItem[] = [];
     for (const item of schema) {
-      if (!item?.id || !item?.key) continue;
+      if (!item?.id) continue;
+      // Resolve the human-readable key. Seeded questions set an explicit
+      // `.key` (e.g. 'entity_address'); questions added via the admin
+      // template editor currently DON'T — so fall back to a slug of the
+      // question text, then to the UUID id. Without this fallback every
+      // admin-added question was silently dropped from the template
+      // context, leaving {{questionnaires.*.*}} placeholders blank.
+      const keyResolved = typeof item.key === 'string' && item.key.trim()
+        ? item.key
+        : (slugifyQuestionText(item.questionText) || String(item.id));
       const value = raw[item.id];
-      // Skip entries the user hasn't answered — keeps the context
-      // compact and makes missing-placeholder checks meaningful.
-      if (value === undefined) continue;
-      // Human-readable key at the top level of the questionnaire.
-      out[item.key] = value;
+      out[item.key || keyResolved] = value ?? null;
+      // If the resolved key differs from what was saved on item.key,
+      // expose under BOTH so templates work against either form.
+      if (keyResolved !== item.key) out[keyResolved] = value ?? null;
       if (item.sectionKey) {
         const sec = slugify(item.sectionKey);
         if (!bySection[sec]) bySection[sec] = {};
-        bySection[sec][item.key] = value;
+        bySection[sec][keyResolved] = value ?? null;
       }
+      // Every question — answered or not — goes into asList so
+      // templates that iterate ({{#each …asList}}) see the full shape
+      // of the questionnaire, not just the rows the auditor has
+      // happened to fill in. `isEmpty` lets templates filter if they
+      // want to.
       asList.push({
-        question: String(item.questionText ?? item.label ?? item.key),
-        key: String(item.key),
-        answer: value,
+        question: String(item.questionText ?? item.label ?? keyResolved),
+        key: keyResolved,
+        answer: value ?? null,
         section: item.sectionKey ? String(item.sectionKey) : null,
         sortOrder: Number(item.sortOrder) || 0,
       });
