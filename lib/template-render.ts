@@ -39,7 +39,7 @@ export interface RenderResult {
  * with a clear message on any unrecoverable error — callers map the
  * message to a 4xx/5xx response.
  */
-export async function renderTemplateToDocx(templateId: string, engagementId: string): Promise<RenderResult> {
+export async function renderTemplateToDocx(templateId: string, engagementId: string | null): Promise<RenderResult> {
   const template = await prisma.documentTemplate.findUnique({
     where: { id: templateId },
     include: { skeleton: true, firm: { select: { name: true } } },
@@ -49,8 +49,17 @@ export async function renderTemplateToDocx(templateId: string, engagementId: str
   const skeleton = template.skeleton ?? await pickDefaultSkeleton(template.firmId, template.auditType);
   if (!skeleton) throw new Error('No firm skeleton attached to this template and no default skeleton exists for this firm / audit type. Upload one first.');
 
-  // 1. Build live context from the engagement.
-  const context = await buildTemplateContext(engagementId);
+  // 1. Build context — live from the engagement if supplied, otherwise
+  //    the firm's dynamic sample context (same thing preview uses). This
+  //    lets SuperAdmin / MethodologyAdmin generate a Word preview of a
+  //    template without needing a real engagement — handy for template
+  //    authoring.
+  let context: Awaited<ReturnType<typeof buildTemplateContext>>;
+  if (engagementId) {
+    context = await buildTemplateContext(engagementId);
+  } else {
+    context = (await buildDynamicSampleContext(template.firmId)) as any;
+  }
 
   // 2. Handlebars render the body.
   const bodyHtml = template.content || '';
@@ -82,7 +91,9 @@ export async function renderTemplateToDocx(templateId: string, engagementId: str
   }
   const buffer = doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 
-  const fileNameSafe = `${slugify(template.name)}__${slugify(context.client.name)}__${context.period.periodEnd || 'period'}.docx`;
+  const clientNamePart = (context as any)?.client?.name || 'sample';
+  const periodPart = (context as any)?.period?.periodEnd || 'sample';
+  const fileNameSafe = `${slugify(template.name)}__${slugify(clientNamePart)}__${periodPart}.docx`;
   return { buffer, fileName: fileNameSafe, skeletonName: skeleton.name, templateName: template.name };
 }
 

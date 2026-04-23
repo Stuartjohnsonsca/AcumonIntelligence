@@ -751,14 +751,25 @@ export function DocumentTemplateEditor({
   }
 
   async function generate() {
-    if (!engagementId) { alert('Pick an engagement to generate the Word document.'); return; }
     setGenerating(true);
     try {
       await save();
-      const res = await fetch(`/api/engagements/${engagementId}/render-template`, {
+      // When engagementId is set, hit the per-engagement render route so
+      // the Word doc reflects real data (and a download event is logged
+      // against that engagement). Otherwise fall back to the admin-only
+      // generate endpoint that renders against the firm's sample context
+      // — same context the Preview pane uses — so admins can iterate on a
+      // template without needing to pick a real engagement.
+      const url = engagementId
+        ? `/api/engagements/${engagementId}/render-template`
+        : `/api/methodology-admin/template-documents/generate`;
+      const payload: Record<string, string> = { templateId: template.id };
+      // The admin route also accepts templateId only; engagement route
+      // gets it from the URL path so we don't double-send it.
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ templateId: template.id }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -769,11 +780,11 @@ export function DocumentTemplateEditor({
       const cd = res.headers.get('Content-Disposition') || '';
       const matched = cd.match(/filename="([^"]+)"/);
       const fileName = matched?.[1] || `${template.name || 'document'}.docx`;
-      const url = URL.createObjectURL(blob);
+      const dlUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = fileName;
+      a.href = dlUrl; a.download = fileName;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(dlUrl);
     } finally {
       setGenerating(false);
     }
