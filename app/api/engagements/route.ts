@@ -39,6 +39,35 @@ export async function GET(req: Request) {
     }
   }
 
+  // List mode — when no specific (clientId, periodId, auditType) triple
+  // is supplied, return engagements for the caller's firm. Used by the
+  // template editor (and any other admin screen that wants to let the
+  // user pick an engagement from a flat list).
+  if (!clientId && !periodId && !auditType) {
+    const limitRaw = Number(searchParams.get('limit'));
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
+    try {
+      const firmId = session.user.firmId;
+      const engagements = await prisma.auditEngagement.findMany({
+        where: session.user.isSuperAdmin ? {} : { firmId },
+        orderBy: [{ startedAt: 'desc' }, { createdAt: 'desc' }],
+        take: limit,
+        select: {
+          id: true,
+          auditType: true,
+          status: true,
+          startedAt: true,
+          client: { select: { id: true, clientName: true } },
+          period: { select: { id: true, startDate: true, endDate: true } },
+        },
+      });
+      return NextResponse.json({ engagements });
+    } catch (err) {
+      console.error('Error listing engagements:', err);
+      return NextResponse.json({ error: 'Failed to list engagements' }, { status: 500 });
+    }
+  }
+
   if (!clientId || !periodId || !auditType) {
     return NextResponse.json({ error: 'clientId, periodId, and auditType are required' }, { status: 400 });
   }

@@ -58,7 +58,22 @@ export interface DocumentTemplate {
   updatedAt: string;
 }
 
-interface EngagementOption { id: string; clientName: string; periodEnd: string | null }
+/**
+ * One engagement option as supplied by the manager. Enriched shape
+ * carries the clientId + periodId so the editor can power cascading
+ * Client → Period dropdowns without needing a second round-trip. Older
+ * callers that still hand back just {id, clientName, periodEnd} still
+ * work — the cascade falls back to showing one row per engagement.
+ */
+interface EngagementOption {
+  id: string;
+  clientName: string;
+  periodEnd: string | null;
+  clientId?: string;
+  periodId?: string;
+  periodStart?: string | null;
+  auditType?: string | null;
+}
 
 const CATEGORIES = [
   // Specific workflow categories at the top — picking one of these
@@ -131,7 +146,75 @@ export function DocumentTemplateEditor({
   const [generateInfo, setGenerateInfo] = useState<GenerateDiagnostics | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<{ html: string; missing: string[]; error: string | null; usedLive: boolean } | null>(null);
-  const [engagementId, setEngagementId] = useState<string>(engagements[0]?.id || '');
+  // Preview / Generate target — chosen via cascading Client → Period
+  // dropdowns below. engagementId is derived from the (client, period)
+  // pair. Default to the first engagement the manager fetched so most
+  // template authoring sessions land on real data immediately.
+  const [selectedClientId, setSelectedClientId] = useState<string>(engagements[0]?.clientId || '');
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>(engagements[0]?.periodId || '');
+
+  // Group engagements by client so the Period dropdown is filtered to
+  // whatever periods actually exist for the chosen client. Engagements
+  // without a clientId (legacy shape) fall through to a synthetic "All"
+  // bucket so the UI still shows something.
+  const engagementsByClient = useMemo(() => {
+    const m = new Map<string, EngagementOption[]>();
+    for (const e of engagements) {
+      const cid = e.clientId || '__unknown__';
+      if (!m.has(cid)) m.set(cid, []);
+      m.get(cid)!.push(e);
+    }
+    return m;
+  }, [engagements]);
+
+  const clientOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ id: string; name: string }> = [];
+    for (const e of engagements) {
+      const cid = e.clientId || '__unknown__';
+      if (seen.has(cid)) continue;
+      seen.add(cid);
+      out.push({ id: cid, name: e.clientName || 'Unnamed client' });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }, [engagements]);
+
+  const periodOptions = useMemo(() => {
+    if (!selectedClientId) return [];
+    const list = engagementsByClient.get(selectedClientId) || [];
+    // One row per period — collapse duplicates (an engagement per audit
+    // type under the same period shows up once, keyed by periodId).
+    const seen = new Set<string>();
+    const out: Array<{ periodId: string; label: string; engagementId: string }> = [];
+    for (const e of list) {
+      if (!e.periodId || seen.has(e.periodId)) continue;
+      seen.add(e.periodId);
+      const label = e.periodStart && e.periodEnd
+        ? `${e.periodStart} → ${e.periodEnd}${e.auditType ? ` · ${e.auditType}` : ''}`
+        : (e.periodEnd ? `Period end ${e.periodEnd}${e.auditType ? ` · ${e.auditType}` : ''}` : e.id);
+      out.push({ periodId: e.periodId, label, engagementId: e.id });
+    }
+    return out;
+  }, [selectedClientId, engagementsByClient]);
+
+  // Resolve the engagementId from the (client, period) pair. Falls back
+  // to an empty string when the pair doesn't match — Generate Word stays
+  // disabled in that case.
+  const engagementId = useMemo(() => {
+    if (!selectedClientId || !selectedPeriodId) return '';
+    const match = periodOptions.find(p => p.periodId === selectedPeriodId);
+    return match?.engagementId || '';
+  }, [selectedClientId, selectedPeriodId, periodOptions]);
+
+  // If the default period for the pre-selected client wasn't valid (e.g.
+  // stale state after engagements reload), clamp to the first available
+  // period for the client.
+  useEffect(() => {
+    if (!selectedClientId) return;
+    if (!periodOptions.some(p => p.periodId === selectedPeriodId)) {
+      setSelectedPeriodId(periodOptions[0]?.periodId || '');
+    }
+  }, [selectedClientId, periodOptions, selectedPeriodId]);
   // AI placeholder-suggester state. The modal takes a plain-English
   // description and asks the server (which in turn asks Llama 3.3)
   // to pick the best snippet out of the merge-field catalog, add a
@@ -835,18 +918,37 @@ export function DocumentTemplateEditor({
         <button onClick={() => runPreview()} disabled={previewing} className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded hover:bg-blue-100">
           {previewing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Eye className="h-3 w-3" />} Preview
         </button>
+        {/* Client + Period — two cascading dropdowns so the admin picks
+            which engagement's real data to render against. No hidden
+            'Acme sample' default — the admin always knows what they're
+            previewing. When the firm has no engagements the dropdowns
+            show an empty-state hint and Generate Word is disabled. */}
         <select
-          value={engagementId}
-          onChange={e => setEngagementId(e.target.value)}
-          className="text-[11px] border border-slate-200 rounded px-2 py-1 max-w-[220px]"
-          title={engagements.length > 0
-            ? 'Pick an engagement to preview / Generate Word against that engagement\'s real data. The "Canned sample" option uses fabricated Acme data — useful when no engagement exists yet.'
-            : 'No engagements found on this firm yet — Generate Word will use canned sample (Acme) data until you create one.'}
+          value={selectedClientId}
+          onChange={e => { setSelectedClientId(e.target.value); setSelectedPeriodId(''); }}
+          className="text-[11px] border border-slate-200 rounded px-2 py-1 max-w-[200px]"
+          title="Client to Generate Word for"
+          disabled={clientOptions.length === 0}
         >
-          <option value="">— Canned sample (Acme) —</option>
-          {engagements.map(e => <option key={e.id} value={e.id}>{e.clientName}{e.periodEnd ? ` · ${e.periodEnd}` : ''}</option>)}
+          <option value="">{clientOptions.length === 0 ? '— No engagements yet —' : '— Pick a client —'}</option>
+          {clientOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <button onClick={generate} disabled={generating} className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-indigo-600 text-white rounded disabled:opacity-50">
+        <select
+          value={selectedPeriodId}
+          onChange={e => setSelectedPeriodId(e.target.value)}
+          className="text-[11px] border border-slate-200 rounded px-2 py-1 max-w-[220px] disabled:opacity-60"
+          title="Period to Generate Word for"
+          disabled={!selectedClientId || periodOptions.length === 0}
+        >
+          <option value="">{!selectedClientId ? '— Pick client first —' : (periodOptions.length === 0 ? '— No periods on this client —' : '— Pick a period —')}</option>
+          {periodOptions.map(p => <option key={p.periodId} value={p.periodId}>{p.label}</option>)}
+        </select>
+        <button
+          onClick={generate}
+          disabled={generating || !engagementId}
+          className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-indigo-600 text-white rounded disabled:opacity-50"
+          title={!engagementId ? 'Pick a client and period first' : 'Generate a .docx against the selected engagement'}
+        >
           {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} Generate Word
         </button>
       </div>

@@ -39,7 +39,15 @@ const DEFAULT_DOC_CATEGORIES: CategoryOption[] = [
  * the admin has room to see the body + preview side by side.
  */
 
-interface EngagementOption { id: string; clientName: string; periodEnd: string | null }
+interface EngagementOption {
+  id: string;
+  clientName: string;
+  periodEnd: string | null;
+  clientId?: string;
+  periodId?: string;
+  periodStart?: string | null;
+  auditType?: string | null;
+}
 
 export function DocumentTemplateManagerClient() {
   const [skeletons, setSkeletons] = useState<Skeleton[]>([]);
@@ -145,7 +153,11 @@ export function DocumentTemplateManagerClient() {
         setEngagements(list.map(e => ({
           id: e.id,
           clientName: e.client?.clientName || e.clientName || 'Engagement',
+          clientId: e.client?.id || e.clientId || undefined,
+          periodId: e.period?.id || e.periodId || undefined,
+          periodStart: e.period?.startDate ? new Date(e.period.startDate).toLocaleDateString('en-GB') : null,
           periodEnd: e.period?.endDate ? new Date(e.period.endDate).toLocaleDateString('en-GB') : (e.periodEnd || null),
+          auditType: e.auditType || null,
         })));
       }
     } catch { /* ignore */ }
