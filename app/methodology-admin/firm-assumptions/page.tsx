@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { FirmAssumptionsClient } from '@/components/methodology-admin/FirmAssumptionsClient';
 import { BackButton } from '@/components/methodology-admin/BackButton';
+import { getFirmIndependenceQuestions, defaultIndependenceQuestions } from '@/lib/independence';
 
 export default async function FirmAssumptionsPage() {
   const session = await auth();
@@ -43,6 +44,12 @@ export default async function FirmAssumptionsPage() {
     ? (tablesMap.firm_variables.variables as Array<{ name: string; label: string; value: number }>)
     : [];
 
+  // Independence Questions — firm-wide questionnaire each team member must
+  // confirm before they can access an engagement. Seeded with a sensible
+  // default set if the firm hasn't configured anything yet.
+  const existingIndependence = await getFirmIndependenceQuestions(firmId);
+  const initialIndependenceQuestions = existingIndependence.length > 0 ? existingIndependence : defaultIndependenceQuestions();
+
   return (
     <div className="container mx-auto px-4 py-10 max-w-6xl">
       <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
@@ -65,6 +72,7 @@ export default async function FirmAssumptionsPage() {
         initialLargeUnusualScoring={largeUnusualScoring}
         initialFirmFees={firmFees}
         initialFirmVariables={firmVariables}
+        initialIndependenceQuestions={initialIndependenceQuestions}
       />
     </div>
   );

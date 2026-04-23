@@ -2,7 +2,9 @@
 
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Save, Loader2, ChevronDown, ChevronUp, Plus, X } from 'lucide-react';
+import { Save, Loader2, ChevronDown, ChevronUp, Plus, X, ShieldCheck } from 'lucide-react';
+import { IndependenceQuestionsClient } from '@/components/methodology-admin/IndependenceQuestionsClient';
+import type { IndependenceQuestion } from '@/lib/independence';
 import type {
   RiskLevel,
   Likelihood,
@@ -33,6 +35,9 @@ interface Props {
   initialFirmFees?: number;
   /** Firm-wide hard-coded numeric variables referenced from schedule formulas */
   initialFirmVariables?: Array<{ name: string; label: string; value: number }>;
+  /** Firm-wide Independence Questions — every team member must answer these
+   *  before they can view or interact with an engagement. */
+  initialIndependenceQuestions?: IndependenceQuestion[];
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -119,6 +124,7 @@ export function FirmAssumptionsClient({
   initialLargeUnusualScoring,
   initialFirmFees,
   initialFirmVariables,
+  initialIndependenceQuestions,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -1102,6 +1108,35 @@ export function FirmAssumptionsClient({
 
       {/* ═══ Communication Headings ═══ */}
       <CommunicationHeadingsSection firmId={firmId} onSave={() => setSaved(true)} />
+
+      {/* ═══ Independence Questions ═══
+          Firm-wide questionnaire every team member must confirm before they
+          can view or interact with an engagement. Has its own Save button
+          (via the embedded IndependenceQuestionsClient) independent of the
+          "Save All" above. */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('independence')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-emerald-600" /> Independence Questions
+          </h2>
+          {expandedSections.independence ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.independence && (
+          <div className="p-4">
+            <p className="text-sm text-slate-600 mb-4">
+              These questions appear as a blocking modal the first time each team member opens an engagement after
+              the audit has started. A team member cannot view or interact with the engagement until they confirm.
+              If they answer &ldquo;No&rdquo; to any <strong>Critical</strong> question — or explicitly declare they
+              are NOT independent — the Responsible Individual and Ethics Partner are emailed automatically and the
+              team member is locked out of the engagement.
+            </p>
+            <IndependenceQuestionsClient initialQuestions={initialIndependenceQuestions || []} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
