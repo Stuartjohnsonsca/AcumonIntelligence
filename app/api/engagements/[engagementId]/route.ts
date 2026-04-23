@@ -4,6 +4,7 @@ import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { fireTrigger } from '@/lib/trigger-engine';
+import { seedIndependenceForEngagement } from '@/lib/independence';
 
 // GET /api/engagements/[engagementId] - Full engagement with all relations
 export async function GET(
@@ -146,6 +147,11 @@ export async function PUT(
         firmId: engagement.firmId,
         userId: session.user.id,
       }).catch(err => console.error('[Trigger] On Start failed:', err));
+
+      // Seed "outstanding" Independence rows for every team member. Runs
+      // best-effort in the background so a seed error doesn't fail the
+      // start-audit request.
+      seedIndependenceForEngagement(engagementId).catch(err => console.error('[Independence] seed on start failed:', err));
     }
 
     return NextResponse.json({ engagement });

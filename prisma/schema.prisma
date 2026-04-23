@@ -135,6 +135,7 @@ model User {
   assuranceFeedback         AssuranceFeedback[]
   // Methodology relations
   auditTeamMemberships      AuditTeamMember[]
+  auditMemberIndependence   AuditMemberIndependence[]
   auditEngagementsCreated   AuditEngagement[]          @relation("EngagementCreator")
   intelligenceReviews       ClientIntelligenceReview[]
   auditDocumentsRequested   AuditDocument[]            @relation("DocumentRequester")
@@ -1841,6 +1842,7 @@ model AuditEngagement {
   priorPeriodEngagement AuditEngagement?          @relation("EngagementPriorPeriod", fields: [priorPeriodEngagementId], references: [id], onDelete: SetNull)
   nextPeriodEngagements AuditEngagement[]         @relation("EngagementPriorPeriod")
   teamMembers           AuditTeamMember[]
+  memberIndependence    AuditMemberIndependence[]
   specialists           AuditSpecialist[]
   contacts              AuditClientContact[]
   agreedDates           AuditAgreedDate[]
@@ -2026,6 +2028,33 @@ model AuditNewClientTakeOn {
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@map("audit_new_client_take_on")
+}
+
+// Per team-member Independence sign-off for an engagement.
+// Seeded as status='outstanding' when the audit is started OR when a
+// team member is added to an engagement that has already started. Users
+// cannot view/interact with the engagement until status='confirmed'. If
+// they submit status='declined' the RI and Ethics Partner are emailed.
+model AuditMemberIndependence {
+  id            String    @id @default(uuid())
+  engagementId  String    @map("engagement_id")
+  userId        String    @map("user_id")
+  status        String    @default("outstanding") // outstanding | confirmed | declined
+  isIndependent Boolean?  @map("is_independent") // true = confirmed independent, false = declared NOT independent (declined)
+  answers       Json? // [{ questionId, questionText, answer, notes }]
+  notes         String?   @db.Text
+  confirmedAt   DateTime? @map("confirmed_at")
+  notifiedAt    DateTime? @map("notified_at") // when decline email was sent to RI / Ethics Partner
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([engagementId, userId])
+  @@index([engagementId])
+  @@index([userId])
+  @@map("audit_member_independence")
 }
 
 model AuditSubsequentEvents {

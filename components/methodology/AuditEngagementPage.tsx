@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 import { EngagementTabs } from '@/components/methodology/EngagementTabs';
+import { IndependenceGate } from '@/components/methodology/IndependenceGate';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -464,16 +465,20 @@ export function AuditEngagementPage({ auditType }: Props) {
           </div>
         )}
 
-        {/* Engagement Tabs */}
+        {/* Engagement Tabs — gated behind Independence sign-off for
+            team members once the audit has started. The gate no-ops for
+            pre-start engagements and for admin viewers. */}
         {isEngagementPhase && (
-          <EngagementTabs
-            engagement={engagement}
-            auditType={auditType}
-            clientName={clientName}
-            periodEndDate={periodEndDate}
-            periodStartDate={periodStartDate}
-            currentUserId={session?.user?.id || ''}
-          />
+          <IndependenceGate engagementId={engagement.id}>
+            <EngagementTabs
+              engagement={engagement}
+              auditType={auditType}
+              clientName={clientName}
+              periodEndDate={periodEndDate}
+              periodStartDate={periodStartDate}
+              currentUserId={session?.user?.id || ''}
+            />
+          </IndependenceGate>
         )}
       </div>
     </div>

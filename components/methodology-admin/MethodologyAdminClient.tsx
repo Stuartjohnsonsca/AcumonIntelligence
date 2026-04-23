@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck } from 'lucide-react';
 
 const tiles = [
   {
@@ -19,6 +19,14 @@ const tiles = [
     icon: ShieldAlert,
     color: 'bg-rose-50 border-rose-200 hover:bg-rose-100',
     iconColor: 'text-rose-600',
+  },
+  {
+    title: 'Independence Questions',
+    description: 'Firm-wide questions every team member must confirm before accessing an engagement',
+    href: '/methodology-admin/independence-questions',
+    icon: ShieldCheck,
+    color: 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100',
+    iconColor: 'text-emerald-600',
   },
   {
     title: 'Specialist Roles',

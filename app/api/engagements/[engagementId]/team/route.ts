@@ -4,6 +4,7 @@ import { checkRIFamiliarityForAssignment } from '@/lib/team-familiarity';
 
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { ensureIndependenceRow, hasAuditStarted } from '@/lib/independence';
 
 /**
  * Clear sign-offs for a given role across ALL engagement data.
@@ -184,6 +185,16 @@ export async function PUT(
     });
     const currentRIIds = new Set(currentRIs.map(r => r.userId));
 
+    // Capture existing userIds before the mutation so we can tell which
+    // ones are new and seed their Independence rows (only when the audit
+    // has already started — pre-start engagements get seeded all-at-once
+    // at the Start Audit moment).
+    const existingMembers = await prisma.auditTeamMember.findMany({
+      where: { engagementId },
+      select: { userId: true },
+    });
+    const existingMemberUserIds = new Set(existingMembers.map(m => m.userId));
+
     const memberIds = teamMembers.filter(m => m.id).map(m => m.id!);
     await prisma.auditTeamMember.deleteMany({
       where: { engagementId, id: { notIn: memberIds } },
@@ -237,6 +248,20 @@ export async function PUT(
 
     if (reviewerChanged) {
       await clearRoleSignOffs(engagementId, 'reviewer');
+    }
+
+    // Seed Independence rows for any NEW team members — but only if the
+    // audit has already started. Pre-start engagements are seeded at the
+    // Start Audit moment instead (see /api/engagements/[id] PUT).
+    const engForGate = await prisma.auditEngagement.findUnique({
+      where: { id: engagementId },
+      select: { status: true, startedAt: true },
+    });
+    if (engForGate && hasAuditStarted(engForGate)) {
+      const newUserIds = teamMembers.map(m => m.userId).filter(uid => !existingMemberUserIds.has(uid));
+      for (const uid of newUserIds) {
+        await ensureIndependenceRow(engagementId, uid).catch(err => console.error('[Independence] seed on team add failed:', err));
+      }
     }
   }
 

@@ -220,3 +220,56 @@ export async function sendExpertActionEmail(
 
   await sendEmail(to, `Expert Review — ${meetingTitle} (${clientName})`, html, { displayName: expertName });
 }
+
+/** Sent when a team member declares they are NOT independent for an engagement. */
+export async function sendIndependenceDeclinedEmail(
+  recipients: Array<{ email: string; name: string }>,
+  declinedBy: { name: string; email: string },
+  clientName: string,
+  periodLabel: string,
+  auditType: string,
+  flaggedQuestions: Array<{ text: string; notes?: string }>,
+  engagementUrl: string,
+): Promise<void> {
+  const flaggedBody = flaggedQuestions.length > 0
+    ? `<ul style="color: #475569; font-size: 14px; padding-left: 20px; margin: 8px 0;">${flaggedQuestions.map(q => `<li style="margin-bottom: 6px;"><strong>${escapeHtml(q.text)}</strong>${q.notes ? `<br/><span style=\"color:#64748b; font-size:13px;\">${escapeHtml(q.notes)}</span>` : ''}</li>`).join('')}</ul>`
+    : '<p style="color: #475569; font-size: 14px;">(No specific questions flagged — the team member indicated they are not independent overall.)</p>';
+
+  const html = brandedTemplate('Independence Alert — Action Required', `
+    <div style="background: #fef2f2; border-left: 4px solid #dc2626; padding: 12px 16px; border-radius: 4px; margin-bottom: 16px;">
+      <p style="color: #991b1b; font-size: 14px; margin: 0; font-weight: 600;">
+        A member of the audit team has indicated they are NOT independent.
+      </p>
+    </div>
+    <p style="color: #334155; font-size: 14px;"><strong>Team member:</strong> ${escapeHtml(declinedBy.name)} (${escapeHtml(declinedBy.email)})</p>
+    <p style="color: #334155; font-size: 14px;"><strong>Client:</strong> ${escapeHtml(clientName)}</p>
+    <p style="color: #334155; font-size: 14px;"><strong>Period:</strong> ${escapeHtml(periodLabel)}</p>
+    <p style="color: #334155; font-size: 14px;"><strong>Audit type:</strong> ${escapeHtml(auditType)}</p>
+    <p style="color: #334155; font-size: 14px; margin-top: 18px;"><strong>Questions flagged:</strong></p>
+    ${flaggedBody}
+    <p style="color: #475569; font-size: 14px; margin-top: 18px;">
+      The team member has been locked out of the engagement until this is resolved. Please review the
+      circumstances and take appropriate action — reassign the engagement, remove the team member,
+      or take mitigating steps before re-enabling their access.
+    </p>
+    <div style="text-align: center; margin: 24px 0;">
+      <a href="${engagementUrl}" style="display: inline-block; padding: 10px 24px; background: linear-gradient(135deg, #1e40af, #3b82f6); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;">
+        Open engagement
+      </a>
+    </div>
+  `);
+
+  const subject = `Independence Alert — ${declinedBy.name} (${clientName})`;
+  await Promise.all(recipients.map(r => sendEmail(r.email, subject, html, { displayName: r.name }).catch(err => {
+    console.error('[independence-email] send failed to', r.email, err);
+  })));
+}
+
+function escapeHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}

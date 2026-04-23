@@ -170,11 +170,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Restore last page for this engagement
+  // Restore last page for this engagement. When the engagement is still in
+  // pre_start we FORCE the Opening tab — the Start Audit button only renders
+  // on Opening and we'd otherwise hide it behind a stale saved tab from a
+  // previous session.
   const storageKey = `lastPage:${engagement.id}`;
   const urlTab = searchParams.get('tab') as TabKey | null;
   const savedState = typeof window !== 'undefined' ? (() => { try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch { return {}; } })() : {};
-  const initialTab = urlTab || savedState.tab || 'opening';
+  const isPreStartInitial = engagement.status === 'pre_start';
+  const initialTab = isPreStartInitial ? 'opening' : (urlTab || savedState.tab || 'opening');
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [tbShowCategory, setTbShowCategory] = useState(true);
   // Debug-overlay enable flag. Read from ?debug=... URL param AND
