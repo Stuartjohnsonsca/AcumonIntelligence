@@ -64,7 +64,7 @@ export const MERGE_FIELDS: MergeField[] = [
   // ─── Client ──────────────────────────────────────────────────────────────
   { group: 'Client', key: 'client.name', label: 'Client legal name', type: 'scalar', sampleValue: 'Acme Holdings Ltd' },
   { group: 'Client', key: 'client.companyNumber', label: 'Company number', type: 'scalar', sampleValue: '07654321' },
-  { group: 'Client', key: 'client.registeredAddress', label: 'Registered address', type: 'scalar', sampleValue: '1 High Street, London, EC1A 1AA' },
+  { group: 'Client', key: 'client.registeredAddress', label: 'Registered address', type: 'scalar', description: 'Client record\u2019s Postal Address (Clients admin). Falls back to the Permanent File\u2019s Entity Address Block when the Client record is blank, so you don\u2019t need to duplicate it.', sampleValue: '1 High Street, London, EC1A 1AA' },
   { group: 'Client', key: 'client.sector', label: 'Sector / industry', type: 'scalar', sampleValue: 'Professional services' },
 
   // ─── Firm ────────────────────────────────────────────────────────────────
