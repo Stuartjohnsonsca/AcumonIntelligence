@@ -44,12 +44,20 @@ export async function POST(req: NextRequest) {
   // Render the catalog as a compact "menu" so the AI can pick from it.
   // Arrays expose their itemFields so the model knows what to put
   // inside a `{{#each}}` block.
-  const staticMenu = MERGE_FIELDS.map(f => {
-    const itemFields = Array.isArray(f.itemFields) && f.itemFields.length > 0
-      ? ` [loop fields: ${f.itemFields.map(i => i.key).join(', ')}]`
-      : '';
-    return `- ${f.key} (${f.type}${f.group ? ', group=' + f.group : ''})${itemFields}${f.description ? ' — ' + f.description : ''}`;
-  }).join('\n');
+  //
+  // Anti-hallucination discipline: paths marked `excludeFromSuggester`
+  // (MyAccount client record, firm admin settings, anything whose data
+  // source lives outside the audit file) are dropped here so the LLM
+  // can't suggest them. Admins can still type them by hand, but AI
+  // proposals will only ever surface audit-file-sourced paths.
+  const staticMenu = MERGE_FIELDS
+    .filter(f => !f.excludeFromSuggester)
+    .map(f => {
+      const itemFields = Array.isArray(f.itemFields) && f.itemFields.length > 0
+        ? ` [loop fields: ${f.itemFields.map(i => i.key).join(', ')}]`
+        : '';
+      return `- ${f.key} (${f.type}${f.group ? ', group=' + f.group : ''})${itemFields}${f.description ? ' — ' + f.description : ''}`;
+    }).join('\n');
 
   // ── Dynamic questionnaire questions ────────────────────────────────
   // Every question the firm has defined in ANY of its questionnaire
@@ -187,6 +195,9 @@ export async function POST(req: NextRequest) {
   const menu = `Static catalog (fixed paths):\n${staticMenu}\n\nFirm-specific questionnaire questions (match on QUESTION text — these are LIVE questions in this firm's questionnaire schemas, always prefer one of these when the admin describes a specific question):\n${dynamicMenu}\n\nQuestionnaire sections available for filterBySection:\n${sectionsCatalog}`;
 
   const systemPrompt = `You are a merge-field matcher AND Handlebars-snippet generator for a UK audit platform's document template editor. The admin types a natural-language description of what they want to appear in the template. Your job is to return a snippet they can paste directly into the editor.
+
+ARCHITECTURAL PRINCIPLE — AUDIT FILE ONLY:
+Document-template data must come from the engagement's audit file (the engagement itself, its period, team, schedules, questionnaires, materiality, error schedule, audit plan, trial balance, etc.). You MUST NOT suggest paths that resolve against firm-wide or MyAccount data (firm admin settings, Clients admin record, CRM fields, portfolio-manager assignments). The catalog below has already been filtered to audit-file-scoped paths — only use paths present in the catalog. Never invent paths (e.g. client.name, firm.address) that aren't listed.
 
 The catalog has THREE parts:
   1. A STATIC catalog of known paths that always exist (engagement metadata, TB figures, error schedule, etc.).
@@ -330,6 +341,28 @@ If the catalog has no suitable field at all, return:
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) return NextResponse.json({ error: 'AI returned non-JSON response', raw: cleaned }, { status: 502 });
     const parsed = JSON.parse(match[0]);
+
+    // Anti-hallucination post-validation: reject any primary path that
+    // references a MyAccount / firm-wide merge field (excludeFromSuggester
+    // flag). The LLM was instructed not to pick those, but we enforce.
+    // Same check against each alternative. If EVERYTHING the AI picked is
+    // invalid we fail the call so the admin isn't tempted to use
+    // off-audit-file data.
+    const excludedKeys = new Set(MERGE_FIELDS.filter(f => f.excludeFromSuggester).map(f => f.key));
+    function isExcludedPath(p: any): boolean {
+      if (typeof p !== 'string' || !p) return false;
+      const base = p.replace(/^priorPeriod\./, '');
+      return excludedKeys.has(base);
+    }
+    if (isExcludedPath(parsed.path)) {
+      parsed.path = '';
+      parsed.snippet = '';
+      parsed.rationale = (parsed.rationale || '') + ' (rejected: path is outside the audit file)';
+      parsed.confidence = 0;
+    }
+    if (Array.isArray(parsed.alternatives)) {
+      parsed.alternatives = parsed.alternatives.filter((a: any) => !isExcludedPath(a?.path));
+    }
     return NextResponse.json(parsed);
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Suggest failed' }, { status: 500 });

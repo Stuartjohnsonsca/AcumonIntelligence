@@ -678,13 +678,18 @@ export async function buildTemplateContext(engagementId: string, opts: { include
       id: engagement.client.id,
       name: engagement.client.clientName,
       companyNumber: (engagement.client as any).companyNumber ?? null,
-      // registeredAddress reads the Client record's Postal Address. If
-      // your firm keeps the statutory address on the Permanent File's
-      // Entity Address Block instead, chain the two paths in your
-      // template via the `default` helper — e.g.
-      //   {{default client.registeredAddress questionnaires.permanentFile.entity_address}}
-      // No code change required; the admin picks which sources apply.
-      registeredAddress: engagement.client.address ?? null,
+      // ARCHITECTURAL PRINCIPLE: document-template data comes ONLY from
+      // the audit file (the engagement's own schedules), not from
+      // MyAccount / CRM / firm-wide records. The engagement is the
+      // single source of truth for what goes into a generated document.
+      // registeredAddress therefore reads the Permanent File's Entity
+      // Address Block (tolerant of the common slug variants firms use).
+      registeredAddress:
+        (pfData as any)?.entity_address
+        ?? (pfData as any)?.entity_address_block
+        ?? (pfData as any)?.registered_address
+        ?? (pfData as any)?.address
+        ?? null,
       sector: engagement.client.sector,
       contactName: [engagement.client.contactFirstName, engagement.client.contactSurname].filter(Boolean).join(' ') || null,
       contactEmail: engagement.client.contactEmail,

@@ -37,6 +37,13 @@ export interface MergeField {
   /** For arrays only: fields available on each iterated item (used to
    *  populate the `{{#each}}` child pill list in the editor). */
   itemFields?: MergeFieldItemField[];
+  /** When true the AI suggester and pill palette hide this field.
+   *  Used for paths whose data source lives OUTSIDE the audit file
+   *  (MyAccount client record, firm-wide settings, etc.). The path is
+   *  still resolvable at render time for anyone who types it by hand —
+   *  we just don't promote it, because document-template data should
+   *  come from the engagement itself. */
+  excludeFromSuggester?: boolean;
 }
 
 /**
@@ -62,14 +69,27 @@ export const MERGE_FIELDS: MergeField[] = [
   { group: 'Period', key: 'period.periodEnd', label: 'Period end', type: 'date', sampleValue: '2026-12-31' },
 
   // ─── Client ──────────────────────────────────────────────────────────────
-  { group: 'Client', key: 'client.name', label: 'Client legal name', type: 'scalar', sampleValue: 'Acme Holdings Ltd' },
-  { group: 'Client', key: 'client.companyNumber', label: 'Company number', type: 'scalar', sampleValue: '07654321' },
-  { group: 'Client', key: 'client.registeredAddress', label: 'Registered address', type: 'scalar', description: 'Client record\u2019s Postal Address (Clients admin). If your firm keeps the statutory address on the Permanent File instead, chain the two sources in your template with the default helper, e.g. {{default client.registeredAddress questionnaires.permanentFile.entity_address}}.', sampleValue: '1 High Street, London, EC1A 1AA' },
-  { group: 'Client', key: 'client.sector', label: 'Sector / industry', type: 'scalar', sampleValue: 'Professional services' },
+  // Suggester exclusions:
+  //   client.name / companyNumber / sector / contact* — these come from
+  //   the MyAccount Clients admin record, NOT the audit file. Per the
+  //   architectural principle "document-template data comes only from
+  //   the audit file", the AI suggester hides them. They remain
+  //   resolvable for anyone who types them by hand.
+  //
+  //   client.registeredAddress is an exception — it's now sourced from
+  //   the Permanent File's Entity Address Block (lib/template-context.ts),
+  //   which IS audit-file data, so the suggester keeps it.
+  { group: 'Client', key: 'client.name', label: 'Client legal name', type: 'scalar', sampleValue: 'Acme Holdings Ltd', excludeFromSuggester: true },
+  { group: 'Client', key: 'client.companyNumber', label: 'Company number', type: 'scalar', sampleValue: '07654321', excludeFromSuggester: true },
+  { group: 'Client', key: 'client.registeredAddress', label: 'Registered address', type: 'scalar', description: 'Reads the Permanent File\u2019s Entity Address Block (audit-file source). Tolerant of the common slug variants — entity_address, entity_address_block, registered_address, address.', sampleValue: '1 High Street, London, EC1A 1AA' },
+  { group: 'Client', key: 'client.sector', label: 'Sector / industry', type: 'scalar', sampleValue: 'Professional services', excludeFromSuggester: true },
 
   // ─── Firm ────────────────────────────────────────────────────────────────
-  { group: 'Firm', key: 'firm.name', label: 'Firm name', type: 'scalar', sampleValue: 'Johnsons Financial Management LLP' },
-  { group: 'Firm', key: 'firm.address', label: 'Firm address', type: 'scalar', sampleValue: '100 King Street, Manchester, M2 4WU' },
+  // Firm-wide settings from MyAccount — outside the audit file. Excluded
+  // from the suggester so admins don't accidentally wire templates to
+  // firm-admin data.
+  { group: 'Firm', key: 'firm.name', label: 'Firm name', type: 'scalar', sampleValue: 'Johnsons Financial Management LLP', excludeFromSuggester: true },
+  { group: 'Firm', key: 'firm.address', label: 'Firm address', type: 'scalar', sampleValue: '100 King Street, Manchester, M2 4WU', excludeFromSuggester: true },
 
   // ─── Team ────────────────────────────────────────────────────────────────
   // Sample values deliberately use role-labelled placeholders rather
