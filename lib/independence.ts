@@ -123,6 +123,71 @@ export async function getFirmIndependenceQuestions(firmId: string): Promise<Inde
   return Array.isArray(items) ? (items as IndependenceQuestion[]) : [];
 }
 
+// ─── Refresh cadence (re-confirm after N days) ─────────────────────────────
+
+/**
+ * One rule per audit type (or 'ALL' for the default that applies to every
+ * audit type not overridden below). Stored as a firm-wide
+ * `MethodologyTemplate` row with templateType='independence_refresh_days'
+ * and items = IndependenceRefreshDaysRule[].
+ */
+export interface IndependenceRefreshDaysRule {
+  auditType: string; // 'ALL' | 'SME' | 'PIE' | 'SME_CONTROLS' | 'PIE_CONTROLS' | 'GROUP'
+  days: number;
+}
+
+const REFRESH_TEMPLATE_KEY = { templateType: 'independence_refresh_days', auditType: 'ALL' as const };
+
+export function defaultIndependenceRefreshRules(): IndependenceRefreshDaysRule[] {
+  // Default: re-confirm every 30 days for all audit types.
+  return [{ auditType: 'ALL', days: 30 }];
+}
+
+export async function getFirmIndependenceRefreshRules(firmId: string): Promise<IndependenceRefreshDaysRule[]> {
+  try {
+    const row = await prisma.methodologyTemplate.findUnique({
+      where: { firmId_templateType_auditType: { firmId, ...REFRESH_TEMPLATE_KEY } },
+    });
+    if (!row) return defaultIndependenceRefreshRules();
+    const items = row.items as unknown;
+    if (!Array.isArray(items)) return defaultIndependenceRefreshRules();
+    const rules = items as IndependenceRefreshDaysRule[];
+    // Guarantee the ALL default is present — the admin UI enforces this but
+    // defend against hand-edited data.
+    if (!rules.some(r => r.auditType === 'ALL')) {
+      return [{ auditType: 'ALL', days: 30 }, ...rules];
+    }
+    return rules;
+  } catch {
+    return defaultIndependenceRefreshRules();
+  }
+}
+
+/**
+ * Given the firm's rule list and the engagement's audit type, return the
+ * applicable "days between re-confirmations" value. Exact-match override
+ * wins over the ALL default. Returns null (no refresh required) only if
+ * no rule matches at all.
+ */
+export function resolveRefreshDays(rules: IndependenceRefreshDaysRule[], auditType: string): number | null {
+  const override = rules.find(r => r.auditType === auditType);
+  if (override && Number.isFinite(override.days) && override.days > 0) return override.days;
+  const fallback = rules.find(r => r.auditType === 'ALL');
+  if (fallback && Number.isFinite(fallback.days) && fallback.days > 0) return fallback.days;
+  return null;
+}
+
+/**
+ * Is the previous confirmation stale enough that we need to re-ask?
+ * Returns true when confirmedAt is more than `days` ago.
+ */
+export function isConfirmationStale(confirmedAt: Date | null | undefined, days: number | null): boolean {
+  if (!confirmedAt || !days || days <= 0) return false;
+  const ageMs = Date.now() - new Date(confirmedAt).getTime();
+  const ageDays = ageMs / 86_400_000;
+  return ageDays > days;
+}
+
 /** A reasonable default set of questions seeded the first time the admin opens the section. */
 export function defaultIndependenceQuestions(): IndependenceQuestion[] {
   return [

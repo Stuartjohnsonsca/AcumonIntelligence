@@ -4,7 +4,8 @@ import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, ChevronDown, ChevronUp, Plus, X, ShieldCheck } from 'lucide-react';
 import { IndependenceQuestionsClient } from '@/components/methodology-admin/IndependenceQuestionsClient';
-import type { IndependenceQuestion } from '@/lib/independence';
+import { IndependenceRefreshDaysClient } from '@/components/methodology-admin/IndependenceRefreshDaysClient';
+import type { IndependenceQuestion, IndependenceRefreshDaysRule } from '@/lib/independence';
 import type {
   RiskLevel,
   Likelihood,
@@ -38,6 +39,9 @@ interface Props {
   /** Firm-wide Independence Questions — every team member must answer these
    *  before they can view or interact with an engagement. */
   initialIndependenceQuestions?: IndependenceQuestion[];
+  /** Re-confirmation cadence — number of days per audit type before we
+   *  prompt the team member to re-confirm their independence. */
+  initialIndependenceRefreshRules?: IndependenceRefreshDaysRule[];
 }
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
@@ -125,6 +129,7 @@ export function FirmAssumptionsClient({
   initialFirmFees,
   initialFirmVariables,
   initialIndependenceQuestions,
+  initialIndependenceRefreshRules,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -1128,11 +1133,13 @@ export function FirmAssumptionsClient({
           <div className="p-4">
             <p className="text-sm text-slate-600 mb-4">
               These questions appear as a blocking modal the first time each team member opens an engagement after
-              the audit has started. A team member cannot view or interact with the engagement until they confirm.
-              If they answer &ldquo;No&rdquo; to any <strong>Critical</strong> question — or explicitly declare they
-              are NOT independent — the Responsible Individual and Ethics Partner are emailed automatically and the
-              team member is locked out of the engagement.
+              the audit has started — and again each time their last confirmation is older than the cadence set
+              below. A team member cannot view or interact with the engagement until they confirm. If they answer
+              &ldquo;No&rdquo; to any <strong>Critical</strong> question — or explicitly declare they are NOT
+              independent — the Responsible Individual and Ethics Partner are emailed automatically and the team
+              member is locked out of the engagement.
             </p>
+            <IndependenceRefreshDaysClient initialRules={initialIndependenceRefreshRules || [{ auditType: 'ALL', days: 30 }]} />
             <IndependenceQuestionsClient initialQuestions={initialIndependenceQuestions || []} />
           </div>
         )}

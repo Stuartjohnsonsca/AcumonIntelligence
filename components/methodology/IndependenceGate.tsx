@@ -32,6 +32,8 @@ interface StatusResponse {
   confirmedAt: string | null;
   required: boolean;
   started: boolean;
+  stale?: boolean;
+  refreshDays?: number | null;
   questions: IndependenceQuestion[];
   isAdminViewer: boolean;
   isTeamMember: boolean;
@@ -192,8 +194,13 @@ export function IndependenceGate({ engagementId, children }: Props) {
       <div className="bg-amber-50 px-6 py-4 border-b border-amber-200 flex items-start gap-3">
         <ShieldAlert className="h-6 w-6 text-amber-600 flex-none mt-0.5" />
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Confirm your independence on this engagement</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            {data.stale ? 'Re-confirm your independence on this engagement' : 'Confirm your independence on this engagement'}
+          </h2>
           <p className="text-sm text-slate-700 mt-1">
+            {data.stale ? (
+              <>Your last confirmation is more than {data.refreshDays} day{data.refreshDays === 1 ? '' : 's'} old. Please re-confirm before continuing. </>
+            ) : null}
             You cannot view or interact with this engagement until you confirm your independence. Please answer every
             question honestly. Answering &ldquo;No&rdquo; to a question marked as critical will automatically notify the
             Responsible Individual and Ethics Partner.

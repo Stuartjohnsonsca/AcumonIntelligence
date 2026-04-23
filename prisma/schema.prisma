@@ -2048,13 +2048,39 @@ model AuditMemberIndependence {
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
-  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  engagement AuditEngagement                  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  user       User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  history    AuditMemberIndependenceHistory[]
 
   @@unique([engagementId, userId])
   @@index([engagementId])
   @@index([userId])
   @@map("audit_member_independence")
+}
+
+// Append-only history of every Independence submission (confirm / decline /
+// re-confirm on refresh). Each time the team member submits the
+// questionnaire — whether positively confirming or declaring themselves
+// not independent — a row is inserted here before the current state is
+// updated. Never deleted; powers the audit trail.
+model AuditMemberIndependenceHistory {
+  id                   String    @id @default(uuid())
+  memberIndependenceId String    @map("member_independence_id")
+  engagementId         String    @map("engagement_id")
+  userId               String    @map("user_id")
+  status               String // confirmed | declined
+  isIndependent        Boolean?  @map("is_independent")
+  answers              Json?
+  notes                String?   @db.Text
+  notifiedAt           DateTime? @map("notified_at")
+  recordedAt           DateTime  @default(now()) @map("recorded_at")
+
+  memberIndependence AuditMemberIndependence @relation(fields: [memberIndependenceId], references: [id], onDelete: Cascade)
+
+  @@index([memberIndependenceId])
+  @@index([engagementId])
+  @@index([userId])
+  @@map("audit_member_independence_history")
 }
 
 model AuditSubsequentEvents {

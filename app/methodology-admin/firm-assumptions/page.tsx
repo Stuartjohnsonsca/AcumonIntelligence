@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { FirmAssumptionsClient } from '@/components/methodology-admin/FirmAssumptionsClient';
 import { BackButton } from '@/components/methodology-admin/BackButton';
-import { getFirmIndependenceQuestions, defaultIndependenceQuestions } from '@/lib/independence';
+import { getFirmIndependenceQuestions, defaultIndependenceQuestions, getFirmIndependenceRefreshRules } from '@/lib/independence';
 
 export default async function FirmAssumptionsPage() {
   const session = await auth();
@@ -49,6 +49,7 @@ export default async function FirmAssumptionsPage() {
   // default set if the firm hasn't configured anything yet.
   const existingIndependence = await getFirmIndependenceQuestions(firmId);
   const initialIndependenceQuestions = existingIndependence.length > 0 ? existingIndependence : defaultIndependenceQuestions();
+  const initialIndependenceRefreshRules = await getFirmIndependenceRefreshRules(firmId);
 
   return (
     <div className="container mx-auto px-4 py-10 max-w-6xl">
@@ -73,6 +74,7 @@ export default async function FirmAssumptionsPage() {
         initialFirmFees={firmFees}
         initialFirmVariables={firmVariables}
         initialIndependenceQuestions={initialIndependenceQuestions}
+        initialIndependenceRefreshRules={initialIndependenceRefreshRules}
       />
     </div>
   );

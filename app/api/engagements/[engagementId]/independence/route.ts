@@ -3,7 +3,10 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import {
   getFirmIndependenceQuestions,
+  getFirmIndependenceRefreshRules,
   hasAuditStarted,
+  isConfirmationStale,
+  resolveRefreshDays,
   type IndependenceAnswer,
   type IndependenceQuestion,
 } from '@/lib/independence';
@@ -36,7 +39,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 
   const engagement = await prisma.auditEngagement.findUnique({
     where: { id: engagementId },
-    select: { id: true, firmId: true, status: true, startedAt: true },
+    select: { id: true, firmId: true, status: true, startedAt: true, auditType: true },
   });
   if (!engagement || engagement.firmId !== firmId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -85,24 +88,36 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 
   const questions = await getFirmIndependenceQuestions(firmId);
 
+  // Refresh cadence — if the user confirmed previously but more than N days
+  // ago (per audit type), treat the confirmation as stale and force a
+  // re-confirmation. We don't mutate the DB row here; the gate just shows
+  // the questionnaire again, and the next POST writes a history row.
+  const refreshRules = await getFirmIndependenceRefreshRules(firmId);
+  const refreshDays = resolveRefreshDays(refreshRules, engagement.auditType);
+  const stale = row?.status === 'confirmed' && isConfirmationStale(row.confirmedAt, refreshDays);
+
   // Gate logic — only block when:
   //  - audit has started, AND
   //  - user is an actual team member (not just an admin peeking), AND
-  //  - their row is NOT confirmed (outstanding or declined keeps them out).
+  //  - their row is NOT a live confirmation (outstanding / declined / stale
+  //    confirmation all keep them out).
+  const hasLiveConfirmation = row?.status === 'confirmed' && !stale;
   const required = Boolean(
     started
     && teamMembership
-    && (!row || row.status !== 'confirmed')
+    && !hasLiveConfirmation
     && !isAdminViewer,
   );
 
   return NextResponse.json({
-    status: row?.status || 'outstanding',
-    isIndependent: row?.isIndependent ?? null,
+    status: stale ? 'outstanding' : (row?.status || 'outstanding'),
+    isIndependent: stale ? null : (row?.isIndependent ?? null),
     confirmedAt: row?.confirmedAt,
-    answers: row?.answers ?? null,
+    answers: stale ? null : (row?.answers ?? null),
     required,
     started,
+    stale,
+    refreshDays,
     questions,
     isAdminViewer,
     isTeamMember: Boolean(teamMembership),
@@ -186,6 +201,30 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
       }, { status: 503 });
     }
     throw err;
+  }
+
+  // Append a history row for this submission — never deleted, powers the
+  // audit trail. Swallows missing-table errors so the user's submit still
+  // succeeds before the history SQL migration lands.
+  try {
+    await prisma.auditMemberIndependenceHistory.create({
+      data: {
+        memberIndependenceId: upserted.id,
+        engagementId,
+        userId,
+        status: upserted.status,
+        isIndependent: upserted.isIndependent,
+        answers: submittedAnswers as any,
+        notes: notes || null,
+      },
+    });
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (/audit_member_independence_history/.test(msg) && /does not exist/i.test(msg)) {
+      console.warn('[independence] history table missing — run scripts/sql/independence-history.sql on Supabase.');
+    } else {
+      console.error('[independence] history insert failed:', err);
+    }
   }
 
   // Decline path — email RI and Ethics Partner.
