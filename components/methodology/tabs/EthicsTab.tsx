@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { DynamicAppendixForm } from '../DynamicAppendixForm';
 import { useActionTriggers } from '@/hooks/useActionTriggers';
-import type { TemplateQuestion } from '@/types/methodology';
+import type { TemplateQuestion, TemplateSectionMeta } from '@/types/methodology';
+import { normaliseTemplateItems } from '@/lib/template-items';
 
 interface Props {
   engagementId: string;
@@ -12,6 +13,7 @@ interface Props {
 export function EthicsTab({ engagementId }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
   const [questions, setQuestions] = useState<TemplateQuestion[]>([]);
+  const [sectionMeta, setSectionMeta] = useState<Record<string, TemplateSectionMeta>>({});
   const [loading, setLoading] = useState(true);
   const actionTriggers = useActionTriggers();
 
@@ -35,10 +37,13 @@ export function EthicsTab({ engagementId }: Props) {
 
       if (templateRes.ok) {
         const json = await templateRes.json();
-        const items = json.template?.items || json.items || [];
-        if (Array.isArray(items) && items.length > 0) {
-          setQuestions(items as TemplateQuestion[]);
-        }
+        // Items may be stored as either a flat TemplateQuestion[] OR
+        // { questions, sectionMeta } — normaliseTemplateItems handles
+        // both shapes. Pulling sectionMeta here is what lets the
+        // admin-configured 4-col / 5-col layouts actually render.
+        const { questions: qs, sectionMeta: sm } = normaliseTemplateItems(json.template?.items || json.items);
+        if (qs.length > 0) setQuestions(qs);
+        setSectionMeta(sm);
       }
     } catch (err) {
       console.error('Failed to load ethics:', err);
@@ -68,6 +73,7 @@ export function EthicsTab({ engagementId }: Props) {
       endpoint="ethics"
       questions={questions}
       initialData={data as Record<string, string | number | boolean | null>}
+      sectionMeta={sectionMeta}
       showActionTriggers
       actionTriggerOptions={actionTriggers}
     />

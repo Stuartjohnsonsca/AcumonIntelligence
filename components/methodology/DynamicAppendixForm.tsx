@@ -10,7 +10,8 @@ import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { useSignOff } from './SignOffHeader';
 import { evaluateFormula, buildFormulaValues, slugifyQuestionText } from '@/lib/formula-engine';
 import { evaluateRulesForSchedule, type ValidationRule, type RuleEvaluation } from '@/lib/validation-rules';
-import type { TemplateQuestion } from '@/types/methodology';
+import type { TemplateQuestion, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
+import { DEFAULT_COLUMN_HEADERS } from '@/types/methodology';
 
 /**
  * Endpoint → `questionnaires.<key>` mapping for the merge-field path shown
@@ -51,6 +52,15 @@ interface Props {
   showActionTriggers?: boolean;
   actionTriggerOptions?: string[];
   priorYearData?: FormValues | null;
+  /**
+   * Optional per-section metadata (layout + custom column headers).
+   * When a section has `layout: 'table_3col' | 'table_4col' | 'table_5col'`
+   * we render the questions in that section as a multi-column table
+   * (one row per question, each non-label column becomes an editable
+   * cell stored under `<questionId>_col<N>`). Standard (Q&A) layout is
+   * the default when no entry is provided.
+   */
+  sectionMeta?: Record<string, TemplateSectionMeta>;
 }
 
 export function DynamicAppendixForm({
@@ -63,6 +73,7 @@ export function DynamicAppendixForm({
   showActionTriggers = false,
   actionTriggerOptions = [],
   priorYearData,
+  sectionMeta,
 }: Props) {
   const { data: session } = useSession();
   const isAdminViewer = Boolean((session?.user as any)?.isSuperAdmin || (session?.user as any)?.isMethodologyAdmin);
@@ -329,6 +340,109 @@ export function DynamicAppendixForm({
         const visibleQuestions = section.questions.filter(isVisible);
         if (visibleQuestions.length === 0) return null;
 
+        // Per-section layout — 'standard' (Q + PY + CY) is the default.
+        // Non-standard layouts ('table_3col'/'4col'/'5col') render as a
+        // multi-column table, one row per question, each non-label
+        // column an editable cell stored under <questionId>_col<N>.
+        // Admin sets this on the schedule in Methodology Admin →
+        // Schedules → <Schedule Name> → section layout dropdown.
+        const meta = sectionMeta?.[section.label];
+        const sectionLayout: SectionLayout = (meta?.layout as SectionLayout) || 'standard';
+        const tableHeaders = sectionLayout !== 'standard'
+          ? (meta?.columnHeaders && meta.columnHeaders.length > 0
+              ? meta.columnHeaders
+              : (DEFAULT_COLUMN_HEADERS[sectionLayout] || []))
+          : [];
+
+        if (sectionLayout !== 'standard' && tableHeaders.length > 0) {
+          return (
+            <div key={section.label}>
+              <div className="bg-blue-50 px-3 py-1.5 rounded-t-lg border border-blue-100">
+                <h3 className="text-xs font-semibold text-blue-800">{formatSectionLabel(section.label)}</h3>
+              </div>
+              <div className="border border-t-0 border-slate-200 rounded-b-lg overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 border-b border-slate-200">
+                      {tableHeaders.map((h, i) => (
+                        <th
+                          key={i}
+                          className={`px-2 py-1.5 font-semibold text-slate-600 text-left ${i === 0 ? 'w-[35%]' : ''}`}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleQuestions.map((q, idx) => {
+                      // Sub-header rows span the whole table.
+                      if (q.inputType === 'subheader') {
+                        return (
+                          <tr key={q.id} className="bg-slate-100/70 border-b border-slate-200">
+                            <td colSpan={tableHeaders.length} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                              {q.questionText}
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const questionSlugT = (q as any).key || slugifyQuestionText(q.questionText) || q.id;
+                      return (
+                        <tr key={q.id} className={`group ${idx > 0 ? 'border-t border-slate-100' : ''} ${q.isBold ? 'bg-slate-50' : ''}`}>
+                          {/* Column 0 — question text (read-only label). */}
+                          <td className={`px-2 py-1.5 align-top ${q.isBold ? 'font-bold text-slate-700' : 'text-slate-700'}`}>
+                            <div className="flex items-start gap-1">
+                              <span className="flex-1 leading-snug">
+                                {q.questionText}
+                                {q.isRequired && <span className="text-red-400 ml-0.5">*</span>}
+                              </span>
+                              {isAdminViewer && (
+                                <PlaceholderBadge
+                                  path={`questionnaires.${questionnaireKey}.${questionSlugT}`}
+                                  title={`Merge-field placeholder (admins only)\n{{questionnaires.${questionnaireKey}.${questionSlugT}}}`}
+                                />
+                              )}
+                            </div>
+                          </td>
+                          {/* Remaining columns — editable cells. Stored as
+                              <questionId>_col<N> in the same values map so
+                              autosave picks them up with no plumbing
+                              changes. */}
+                          {tableHeaders.slice(1).map((_, ci) => {
+                            const cellKey = `${q.id}_col${ci + 1}`;
+                            return (
+                              <td key={ci} className="px-2 py-1 align-top">
+                                {q.isBold ? null : q.inputType === 'dropdown' && q.dropdownOptions ? (
+                                  <select
+                                    value={(values[cellKey] as string) || ''}
+                                    onChange={e => handleChange(cellKey, e.target.value)}
+                                    className="w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300"
+                                  >
+                                    <option value="">Select...</option>
+                                    {q.dropdownOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                  </select>
+                                ) : (
+                                  <textarea
+                                    value={(values[cellKey] as string) || ''}
+                                    onChange={e => handleChange(cellKey, e.target.value)}
+                                    rows={1}
+                                    className="w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 min-h-[28px] resize-y"
+                                  />
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        }
+
+        // Standard Q + PY + CY layout (original rendering below).
         return (
           <div key={section.label}>
             <div className="bg-blue-50 px-3 py-1.5 rounded-t-lg border border-blue-100">

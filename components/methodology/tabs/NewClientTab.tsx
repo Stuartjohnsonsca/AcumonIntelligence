@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { DynamicAppendixForm } from '../DynamicAppendixForm';
 import { useActionTriggers } from '@/hooks/useActionTriggers';
-import type { TemplateQuestion } from '@/types/methodology';
+import type { TemplateQuestion, TemplateSectionMeta } from '@/types/methodology';
 
 interface Props {
   engagementId: string;
@@ -12,6 +12,7 @@ interface Props {
 export function NewClientTab({ engagementId }: Props) {
   const [data, setData] = useState<Record<string, unknown>>({});
   const [questions, setQuestions] = useState<TemplateQuestion[]>([]);
+  const [sectionMeta, setSectionMeta] = useState<Record<string, TemplateSectionMeta>>({});
   const [loading, setLoading] = useState(true);
   const actionTriggers = useActionTriggers();
   // Diagnostic info captured from the template lookup response.
@@ -106,6 +107,12 @@ export function NewClientTab({ engagementId }: Props) {
               : [];
         if (Array.isArray(items) && items.length > 0) {
           setQuestions(items as TemplateQuestion[]);
+        }
+        // Preserve any sectionMeta embedded in the raw items blob so
+        // admin-configured 4-col/5-col layouts take effect here too.
+        if (rawItems && typeof rawItems === 'object' && !Array.isArray(rawItems)) {
+          const sm = (rawItems as any).sectionMeta;
+          if (sm && typeof sm === 'object') setSectionMeta(sm);
         }
       }
 
@@ -251,6 +258,7 @@ export function NewClientTab({ engagementId }: Props) {
       endpoint="new-client-takeon"
       questions={questions}
       initialData={data as Record<string, string | number | boolean | null>}
+      sectionMeta={sectionMeta}
       showActionTriggers
       actionTriggerOptions={actionTriggers}
     />
