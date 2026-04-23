@@ -106,6 +106,7 @@ export function Navbar() {
                     <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">Grant Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
                     <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">CASS Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
                     <Link href="/tools/methodology/group" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Group Audit</Link>
+                    <Link href="/tools/methodology/quality-management" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Quality Management</Link>
                     <div className="border-t border-slate-100 mt-1 pt-1 relative group/tools">
                       <button className="w-full text-left px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center justify-between">
                         Tools
@@ -361,6 +362,7 @@ export function Navbar() {
             <span className="block px-3 py-2 text-sm text-slate-400">Grant Audit <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
             <span className="block px-3 py-2 text-sm text-slate-400">CASS Audit <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
             <Link href="/tools/methodology/group" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Group Audit</Link>
+            <Link href="/tools/methodology/quality-management" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Quality Management</Link>
             <p className="px-3 py-1 mt-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Tools</p>
             {[
               { label: 'Financial Data Extraction', prefix: 'DateExtraction' },
