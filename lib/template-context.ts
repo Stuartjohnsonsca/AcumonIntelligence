@@ -468,7 +468,29 @@ export async function buildTemplateContext(engagementId: string, opts: { include
   async function loadQ(table: string): Promise<Record<string, any>> {
     try {
       const model = (prisma as any)[table];
-      if (!model || typeof model.findUnique !== 'function') return {};
+      if (!model) return {};
+
+      // AuditPermanentFile is the odd-one-out: data is split across
+      // multiple rows keyed on (engagementId, sectionKey) — one row
+      // per section, plus meta rows ('__signoffs', '__fieldmeta').
+      // findUnique({ where: { engagementId } }) fails because engagementId
+      // alone isn't unique on this model. Load all section rows and
+      // merge their `data` objects into a single flat answer map, which
+      // is the shape enrichQuestionnaire expects ({ <uuid>: value }).
+      if (table === 'auditPermanentFile') {
+        if (typeof model.findMany !== 'function') return {};
+        const rows = await model.findMany({ where: { engagementId } });
+        const merged: Record<string, any> = {};
+        for (const r of rows) {
+          const sk = r?.sectionKey as string | undefined;
+          if (sk === '__signoffs' || sk === '__fieldmeta') continue;
+          if (!r?.data || typeof r.data !== 'object') continue;
+          Object.assign(merged, r.data as Record<string, any>);
+        }
+        return merged;
+      }
+
+      if (typeof model.findUnique !== 'function') return {};
       const row = await model.findUnique({ where: { engagementId } });
       return (row?.data && typeof row.data === 'object') ? row.data as Record<string, any> : {};
     } catch { return {}; }
