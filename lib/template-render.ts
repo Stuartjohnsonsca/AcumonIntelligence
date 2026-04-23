@@ -49,6 +49,11 @@ export interface RenderResult {
    *  which engagement the render ran against. */
   resolvedClientName: string;
   resolvedPeriodEnd: string | null;
+  /** Identifiers for deep-linking to source forms from the diagnostics
+   *  UI. Null when running against sample context. */
+  resolvedClientId: string | null;
+  resolvedPeriodId: string | null;
+  resolvedAuditType: string | null;
 }
 
 /**
@@ -169,6 +174,9 @@ export async function renderTemplateToDocx(templateId: string, engagementId: str
     emptyPlaceholders,
     resolvedClientName: String(clientNamePart),
     resolvedPeriodEnd: (context as any)?.period?.periodEnd || null,
+    resolvedClientId: (context as any)?.client?.id || null,
+    resolvedPeriodId: (context as any)?.period?.id || null,
+    resolvedAuditType: (context as any)?.engagement?.auditType || null,
   };
 }
 
