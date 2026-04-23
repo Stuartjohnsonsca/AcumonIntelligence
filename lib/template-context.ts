@@ -10,6 +10,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { ERROR_SCHEDULE_SAFE_SELECT } from '@/lib/error-schedule-select';
 
 /** A single RMM row rendered into template context — every useful
  *  field from AuditRMMRow. Templates can show a minimal view (just
@@ -319,8 +320,14 @@ export async function buildTemplateContext(engagementId: string, opts: { include
     },
   };
 
-  // Error schedule.
-  const errorRows = await prisma.auditErrorSchedule.findMany({ where: { engagementId } });
+  // Error schedule. Using an explicit select because production Supabase
+  // is missing the `linked_from_type` / `linked_from_id` columns that
+  // the Prisma schema declares — unbounded findMany would 500. Remove
+  // once scripts/sql/raise-as-linked-from.sql has been applied.
+  const errorRows = await prisma.auditErrorSchedule.findMany({
+    where: { engagementId },
+    select: ERROR_SCHEDULE_SAFE_SELECT,
+  });
   const errorSchedule = errorRows.map(e => ({
     id: e.id,
     fsLine: e.fsLine,

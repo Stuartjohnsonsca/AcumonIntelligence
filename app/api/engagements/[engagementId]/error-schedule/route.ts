@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { ERROR_SCHEDULE_SAFE_SELECT } from '@/lib/error-schedule-select';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -19,6 +20,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
   const errors = await prisma.auditErrorSchedule.findMany({
     where: { engagementId },
     orderBy: { createdAt: 'desc' },
+    // Explicit select — production Supabase lacks the `linked_from_type`
+    // / `linked_from_id` columns on this table until
+    // scripts/sql/raise-as-linked-from.sql is applied. Without this,
+    // Prisma selects those columns by default and the query 500s.
+    select: ERROR_SCHEDULE_SAFE_SELECT,
   });
   return NextResponse.json({ errors });
 }
