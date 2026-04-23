@@ -51,9 +51,37 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   });
 
   const started = hasAuditStarted(engagement);
-  const row = await prisma.auditMemberIndependence.findUnique({
-    where: { engagementId_userId: { engagementId, userId } },
-  });
+
+  // Fail-open when the `audit_member_independence` table hasn't been
+  // migrated yet — otherwise every engagement becomes inaccessible until
+  // the admin runs scripts/sql/independence-gate.sql in Supabase. We log
+  // the error so it's visible in server logs, but treat it as "no row
+  // exists" so the gate shows the questionnaire (or skips entirely if the
+  // audit hasn't started).
+  let row: Awaited<ReturnType<typeof prisma.auditMemberIndependence.findUnique>> = null;
+  try {
+    row = await prisma.auditMemberIndependence.findUnique({
+      where: { engagementId_userId: { engagementId, userId } },
+    });
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (/audit_member_independence/.test(msg) && /does not exist/i.test(msg)) {
+      console.warn('[independence] table missing — run scripts/sql/independence-gate.sql on Supabase. Failing open.');
+      return NextResponse.json({
+        status: 'outstanding',
+        isIndependent: null,
+        confirmedAt: null,
+        answers: null,
+        required: false,
+        started,
+        questions: [],
+        isAdminViewer,
+        isTeamMember: Boolean(teamMembership),
+        migrationPending: true,
+      });
+    }
+    throw err;
+  }
 
   const questions = await getFirmIndependenceQuestions(firmId);
 
@@ -129,25 +157,36 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   const isIndependent = !overallDeclined && !hardFail;
   const status: 'confirmed' | 'declined' = isIndependent ? 'confirmed' : 'declined';
 
-  const upserted = await prisma.auditMemberIndependence.upsert({
-    where: { engagementId_userId: { engagementId, userId } },
-    create: {
-      engagementId,
-      userId,
-      status,
-      isIndependent,
-      answers: submittedAnswers as any,
-      notes: notes || null,
-      confirmedAt: new Date(),
-    },
-    update: {
-      status,
-      isIndependent,
-      answers: submittedAnswers as any,
-      notes: notes || null,
-      confirmedAt: new Date(),
-    },
-  });
+  let upserted;
+  try {
+    upserted = await prisma.auditMemberIndependence.upsert({
+      where: { engagementId_userId: { engagementId, userId } },
+      create: {
+        engagementId,
+        userId,
+        status,
+        isIndependent,
+        answers: submittedAnswers as any,
+        notes: notes || null,
+        confirmedAt: new Date(),
+      },
+      update: {
+        status,
+        isIndependent,
+        answers: submittedAnswers as any,
+        notes: notes || null,
+        confirmedAt: new Date(),
+      },
+    });
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (/audit_member_independence/.test(msg) && /does not exist/i.test(msg)) {
+      return NextResponse.json({
+        error: 'Independence table not migrated yet. Run scripts/sql/independence-gate.sql on Supabase.',
+      }, { status: 503 });
+    }
+    throw err;
+  }
 
   // Decline path — email RI and Ethics Partner.
   let emailsSent = 0;

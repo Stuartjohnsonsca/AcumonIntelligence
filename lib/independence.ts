@@ -57,11 +57,23 @@ export type IndependenceStatus = 'outstanding' | 'confirmed' | 'declined';
  * no-op.
  */
 export async function ensureIndependenceRow(engagementId: string, userId: string): Promise<void> {
-  await prisma.auditMemberIndependence.upsert({
-    where: { engagementId_userId: { engagementId, userId } },
-    create: { engagementId, userId, status: 'outstanding' },
-    update: {}, // don't clobber confirmed / declined rows if they already exist
-  });
+  try {
+    await prisma.auditMemberIndependence.upsert({
+      where: { engagementId_userId: { engagementId, userId } },
+      create: { engagementId, userId, status: 'outstanding' },
+      update: {}, // don't clobber confirmed / declined rows if they already exist
+    });
+  } catch (err: any) {
+    // Fail quietly when the table hasn't been migrated yet — the admin just
+    // needs to run scripts/sql/independence-gate.sql in Supabase. Logged so
+    // it's visible but non-blocking for the caller (Start Audit / add team).
+    const msg = err?.message || String(err);
+    if (/audit_member_independence/.test(msg) && /does not exist/i.test(msg)) {
+      console.warn('[independence] ensureIndependenceRow: table missing — run scripts/sql/independence-gate.sql on Supabase.');
+      return;
+    }
+    throw err;
+  }
 }
 
 /**
