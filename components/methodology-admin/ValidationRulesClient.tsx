@@ -1,9 +1,16 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Save, Trash2, AlertTriangle, AlertOctagon, Loader2, Check, FlaskConical, X } from 'lucide-react';
+import { Plus, Save, Trash2, AlertTriangle, AlertOctagon, Loader2, Check, FlaskConical, X, Sparkles } from 'lucide-react';
 import type { ValidationRule } from '@/lib/validation-rules';
 import { evaluateRule, newRuleId, starterRule } from '@/lib/validation-rules';
+
+interface AiSuggestion {
+  slug: string;
+  label: string;
+  description: string;
+  isExisting: boolean;
+}
 
 /**
  * Client for the Methodology Admin → Validation Rules page.
@@ -32,6 +39,12 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
   // and see whether it would fire. Keyed by rule.id.
   const [testOpenFor, setTestOpenFor] = useState<string | null>(null);
   const [testValues, setTestValues] = useState<Record<string, Record<string, string>>>({});
+  // AI Help panel — per-rule state so each rule can have its own open panel.
+  const [aiHelpOpenFor, setAiHelpOpenFor] = useState<string | null>(null);
+  const [aiHelpLoading, setAiHelpLoading] = useState(false);
+  const [aiHelpError, setAiHelpError] = useState<string | null>(null);
+  const [aiHelpHint, setAiHelpHint] = useState('');
+  const [aiHelpSuggestions, setAiHelpSuggestions] = useState<Record<string, AiSuggestion[]>>({});
 
   function update(id: string, patch: Partial<ValidationRule>) {
     setRules(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
@@ -42,6 +55,48 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
   function removeRule(id: string) {
     if (!confirm('Delete this validation rule? This cannot be undone.')) return;
     setRules(prev => prev.filter(r => r.id !== id));
+  }
+
+  async function requestAiHelp(rule: ValidationRule) {
+    setAiHelpLoading(true);
+    setAiHelpError(null);
+    try {
+      const scheduleLabel = scheduleKeys.find(s => s.key === rule.scheduleKey)?.label || rule.scheduleKey;
+      // Best-effort list of existing slugs, sniffed from the draft expression —
+      // the server doesn't know the schedule's question list, but showing the
+      // AI what the admin has already typed is enough context for it to build on.
+      const existingSlugs = extractIdentifiers(rule.expression);
+      const res = await fetch('/api/methodology-admin/validation-rules/ai-field-help', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scheduleKey: rule.scheduleKey,
+          scheduleLabel,
+          existingSlugs,
+          existingExpression: rule.expression,
+          userHint: aiHelpHint,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setAiHelpError(data.error || `AI request failed (${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      setAiHelpSuggestions(prev => ({ ...prev, [rule.id]: data.suggestions || [] }));
+    } catch (err: any) {
+      setAiHelpError(err?.message || 'AI request failed');
+    } finally {
+      setAiHelpLoading(false);
+    }
+  }
+
+  function insertFieldIntoExpression(rule: ValidationRule, slug: string) {
+    // Append the slug at the end of the current expression, separated by a
+    // space. Admins can then adjust — cheap UX, and we avoid caret tracking
+    // on the input ref.
+    const expr = rule.expression ? `${rule.expression.trimEnd()} ${slug}` : slug;
+    update(rule.id, { expression: expr });
   }
 
   async function saveAll() {
@@ -207,9 +262,25 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
 
               {/* Expression */}
               <div className="mb-2">
-                <label className="block text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-0.5">
-                  Expression <span className="text-slate-400 normal-case">(truthy = violation)</span>
-                </label>
+                <div className="flex items-center justify-between mb-0.5">
+                  <label className="block text-[10px] uppercase tracking-wide text-slate-500 font-semibold">
+                    Expression <span className="text-slate-400 normal-case">(truthy = violation)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const opening = aiHelpOpenFor !== rule.id;
+                      setAiHelpOpenFor(opening ? rule.id : null);
+                      setAiHelpError(null);
+                      if (opening) setAiHelpHint('');
+                    }}
+                    className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded hover:bg-indigo-100 font-medium"
+                    title="Ask AI to suggest field names for this rule"
+                    disabled={!rule.scheduleKey}
+                  >
+                    <Sparkles className="h-3 w-3" /> AI Help
+                  </button>
+                </div>
                 <input
                   type="text"
                   value={rule.expression}
@@ -223,6 +294,74 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
                   <code>ABS</code>, <code>IF</code>, <code>AND</code>, <code>OR</code>. Comparisons: <code>&lt;</code>, <code>&gt;</code>,
                   <code>&lt;=</code>, <code>&gt;=</code>, <code>=</code>, <code>!=</code>.
                 </p>
+
+                {/* AI Help panel — suggestion chips, hint input, error */}
+                {aiHelpOpenFor === rule.id && (
+                  <div className="mt-3 border border-indigo-200 bg-indigo-50/40 rounded p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-semibold text-indigo-800 flex items-center gap-1">
+                        <Sparkles className="h-3 w-3" /> AI field suggestions
+                      </span>
+                      <button
+                        onClick={() => setAiHelpOpenFor(null)}
+                        className="text-slate-400 hover:text-slate-600"
+                        title="Close AI Help"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-600 mb-2">
+                      Ask AI to suggest field names (question slugs) for this schedule. Suggestions include common slugs for
+                      this schedule type and additional fields the AI thinks would be useful — you can use slugs that
+                      don&rsquo;t yet exist and add the matching question later.
+                    </p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <input
+                        type="text"
+                        value={aiHelpHint}
+                        onChange={e => setAiHelpHint(e.target.value)}
+                        placeholder="Optional hint — e.g. 'I want to cap non-audit fees at 30% of audit fees'"
+                        className="flex-1 text-[11px] border border-slate-200 rounded px-2 py-1"
+                      />
+                      <button
+                        onClick={() => requestAiHelp(rule)}
+                        disabled={aiHelpLoading || !rule.scheduleKey}
+                        className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        {aiHelpLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                        {aiHelpLoading ? 'Thinking...' : 'Suggest'}
+                      </button>
+                    </div>
+                    {aiHelpError && (
+                      <div className="text-[11px] text-red-600 mb-2">⚠ {aiHelpError}</div>
+                    )}
+                    {(aiHelpSuggestions[rule.id] || []).length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {(aiHelpSuggestions[rule.id] || []).map(s => (
+                          <button
+                            key={s.slug}
+                            onClick={() => insertFieldIntoExpression(rule, s.slug)}
+                            title={s.description + (s.isExisting ? ' — exists on schedule' : ' — not yet on schedule; add it as a question')}
+                            className={`group text-left text-[11px] px-2 py-1 rounded border transition-colors ${
+                              s.isExisting
+                                ? 'bg-green-50 border-green-200 text-green-800 hover:bg-green-100'
+                                : 'bg-white border-indigo-200 text-indigo-800 hover:bg-indigo-100'
+                            }`}
+                          >
+                            <span className="font-mono">{s.slug}</span>
+                            <span className="text-slate-500 ml-1.5">— {s.label}</span>
+                            {!s.isExisting && <span className="ml-1.5 text-[9px] uppercase tracking-wide text-indigo-500">new</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {(aiHelpSuggestions[rule.id] || []).length === 0 && !aiHelpLoading && !aiHelpError && (
+                      <p className="text-[10px] text-slate-400 italic">
+                        Click <strong>Suggest</strong> to get field-name ideas from the AI.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Message */}
