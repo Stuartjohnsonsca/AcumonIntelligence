@@ -128,8 +128,18 @@ export function DynamicAppendixForm({
     const withAliases = buildFormulaValues(questions, merged);
     const computed: FormValues = {};
     for (const q of questions) {
+      // Formula-typed questions: always evaluate via the template's formulaExpression.
       if (q.inputType === 'formula' && q.formulaExpression) {
         computed[q.id] = evaluateFormula(q.formulaExpression, withAliases, crossRefData);
+        continue;
+      }
+      // Ad-hoc formulas: if the saved answer is a string starting with '='
+      // treat it as a formula too — the auditor sees the computed result and
+      // the '=' expression stays hidden (only revealed when editing).
+      const raw = values[q.id];
+      if (typeof raw === 'string' && raw.trim().startsWith('=')) {
+        const expr = raw.trim().slice(1);
+        computed[q.id] = evaluateFormula(expr, withAliases, crossRefData);
       }
     }
     return computed;
@@ -294,7 +304,11 @@ export function DynamicAppendixForm({
                         onChange={v => handleChange(q.id, v)}
                         dropdownOptions={q.dropdownOptions}
                         computedValue={computedValues[q.id]}
-                        isFormula={q.inputType === 'formula'}
+                        // Treat as formula when the question is configured
+                        // that way OR the saved answer starts with '=' —
+                        // both paths hide the raw formula and display the
+                        // computed result.
+                        isFormula={q.inputType === 'formula' || (typeof values[q.id] === 'string' && (values[q.id] as string).trim().startsWith('='))}
                         validationMin={q.validationMin}
                         validationMax={q.validationMax}
                       />

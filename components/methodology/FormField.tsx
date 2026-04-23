@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type { QuestionInputType } from '@/types/methodology';
 
 interface Props {
@@ -33,12 +34,49 @@ export function FormField({
 }: Props) {
   const baseClass = 'w-full border border-slate-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-slate-50 disabled:text-slate-400';
 
+  // Ad-hoc formula: a text/textarea answer the user typed starting with '='.
+  // Different from a template-configured formula question — the formula
+  // expression lives on the VALUE, not on the question schema, so the user
+  // needs a way to click in and edit it. Formula stays hidden by default;
+  // click to reveal and edit, blur to hide again.
+  const isAdHocFormula = Boolean(
+    isFormula
+    && inputType !== 'formula'
+    && typeof value === 'string'
+    && value.trim().startsWith('=')
+  );
+  const [editingAdHoc, setEditingAdHoc] = useState(false);
+
   // Formula fields show computed value as read-only
-  if (isFormula && computedValue !== undefined) {
+  if (isFormula && computedValue !== undefined && !(isAdHocFormula && editingAdHoc)) {
     return (
-      <div className={`${baseClass} bg-blue-50/30 text-slate-600 min-h-[36px] ${className}`}>
+      <button
+        type="button"
+        onClick={() => { if (isAdHocFormula && !disabled) setEditingAdHoc(true); }}
+        title={isAdHocFormula ? `Click to edit formula: ${value}` : 'Auto-calculated'}
+        className={`${baseClass} bg-blue-50/30 text-slate-700 min-h-[36px] text-left ${isAdHocFormula && !disabled ? 'cursor-text hover:bg-blue-100/40' : 'cursor-default'} ${className}`}
+      >
         {computedValue !== null && computedValue !== '' ? String(computedValue) : <span className="text-slate-300 italic">Auto-calculated</span>}
-      </div>
+      </button>
+    );
+  }
+
+  // Ad-hoc formula in edit mode — show the raw expression for editing, swap
+  // back to the computed display on blur when it still starts with '='.
+  if (isAdHocFormula && editingAdHoc) {
+    return (
+      <input
+        type="text"
+        autoFocus
+        id={questionId}
+        value={typeof value === 'string' ? value : ''}
+        onChange={e => onChange(e.target.value)}
+        onBlur={() => setEditingAdHoc(false)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { e.currentTarget.blur(); } }}
+        disabled={disabled}
+        placeholder="= formula (e.g. =audit_fee + non_audit_fee)"
+        className={`${baseClass} font-mono bg-blue-50/20 ${className}`}
+      />
     );
   }
 
