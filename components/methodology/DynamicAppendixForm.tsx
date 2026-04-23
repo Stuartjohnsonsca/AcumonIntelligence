@@ -1,14 +1,38 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useSession } from 'next-auth/react';
 import { AlertTriangle, AlertOctagon } from 'lucide-react';
 import { FormField } from './FormField';
+import { PlaceholderBadge } from './PlaceholderBadge';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { useSignOff } from './SignOffHeader';
-import { evaluateFormula, buildFormulaValues } from '@/lib/formula-engine';
+import { evaluateFormula, buildFormulaValues, slugifyQuestionText } from '@/lib/formula-engine';
 import { evaluateRulesForSchedule, type ValidationRule, type RuleEvaluation } from '@/lib/validation-rules';
 import type { TemplateQuestion } from '@/types/methodology';
+
+/**
+ * Endpoint → `questionnaires.<key>` mapping for the merge-field path shown
+ * on the PlaceholderBadge. Unlisted endpoints fall back to a sensible
+ * camelCase derivative of the endpoint itself (still a valid path, just
+ * not the canonical one documented in template-merge-fields.ts).
+ */
+const ENDPOINT_TO_QUESTIONNAIRE_KEY: Record<string, string> = {
+  'ethics': 'ethics',
+  'continuance': 'continuance',
+  'permanent-file': 'permanentFile',
+  'materiality': 'materiality',
+  'new-client': 'newClientTakeOn',
+  'subsequent-events': 'subsequentEvents',
+  'fees': 'fees',
+  'prior-period': 'priorPeriod',
+};
+function endpointToQuestionnaireKey(endpoint: string): string {
+  if (ENDPOINT_TO_QUESTIONNAIRE_KEY[endpoint]) return ENDPOINT_TO_QUESTIONNAIRE_KEY[endpoint];
+  // Fallback: kebab-case → camelCase, stripping non-alphanumerics.
+  return endpoint.replace(/[-_]+([a-z0-9])/g, (_, c) => c.toUpperCase()).replace(/[^a-zA-Z0-9]/g, '');
+}
 
 type FormValues = Record<string, string | number | boolean | null>;
 
@@ -40,6 +64,10 @@ export function DynamicAppendixForm({
   actionTriggerOptions = [],
   priorYearData,
 }: Props) {
+  const { data: session } = useSession();
+  const isAdminViewer = Boolean((session?.user as any)?.isSuperAdmin || (session?.user as any)?.isMethodologyAdmin);
+  const questionnaireKey = endpointToQuestionnaireKey(endpoint);
+
   const [values, setValues] = useState<FormValues>(initialData);
   const [triggerValues, setTriggerValues] = useState<Record<string, string>>(() => {
     // Load trigger selections from initialData (stored as trigger_<questionId>)
@@ -264,13 +292,25 @@ export function DynamicAppendixForm({
                   );
                 }
                 const outline = getFieldOutline(q.id);
+                // Admin-only placeholder path — what the template editor
+                // would use to reference this answer. Falls back to the
+                // canonical slug of the question text; if the admin sees
+                // a wrong path they can adjust.
+                const questionSlug = slugifyQuestionText(q.questionText) || q.id;
+                const placeholderPath = `questionnaires.${questionnaireKey}.${questionSlug}`;
                 return (
-                  <div key={q.id} className={`flex gap-0 ${idx > 0 ? 'border-t border-slate-100' : ''}`}>
+                  <div key={q.id} className={`group flex gap-0 ${idx > 0 ? 'border-t border-slate-100' : ''}`}>
                     <div className="bg-slate-50 px-3 py-2 w-[35%] flex-shrink-0 flex items-start">
-                      <label htmlFor={q.id} className="text-xs text-slate-700 leading-snug">
+                      <label htmlFor={q.id} className="text-xs text-slate-700 leading-snug flex-1">
                         {q.questionText}
                         {q.isRequired && <span className="text-red-400 ml-0.5">*</span>}
                       </label>
+                      {isAdminViewer && (
+                        <PlaceholderBadge
+                          path={placeholderPath}
+                          title={`Merge-field placeholder (admins only) — click to copy\n{{${placeholderPath}}}`}
+                        />
+                      )}
                     </div>
                     {/* Prior year column — read-only if data exists, editable if not */}
                     <div className="w-[15%] flex-shrink-0 bg-slate-100 px-2 py-1.5 flex items-center border-l border-slate-200">
