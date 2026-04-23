@@ -1,0 +1,541 @@
+FS Line Item,Test Description,Type,Assertion,Significant Risk,Framework
+Going Concern,Check cashflow forecast,Judgement,Occurrence & Accuracy,Y,FRS102
+Management Override,Check journals posted,Judgement,Occurrence & Accuracy,Y,FRS102
+Notes and Disclosures,Run FS Checker,Judgement,Occurrence & Accuracy,Y,FRS102
+Revenue,Obtain understanding of the entity's process for recording sales and assess the design effectiveness of controls relavant to the process.,Judgement,Completeness,Y,FRS102
+Revenue,"Obtain sales listing for the period and ensure that the total of sales matches to the trial balance. If separate system is in use for recording sales transactions, ensure that the total sales as per independent system matches to the General Ledger/TB.",Judgement,Completeness,Y,FRS102
+Revenue,Discuss with management on the open projects at year-end and assess how the revenue for the work completed to the year-end has been caculated and recorded. ,Judgement,Completeness,Y,FRS102
+Revenue,"Perform trend analysis (monthly sales, comparison to prior periods/budgets) to identify any unusual fluctuations.",Judgement,Completeness,Y,FRS102
+Revenue,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Revenue,Assess if management has applied the correct accounting policy (IFRS 15 / UKGAAP) in line with performance obligations.,Analytical Review,Occurence & Accuracy,Y,FRS102
+Revenue,Using sampling calculator determine the number of samples to tested.,Analytical Review,Occurence & Accuracy,Y,FRS102
+Revenue,"Obtain supporting documents such as invoice, contract and Goods Delivery Note (where applicable) to trace amount recorded in GL to the supporting documents.",Analytical Review,Occurence & Accuracy,Y,FRS102
+Revenue,Assess how the performance obligation is satisfied as per the terms of the agreement.,Analytical Review,Occurence & Accuracy,Y,FRS102
+Revenue,"For sales in foreign currencies, ensure that the appropriate exchange rate (i.e., on the date of transactions) is applied by management.",Analytical Review,Occurence & Accuracy,Y,FRS102
+Revenue,"Where revenue involves estimates/judgements (e.g., variable consideration, long-term contracts), assess reasonableness and appropriateness.",Analytical Review,Occurence & Accuracy,Y,FRS102
+Revenue,"Consider fraud risk of fictitious sales (e.g., unusual terms, related party sales).",Analytical Review,Occurence & Accuracy,Y,FRS102
+Revenue,"Clearly define the cut-off period relevant for performing the procedure, considering management’s timeline for closing accounts before and after year-end.",Test of Details,Cut Off,Y,FRS102
+Revenue,Select samples covering pre-period and post year-end and perform testing to ensure that the revenue is recorded in the appropriate period.,Test of Details,Cut Off,Y,FRS102
+Revenue,Review post year-end returns/credit notes to check if revenue recorded pre-year-end should be reversed.,Test of Details,Cut Off,Y,FRS102
+Revenue,Review the revenue recognition policy and chart of accounts to confirm that revenue streams are appropriately defined.,Test of Details,Classification,Y,FRS102
+Revenue,"Test a sample of revenue transactions to confirm correct classification between product sales, services, related parties, or other categories.",Test of Details,Classification,Y,FRS102
+Revenue,"Ensure items not meeting the definition of revenue (e.g., reimbursements, finance income) are not misclassified within revenue.",Test of Details,Classification,Y,FRS102
+Revenue,Compare classification of revenue streams to prior periods for consistency.,Test of Details,Classification,Y,FRS102
+Revenue,"Review revenue disclosures for compliance with IFRS 15 and UKGAAP, including:
+• Disaggregation of revenue into meaningful categories (e.g., by geography, product, service, timing of transfer).
+• Disclosure of contract balances (assets and liabilities).
+• Disclosure of significant judgements and estimates in revenue recognition.",Test of Details,Presentation,Y,FRS102
+Revenue,Verify that related party revenues are disclosed in accordance with IAS 24.,Test of Details,Presentation,Y,FRS102
+Revenue,Assess whether gross vs. net presentation (principal vs. agent) is appropriate (if applicable).,Test of Details,Presentation,Y,FRS102
+Revenue,"Perform consistency checks between segment reporting, trial balance, management reporting packs, and FS disclosures.",Test of Details,Presentation,Y,FRS102
+Revenue,Ensure presentation is aligned with industry norms and regulatory expectations.,Test of Details,Presentation,Y,FRS102
+Cost of Sales,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Cost of Sales,"Obtain an understanding of the process for recording purchases and CoS, including controls over matching goods received, purchase invoices, and postings to the ledger.",Test of Details,Completeness,Y,FRS102
+Cost of Sales,Perform a reconciliation between the purchases/GRN records and the General Ledger/Trial Balance to ensure all costs are captured.,Test of Details,Completeness,Y,FRS102
+Cost of Sales,Review whether accruals for un-invoiced goods/services at year-end are identified and recorded (GRNI testing).,Test of Details,Completeness,Y,FRS102
+Cost of Sales,Perform cut-off testing around year-end to ensure completeness of accrued costs.,Test of Details,Completeness,Y,FRS102
+Cost of Sales,Analytical review: compare gross margin % with prior periods and budget to identify anomalies.,Test of Details,Completeness,Y,FRS102
+Cost of Sales,"Select samples of recorded cost of sales and trace to supporting documentation (e.g., supplier invoices, GRNs, contracts, inventory issues) to verify validity and accuracy.",Test of Details,Occurence & Accuracy,Y,FRS102
+Cost of Sales,"Verify that amounts recorded agree to supplier invoices and contracts, including price and quantity checks.",Test of Details,Occurence & Accuracy,Y,FRS102
+Cost of Sales,"For foreign currency purchases, test application of exchange rates to ensure accuracy.",Test of Details,Occurence & Accuracy,Y,FRS102
+Cost of Sales,"Where allocations or estimates are used (e.g., overhead absorption into inventory), evaluate the appropriateness of methods applied.",Test of Details,Occurence & Accuracy,Y,FRS102
+Cost of Sales,"Consider fraud risk of fictitious purchases (e.g., unusual terms, related party purchases).",Test of Details,Occurence & Accuracy,Y,FRS102
+Cost of Sales,"Clearly define the cut-off period relevant for performing the procedure, considering management’s timeline for closing accounts before and after year-end.",Test of Details,Cut Off,Y,FRS102
+Cost of Sales,"Test purchases/CoS recorded immediately before and after year-end, tracing to GRNs and invoices to ensure costs are recorded in the correct period.",Test of Details,Cut Off,Y,FRS102
+Cost of Sales,Review returns and credit notes issued after year-end to ensure related costs are adjusted appropriately.,Test of Details,Cut Off,Y,FRS102
+Cost of Sales,Verify that cost of sales is classified correctly and not misstated as operating expenses or other costs.,Test of Details,Classification,Y,FRS102
+Cost of Sales,"Review the allocation of direct costs (materials, labour, subcontracting) and indirect costs to ensure consistent and appropriate classification.",Test of Details,Classification,Y,FRS102
+Cost of Sales,Ensure consistency of classification with prior periods and industry norms.,Test of Details,Classification,Y,FRS102
+Cost of Sales,Check that related party costs are identified and correctly classified.,Test of Details,Classification,Y,FRS102
+Cost of Sales,Review disclosures in the FS to ensure compliance with requirements under financial reporting framework.,Test of Details,Presentation,Y,FRS102
+Cost of Sales,"Confirm that disclosures on cost of sales, inventory, and related balances (e.g., GRNI accruals, purchase commitments) are complete and accurate.",Test of Details,Presentation,Y,FRS102
+Cost of Sales,Ensure disclosure of related party purchases is in line with IAS 24.,Test of Details,Presentation,Y,FRS102
+Cost of Sales,"Perform consistency checks between CoS, revenue, and inventory disclosures to ensure margins reconcile appropriately.",Test of Details,Presentation,Y,FRS102
+Cost of Sales,Ensure accounting policies for inventory valuation and expense recognition are clearly presented.,Test of Details,Presentation,Y,FRS102
+Operating Expenses,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Operating Expenses,"Obtain an understanding of the process for recording admin expenses and assess design effectiveness of related controls (e.g., invoice processing, approval workflows).",Test of Details,Completeness,Y,FRS102
+Operating Expenses,Perform reconciliation of expense listings to the GL/TB to Ensure all expenses are captured.,Test of Details,Completeness,Y,FRS102
+Operating Expenses,Review accruals for unrecorded expenses and test for completeness.,Test of Details,Completeness,Y,FRS102
+Operating Expenses,Perform analytical review by comparing admin expense categories to prior periods and budgets to identify anomalies.,Test of Details,Completeness,Y,FRS102
+Operating Expenses,"Perform search for unrecorded liabilities (review post year-end payments, supplier statements)",Test of Details,Completeness,Y,FRS102
+Operating Expenses,"Select a sample of expenses and trace to supporting documents (invoices, contracts, expense claims) to confirm validity and accuracy.",Test of Details,Occurence & Accuracy,Y,FRS102
+Operating Expenses,Verify that expenses relate to the entity’s business operations and are not personal/non-business in nature.,Test of Details,Occurence & Accuracy,Y,FRS102
+Operating Expenses,Check accuracy of recorded amounts against supplier invoices and underlying contracts.,Test of Details,Occurence & Accuracy,Y,FRS102
+Operating Expenses,"For foreign currency expenses, test the application of exchange rates.",Test of Details,Occurence & Accuracy,Y,FRS102
+Operating Expenses,"Consider fraud risks (e.g., duplicate payments, management override, misallocation of personal expenses).",Test of Details,Occurence & Accuracy,Y,FRS102
+Operating Expenses,"Clearly define the cut-off period relevant for performing the procedure, considering management’s timeline for closing accounts before and after year-end.",Test of Details,Cut Off,Y,FRS102
+Operating Expenses,Test a sample of expenses recorded just before and after year-end to ensure they are recorded in the correct accounting period.,Test of Details,Cut Off,Y,FRS102
+Operating Expenses,Review accruals and prepayments to ensure costs are recognised in the right period.,Test of Details,Cut Off,Y,FRS102
+Operating Expenses,Inspect post year-end invoices to determine whether related expenses should have been recorded in the prior year.,Test of Details,Cut Off,Y,FRS102
+Operating Expenses,"Review expense accounts to confirm admin expenses are not misclassified as cost of sales, finance costs, or capitalised as assets (unless appropriate, e.g., development costs under IAS 38).",Test of Details,Classification,Y,FRS102
+Operating Expenses,"Test samples to ensure consistent allocation across appropriate categories (e.g., staff costs, professional fees, IT, premises).",Test of Details,Classification,Y,FRS102
+Operating Expenses,Compare with prior periods to assess consistency of classification.,Test of Details,Classification,Y,FRS102
+Operating Expenses,Ensure related party transactions are identified and appropriately classified.,Test of Details,Classification,Y,FRS102
+Operating Expenses,Review disclosures in the FS to ensure compliance with requirements under financial reporting framework.,Test of Details,Presentation,Y,FRS102
+Operating Expenses,"Confirm that significant categories of admin expenses are separately disclosed where material (e.g., audit fees, directors’ remuneration, R&D costs).",Test of Details,Presentation,Y,FRS102
+Operating Expenses,Ensure related party expenses are disclosed in line with IAS 24.,Test of Details,Presentation,Y,FRS102
+Operating Expenses,Cross-check totals per note disclosures to TB/GL and management accounts.,Test of Details,Presentation,Y,FRS102
+Operating Expenses,Ensure accounting policies for expense recognition and presentation are clear and appropriately disclosed.,Test of Details,Presentation,Y,FRS102
+Wages & Salaries,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Wages & Salaries,"Obtain an understanding of the payroll process and assess the design effectiveness of controls (e.g., approval of new joiners, leavers, and changes to pay rates).",Test of Details,Completeness,Y,FRS102
+Wages & Salaries,Reconcile the total payroll cost per payroll system to the general ledger/trial balance.,Test of Details,Completeness,Y,FRS102
+Wages & Salaries,"Perform analytical review by comparing monthly payroll costs to prior periods and budgets, considering headcount movements.",Test of Details,Completeness,Y,FRS102
+Wages & Salaries,"Review accruals for unpaid wages, overtime, and bonuses at year-end to ensure completeness.",Test of Details,Completeness,Y,FRS102
+Wages & Salaries,Inspect post year-end payments to identify any unrecorded liabilities.,Test of Details,Completeness,Y,FRS102
+Wages & Salaries,"Select samples of employees and trace salaries and wages recorded in the GL to supporting documentation such as contracts, HR records, and payroll reports.",Test of Details,Occurence & Accuracy,Y,FRS102
+Wages & Salaries,Verify that only valid employees are included in payroll (no ghost employees).,Test of Details,Occurence & Accuracy,Y,FRS102
+Wages & Salaries,"Check pay rates, hours worked, and authorised deductions to ensure amounts are calculated accurately.",Test of Details,Occurence & Accuracy,Y,FRS102
+Wages & Salaries,Recalculate sample payroll amounts and agree totals to payslips or bank transfer records.,Test of Details,Occurence & Accuracy,Y,FRS102
+Wages & Salaries,Test payroll expenses recorded immediately before and after year-end to ensure they are recorded in the correct accounting period.,Test of Details,Cut Off,Y,FRS102
+Wages & Salaries,Review payroll accruals and prepayments to ensure proper allocation between periods.,Test of Details,Cut Off,Y,FRS102
+Wages & Salaries,"Inspect year-end adjustments for salaries, bonuses, and social security contributions.",Test of Details,Cut Off,Y,FRS102
+Wages & Salaries,"Review postings to confirm that salaries, wages, bonuses, and related costs are classified correctly (e.g., admin expenses, cost of sales, distribution costs).",Test of Details,Classification,Y,FRS102
+Wages & Salaries,"Ensure that employer’s contributions (e.g., pension, social security, payroll taxes) are classified appropriately.",Test of Details,Classification,Y,FRS102
+Wages & Salaries,"Verify that capitalised staff costs (e.g., development costs under IAS 38, construction under IAS 16) meet recognition criteria (if any).",Test of Details,Classification,Y,FRS102
+Wages & Salaries,Check for consistency with prior periods.,Test of Details,Classification,Y,FRS102
+Wages & Salaries,Review financial statement disclosures to ensure compliance with as required under financial reporting framework.,Test of Details,Presentation,Y,FRS102
+Wages & Salaries,Confirm that directors’ remuneration and key management compensation are disclosed separately as required under financial reporting framework.,Test of Details,Presentation,Y,FRS102
+Wages & Salaries,Ensure pension and other post-employment benefit costs are presented and disclosed as required under financial reporting framework.,Test of Details,Presentation,Y,FRS102
+Wages & Salaries,"Cross-check totals per payroll disclosures to GL, payroll records, and supporting schedules.",Test of Details,Presentation,Y,FRS102
+Wages & Salaries,"Ensure accounting policies for employee benefits, payroll, and share-based payments (if applicable) are clearly disclosed.",Test of Details,Presentation,Y,FRS102
+Other Operating Income,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Other Operating Income,"Obtain an understanding of the processes for identifying and recording other operating income (e.g., grants, rental income, management fees, foreign exchange gains).",Test of Details,Completeness,Y,FRS102
+Other Operating Income,Reconcile other operating income per the general ledger/trial balance to supporting schedules maintained by management.,Test of Details,Completeness,Y,FRS102
+Other Operating Income,Perform analytical review by comparing income streams with prior periods and budgets to identify unusual variances.,Test of Details,Completeness,Y,FRS102
+Other Operating Income,"Review minutes of board meetings, contracts, and correspondence to identify potential income streams not recorded.",Test of Details,Completeness,Y,FRS102
+Other Operating Income,Inspect post year-end receipts to identify income that should have been recognised in the current year.,Test of Details,Completeness,Y,FRS102
+Other Operating Income,"Select samples of recorded other operating income and trace to supporting documentation (e.g., lease agreements, grant letters, invoices, bank receipts).",Test of Details,Occurence & Accuracy,Y,FRS102
+Other Operating Income,Verify that income recorded relates to the entity and represents genuine transactions.,Test of Details,Occurence & Accuracy,Y,FRS102
+Other Operating Income,"Check accuracy of recorded amounts against agreements, calculations, or confirmations.",Test of Details,Occurence & Accuracy,Y,FRS102
+Other Operating Income,"Where income involves estimates (e.g., government grants, service allocations), evaluate the appropriateness of management’s methodology.",Test of Details,Occurence & Accuracy,Y,FRS102
+Other Operating Income,Test items of other operating income recorded immediately before and after year-end to ensure recognition in the correct period.,Test of Details,Cut Off,Y,FRS102
+Other Operating Income,"Review terms of agreements (e.g., rental periods, grant conditions, service periods) to ensure income is allocated to the right reporting period.",Test of Details,Cut Off,Y,FRS102
+Other Operating Income,Inspect post year-end receipts and assess whether income should have been recognised earlier.,Test of Details,Cut Off,Y,FRS102
+Other Operating Income,"Review postings to confirm that other operating income is not misclassified as revenue, finance income, or exceptional items unless appropriate.",Test of Details,Classification,Y,FRS102
+Other Operating Income,"Ensure different categories of other operating income (e.g., grants, rental income, service fees) are correctly classified in line with accounting policies.",Test of Details,Classification,Y,FRS102
+Other Operating Income,Compare classification with prior periods for consistency.,Test of Details,Classification,Y,FRS102
+Other Operating Income,Ensure related party income is separately identified.,Test of Details,Classification,Y,FRS102
+Other Operating Income,Review financial statement presentation of other operating income for compliance with financial reporting framework..,Test of Details,Presentation,Y,FRS102
+Other Operating Income,Confirm that significant categories of other income are separately disclosed where material.,Test of Details,Presentation,Y,FRS102
+Other Operating Income,"Cross-check note disclosures to GL, supporting schedules, and management accounts.",Test of Details,Presentation,Y,FRS102
+Other Operating Income,Ensure accounting policies for other income streams are clearly disclosed and consistently applied.,Test of Details,Presentation,Y,FRS102
+Other interest receivable and similar income,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Other interest receivable and similar income,"Obtain an understanding of processes for recording interest income (e.g., loan agreements, investment holdings, bank accounts).",Test of Details,Completeness,Y,FRS102
+Other interest receivable and similar income,"Reconcile interest income per the general ledger/trial balance to bank confirmations, loan schedules, and investment statements.",Test of Details,Completeness,Y,FRS102
+Other interest receivable and similar income,"Perform analytical review (e.g., effective interest rate vs. balance, expected vs. actual interest) to identify anomalies.",Test of Details,Completeness,Y,FRS102
+Other interest receivable and similar income,Review board minutes and loan/investment agreements to identify potential income streams not recorded.,Test of Details,Completeness,Y,FRS102
+Other interest receivable and similar income,Inspect post year-end receipts to confirm completeness.,Test of Details,Completeness,Y,FRS102
+Other interest receivable and similar income,"Select samples of recorded interest income and trace to supporting documents such as bank advices, loan agreements, or investment contracts.",Test of Details,Occurence & Accuracy,Y,FRS102
+Other interest receivable and similar income,"Recalculate interest using the effective interest method (EIR) where applicable, considering principal, rate, and timing.",Test of Details,Occurence & Accuracy,Y,FRS102
+Other interest receivable and similar income,Verify that income recorded relates to the entity and represents genuine transactions.,Test of Details,Occurence & Accuracy,Y,FRS102
+Other interest receivable and similar income,"For foreign currency interest, ensure correct exchange rates are applied.",Test of Details,Occurence & Accuracy,Y,FRS102
+Other interest receivable and similar income,"Check whether management’s estimates (e.g., amortised cost, accrued interest) are reasonable",Test of Details,Occurence & Accuracy,Y,FRS102
+Other interest receivable and similar income,Test interest income recorded immediately before and after year-end to confirm recognition in the correct period.,Test of Details,Cut Off,Y,FRS102
+Other interest receivable and similar income,Review accrued interest calculations at year-end for accuracy and completeness.,Test of Details,Cut Off,Y,FRS102
+Other interest receivable and similar income,Inspect post year-end receipts to assess whether related income should have been accrued at year-end.,Test of Details,Cut Off,Y,FRS102
+Other interest receivable and similar income,Verify that interest income is classified separately from revenue and operating income in line with accounting policies.,Test of Details,Classification,Y,FRS102
+Other interest receivable and similar income,Ensure interest income from related parties is separately identified.,Test of Details,Classification,Y,FRS102
+Other interest receivable and similar income,"Check classification of different types of interest (e.g., bank deposits, intercompany loans, debt securities).",Test of Details,Classification,Y,FRS102
+Other interest receivable and similar income,Ensure consistency with prior periods.,Test of Details,Classification,Y,FRS102
+Other interest receivable and similar income,Review FS disclosures to ensure compliance with financial reporting framework,Test of Details,Presentation,Y,FRS102
+Other interest receivable and similar income,Confirm interest income is disclosed separately from operating revenue.,Test of Details,Presentation,Y,FRS102
+Other interest receivable and similar income,Ensure related party income is disclosed under IAS 24 / FRS 102 Section 33.,Test of Details,Presentation,Y,FRS102
+Other interest receivable and similar income,Verify accounting policies for interest income (effective interest method vs. other method) are clearly disclosed.,Test of Details,Presentation,Y,FRS102
+Other interest receivable and similar income,"Cross-check totals per note disclosures to GL, schedules, and confirmations.",Test of Details,Presentation,Y,FRS102
+Interest payable and similar income,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Interest payable and similar income,"Obtain an understanding of the entity’s financing arrangements (bank loans, overdrafts, lease liabilities, intercompany borrowings).",Test of Details,Completeness,Y,FRS102
+Interest payable and similar income,"Reconcile interest expense per the general ledger/trial balance to loan statements, amortisation schedules, and bank confirmations.",Test of Details,Completeness,Y,FRS102
+Interest payable and similar income,Perform analytical review by comparing actual interest charges against expectations (loan balance × effective rate).,Test of Details,Completeness,Y,FRS102
+Interest payable and similar income,Review board minutes and agreements to identify unrecorded borrowings or financing costs.,Test of Details,Completeness,Y,FRS102
+Interest payable and similar income,Inspect post year-end payments of interest to confirm completeness.,Test of Details,Completeness,Y,FRS102
+Interest payable and similar income,"Select a sample of recorded interest expenses and trace to supporting documentation (loan agreements, bank statements, lease schedules).",Test of Details,Occurence & Accuracy,Y,FRS102
+Interest payable and similar income,"Recalculate interest expense under the effective interest method (EIR), including amortisation of fees, premiums, or discounts.",Test of Details,Occurence & Accuracy,Y,FRS102
+Interest payable and similar income,Verify that expenses recorded relate to genuine liabilities of the entity.,Test of Details,Occurence & Accuracy,Y,FRS102
+Interest payable and similar income,"For foreign currency borrowings, test the application of exchange rates.",Test of Details,Occurence & Accuracy,Y,FRS102
+Interest payable and similar income,Assess appropriateness of management’s estimates where accrued interest or amortised costs are used.,Test of Details,Occurence & Accuracy,Y,FRS102
+Interest payable and similar income,Test interest expenses recorded immediately before and after year-end to ensure recognition in the correct accounting period.,Test of Details,Cut Off,Y,FRS102
+Interest payable and similar income,Review accrued interest at year-end for completeness and accuracy.,Test of Details,Cut Off,Y,FRS102
+Interest payable and similar income,Inspect post year-end payments to confirm whether related interest should have been accrued at year-end.,Test of Details,Cut Off,Y,FRS102
+Interest payable and similar income,Verify that interest payable and similar charges are classified separately from operating expenses and cost of sales.,Test of Details,Classification,Y,FRS102
+Interest payable and similar income,"Ensure different types of finance costs (bank loans, lease liabilities, intercompany loans) are classified consistently.",Test of Details,Classification,Y,FRS102
+Interest payable and similar income,Check whether borrowing costs capitalised under IAS 23/FRS 102 Section 25 meet recognition criteria.,Test of Details,Classification,Y,FRS102
+Interest payable and similar income,Ensure related party finance costs are separately identified.,Test of Details,Classification,Y,FRS102
+Interest payable and similar income,Review FS disclosures to ensure compliance with financial reporting framework,Test of Details,Presentation,Y,FRS102
+Interest payable and similar income,Ensure related party interest expense is disclosed under IAS 24 / FRS 102 Section 33.,Test of Details,Presentation,Y,FRS102
+Interest payable and similar income,"Verify accounting policies for finance costs (EIR method, capitalisation) are clearly disclosed.",Test of Details,Presentation,Y,FRS102
+Interest payable and similar income,"Cross-check note disclosures to GL, amortisation schedules, and confirmations.",Test of Details,Presentation,Y,FRS102
+Tax expense,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Tax expense,Obtain an understanding of the process for preparing tax computations and recording tax expense.,Test of Details,Completeness,Y,FRS102
+Tax expense,Reconcile current tax charge to submitted or draft tax returns and supporting computations.,Test of Details,Completeness,Y,FRS102
+Tax expense,"Reconcile deferred tax charge to deferred tax workings (temporary differences, tax losses, credits).",Test of Details,Completeness,Y,FRS102
+Tax expense,"Review minutes, correspondence with tax authorities, and legal letters to identify unrecorded tax exposures.",Test of Details,Completeness,Y,FRS102
+Tax expense,Inspect post year-end payments and refunds of tax to assess completeness.,Test of Details,Completeness,Y,FRS102
+Tax expense,Trace tax expense amounts to underlying tax computations prepared by management or external tax advisors.,Test of Details,Occurence & Accuracy,Y,FRS102
+Tax expense,Recalculate current tax based on taxable profits and applicable tax rates.,Test of Details,Occurence & Accuracy,Y,FRS102
+Tax expense,"Recalculate deferred tax on major temporary differences (e.g., accelerated capital allowances, provisions, pensions).",Test of Details,Occurence & Accuracy,Y,FRS102
+Tax expense,"Assess appropriateness of assumptions and estimates (e.g., recoverability of deferred tax assets).",Test of Details,Occurence & Accuracy,Y,FRS102
+Tax expense,"Verify adjustments for non-deductible expenses, exempt income, and prior year adjustments.",Test of Details,Occurence & Accuracy,Y,FRS102
+Tax expense,Ensure tax expense recorded relates to the correct accounting period.,Test of Details,Cut Off,Y,FRS102
+Tax expense,Review post year-end tax payments/refunds and check whether they relate to the reporting period.,Test of Details,Cut Off,Y,FRS102
+Tax expense,Ensure deferred tax adjustments reflect temporary differences existing at the reporting date only.,Test of Details,Cut Off,Y,FRS102
+Tax expense,Verify that current tax expense and deferred tax expense are separately disclosed in the financial statements.,Test of Details,Classification,Y,FRS102
+Tax expense,Ensure tax effects of items recognised outside profit or loss (OCI or equity) are correctly classified.,Test of Details,Classification,Y,FRS102
+Tax expense,Check whether Pillar Two income taxes (if applicable) are presented separately in line with IAS 12.88A amendments.,Test of Details,Classification,Y,FRS102
+Tax expense,Ensure consistency of classification with prior years.,Test of Details,Classification,Y,FRS102
+Tax expense,"Review financial statement disclosures to ensure compliance with IFRS and UK GAAP:
+• IAS 12.79 requires reconciliation between tax expense and accounting profit × statutory rate.
+• IAS 12.80 requires disclosure of unrecognised temporary differences and deferred tax assets.
+• FRS 102 Section 29.27–29.32 requires reconciliation of tax expense, deferred tax disclosure, and unrecognised assets.",Test of Details,Presentation,Y,FRS102
+Tax expense,Ensure current and deferred tax are presented separately in the statement of financial position and profit or loss.,Test of Details,Presentation,Y,FRS102
+Tax expense,Verify disclosure of key judgements and estimates in line with IAS 1.122 / FRS 102 Section 8.6.,Test of Details,Presentation,Y,FRS102
+Tax expense,"Cross-check tax disclosures to computations, GL, and supporting schedules.",Test of Details,Presentation,Y,FRS102
+Property plant and equipment,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Property plant and equipment,Review fixed asset register (FAR) and reconcile to the general ledger and trial balance.,Test of Details,Completeness,Y,FRS102
+Property plant and equipment,"Test a sample of additions by tracing to purchase invoices, contracts, and approvals to confirm all assets are recorded.",Test of Details,Completeness,Y,FRS102
+Property plant and equipment,Review repairs and maintenance expense accounts for potential capital expenditure that should be reclassified.,Test of Details,Completeness,Y,FRS102
+Property plant and equipment,"Inspect board minutes, budgets for evidence of unrecorded assets.",Test of Details,Completeness,Y,FRS102
+Property plant and equipment,"Ensure additions are correctly classified between PPE categories (land, buildings, plant, fixtures, etc.).",Test of Details,Classification,Y,FRS102
+Property plant and equipment,Review construction-in-progress balances to ensure correct classification and transfer to appropriate asset category once complete.,Test of Details,Classification,Y,FRS102
+Property plant and equipment,Review financial statements to ensure PPE is presented separately from other non-current assets.,Test of Details,Presentation,Y,FRS102
+Property plant and equipment,Ensure accumulated depreciation and impairment are disclosed separately from gross cost.,Test of Details,Presentation,Y,FRS102
+Property plant and equipment,"Verify disclosure of accounting policies, depreciation methods, useful lives, restrictions on title, and pledged assets.",Test of Details,Presentation,Y,FRS102
+Property plant and equipment,Check disclosure of contractual commitments for acquisition of PPE.,Test of Details,Presentation,Y,FRS102
+Property plant and equipment,Perform physical verification of PPE (on a sample basis) and reconcile to the FAR.,Test of Details,Existence,Y,FRS102
+Property plant and equipment,"Inspect asset tags, serial numbers, and location to confirm physical existence.",Test of Details,Existence,Y,FRS102
+Property plant and equipment,"For disposals, verify removal from FAR and agreement to disposal documentation (sales invoice, scrap records).",Test of Details,Existence,Y,FRS102
+Property plant and equipment,Recalculate depreciation expense and compare with FAR and policy.,Test of Details,Valuation,Y,FRS102
+Property plant and equipment,Test a sample of additions to verify recorded cost includes all directly attributable costs.,Test of Details,Valuation,Y,FRS102
+Property plant and equipment,"Where revaluations are performed, assess competence of valuer, methodology used, and appropriateness of assumptions.",Test of Details,Valuation,Y,FRS102
+Property plant and equipment,"Test for impairment indicators and if triggered, assess management’s impairment review (recoverable amount = higher of fair value less costs of disposal and value in use).",Test of Details,Valuation,Y,FRS102
+Property plant and equipment,"Inspect purchase documents, title deeds to confirm ownership rights.",Test of Details,Rights & obligations,Y,FRS102
+Property plant and equipment,Check whether assets are pledged as security and ensure appropriate disclosure.,Test of Details,Rights & obligations,Y,FRS102
+Property plant and equipment,Review supplier contracts and insurance policies for indications of ownership.,Test of Details,Rights & obligations,Y,FRS102
+Intangible assets,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Intangible assets,Obtain and review the intangible asset register and reconcile it to the general ledger/trial balance.,Test of Details,Completeness,Y,FRS102
+Intangible assets,Inspect R&D expense accounts and other operating expenses to ensure items that meet recognition criteria under IAS 38 / FRS 102 Section 18 have not been omitted.,Test of Details,Completeness,Y,FRS102
+Intangible assets,"Review board minutes, contracts, and legal filings (e.g., patents, licenses) for unrecorded intangibles.",Test of Details,Completeness,Y,FRS102
+Intangible assets,Verify that intangibles are correctly classified between acquired and internally generated.,Test of Details,Classification,Y,FRS102
+Intangible assets,"Ensure software, licenses, brands, and goodwill are presented in the correct category.",Test of Details,Classification,Y,FRS102
+Intangible assets,"Check that development costs capitalised meet recognition criteria, while research costs are expensed.",Test of Details,Classification,Y,FRS102
+Intangible assets,Review financial statements to ensure intangible assets are separately disclosed from PPE.,Test of Details,Presentation,Y,FRS102
+Intangible assets,"Check disclosure of accounting policies, amortisation methods, useful lives, impairment testing policies, and restrictions on title.",Test of Details,Presentation,Y,FRS102
+Intangible assets,Verify disclosure of internally generated intangible assets and commitments for acquisition.,Test of Details,Presentation,Y,FRS102
+Intangible assets,"Inspect contracts, registration documents (patents, licenses, trademarks), or invoices to verify existence of recognised intangible assets.",Test of Details,Existence,Y,FRS102
+Intangible assets,"For internally generated development assets, review project documentation and approvals.",Test of Details,Existence,Y,FRS102
+Intangible assets,"Test a sample of capitalised costs (e.g., software development costs, licenses) to ensure only directly attributable costs are included.",Test of Details,Valuation,Y,FRS102
+Intangible assets,Recalculate amortisation charges and verify consistency with useful lives and policies.,Test of Details,Valuation,Y,FRS102
+Intangible assets,"Review management’s impairment assessments, especially for indefinite-life intangibles and goodwill.",Test of Details,Valuation,Y,FRS102
+Intangible assets,"Challenge assumptions used in impairment models (e.g., cash flow forecasts, discount rates, growth rates).",Test of Details,Valuation,Y,FRS102
+Intangible assets,"Inspect legal agreements, contracts, or registration certificates to confirm ownership rights and control over the intangible.",Test of Details,Rights & obligations,Y,FRS102
+Intangible assets,"Verify that the entity has the right to use the asset (e.g., software licenses are in entity’s name and valid at year-end).",Test of Details,Rights & obligations,Y,FRS102
+Intangible assets,Check for disclosure of restrictions or pledged intangible assets.,Test of Details,Rights & obligations,Y,FRS102
+Investments (financial assets),Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Investments (financial assets),Obtain a complete list of all investments from management and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Investments (financial assets),Review post-year-end transactions to identify any investments purchased before year-end but not recorded.,Test of Details,Completeness,Y,FRS102
+Investments (financial assets),"Inspect confirmations from brokers, custodians, and fund managers to ensure all investments are included.",Test of Details,Completeness,Y,FRS102
+Investments (financial assets),"Verify the classification of investments into short-term, long-term, available-for-sale, held-to-maturity, or trading.",Test of Details,Classification,Y,FRS102
+Investments (financial assets),"Review board minutes or management plans for intentions regarding the investment (e.g., to hold, sell, or trade).",Test of Details,Classification,Y,FRS102
+Investments (financial assets),Check consistency with prior year and accounting policy.,Test of Details,Classification,Y,FRS102
+Investments (financial assets),"Review disclosures in the notes, including types of investments, fair value, and any restrictions.",Test of Details,Presentation,Y,FRS102
+Investments (financial assets),"Check for proper aggregation or segregation of investments (e.g., related parties, associates).",Test of Details,Presentation,Y,FRS102
+Investments (financial assets),"Confirm presentation of income (dividends, interest) in the correct line items.",Test of Details,Presentation,Y,FRS102
+Investments (financial assets),"Obtain confirmations directly from custodians, brokers, or counterparties.",Test of Details,Existence,Y,FRS102
+Investments (financial assets),Perform physical inspection of certificates (if applicable).,Test of Details,Existence,Y,FRS102
+Investments (financial assets),Trace recorded investments in the ledger to supporting documents or market platforms.,Test of Details,Existence,Y,FRS102
+Investments (financial assets),Recalculate fair value or market value of investments using quoted prices or valuation models.,Test of Details,Valuation,Y,FRS102
+Investments (financial assets),Review impairment assessments for investments not at fair value.,Test of Details,Valuation,Y,FRS102
+Investments (financial assets),Evaluate appropriateness of foreign currency translation for investments denominated in foreign currency.,Test of Details,Valuation,Y,FRS102
+Investments (financial assets),Test accuracy of amortised cost calculations for held-to-maturity instruments.,Test of Details,Valuation,Y,FRS102
+Investments (financial assets),"Review title deeds, contracts, or custodial agreements to confirm ownership.",Test of Details,Rights & obligations,Y,FRS102
+Investments (financial assets),Examine board resolutions or agreements for restrictions on investments.,Test of Details,Rights & obligations,Y,FRS102
+Investments (financial assets),Ensure pledged investments are properly disclosed.,Test of Details,Rights & obligations,Y,FRS102
+Investments in subsidaries,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Investments in subsidaries,Obtain a complete list of all subsidiaries from management and reconcile with the investment ledger.,Test of Details,Completeness,Y,FRS102
+Investments in subsidaries,Inspect board minutes or corporate registry filings for subsidiaries incorporated or acquired during the year.,Test of Details,Completeness,Y,FRS102
+Investments in subsidaries,Verify that all subsidiaries required to be consolidated are included (where applicable).,Test of Details,Completeness,Y,FRS102
+Investments in subsidaries,Confirm that investments in subsidiaries are classified as subsidiaries rather than associates or joint ventures.,Test of Details,Classification,Y,FRS102
+Investments in subsidaries,Review management intention and control assessment to support classification.,Test of Details,Classification,Y,FRS102
+Investments in subsidaries,Verify that investments in subsidiaries are properly presented in the parent company financial statements.,Test of Details,Presentation,Y,FRS102
+Investments in subsidaries,"Review disclosures about the nature, country of incorporation, and proportion of ownership.",Test of Details,Presentation,Y,FRS102
+Investments in subsidaries,"Inspect certificates of incorporation, share certificates, or corporate registry filings to confirm existence of subsidiaries.",Test of Details,Existence,Y,FRS102
+Investments in subsidaries,Confirm investment balances with subsidiary financial statements or share capital records.,Test of Details,Existence,Y,FRS102
+Investments in subsidaries,Check that investments in subsidiaries are valued at cost less impairment.,Test of Details,Valuation,Y,FRS102
+Investments in subsidaries,"Review subsidiary financial statements for impairment indicators. Where impairment indicators exists, obtain management's impairment assessment and assess the appropriateness of the judgements and assumptions considered in those estimates.",Test of Details,Valuation,Y,FRS102
+Investments in subsidaries,Verify adjustments for fair value or impairment under applicable standards.,Test of Details,Valuation,Y,FRS102
+Investments in subsidaries,"Inspect legal documents, share certificates, or agreements to confirm ownership and control.",Test of Details,Rights & obligations,Y,FRS102
+Investments in subsidaries,"Check for restrictions, pledges, or encumbrances on shares of subsidiaries.",Test of Details,Rights & obligations,Y,FRS102
+Investments in subsidaries,Review board resolutions authorizing significant transactions with subsidiaries.,Test of Details,Rights & obligations,Y,FRS102
+Inventory,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Inventory,Obtain a complete inventory listing and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Inventory,Review purchase records and goods received notes for unrecorded inventory.,Test of Details,Completeness,Y,FRS102
+Inventory,Perform cut-off testing at year-end to ensure all inventory on hand is recorded.,Test of Details,Completeness,Y,FRS102
+Inventory,"Verify the classification of inventory into raw materials, work-in-progress, and finished goods.",Test of Details,Classification,Y,FRS102
+Inventory,Check that inventory is not misclassified as expenses or other assets.,Test of Details,Classification,Y,FRS102
+Inventory,Review consistency with prior year and accounting policy.,Test of Details,Classification,Y,FRS102
+Inventory,"Review financial statement presentation of inventory, including notes on valuation methods, pledged inventory, and any restrictions.",Test of Details,Presentation,Y,FRS102
+Inventory,Check that inventory is presented separately from other assets.,Test of Details,Presentation,Y,FRS102
+Inventory,Perform inventory count at year-end. Where inventory count is not performed on year-date perform roll-forward or roll back procedures as applicable.,Test of Details,Existence,Y,FRS102
+Inventory,Trace inventory quantities to the inventory records and discuss with management for any material differences,Test of Details,Existence,Y,FRS102
+Inventory,"Confirm inventory held by third parties, such as warehouses or in transit. For in-transit inventory, ensure that the entity can record the inventory on its balance sheet as per inco terms.",Test of Details,Existence,Y,FRS102
+Inventory,"Review inventory costing methods (FIFO, weighted average, or standard cost) and ensure consistent application.",Test of Details,Valuation,Y,FRS102
+Inventory,"Test calculations for cost, net realizable value, and write-downs for obsolete or slow-moving inventory.",Test of Details,Valuation,Y,FRS102
+Inventory,Assess adequacy of inventory provisions.,Test of Details,Valuation,Y,FRS102
+Inventory,"Inspect purchase invoices, contracts, and delivery documents to confirm legal title to inventory.",Test of Details,Rights & obligations,Y,FRS102
+Inventory,Check for any pledged inventory or restrictions on ownership.,Test of Details,Rights & obligations,Y,FRS102
+Inventory,Review agreements with third parties storing inventory on behalf of the entity.,Test of Details,Rights & obligations,Y,FRS102
+Cash and Cash equivalents,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Cash and Cash equivalents,"Obtain a complete list of all bank accounts, cash in hand, and short-term deposits.",Test of Details,Completeness,Y,FRS102
+Cash and Cash equivalents,Reconcile bank balances per the general ledger to bank statements and bank confirmations.,Test of Details,Completeness,Y,FRS102
+Cash and Cash equivalents,Review subsequent bank statements and cash receipts to identify unrecorded transactions.,Test of Details,Completeness,Y,FRS102
+Cash and Cash equivalents,"Verify that cash and cash equivalents are classified correctly, e.g., cash in hand, current account, short-term highly liquid investments.",Test of Details,Classification,Y,FRS102
+Cash and Cash equivalents,Check consistency with prior year and accounting policies.,Test of Details,Classification,Y,FRS102
+Cash and Cash equivalents,Review presentation in the statement of financial position and cash flow statement.,Test of Details,Presentation,Y,FRS102
+Cash and Cash equivalents,"Check disclosures about restrictions on cash, pledged cash, or compensating balances.",Test of Details,Presentation,Y,FRS102
+Cash and Cash equivalents,Confirm cash balances directly with banks through bank confirmations.,Test of Details,Existence,Y,FRS102
+Cash and Cash equivalents,Observe cash on hand counts at year-end.,Test of Details,Existence,Y,FRS102
+Cash and Cash equivalents,Reconcile cash balances to bank statements and cash book.,Test of Details,Existence,Y,FRS102
+Cash and Cash equivalents,Review bank ledgers during the year and test for any unusual or large transactions.,Test of Details,Existence,Y,FRS102
+Cash and Cash equivalents,Check that cash and cash equivalents are recorded at face value.,Test of Details,Valuation,Y,FRS102
+Cash and Cash equivalents,Verify foreign currency balances are translated using the correct year-end exchange rates.,Test of Details,Valuation,Y,FRS102
+Cash and Cash equivalents,Investigate any bank overdrafts classified within cash equivalents.,Test of Details,Valuation,Y,FRS102
+Cash and Cash equivalents,"Inspect bank statements, bank confirmations, and agreements to confirm entity’s ownership of cash.",Test of Details,Rights & obligations,Y,FRS102
+Cash and Cash equivalents,Review any pledged cash or restrictions on use.,Test of Details,Rights & obligations,Y,FRS102
+Cash and Cash equivalents,Check authorizations for bank accounts and signatories.,Test of Details,Rights & obligations,Y,FRS102
+Trade debtors,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Trade debtors,Obtain a complete list of trade debtors from the subsidiary ledger and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Trade debtors,Review sales cutoff at year-end to ensure all sales are recorded in the correct period.,Test of Details,Completeness,Y,FRS102
+Trade debtors,Inspect subsequent receipts after year-end to identify unrecorded receivables.,Test of Details,Completeness,Y,FRS102
+Trade debtors,Verify trade receivables are correctly classified as current assets.,Test of Details,Classification,Y,FRS102
+Trade debtors,Check for misclassification with other receivables or prepayments.,Test of Details,Classification,Y,FRS102
+Trade debtors,Confirm consistent application of accounting policies.,Test of Details,Classification,Y,FRS102
+Trade debtors,"Review disclosures relating to trade debtors, including aging, credit risk, and related party balances.",Test of Details,Presentation,Y,FRS102
+Trade debtors,Check that trade receivables are presented separately from other receivables.,Test of Details,Presentation,Y,FRS102
+Trade debtors,Send confirmations to debtors to verify balances. Select the samples for confirmations based on the audit methodology.,Test of Details,Existence,Y,FRS102
+Trade debtors,"Inspect supporting documentation, such as invoices and shipping documents, for selected balances.",Test of Details,Existence,Y,FRS102
+Trade debtors,Perform cutoff tests around year-end.,Test of Details,Existence,Y,FRS102
+Trade debtors,Perform alternative procedures such as testing underlying invoices and post year-end receipts where the confirmations are not received.,Test of Details,Existence,Y,FRS102
+Trade debtors,Review allowance for expected credit losses or bad debts provision. Challenge management's assumptions and judgements on the recoverability of balances.,Test of Details,Valuation,Y,FRS102
+Trade debtors,Test the aging of receivables and the reasonableness of write-offs.,Test of Details,Valuation,Y,FRS102
+Trade debtors,Check that receivables are recorded net of any allowances.,Test of Details,Valuation,Y,FRS102
+Trade debtors,"Inspect contracts, invoices, and sales agreements to confirm the entity’s right to receive payment.",Test of Details,Rights & obligations,Y,FRS102
+Trade debtors,"Check for factoring arrangements, pledged receivables, or restrictions on collection.",Test of Details,Rights & obligations,Y,FRS102
+Prepayments and accrued income,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Prepayments and accrued income,Obtain a complete listing of prepayments and accrued income.,Test of Details,Completeness,Y,FRS102
+Prepayments and accrued income,"Review supporting invoices, contracts, or schedules to ensure all items are recorded.",Test of Details,Completeness,Y,FRS102
+Prepayments and accrued income,Check that all prepayments and accruals at year-end are included.,Test of Details,Completeness,Y,FRS102
+Prepayments and accrued income,Verify correct classification of prepayments and accrued income as current or non-current assets.,Test of Details,Classification,Y,FRS102
+Prepayments and accrued income,Ensure amounts are not misclassified as expenses or receivables.,Test of Details,Classification,Y,FRS102
+Prepayments and accrued income,Check consistent application of accounting policies.,Test of Details,Classification,Y,FRS102
+Prepayments and accrued income,"Review disclosures relating to prepayments and accrued income, including nature and amount.",Test of Details,Presentation,Y,FRS102
+Prepayments and accrued income,Ensure they are presented separately from other assets and liabilities.,Test of Details,Presentation,Y,FRS102
+Prepayments and accrued income,"Inspect supporting documentation, such as invoices, contracts, and payment records, for selected prepayments.",Test of Details,Existence,Y,FRS102
+Prepayments and accrued income,Confirm with third parties where applicable.,Test of Details,Existence,Y,FRS102
+Prepayments and accrued income,Review amortization of prepayments and calculation of accrued income.,Test of Details,Valuation,Y,FRS102
+Prepayments and accrued income,Check that amounts are recognized in accordance with accounting policies and adjusted for impairment or uncollectibility where applicable.,Test of Details,Valuation,Y,FRS102
+Prepayments and accrued income,"Inspect supporting contracts, invoices, and agreements to confirm the entity’s rights to prepayments or accrued income.",Test of Details,Rights & obligations,Y,FRS102
+Prepayments and accrued income,"Check for any restrictions, pledges, or obligations associated with these amounts.",Test of Details,Rights & obligations,Y,FRS102
+Deferred tax,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Deferred tax,Obtain a detailed schedule of deferred tax assets from management and reconcile to the general ledger.,Test of Details,Completeness,Y,FRS102
+Deferred tax,"Review temporary differences, carryforwards, and adjustments for completeness.",Test of Details,Completeness,Y,FRS102
+Deferred tax,"Inspect tax computations, tax returns, and supporting documents to ensure all DTAs are recorded.",Test of Details,Completeness,Y,FRS102
+Deferred tax,Verify correct classification of deferred tax assets as non-current.,Test of Details,Classification,Y,FRS102
+Deferred tax,Check proper separation from deferred tax liabilities.,Test of Details,Classification,Y,FRS102
+Deferred tax,Ensure consistency with prior year and accounting policy.,Test of Details,Classification,Y,FRS102
+Deferred tax,"Review disclosures of deferred tax assets, including nature, movement, and unrecognized amounts.",Test of Details,Presentation,Y,FRS102
+Deferred tax,Check presentation in the statement of financial position and notes.,Test of Details,Presentation,Y,FRS102
+Deferred tax,"Inspect supporting evidence for DTAs, including temporary differences schedules, tax returns, and accounting records.",Test of Details,Existence,Y,FRS102
+Deferred tax,Confirm the existence of deductible temporary differences and unused tax losses.,Test of Details,Existence,Y,FRS102
+Deferred tax,Assess the recoverability of DTAs based on future taxable profits.,Test of Details,Valuation,Y,FRS102
+Deferred tax,Review management assumptions and forecasts used for realization.,Test of Details,Valuation,Y,FRS102
+Deferred tax,"Test calculations for accuracy, including tax rates and timing of reversal.",Test of Details,Valuation,Y,FRS102
+Deferred tax,Consider impairment of deferred tax assets if recovery is uncertain.,Test of Details,Valuation,Y,FRS102
+Deferred tax,Inspect relevant tax filings and correspondence to confirm the entity has rights to the tax benefits.,Test of Details,Rights & obligations,Y,FRS102
+Deferred tax,Review any agreements or restrictions that may affect recognition of DTAs.,Test of Details,Rights & obligations,Y,FRS102
+Amount owed by group undertakings,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Amount owed by group undertakings,Obtain a complete list of amounts owed by group undertakings and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Amount owed by group undertakings,Review intra-group transactions and reconciliations to ensure all balances are recorded.,Test of Details,Completeness,Y,FRS102
+Amount owed by group undertakings,Inspect post-year-end receipts to identify unrecorded amounts.,Test of Details,Completeness,Y,FRS102
+Amount owed by group undertakings,Verify that intercompany balances are correctly classified as current or non-current.,Test of Details,Classification,Y,FRS102
+Amount owed by group undertakings,"Check for misclassification with trade receivables, prepayments, or other assets.",Test of Details,Classification,Y,FRS102
+Amount owed by group undertakings,Confirm consistent application of accounting policy.,Test of Details,Classification,Y,FRS102
+Amount owed by group undertakings,"Review disclosures of intercompany balances, including nature, terms, and any related party relationships.",Test of Details,Presentation,Y,FRS102
+Amount owed by group undertakings,Check that amounts are presented separately from other receivables.,Test of Details,Presentation,Y,FRS102
+Amount owed by group undertakings,Confirm balances directly with the respective group entities.,Test of Details,Existence,Y,FRS102
+Amount owed by group undertakings,"Inspect supporting documentation such as intercompany invoices, agreements, and ledger reconciliations. Test post year-end receipts where relevant.",Test of Details,Existence,Y,FRS102
+Amount owed by group undertakings,Perform cutoff testing for year-end transactions.,Test of Details,Existence,Y,FRS102
+Amount owed by group undertakings,Review intercompany balances for recoverability and consider any allowance for doubtful debts.,Test of Details,Valuation,Y,FRS102
+Amount owed by group undertakings,Test accuracy of currency translation for balances denominated in foreign currency.,Test of Details,Valuation,Y,FRS102
+Amount owed by group undertakings,Ensure proper elimination adjustments in consolidation if applicable.,Test of Details,Valuation,Y,FRS102
+Amount owed by group undertakings,"Inspect intercompany agreements, contracts, or board resolutions to confirm the entity’s right to collect the balances.",Test of Details,Rights & obligations,Y,FRS102
+Amount owed by group undertakings,"Check for any restrictions, offsets, or settlement arrangements.",Test of Details,Rights & obligations,Y,FRS102
+Other debtors,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Other debtors,Obtain a complete listing of other debtors and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Other debtors,"Review supporting invoices, agreements, and correspondence to ensure all amounts are recorded.",Test of Details,Completeness,Y,FRS102
+Other debtors,Inspect post-year-end receipts to identify unrecorded balances.,Test of Details,Completeness,Y,FRS102
+Other debtors,Verify that other debtors are correctly classified as current or non-current assets.,Test of Details,Classification,Y,FRS102
+Other debtors,"Check that balances are not misclassified as trade receivables, prepayments, or investments.",Test of Details,Classification,Y,FRS102
+Other debtors,Confirm consistency with accounting policies and prior year.,Test of Details,Classification,Y,FRS102
+Other debtors,"Review disclosures for other debtors, including nature of balances, related party transactions, and aging.",Test of Details,Presentation,Y,FRS102
+Other debtors,Ensure balances are presented separately from trade receivables and other assets.,Test of Details,Presentation,Y,FRS102
+Other debtors,"Inspect supporting documentation such as invoices, agreements, and correspondence.",Test of Details,Existence,Y,FRS102
+Other debtors,Send confirmations to debtors where material and appropriate.,Test of Details,Existence,Y,FRS102
+Other debtors,Verify cutoff by checking post-year-end receipts.,Test of Details,Existence,Y,FRS102
+Other debtors,Assess recoverability of other debtors and consider allowances for doubtful debts.,Test of Details,Valuation,Y,FRS102
+Other debtors,Test calculations for accuracy and reasonableness.,Test of Details,Valuation,Y,FRS102
+Other debtors,Ensure amounts are recorded net of any provisions.,Test of Details,Valuation,Y,FRS102
+Other debtors,"Inspect agreements, contracts, or invoices to confirm the entity’s rights to collect the balances.",Test of Details,Rights & obligations,Y,FRS102
+Other debtors,"Check for any restrictions, pledges, or offset arrangements affecting the balances.",Test of Details,Rights & obligations,Y,FRS102
+Loans and borrowings,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Loans and borrowings,Obtain a complete schedule of all loans and borrowings and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Loans and borrowings,"Review loan agreements, drawdown schedules, and bank statements to ensure all borrowings are recorded. For new borrowings during the year, obtain and review the loan agreements. Similarly for loans closed during the year, obtain and review evidence of closure.",Test of Details,Completeness,Y,FRS102
+Loans and borrowings,Inspect subsequent borrowings or repayments after year-end to identify unrecorded liabilities.,Test of Details,Completeness,Y,FRS102
+Loans and borrowings,Verify correct classification of borrowings as current or non-current based on contractual terms and covenant provisions.,Test of Details,Classification,Y,FRS102
+Loans and borrowings,Check proper classification of interest and finance charges.,Test of Details,Classification,Y,FRS102
+Loans and borrowings,Confirm consistency with accounting policies and prior year.,Test of Details,Classification,Y,FRS102
+Loans and borrowings,"Review presentation of loans and borrowings in the financial statements, including notes on terms, interest rates, maturities, and covenants.",Test of Details,Presentation,Y,FRS102
+Loans and borrowings,"Ensure disclosure of any covenant breaches, waivers, or restrictions imposed by lenders.",Test of Details,Presentation,Y,FRS102
+Loans and borrowings,"Inspect loan agreements, confirmations from lenders, and drawdown schedules to verify balances.",Test of Details,Existence,Y,FRS102
+Loans and borrowings,Trace recorded borrowings to supporting documents and bank statements.,Test of Details,Existence,Y,FRS102
+Loans and borrowings,Recalculate interest accruals and repayments.,Test of Details,Valuation,Y,FRS102
+Loans and borrowings,Check amortized cost or fair value measurement for borrowings under applicable standards.,Test of Details,Valuation,Y,FRS102
+Loans and borrowings,"Assess whether covenant breaches could result in accelerated repayment or penalties, and adjust valuation if necessary.",Test of Details,Valuation,Y,FRS102
+Loans and borrowings,"Inspect loan agreements, board resolutions, and correspondence with lenders to confirm the entity’s obligations.",Test of Details,Rights & obligations,Y,FRS102
+Loans and borrowings,"Review compliance with covenants, including financial ratios and other conditions.",Test of Details,Rights & obligations,Y,FRS102
+Loans and borrowings,"Check for pledges, guarantees, or restrictions triggered by covenants.",Test of Details,Rights & obligations,Y,FRS102
+Loans and borrowings,"Confirm disclosure of any breaches, waivers, or potential consequences.",Test of Details,Rights & obligations,Y,FRS102
+Trade creditors,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Trade creditors,Obtain a complete schedule of trade creditors and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Trade creditors,"Review purchase ledger, invoices, and goods received notes around year-end.",Test of Details,Completeness,Y,FRS102
+Trade creditors,Perform cut-off testing and inspect post-year-end payments to identify unrecorded liabilities.,Test of Details,Completeness,Y,FRS102
+Trade creditors,"Review unmatched purchase orders, supplier statements, and accruals for potential unrecorded liabilities.",Test of Details,Completeness,Y,FRS102
+Trade creditors,Verify that trade creditors are correctly classified as current liabilities.,Test of Details,Classification,Y,FRS102
+Trade creditors,"Check separation from other payables, accruals, or provisions.",Test of Details,Classification,Y,FRS102
+Trade creditors,Confirm consistent application of accounting policy.,Test of Details,Classification,Y,FRS102
+Trade creditors,Review presentation of trade creditors in the financial statements and related notes.,Test of Details,Presentation,Y,FRS102
+Trade creditors,"Check disclosures of terms, aging, related party balances, and other relevant information.",Test of Details,Presentation,Y,FRS102
+Trade creditors,"Inspect supplier statements, invoices, and correspondence to confirm balances.",Test of Details,Existence,Y,FRS102
+Trade creditors,Send confirmations to selected suppliers that are material and in line with the sampling methodology.,Test of Details,Existence,Y,FRS102
+Trade creditors,Perform alternative procedures such as testing underlying invoices and post year-end payments where the confirmations are not received.,Test of Details,Existence,Y,FRS102
+Trade creditors,"Review accuracy of recorded liabilities, including adjustments for discounts, foreign currency, and accrued expenses.",Test of Details,Valuation,Y,FRS102
+Trade creditors,Ensure trade creditors are recorded at the amount expected to settle the obligation.,Test of Details,Valuation,Y,FRS102
+Accruals,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Accruals,Obtain a complete schedule of accruals and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Accruals,Review subsequent payments and invoices to identify unrecorded accruals.,Test of Details,Completeness,Y,FRS102
+Accruals,"Inspect contracts, agreements, and management estimates for year-end obligations.",Test of Details,Completeness,Y,FRS102
+Accruals,Verify that accruals are correctly classified as current or non-current liabilities.,Test of Details,Classification,Y,FRS102
+Accruals,"Check that accruals are not misclassified as payables, provisions, or prepayments.",Test of Details,Classification,Y,FRS102
+Accruals,Confirm consistent application of accounting policy.,Test of Details,Classification,Y,FRS102
+Accruals,"Review disclosures relating to accruals, including nature, amounts, and maturity.",Test of Details,Presentation,Y,FRS102
+Accruals,Ensure accruals are presented separately from other liabilities.,Test of Details,Presentation,Y,FRS102
+Accruals,"Inspect supporting documentation such as invoices, contracts, and correspondence for selected accruals.",Test of Details,Existence,Y,FRS102
+Accruals,Confirm that accruals relate to valid obligations of the entity at year-end.,Test of Details,Existence,Y,FRS102
+Accruals,Review calculations of accruals to ensure amounts are accurate and reasonable.,Test of Details,Valuation,Y,FRS102
+Accruals,Assess management estimates for completeness and consistency.,Test of Details,Valuation,Y,FRS102
+Accruals,Ensure accruals are recorded at amounts expected to settle the obligation.,Test of Details,Valuation,Y,FRS102
+Accruals,"Inspect contracts, agreements, or board resolutions to confirm the entity’s obligations.",Test of Details,Rights & obligations,Y,FRS102
+Accruals,Check for any disputed or contingent liabilities that may affect recognition.,Test of Details,Rights & obligations,Y,FRS102
+Amounts owed to group undertakings,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Amounts owed to group undertakings,Obtain a full schedule of balances owed to group undertakings and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Amounts owed to group undertakings,Review intercompany reconciliations and confirm all balances are captured.,Test of Details,Completeness,Y,FRS102
+Amounts owed to group undertakings,Inspect post-year-end payments or settlements for unrecorded liabilities.,Test of Details,Completeness,Y,FRS102
+Amounts owed to group undertakings,Verify balances are classified correctly as current or non-current liabilities.,Test of Details,Classification,Y,FRS102
+Amounts owed to group undertakings,"Check for misclassification with trade payables, accruals, or loans.",Test of Details,Classification,Y,FRS102
+Amounts owed to group undertakings,Ensure consistent application of accounting policies.,Test of Details,Classification,Y,FRS102
+Amounts owed to group undertakings,"Review disclosures for related party balances, including nature, terms, and repayment conditions.",Test of Details,Presentation,Y,FRS102
+Amounts owed to group undertakings,Ensure balances owed to group undertakings are presented separately from other payables.,Test of Details,Presentation,Y,FRS102
+Amounts owed to group undertakings,Confirm disclosure of any unusual terms or conditions.,Test of Details,Presentation,Y,FRS102
+Amounts owed to group undertakings,"Confirm balances directly with group entities, where practical.",Test of Details,Existence,Y,FRS102
+Amounts owed to group undertakings,"Inspect intercompany agreements, invoices, and reconciliations.",Test of Details,Existence,Y,FRS102
+Amounts owed to group undertakings,Perform cut-off tests around year-end to confirm liabilities are recorded in the right period.,Test of Details,Existence,Y,FRS102
+Amounts owed to group undertakings,Reconcile balances with counterparties and agree to supporting records.,Test of Details,Valuation,Y,FRS102
+Amounts owed to group undertakings,Check for accuracy of foreign currency translation where balances are denominated in other currencies.,Test of Details,Valuation,Y,FRS102
+Amounts owed to group undertakings,Assess whether any accrued interest or charges are included.,Test of Details,Valuation,Y,FRS102
+Amounts owed to group undertakings,Inspect loan or intercompany agreements to confirm obligations.,Test of Details,Rights & obligations,Y,FRS102
+Amounts owed to group undertakings,"Check for guarantees, restrictions, or unusual settlement terms.",Test of Details,Rights & obligations,Y,FRS102
+Amounts owed to group undertakings,"Ensure disclosure of subordination, set-off, or covenant arrangements, if applicable.",Test of Details,Rights & obligations,Y,FRS102
+Other taxation and social security payable,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Other taxation and social security payable,Obtain a schedule of taxation and social security payables and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Other taxation and social security payable,"Review VAT returns, PAYE/NIC submissions, and tax correspondence to ensure all liabilities are recorded.",Test of Details,Completeness,Y,FRS102
+Other taxation and social security payable,Inspect payments made after year-end to identify unrecorded liabilities.,Test of Details,Completeness,Y,FRS102
+Other taxation and social security payable,Verify balances are correctly classified as current liabilities.,Test of Details,Classification,Y,FRS102
+Other taxation and social security payable,Check separation from corporation tax payable and trade payables.,Test of Details,Classification,Y,FRS102
+Other taxation and social security payable,Review disclosures in the notes to ensure “Other taxation and social security” is presented separately from corporation tax and trade creditors.,Test of Details,Presentation,Y,FRS102
+Other taxation and social security payable,Ensure disclosure of material balances and any contingent liabilities relating to tax disputes.,Test of Details,Presentation,Y,FRS102
+Other taxation and social security payable,"Inspect VAT returns, HMRC correspondence, PAYE/NIC schedules, and other tax filings to verify balances.",Test of Details,Existence,Y,FRS102
+Other taxation and social security payable,Trace recorded liabilities to underlying tax returns or payroll records.,Test of Details,Existence,Y,FRS102
+Other taxation and social security payable,Recalculate VAT payable or receivable from underlying accounting records.,Test of Details,Valuation,Y,FRS102
+Other taxation and social security payable,Reconcile PAYE/NIC amounts to payroll records.,Test of Details,Valuation,Y,FRS102
+Other taxation and social security payable,Check provisions for interest/penalties if returns are late or under dispute.,Test of Details,Valuation,Y,FRS102
+Other taxation and social security payable,Review correspondence with HMRC and confirm the entity’s legal obligations.,Test of Details,Rights & obligations,Y,FRS102
+Other taxation and social security payable,Check if any liabilities are under appeal or dispute and assess whether disclosure is required.,Test of Details,Rights & obligations,Y,FRS102
+Other creditors,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Other creditors,Obtain a detailed schedule of other creditors and reconcile to the general ledger.,Test of Details,Completeness,Y,FRS102
+Other creditors,Review post year-end cash disbursements and bank statements for payments relating to pre-year-end obligations.,Test of Details,Completeness,Y,FRS102
+Other creditors,Inspect minutes of meetings and legal correspondence for unrecorded liabilities.,Test of Details,Completeness,Y,FRS102
+Other creditors,Review balances to ensure they are classified correctly between current and non-current liabilities.,Test of Details,Classification,Y,FRS102
+Other creditors,"Check no misclassification between accruals, loans, or trade creditors.",Test of Details,Classification,Y,FRS102
+Other creditors,"Confirm that “other creditors” are separately disclosed in the notes, with material items explained.",Test of Details,Presentation,Y,FRS102
+Other creditors,Check for compliance with related party disclosure if the creditor is connected.,Test of Details,Presentation,Y,FRS102
+Other creditors,"Obtain supporting documentation (invoices, contracts, agreements) for recorded balances.",Test of Details,Existence,Y,FRS102
+Other creditors,"Perform direct confirmation procedures for significant creditors, where relevant.",Test of Details,Existence,Y,FRS102
+Other creditors,Test accuracy of balances by reconciling to supporting documentation.,Test of Details,Valuation,Y,FRS102
+Other creditors,"Recalculate any accrued interest, fees, or charges included.",Test of Details,Valuation,Y,FRS102
+Other creditors,"If foreign currency denominated, test translation to year-end rates.",Test of Details,Valuation,Y,FRS102
+Other creditors,"Review contracts, correspondence, and supporting evidence to confirm the entity has an obligation to settle.",Test of Details,Rights & obligations,Y,FRS102
+Other creditors,"Check for restrictions, contingent obligations, or guarantees that require disclosure.",Test of Details,Rights & obligations,Y,FRS102
+Deferred revenue,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Deferred revenue,Obtain a complete schedule of deferred revenue balances and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Deferred revenue,"Review customer contracts, invoices, and payment schedules to ensure all unearned income is recorded.",Test of Details,Completeness,Y,FRS102
+Deferred revenue,Inspect post-year-end revenue recognition to identify unrecorded deferrals.,Test of Details,Completeness,Y,FRS102
+Deferred revenue,Verify that deferred revenue is correctly classified as a current or non-current liability depending on when it will be recognized.,Test of Details,Classification,Y,FRS102
+Deferred revenue,Check separation from trade payables or accrued income.,Test of Details,Classification,Y,FRS102
+Deferred revenue,"Review disclosures relating to deferred revenue, including nature, amounts, and timing of recognition.",Test of Details,Presentation,Y,FRS102
+Deferred revenue,Ensure deferred revenue is presented separately from other liabilities.,Test of Details,Presentation,Y,FRS102
+Deferred revenue,"Inspect supporting contracts, invoices, and payment records.",Test of Details,Existence,Y,FRS102
+Deferred revenue,Confirm customer payments that relate to deferred revenue exist.,Test of Details,Existence,Y,FRS102
+Deferred revenue,Perform cutoff testing to verify balances relate to the correct reporting period.,Test of Details,Existence,Y,FRS102
+Deferred revenue,"Recalculate deferred revenue based on contract terms, payment received, and revenue recognition policy.",Test of Details,Valuation,Y,FRS102
+Deferred revenue,Ensure amounts are recorded accurately and consistently.,Test of Details,Valuation,Y,FRS102
+Deferred revenue,"Review any discounts, rebates, or performance obligations that affect recognition.",Test of Details,Valuation,Y,FRS102
+Deferred revenue,Inspect contracts and agreements to confirm the entity has an obligation to deliver goods or services in exchange for the deferred revenue.,Test of Details,Rights & obligations,Y,FRS102
+Deferred revenue,Check whether there are any restrictions or conditions affecting recognition or repayment.,Test of Details,Rights & obligations,Y,FRS102
+Corporation tax payable,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Corporation tax payable,Obtain a schedule of corporation tax payable and reconcile with the general ledger.,Test of Details,Completeness,Y,FRS102
+Corporation tax payable,Review tax computations and correspondence with HMRC to ensure all liabilities are recorded.,Test of Details,Completeness,Y,FRS102
+Corporation tax payable,Inspect payments made after year-end for unrecorded liabilities.,Test of Details,Completeness,Y,FRS102
+Corporation tax payable,Verify that corporation tax payable is classified correctly as a current liability.,Test of Details,Classification,Y,FRS102
+Corporation tax payable,Ensure separation from deferred tax and other tax payables.,Test of Details,Classification,Y,FRS102
+Corporation tax payable,"Review financial statement presentation, including notes on corporation tax.",Test of Details,Presentation,Y,FRS102
+Corporation tax payable,"Ensure disclosures include basis of calculation, payments made, and any outstanding disputes or uncertainties.",Test of Details,Presentation,Y,FRS102
+Corporation tax payable,"Inspect supporting tax computations, tax returns, and HMRC correspondence to verify balances.",Test of Details,Existence,Y,FRS102
+Corporation tax payable,Trace recorded liabilities to supporting documents.,Test of Details,Existence,Y,FRS102
+Corporation tax payable,"Recalculate corporation tax liability based on taxable profits, tax rates, and adjustments.",Test of Details,Valuation,Y,FRS102
+Corporation tax payable,"Review provisions for uncertain tax positions, interest, and penalties.",Test of Details,Valuation,Y,FRS102
+Corporation tax payable,Review correspondence with HMRC and relevant agreements to confirm the entity’s obligation to pay corporation tax.,Test of Details,Rights & obligations,Y,FRS102
+Corporation tax payable,Check for any disputes or deferred payment arrangements.,Test of Details,Rights & obligations,Y,FRS102
+Share capital,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Share capital,Obtain the company’s share register and reconcile to the general ledger.,Test of Details,Completeness,Y,FRS102
+Share capital,"Inspect board minutes, incorporation documents, and share allotment records to ensure all issued shares are recorded.",Test of Details,Completeness,Y,FRS102
+Share capital,Review share issuance and buyback transactions during the year.,Test of Details,Completeness,Y,FRS102
+Share capital,"Verify the classification of share capital (e.g., ordinary shares, preference shares) in the balance sheet.",Test of Details,Classification,Y,FRS102
+Share capital,"Check separation from share premium, reserves, and retained earnings.",Test of Details,Classification,Y,FRS102
+Share capital,"Review disclosures in the notes, including number and type of shares issued, par value, rights attached to shares, and movements during the year.",Test of Details,Presentation,Y,FRS102
+Share capital,"Inspect share certificates, share register, and incorporation documents to verify issued shares.",Test of Details,Existence,Y,FRS102
+Share capital,Confirm with the company secretary or registrar that recorded share capital exists.,Test of Details,Existence,Y,FRS102
+Share capital,Confirm that share capital is recorded at the correct nominal (par) value.,Test of Details,Valuation,Y,FRS102
+Share capital,"Check calculations of share premium, if applicable, and ensure it is correctly recorded.",Test of Details,Valuation,Y,FRS102
+Share capital,"Inspect articles of association, shareholder agreements, and board minutes to confirm rights attached to shares.",Test of Details,Rights & obligations,Y,FRS102
+Share capital,"Check for restrictions, buyback obligations, or special rights of certain classes of shares.",Test of Details,Rights & obligations,Y,FRS102
+Reserves,Review changes from PY if either >PM or 30% and obtain explanation for movement,Analytical Review,Completeness,Y,FRS102
+Reserves,Obtain the opening balance of retained earnings from prior year audited financial statements.,Test of Details,Completeness,Y,FRS102
+Reserves,"Reconcile movements in retained earnings during the year with the general ledger, including profit or loss, dividends, and prior period adjustments.",Test of Details,Completeness,Y,FRS102
+Reserves,Verify that retained earnings are properly classified within equity.,Test of Details,Classification,Y,FRS102
+Reserves,"Check for correct separation from other reserves, share capital, and other components of equity.",Test of Details,Classification,Y,FRS102
+Reserves,Review presentation of retained earnings in the statement of changes in equity and notes.,Test of Details,Presentation,Y,FRS102
+Reserves,"Check disclosures regarding dividends, transfers to reserves, and any restrictions on retained earnings.",Test of Details,Presentation,Y,FRS102
+Reserves,Inspect reconciliations from the opening balance to the closing balance.,Test of Details,Existence,Y,FRS102
+Reserves,Verify that movements in retained earnings are supported by audited profit or loss accounts and dividend records.,Test of Details,Existence,Y,FRS102
+Reserves,"Review calculations of profit or loss allocated to retained earnings, dividends declared, and prior period adjustments.",Test of Details,Valuation,Y,FRS102
+Reserves,Check for any overstatements or misstatements affecting equity.,Test of Details,Valuation,Y,FRS102
+Reserves,"Verify whether any portion of retained earnings is subject to legal, contractual, or regulatory restrictions.",Test of Details,Rights & obligations,Y,FRS102
+Reserves,Review board minutes for dividend approvals and transfers to reserves.,Test of Details,Rights & obligations,Y,FRS102
