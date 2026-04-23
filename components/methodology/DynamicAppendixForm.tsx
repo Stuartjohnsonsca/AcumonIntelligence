@@ -386,6 +386,28 @@ export function DynamicAppendixForm({
                           </tr>
                         );
                       }
+                      // Description rows — question text spans every
+                      // column rather than sitting narrow in column 0.
+                      // Triggered by any of:
+                      //   - q.isBold        (explicit admin flag from the schedule editor)
+                      //   - 'textarea' / 'text' inputType with NO answer
+                      //     cells to fill — i.e. a pure prose anchor
+                      //     like "Audit strategy" above a table of
+                      //     detail rows. Heuristic: when isBold is set
+                      //     the admin has said "this is a header / label
+                      //     row, not a data row". Matches how
+                      //     CompletionPanel skips input cells for
+                      //     isBold rows today.
+                      if (q.isBold) {
+                        return (
+                          <tr key={q.id} className="bg-slate-50 border-b border-slate-200">
+                            <td colSpan={tableHeaders.length} className="px-3 py-2 text-[11px] text-slate-700 leading-snug font-bold whitespace-pre-wrap">
+                              {q.questionText}
+                              {q.isRequired && <span className="text-red-400 ml-0.5">*</span>}
+                            </td>
+                          </tr>
+                        );
+                      }
                       const questionSlugT = (q as any).key || slugifyQuestionText(q.questionText) || q.id;
                       return (
                         <tr key={q.id} className={`group ${idx > 0 ? 'border-t border-slate-100' : ''} ${q.isBold ? 'bg-slate-50' : ''}`}>

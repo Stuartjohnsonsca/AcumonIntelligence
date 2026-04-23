@@ -662,6 +662,13 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 Required
                               </label>
                               <label
+                                className="flex items-center gap-1.5 text-xs text-slate-600"
+                                title="In a multi-column table section (3/4/5 columns), this row shows the description spanning all columns — no answer cells. Useful for section anchors or headline items above detail rows."
+                              >
+                                <input type="checkbox" checked={q.isBold || false} onChange={e => updateQuestion(q.id, { isBold: e.target.checked })} className="w-3.5 h-3.5 rounded" />
+                                Description row (span all columns)
+                              </label>
+                              <label
                                 className="flex items-center gap-1.5 text-xs text-slate-500"
                                 title={
                                   'Cross-reference this question to another schedule, so its value is pulled live from there (read-only here). Format: <schedule>.<questionKey> — e.g.\n' +
