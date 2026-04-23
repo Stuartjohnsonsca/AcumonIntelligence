@@ -50,9 +50,14 @@ export function IndependenceGate({ engagementId, children }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Initial fetch + refetch on demand. EngagementTabs fires
+  // `independence:refetch` right after a successful Start Audit so the
+  // user who clicked Start sees the gate immediately — without this
+  // they'd need to reload the page to pick up the newly-seeded
+  // outstanding row.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    async function load() {
       try {
         const res = await fetch(`/api/engagements/${engagementId}/independence`);
         if (!res.ok) {
@@ -61,14 +66,25 @@ export function IndependenceGate({ engagementId, children }: Props) {
           return;
         }
         const d: StatusResponse = await res.json();
-        if (!cancelled) setData(d);
+        if (!cancelled) { setData(d); setError(null); }
       } catch (err: any) {
         if (!cancelled) setError(err?.message || 'Failed to load independence status');
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    load();
+
+    function onRefetch() { load(); }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('independence:refetch', onRefetch);
+    }
+    return () => {
+      cancelled = true;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('independence:refetch', onRefetch);
+      }
+    };
   }, [engagementId]);
 
   // Not gated — render children immediately.
