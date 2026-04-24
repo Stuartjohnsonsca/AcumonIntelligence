@@ -538,18 +538,23 @@ export function DynamicAppendixForm({
                             const colReferenced = isColumnReferenced(q, colN);
                             const colTitle = colReferenced ? referencedByTooltip(q, colN) : undefined;
                             const refClass = colReferenced ? 'ring-2 ring-red-500 ring-offset-1' : '';
-                            // Per-column config lives on meta.columns
-                            // and describes the NON-label columns
-                            // (index 0 = the column immediately after
-                            // the label). Fall back to the question's
-                            // own inputType so older sections without
-                            // per-column config still render.
-                            const colConfig = meta?.columns?.[ci];
-                            const cellInputType = colConfig?.inputType || q.inputType;
-                            const cellOptions = colConfig?.dropdownOptions && colConfig.dropdownOptions.length > 0
-                              ? colConfig.dropdownOptions
+                            // Per-cell config is ROW-level — each
+                            // question (row) has its own `columns`
+                            // array describing what widget to render
+                            // in each non-label cell. Priority:
+                            //   1. q.columns[ci] (the row's own per-cell config)
+                            //   2. q.inputType + q.dropdownOptions  (row-wide fallback)
+                            // Different rows in the same table can
+                            // therefore mix widgets — a currency row
+                            // and a commentary row sitting side-by-side
+                            // under the same Planning Amount column
+                            // each render their own appropriate input.
+                            const rowColCfg = q.columns?.[ci];
+                            const cellInputType = rowColCfg?.inputType || q.inputType;
+                            const cellOptions = rowColCfg?.dropdownOptions && rowColCfg.dropdownOptions.length > 0
+                              ? rowColCfg.dropdownOptions
                               : q.dropdownOptions;
-                            const cellPlaceholder = colConfig?.placeholder;
+                            const cellPlaceholder = rowColCfg?.placeholder;
                             return (
                               <td key={ci} className="px-2 py-1 align-top" title={colTitle}>
                                 {q.isBold ? null : cellInputType === 'dropdown' && cellOptions ? (
@@ -587,8 +592,8 @@ export function DynamicAppendixForm({
                                     type="number"
                                     value={values[cellKey] === null || values[cellKey] === undefined || values[cellKey] === '' ? '' : Number(values[cellKey])}
                                     onChange={e => handleChange(cellKey, e.target.value === '' ? null : Number(e.target.value))}
-                                    min={colConfig?.validationMin}
-                                    max={colConfig?.validationMax}
+                                    min={rowColCfg?.validationMin}
+                                    max={rowColCfg?.validationMax}
                                     placeholder={cellPlaceholder}
                                     className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 ${refClass}`}
                                   />

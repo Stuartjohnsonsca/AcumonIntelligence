@@ -420,90 +420,34 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
               </div>
             </div>
 
-            {/* Column editor — shown for table layouts. Each non-label
-                column has its own header text + input type + optional
-                dropdown options. Column 0 is always the question/row
-                label (read-only) and just has a header; columns 1..N-1
-                are the editable cells so each can be configured
-                independently (e.g. a 5-col Materiality section can be
-                [Particulars | Planning Amount: currency | Final Amount:
-                currency | Comment: textarea | WP Ref: text]). */}
-            {!isCollapsed && sectionMeta[sectionKey]?.layout && sectionMeta[sectionKey].layout !== 'standard' && (() => {
-              const layout = sectionMeta[sectionKey]!.layout;
-              const headers = sectionMeta[sectionKey]?.columnHeaders || LAYOUT_DEFAULT_HEADERS[layout] || [];
-              const columnsConfig = sectionMeta[sectionKey]?.columns || [];
-              function updateHeader(ci: number, value: string) {
-                const next = [...(sectionMeta[sectionKey]?.columnHeaders || LAYOUT_DEFAULT_HEADERS[layout] || [])];
-                next[ci] = value;
-                updateSectionMeta(sectionKey, { columnHeaders: next });
-                // Keep columns[ci-1].header in sync if the admin's already set one.
-                if (ci >= 1) {
-                  const cols = [...(sectionMeta[sectionKey]?.columns || [])];
-                  if (cols[ci - 1]) { cols[ci - 1] = { ...cols[ci - 1], header: value }; updateSectionMeta(sectionKey, { columns: cols }); }
-                }
-              }
-              function updateColumn(colIdx: number, patch: Partial<{ inputType: QuestionInputType; dropdownOptions: string[]; placeholder: string }>) {
-                const cols: any[] = [...(sectionMeta[sectionKey]?.columns || [])];
-                // Pad out with defaults so colIdx is always addressable.
-                while (cols.length <= colIdx) {
-                  const hi = cols.length + 1; // +1 because column 0 is the label
-                  cols.push({ header: headers[hi] || `Column ${hi + 1}`, inputType: 'textarea' });
-                }
-                cols[colIdx] = { ...cols[colIdx], ...patch, header: cols[colIdx]?.header || headers[colIdx + 1] || `Column ${colIdx + 2}` };
-                updateSectionMeta(sectionKey, { columns: cols });
-              }
-              return (
-                <div className="px-4 py-2 bg-blue-50/30 border-b border-slate-200 space-y-1.5">
-                  {headers.map((h, hi) => (
-                    <div key={hi} className="flex items-center gap-2">
-                      <span className="text-[10px] text-blue-600 font-medium shrink-0 w-16">
-                        {hi === 0 ? 'Col 0 (label):' : `Col ${hi}:`}
-                      </span>
-                      <input
-                        value={h}
-                        onChange={e => updateHeader(hi, e.target.value)}
-                        className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white w-40 focus:outline-none focus:border-blue-400"
-                        placeholder="Column heading"
-                      />
-                      {hi >= 1 && (
-                        <>
-                          <select
-                            value={columnsConfig[hi - 1]?.inputType || 'textarea'}
-                            onChange={e => updateColumn(hi - 1, { inputType: e.target.value as QuestionInputType })}
-                            className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
-                            title="Input type for every cell in this column"
-                          >
-                            {INPUT_TYPE_OPTIONS.filter(o => o.value !== 'subheader' && o.value !== 'table_row' && o.value !== 'formula' && o.value !== 'yes_only').map(opt => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </select>
-                          {columnsConfig[hi - 1]?.inputType === 'dropdown' && (
-                            <input
-                              type="text"
-                              value={(columnsConfig[hi - 1]?.dropdownOptions || []).join(', ')}
-                              onChange={e => updateColumn(hi - 1, { dropdownOptions: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                              placeholder="Option 1, Option 2, Option 3"
-                              className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white flex-1 focus:outline-none focus:border-blue-400"
-                            />
-                          )}
-                          <input
-                            type="text"
-                            value={columnsConfig[hi - 1]?.placeholder || ''}
-                            onChange={e => updateColumn(hi - 1, { placeholder: e.target.value })}
-                            placeholder="Placeholder (optional)"
-                            className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white flex-1 min-w-[80px] focus:outline-none focus:border-blue-400"
-                          />
-                        </>
-                      )}
-                    </div>
-                  ))}
-                  <p className="text-[10px] text-blue-700 italic pt-1 border-t border-blue-100">
-                    Each non-label column has its own input type and options. Change the dropdown to Currency / Date / Y-N / etc. per column.
-                    Templates reference cell values as <code className="font-mono bg-white px-1 rounded border border-blue-200">{'{{questionnaires.<schedule>.<key>_col1}}'}</code>, <code className="font-mono bg-white px-1 rounded border border-blue-200">_col2</code>, etc.
-                  </p>
-                </div>
-              );
-            })()}
+            {/* Column headers editor — only the header TEXT lives here,
+                since headers are shared by every row in the table. The
+                per-cell input type + dropdown options live on each
+                question/row (see the expanded row editor), because
+                different rows commonly need different widgets in the
+                same column (e.g. a currency row and a commentary row
+                sitting in the same Planning Amount column). */}
+            {!isCollapsed && sectionMeta[sectionKey]?.layout && sectionMeta[sectionKey].layout !== 'standard' && (
+              <div className="px-4 py-2 bg-blue-50/30 border-b border-slate-200 flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] text-blue-600 font-medium shrink-0">Column headings:</span>
+                {(sectionMeta[sectionKey]?.columnHeaders || LAYOUT_DEFAULT_HEADERS[sectionMeta[sectionKey]!.layout] || []).map((h, hi) => (
+                  <input
+                    key={hi}
+                    value={h}
+                    onChange={e => {
+                      const headers = [...(sectionMeta[sectionKey]?.columnHeaders || LAYOUT_DEFAULT_HEADERS[sectionMeta[sectionKey]!.layout] || [])];
+                      headers[hi] = e.target.value;
+                      updateSectionMeta(sectionKey, { columnHeaders: headers });
+                    }}
+                    className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white flex-1 min-w-[80px] focus:outline-none focus:border-blue-400"
+                    placeholder={hi === 0 ? 'Label column' : `Column ${hi + 1}`}
+                  />
+                ))}
+                <p className="w-full text-[10px] text-blue-700 italic mt-1">
+                  Per-row cell configuration (input type / dropdown options / placeholder) is set on each question below — different rows can have different widgets in the same column.
+                </p>
+              </div>
+            )}
 
             {/* Questions */}
             {!isCollapsed && (
@@ -736,6 +680,77 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 <input type="checkbox" checked={q.isBold || false} onChange={e => updateQuestion(q.id, { isBold: e.target.checked })} className="w-3.5 h-3.5 rounded" />
                                 Description row (span all columns)
                               </label>
+
+                              {/* Per-row column config — visible only when
+                                  the parent section has a table layout AND
+                                  the row isn't a description-span row.
+                                  Each row defines its OWN per-column input
+                                  types, so e.g. a currency row and a
+                                  commentary row can sit in the same table
+                                  with different widgets per cell. */}
+                              {(() => {
+                                const parentMeta = sectionMeta[q.sectionKey];
+                                const parentLayout = parentMeta?.layout;
+                                if (!parentLayout || parentLayout === 'standard') return null;
+                                if (q.isBold || q.inputType === 'subheader') return null;
+                                const headers = parentMeta?.columnHeaders || LAYOUT_DEFAULT_HEADERS[parentLayout] || [];
+                                // Cells = non-label columns (skip index 0).
+                                const cellCount = Math.max(0, headers.length - 1);
+                                if (cellCount === 0) return null;
+                                function updateRowCol(ci: number, patch: Partial<{ inputType: QuestionInputType; dropdownOptions: string[]; placeholder: string }>) {
+                                  const current = (q.columns || []).slice();
+                                  while (current.length <= ci) current.push({ inputType: 'textarea' } as any);
+                                  current[ci] = { ...current[ci], ...patch };
+                                  updateQuestion(q.id, { columns: current });
+                                }
+                                return (
+                                  <div className="col-span-2 w-full pt-2 mt-1 border-t border-slate-100">
+                                    <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">Per-cell configuration for this row</div>
+                                    <div className="space-y-1">
+                                      {Array.from({ length: cellCount }).map((_, ci) => {
+                                        const cfg = q.columns?.[ci];
+                                        const header = headers[ci + 1] || `Column ${ci + 2}`;
+                                        return (
+                                          <div key={ci} className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-[10px] text-slate-500 w-32 truncate" title={header}>
+                                              <strong className="text-slate-700">Col {ci + 1}</strong> — {header}
+                                            </span>
+                                            <select
+                                              value={cfg?.inputType || q.inputType}
+                                              onChange={e => updateRowCol(ci, { inputType: e.target.value as QuestionInputType })}
+                                              className="text-[10px] border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
+                                              title="Input type for this cell only (this row's version of this column)"
+                                            >
+                                              {INPUT_TYPE_OPTIONS
+                                                .filter(o => o.value !== 'subheader' && o.value !== 'table_row' && o.value !== 'formula' && o.value !== 'yes_only')
+                                                .map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                            </select>
+                                            {cfg?.inputType === 'dropdown' && (
+                                              <input
+                                                type="text"
+                                                value={(cfg?.dropdownOptions || []).join(', ')}
+                                                onChange={e => updateRowCol(ci, { dropdownOptions: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                                                placeholder="Option 1, Option 2, Option 3"
+                                                className="text-[10px] border border-slate-200 rounded px-2 py-1 flex-1 min-w-[120px] focus:outline-none focus:border-blue-400"
+                                              />
+                                            )}
+                                            <input
+                                              type="text"
+                                              value={cfg?.placeholder || ''}
+                                              onChange={e => updateRowCol(ci, { placeholder: e.target.value })}
+                                              placeholder="Placeholder (optional)"
+                                              className="text-[10px] border border-slate-200 rounded px-2 py-1 flex-1 min-w-[80px] focus:outline-none focus:border-blue-400"
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 italic mt-1">
+                                      Leave alone to use the row&rsquo;s own input type ({INPUT_TYPE_OPTIONS.find(o => o.value === q.inputType)?.label || q.inputType}) for every cell; set per-cell to mix widgets in the same row.
+                                    </p>
+                                  </div>
+                                );
+                              })()}
                               <label
                                 className="flex items-center gap-1.5 text-xs text-slate-500"
                                 title={

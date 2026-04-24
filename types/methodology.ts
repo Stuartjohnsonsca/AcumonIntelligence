@@ -337,36 +337,35 @@ export interface TemplateQuestion {
   };
   mergedWith?: string;
   isBold?: boolean; // For conclusion/header rows in tables
+  /** Per-column cell configuration for this ROW when the parent
+   *  section uses a table layout (3/4/5-col). One entry per non-label
+   *  column — columns[0] is the cell in column 1, columns[1] is the
+   *  cell in column 2, etc. Each row configures its own cells
+   *  independently (a currency row and a commentary row can sit in
+   *  the same table with different widgets per column). When missing
+   *  the cell falls back to the row's own `inputType`. */
+  columns?: TemplateQuestionColumn[];
 }
 
-export type SectionLayout = 'standard' | 'table_4col' | 'table_3col' | 'table_5col';
-
-/** Per-column configuration inside a table layout. Column index 0 is
- *  always the question label (read-only) — `columns` describes the
- *  editable cells in columns 1 … N-1, each with its own input type,
- *  dropdown options and validation. Admins configure these via the
- *  section edit panel in AppendixTemplateEditor. */
-export interface TemplateSectionColumn {
-  header: string;
+export interface TemplateQuestionColumn {
   inputType: QuestionInputType;
   dropdownOptions?: string[];
   validationMin?: number;
   validationMax?: number;
-  /** Optional description / placeholder text shown in the cell. */
   placeholder?: string;
 }
+
+export type SectionLayout = 'standard' | 'table_4col' | 'table_3col' | 'table_5col';
 
 export interface TemplateSectionMeta {
   key: string;
   label: string;
   layout: SectionLayout;
-  /** Legacy flat list of header strings, one per column (including
-   *  the label column at index 0). Kept for back-compat; when
-   *  `columns` is also set it takes precedence. */
+  /** Flat list of column heading strings, one per column (including
+   *  the label column at index 0). Headers are shared by every row
+   *  in the table; per-row cell widgets are configured on each
+   *  question via TemplateQuestion.columns (see types above). */
   columnHeaders?: string[];
-  /** Per-column configuration for columns 1 … N-1. Length matches the
-   *  non-label columns of `layout`. */
-  columns?: TemplateSectionColumn[];
   signOff?: boolean; // Whether section has Preparer/Reviewer/RI sign-off
 }
 
