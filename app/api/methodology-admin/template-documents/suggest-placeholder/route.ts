@@ -237,10 +237,17 @@ Collection / filter helpers you can use inside \`{{#each …}}\` sub-expressions
 
 Every questionnaire's \`asList\` entry has these fields you can use inside the loop:
   {{question}}          question text
-  {{answer}}            user's answer
+  {{answer}}            user's answer (row-level — used by Q+A and by rows that haven't been configured as multi-column)
   {{key}}               question key
   {{section}}           section name (verbatim, not slugified)
   {{sortOrder}}         integer
+  {{col1}} / {{col2}} / {{col3}} / {{col4}} / {{col5}}
+                        Per-column cell values for rows in a
+                        multi-column (3/4/5-col) table section. The
+                        label column (col 0) is the question text; col1
+                        onward are the editable cells. Use these inside
+                        the loop to render multiple cells per row or to
+                        pair a trigger column with a detail column.
   {{previousAnswer}}    answer to the item immediately before this one in asList
   {{nextAnswer}}        answer to the item immediately after this one in asList
   {{previousKey}} / {{previousQuestion}} / {{nextKey}} / {{nextQuestion}}
@@ -297,6 +304,34 @@ Example C — "Every error on the error schedule as a table":
 
 Example D — "Total of the current-year TB movements only":
   {{formatCurrency (sumFieldWhere tbRows "currentYear" "fsStatement" "eq" "Profit & Loss")}}
+
+Example E — "Rows in a 4-column section where column 2 is 'Y', render columns 3 & 4 as a table":
+  When the admin says things like 'only where col 2 is Y', or 'for
+  each row where the third column answer is Yes, show the fourth
+  column' — the rows live in a 4/5-col table-layout section and each
+  row's cells are on the asList item as col1..col5. Filter with
+  filterWhere on 'col2', render with {{col3}} / {{col4}}.
+
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+      <thead>
+        <tr>
+          <th style="text-align:left;background:#f1f5f9">Procedure</th>
+          <th style="text-align:left;background:#f1f5f9">Conclusion</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!--{{#each (filterWhere questionnaires.<schedule>.asList "col2" "eq" "Y")}}-->
+        <tr>
+          <td>{{col3}}</td>
+          <td>{{col4}}</td>
+        </tr>
+        <!--{{/each}}-->
+      </tbody>
+    </table>
+
+  Pair filterWhere with filterBySection when the admin says 'each row
+  in <section> where column N is Y' — compose them exactly like
+  Example B.
 ============================================================
 
 Choose the right idiom:
@@ -305,6 +340,7 @@ Choose the right idiom:
 - Admin says "each section's …" (across all sections) → plain {{#each asList}}.
 - Admin describes a single value/question → a single {{placeholder}}, wrapped in a formatter when useful.
 - Admin asks for a total / sum → sumField / sumFieldWhere.
+- Admin says "where column N is Y/Yes" / "rows with col N = …" / "only where the <header> column is …" → Example E shape. Use filterWhere on "col<N>" and render with {{col1}} / {{col2}} / {{col3}} / {{col4}} / {{col5}} inside the loop. The filter field name is literally "col2" (or col1 / col3 / …), matching how the per-column cells are stored.
 
 Return ONLY JSON:
 {
