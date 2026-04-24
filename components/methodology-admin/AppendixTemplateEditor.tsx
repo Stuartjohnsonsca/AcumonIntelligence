@@ -771,7 +771,15 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 type CellCondOp = NonNullable<NonNullable<TemplateQuestion['columns']>[number]['conditionalOn']>['operator'];
                                 function updateRowCol(ci: number, patch: Partial<{ inputType: QuestionInputType; dropdownOptions: string[]; placeholder: string; formulaExpression: string; conditionalOn: { columnIndex: number; operator?: CellCondOp; value?: string } | undefined }>) {
                                   const current = (q.columns || []).slice();
-                                  while (current.length <= ci) current.push({ inputType: 'textarea' } as any);
+                                  // Backfill placeholder columns with the ROW's current
+                                  // inputType — NOT a hard-coded 'textarea'. The old
+                                  // behaviour meant changing a later cell (say Col 3)
+                                  // silently overwrote earlier unconfigured cells
+                                  // (Col 1, Col 2) with 'textarea' as a visible side
+                                  // effect. Mirroring q.inputType keeps them looking
+                                  // exactly as they did before the admin touched
+                                  // anything.
+                                  while (current.length <= ci) current.push({ inputType: q.inputType } as any);
                                   current[ci] = { ...current[ci], ...patch };
                                   updateQuestion(q.id, { columns: current });
                                 }
