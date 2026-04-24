@@ -35,7 +35,14 @@ export async function GET(req: Request) {
   // view without re-computing the summary metrics (which always cover
   // the full engagement so the header numbers are consistent).
   const status = searchParams.get('status'); // outstanding | responded | escalated
-  const fsLineId = searchParams.get('fsLineId');
+  // Multi-select filters. Accept comma-separated id/code lists so the
+  // URL can encode either single-value or multi-value selections
+  // cleanly. Fall back to the legacy singular `fsLineId` / `assigneeId`
+  // params so any bookmarked URL or drill-down link keeps working.
+  const rawFsLineIds = searchParams.get('fsLineIds') || searchParams.get('fsLineId') || '';
+  const rawTbCodes = searchParams.get('tbAccountCodes') || '';
+  const fsLineIdSet = new Set(rawFsLineIds.split(',').map(s => s.trim()).filter(Boolean));
+  const tbAccountCodeSet = new Set(rawTbCodes.split(',').map(s => s.trim()).filter(Boolean));
   const assigneeId = searchParams.get('assigneeId');
   const searchText = (searchParams.get('q') || '').trim();
   // Chart drill-down: narrows the list to a single day's bucket.
@@ -78,14 +85,33 @@ export async function GET(req: Request) {
   }).catch(() => [] as any[]);
 
   // Resolve FS Line names for filter pills + list rendering.
-  const fsLineIds = [...new Set(all.map(r => r.routingFsLineId).filter(Boolean) as string[])];
-  const fsLines = fsLineIds.length > 0
+  const fsLineIdsInRequests = [...new Set(all.map(r => r.routingFsLineId).filter(Boolean) as string[])];
+  const fsLines = fsLineIdsInRequests.length > 0
     ? await prisma.methodologyFsLine.findMany({
-        where: { id: { in: fsLineIds } },
+        where: { id: { in: fsLineIdsInRequests } },
         select: { id: true, name: true },
       })
     : [];
   const fsNameById = new Map(fsLines.map(l => [l.id, l.name]));
+
+  // TB codes per FS Line — fed to the multi-select filter UI so the
+  // Principal can drill in past just FS Line. We resolve the codes
+  // from AuditTBRow (authoritative source) rather than from requests
+  // alone, so the filter shows every TB code under an FS Line even
+  // when no request has been raised against it yet.
+  const tbRowsForFilter = fsLineIdsInRequests.length > 0
+    ? await prisma.auditTBRow.findMany({
+        where: { engagementId, fsLineId: { in: fsLineIdsInRequests } },
+        select: { accountCode: true, description: true, fsLineId: true },
+        orderBy: [{ fsLineId: 'asc' }, { accountCode: 'asc' }],
+      })
+    : [];
+  const tbByFsLine = new Map<string, Array<{ accountCode: string; description: string }>>();
+  for (const r of tbRowsForFilter) {
+    if (!r.fsLineId) continue;
+    if (!tbByFsLine.has(r.fsLineId)) tbByFsLine.set(r.fsLineId, []);
+    tbByFsLine.get(r.fsLineId)!.push({ accountCode: r.accountCode, description: r.description });
+  }
 
   // Staff name lookup for assignee rendering.
   const staff = await prisma.clientPortalStaffMember.findMany({
@@ -202,7 +228,17 @@ export async function GET(req: Request) {
       const columnSla = r.escalationLevel === 0 ? sla.days1 : r.escalationLevel === 1 ? sla.days2 : sla.days3;
       if (hours <= columnSla * 24) return false;
     }
-    if (fsLineId && r.routingFsLineId !== fsLineId) return false;
+    // Multi-select semantics: a request matches if EITHER its
+    // routingFsLineId is in the selected FS Lines OR its
+    // routingTbAccountCode is in the selected TB codes. An empty
+    // selection means "no filter". Picking FS Line + TB code at
+    // the same time shows requests matching either — the UX is
+    // an additive filter, not an intersection.
+    if (fsLineIdSet.size > 0 || tbAccountCodeSet.size > 0) {
+      const fsHit = !!r.routingFsLineId && fsLineIdSet.has(r.routingFsLineId);
+      const tbHit = !!r.routingTbAccountCode && tbAccountCodeSet.has(r.routingTbAccountCode);
+      if (!fsHit && !tbHit) return false;
+    }
     if (assigneeId && r.assignedPortalUserId !== assigneeId) return false;
     if (searchText && !(r.question || '').toLowerCase().includes(searchText.toLowerCase())) return false;
     if (dayStart && dayEnd) {
@@ -256,7 +292,15 @@ export async function GET(req: Request) {
     },
     trend,
     filters: {
-      fsLines: fsLines.map(l => ({ id: l.id, name: l.name })),
+      // fsLines carries a nested `tbCodes` array so the filter UI
+      // can render a multi-select popover with TB codes embedded
+      // under each FS Line. Empty tbCodes = FS Line has no TB rows
+      // (the filter just shows the FS Line itself, no children).
+      fsLines: fsLines.map(l => ({
+        id: l.id,
+        name: l.name,
+        tbCodes: tbByFsLine.get(l.id) || [],
+      })),
       staff: [...nameByUser.entries()].map(([id, name]) => ({ id, name })),
     },
     list: {

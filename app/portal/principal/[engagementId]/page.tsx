@@ -19,10 +19,10 @@
  * portal's typical client environment.
  */
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertTriangle, Clock, CheckCircle2, TrendingUp, RefreshCw, Settings, Loader2, Filter } from 'lucide-react';
+import { AlertTriangle, Clock, CheckCircle2, TrendingUp, RefreshCw, Settings, Loader2, Filter, ChevronDown, ChevronRight, X } from 'lucide-react';
 
 interface PrincipalDashboardData {
   engagementId: string;
@@ -36,7 +36,14 @@ interface PrincipalDashboardData {
     perStaff: Array<{ userId: string; name: string; n: number; meanHours: number | null; medianHours: number | null; p90Hours: number | null }>;
   };
   trend: Array<{ date: string; outstanding: number; responded: number }>;
-  filters: { fsLines: Array<{ id: string; name: string }>; staff: Array<{ id: string; name: string }> };
+  filters: {
+    fsLines: Array<{
+      id: string;
+      name: string;
+      tbCodes: Array<{ accountCode: string; description: string }>;
+    }>;
+    staff: Array<{ id: string; name: string }>;
+  };
   list: {
     rows: Array<{
       id: string; section: string; question: string; status: string;
@@ -62,7 +69,12 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
   const [error, setError] = useState<string | null>(null);
 
   const [filterStatus, setFilterStatus] = useState<string>('');
-  const [filterFsLine, setFilterFsLine] = useState<string>('');
+  // Multi-select: Sets of selected FS Line IDs + TB account codes.
+  // Drives a popover filter rather than a simple dropdown, because
+  // TB codes live underneath their FS Lines and a flat list would
+  // be too long / unclear.
+  const [filterFsLineIds, setFilterFsLineIds] = useState<Set<string>>(new Set());
+  const [filterTbCodes, setFilterTbCodes] = useState<Set<string>>(new Set());
   const [filterAssignee, setFilterAssignee] = useState<string>('');
   const [filterText, setFilterText] = useState('');
   // Drill-down dimension: when set by clicking a chart, narrows the
@@ -81,7 +93,8 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
     try {
       const qp = new URLSearchParams({ token, engagementId, offset: String(offset), limit: '50' });
       if (filterStatus) qp.set('status', filterStatus);
-      if (filterFsLine) qp.set('fsLineId', filterFsLine);
+      if (filterFsLineIds.size > 0) qp.set('fsLineIds', [...filterFsLineIds].join(','));
+      if (filterTbCodes.size > 0) qp.set('tbAccountCodes', [...filterTbCodes].join(','));
       if (filterAssignee) qp.set('assigneeId', filterAssignee);
       if (filterText) qp.set('q', filterText);
       if (drillDown?.kind === 'day') {
@@ -100,7 +113,7 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
     } finally {
       setLoading(false);
     }
-  }, [token, engagementId, offset, filterStatus, filterFsLine, filterAssignee, filterText, drillDown]);
+  }, [token, engagementId, offset, filterStatus, filterFsLineIds, filterTbCodes, filterAssignee, filterText, drillDown]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -239,10 +252,12 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
               <option value="escalated">Escalated</option>
               <option value="responded">Responded</option>
             </select>
-            <select value={filterFsLine} onChange={e => { setFilterFsLine(e.target.value); setOffset(0); }} className="text-sm border border-slate-300 rounded-md px-3 py-1.5">
-              <option value="">All FS Lines</option>
-              {data.filters.fsLines.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-            </select>
+            <FsLineTbMultiSelect
+              fsLines={data.filters.fsLines}
+              selectedFsLineIds={filterFsLineIds}
+              selectedTbCodes={filterTbCodes}
+              onChange={(fs, tb) => { setFilterFsLineIds(fs); setFilterTbCodes(tb); setOffset(0); }}
+            />
             <select value={filterAssignee} onChange={e => { setFilterAssignee(e.target.value); setOffset(0); }} className="text-sm border border-slate-300 rounded-md px-3 py-1.5">
               <option value="">All assignees</option>
               {data.filters.staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -479,6 +494,194 @@ function ListPaginator({ total, offset, limit, onOffset }: { total: number; offs
           className="px-2 py-1 border border-slate-300 rounded disabled:opacity-40 hover:bg-slate-50"
         >Next</button>
       </div>
+    </div>
+  );
+}
+
+// ─── FS Line + TB code multi-select popover ───────────────────────
+
+interface FsLineTbMultiSelectProps {
+  fsLines: Array<{ id: string; name: string; tbCodes: Array<{ accountCode: string; description: string }> }>;
+  selectedFsLineIds: Set<string>;
+  selectedTbCodes: Set<string>;
+  onChange: (fsLineIds: Set<string>, tbCodes: Set<string>) => void;
+}
+
+/**
+ * Drop-in replacement for the single-select FS Line filter. Renders
+ * as a button showing selection count; clicking opens a popover
+ * with each FS Line expandable to reveal its TB codes. Both FS
+ * Lines and TB codes are checkable independently — picking the
+ * FS Line filters all requests tagged to that line, picking a TB
+ * code filters just that account, and picking both shows the
+ * union.
+ *
+ * Ticking an FS Line auto-ticks every TB code below it for
+ * visual consistency but the filter logic on the server treats
+ * them as independent ORs so it doesn't affect the result set.
+ */
+function FsLineTbMultiSelect({ fsLines, selectedFsLineIds, selectedTbCodes, onChange }: FsLineTbMultiSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside-click.
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (!wrapperRef.current) return;
+      if (!wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  const totalSelected = selectedFsLineIds.size + selectedTbCodes.size;
+  const label =
+    totalSelected === 0 ? 'All FS Lines / TB codes' :
+    totalSelected === 1 && selectedFsLineIds.size === 1
+      ? (fsLines.find(f => selectedFsLineIds.has(f.id))?.name || '1 selected') :
+    `${totalSelected} selected`;
+
+  const norm = (s: string) => s.toLowerCase();
+  const matches = search.trim()
+    ? fsLines.filter(f =>
+        norm(f.name).includes(norm(search)) ||
+        f.tbCodes.some(tb => norm(tb.accountCode).includes(norm(search)) || norm(tb.description).includes(norm(search))),
+      )
+    : fsLines;
+
+  function toggleFsLine(id: string) {
+    const next = new Set(selectedFsLineIds);
+    const fs = fsLines.find(f => f.id === id);
+    if (next.has(id)) {
+      next.delete(id);
+      // Also untick every TB code under this FS Line so the UI
+      // reflects a clean "all off" state for the row.
+      const nextTb = new Set(selectedTbCodes);
+      for (const tb of fs?.tbCodes || []) nextTb.delete(tb.accountCode);
+      onChange(next, nextTb);
+    } else {
+      next.add(id);
+      onChange(next, selectedTbCodes);
+    }
+  }
+
+  function toggleTb(fsLineId: string, accountCode: string) {
+    const next = new Set(selectedTbCodes);
+    if (next.has(accountCode)) next.delete(accountCode); else next.add(accountCode);
+    onChange(selectedFsLineIds, next);
+  }
+
+  function clear() {
+    onChange(new Set(), new Set());
+  }
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full text-left text-sm border border-slate-300 rounded-md px-3 py-1.5 bg-white flex items-center justify-between hover:bg-slate-50"
+      >
+        <span className={totalSelected === 0 ? 'text-slate-500' : 'text-slate-800'}>{label}</span>
+        <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0 ml-2" />
+      </button>
+
+      {open && (
+        <div className="absolute z-20 mt-1 w-[360px] max-w-[90vw] bg-white border border-slate-200 rounded-md shadow-lg max-h-[60vh] overflow-hidden flex flex-col">
+          <div className="p-2 border-b border-slate-100">
+            <input
+              autoFocus
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search FS Lines or TB codes…"
+              className="w-full text-sm border border-slate-300 rounded px-2 py-1"
+            />
+          </div>
+          <div className="overflow-y-auto flex-1">
+            {matches.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-slate-500 italic">No matches.</div>
+            ) : matches.map(fs => {
+              const isExp = expanded.has(fs.id);
+              const fsChecked = selectedFsLineIds.has(fs.id);
+              const anyTbChecked = fs.tbCodes.some(tb => selectedTbCodes.has(tb.accountCode));
+              return (
+                <div key={fs.id} className="border-b border-slate-50 last:border-0">
+                  <div className="flex items-center gap-1 px-2 py-1.5 hover:bg-slate-50">
+                    {fs.tbCodes.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpanded(prev => {
+                            const n = new Set(prev);
+                            if (n.has(fs.id)) n.delete(fs.id); else n.add(fs.id);
+                            return n;
+                          });
+                        }}
+                        className="text-slate-400 hover:text-slate-700 p-0.5"
+                      >
+                        {isExp ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      </button>
+                    ) : <span className="w-4" />}
+                    <label className="flex-1 flex items-center gap-2 cursor-pointer text-sm">
+                      <input
+                        type="checkbox"
+                        checked={fsChecked}
+                        onChange={() => toggleFsLine(fs.id)}
+                        className="rounded border-slate-300"
+                      />
+                      <span className={fsChecked ? 'font-medium text-slate-800' : 'text-slate-700'}>{fs.name}</span>
+                      {fs.tbCodes.length > 0 && (
+                        <span className="text-[11px] text-slate-400">({fs.tbCodes.length})</span>
+                      )}
+                      {anyTbChecked && !fsChecked && (
+                        <span className="ml-auto text-[10px] text-blue-600">partial</span>
+                      )}
+                    </label>
+                  </div>
+                  {isExp && fs.tbCodes.map(tb => {
+                    const tbChecked = selectedTbCodes.has(tb.accountCode);
+                    return (
+                      <label key={tb.accountCode} className="flex items-start gap-2 pl-9 pr-2 py-1 text-xs cursor-pointer hover:bg-slate-50">
+                        <input
+                          type="checkbox"
+                          checked={tbChecked}
+                          onChange={() => toggleTb(fs.id, tb.accountCode)}
+                          className="rounded border-slate-300 mt-0.5"
+                        />
+                        <span className="flex-1">
+                          <span className="font-mono text-slate-500 mr-2">{tb.accountCode}</span>
+                          <span className={tbChecked ? 'text-slate-800 font-medium' : 'text-slate-600'}>{tb.description}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+          <div className="p-2 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">{totalSelected} selected</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={clear}
+                disabled={totalSelected === 0}
+                className="text-xs text-slate-600 hover:text-red-600 disabled:opacity-40 inline-flex items-center gap-1"
+              >
+                <X className="w-3 h-3" />Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+              >Done</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

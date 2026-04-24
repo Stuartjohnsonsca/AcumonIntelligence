@@ -208,8 +208,15 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.error || `Failed (${r.status})`);
-      setBanner('Setup complete — staff members can now log in and respond to requests.');
-      await load();
+      // Setup complete → bounce straight back to the portal home.
+      // Short confirmation flash first so the Principal sees the
+      // success state before we navigate away. The home dashboard
+      // will show the green "Manage — <client>" row for this
+      // engagement (via /api/portal/my-engagements).
+      setBanner('Setup complete — taking you back to your dashboard…');
+      setTimeout(() => {
+        router.push(`/portal/dashboard?token=${encodeURIComponent(token)}`);
+      }, 900);
     } catch (err: any) {
       setError(err?.message || 'Could not complete setup');
     }
