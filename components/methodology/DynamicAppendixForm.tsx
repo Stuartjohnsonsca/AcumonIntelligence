@@ -371,6 +371,11 @@ export function DynamicAppendixForm({
   function isCellVisible(q: TemplateQuestion, ci: number): boolean {
     const cond = q.columns?.[ci]?.conditionalOn;
     if (!cond) return true;
+    // "Never" is a permanent-hide operator — no columnIndex / value
+    // needed. Evaluate it before the other operators so admins can
+    // tick "Never show" without also having to pick a reference
+    // column they don't actually care about.
+    if (cond.operator === 'never') return false;
     const { columnIndex, operator = 'eq', value = '' } = cond;
     if (!Number.isFinite(columnIndex) || columnIndex < 1) return true;
     const refKey = `${q.id}_col${columnIndex}`;
@@ -398,6 +403,9 @@ export function DynamicAppendixForm({
 
   function isVisible(q: TemplateQuestion): boolean {
     if (!q.conditionalOn) return true;
+    // "Never" is a permanent-hide — shown first so admins don't
+    // need to pick a reference question just to suppress a row.
+    if (q.conditionalOn.operator === 'never') return false;
     const { questionId, value, operator = 'eq', columnIndex } = q.conditionalOn;
     // When columnIndex is set the condition reads the parent's
     // per-cell value (stored as `<questionId>_col<N>`) instead of

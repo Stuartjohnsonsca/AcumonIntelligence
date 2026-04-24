@@ -341,7 +341,13 @@ export interface TemplateQuestion {
   conditionalOn?: {
     questionId: string;
     value: string;
-    operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'notContains' | 'isEmpty' | 'isNotEmpty';
+    /** `'never'` is a permanent hide — the question / cell is never
+     *  shown on the rendered schedule regardless of other answers.
+     *  Useful when a row is being retired but can't be deleted yet
+     *  (referenced by templates or another schedule) or when a
+     *  firm-admin wants to hide a mandatory row from a specific
+     *  client type without editing the methodology core. */
+    operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'notContains' | 'isEmpty' | 'isNotEmpty' | 'never';
     columnIndex?: number;
   };
   mergedWith?: string;
@@ -375,7 +381,11 @@ export interface TemplateQuestionColumn {
    *  Leaving conditionalOn unset means the cell is always shown. */
   conditionalOn?: {
     columnIndex: number;
-    operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'notContains' | 'isEmpty' | 'isNotEmpty';
+    /** `'never'` permanently hides the cell — same semantics as on
+     *  TemplateQuestion above. Useful when a column on one row is
+     *  not meaningful (e.g. a subtotal row that should only span
+     *  some columns). */
+    operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'notContains' | 'isEmpty' | 'isNotEmpty' | 'never';
     value?: string;
   };
 }

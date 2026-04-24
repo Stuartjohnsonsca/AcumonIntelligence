@@ -860,23 +860,32 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                             <div className="flex items-center gap-2 flex-wrap text-[10px] text-slate-600">
                                               <span className="text-[10px] text-slate-500 w-32 shrink-0">Show when:</span>
                                               <select
-                                                value={cond?.columnIndex ? String(cond.columnIndex) : ''}
+                                                value={cond?.operator === 'never' ? '__never__' : (cond?.columnIndex ? String(cond.columnIndex) : '')}
                                                 onChange={e => {
                                                   const v = e.target.value;
                                                   if (!v) { updateRowCol(ci, { conditionalOn: undefined }); return; }
+                                                  if (v === '__never__') {
+                                                    // Permanent hide — no columnIndex / value needed.
+                                                    // columnIndex is retained as a no-op number to
+                                                    // satisfy the non-optional type; the runtime
+                                                    // short-circuits on operator before using it.
+                                                    updateRowCol(ci, { conditionalOn: { columnIndex: 1, operator: 'never', value: '' } });
+                                                    return;
+                                                  }
                                                   const nextColIndex = Number(v);
                                                   const base = cond || { columnIndex: nextColIndex, operator: 'eq', value: '' };
-                                                  updateRowCol(ci, { conditionalOn: { columnIndex: nextColIndex, operator: base.operator || 'eq', value: base.value || '' } });
+                                                  updateRowCol(ci, { conditionalOn: { columnIndex: nextColIndex, operator: base.operator === 'never' ? 'eq' : (base.operator || 'eq'), value: base.value || '' } });
                                                 }}
                                                 className="text-[10px] border border-slate-200 rounded px-2 py-1 bg-white"
                                               >
                                                 <option value="">— always show —</option>
+                                                <option value="__never__">— never show —</option>
                                                 {Array.from({ length: cellCount }).map((_, j) => {
                                                   if (j === ci) return null; // can't reference itself
                                                   return <option key={j + 1} value={String(j + 1)}>Col {j + 1} — {headers[j + 1] || `Column ${j + 2}`}</option>;
                                                 })}
                                               </select>
-                                              {cond?.columnIndex && (
+                                              {cond?.columnIndex && cond.operator !== 'never' && (
                                                 <select
                                                   value={cond.operator || 'eq'}
                                                   onChange={e => {
@@ -898,7 +907,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                                   <option value="isNotEmpty">is not empty</option>
                                                 </select>
                                               )}
-                                              {cond?.columnIndex && !condUnary && (
+                                              {cond?.columnIndex && cond.operator !== 'never' && !condUnary && (
                                                 refInputType === 'yesno' || refInputType === 'yna' || refInputType === 'checkbox' ? (
                                                   <select
                                                     value={cond.value || ''}
@@ -1047,20 +1056,33 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                   );
                                 })();
 
+                                const isNever = condOperator === 'never';
                                 return (
                                   <label className="flex items-center gap-1.5 text-xs text-slate-500 flex-wrap">
                                     Conditional on:
                                     <select
-                                      value={condParentId}
+                                      value={isNever ? '__never__' : condParentId}
                                       onChange={e => {
-                                        const newParentId = e.target.value;
-                                        if (!newParentId) updateQuestion(q.id, { conditionalOn: undefined });
-                                        else patchCond({ questionId: newParentId });
+                                        const v = e.target.value;
+                                        if (!v) { updateQuestion(q.id, { conditionalOn: undefined }); return; }
+                                        if (v === '__never__') {
+                                          // Permanent hide — questionId is required by the type
+                                          // but unused at runtime when operator='never'. We keep
+                                          // the prior parent id if there is one so toggling back
+                                          // to "Always show" doesn't lose the user's earlier pick.
+                                          updateQuestion(q.id, { conditionalOn: { questionId: condParentId || '__never__', value: '', operator: 'never' } });
+                                          return;
+                                        }
+                                        // Switching from "never" back to a real parent — clear
+                                        // the operator so it resets to the default 'eq'.
+                                        if (isNever) updateQuestion(q.id, { conditionalOn: { questionId: v, value: '' } });
+                                        else patchCond({ questionId: v });
                                       }}
                                       className="border border-slate-200 rounded px-2 py-1 text-xs max-w-[14rem]"
-                                      title="Pick a sibling question — this question only shows when the chosen operator + value match"
+                                      title="Pick a sibling question — or choose 'Never show' to permanently hide this row"
                                     >
                                       <option value="">— Always show —</option>
+                                      <option value="__never__">— Never show —</option>
                                       {siblings.map(p => (
                                         <option key={p.id} value={p.id}>
                                           {(p.questionText || '(untitled)').length > 50
@@ -1069,7 +1091,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                         </option>
                                       ))}
                                     </select>
-                                    {condParentId && parentCellCount > 0 && (
+                                    {!isNever && condParentId && parentCellCount > 0 && (
                                       <select
                                         value={condColumnIndex ? String(condColumnIndex) : ''}
                                         onChange={e => {
@@ -1087,7 +1109,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                         ))}
                                       </select>
                                     )}
-                                    {condParentId && (
+                                    {!isNever && condParentId && (
                                       <select
                                         value={condOperator}
                                         onChange={e => {
@@ -1110,7 +1132,10 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                         <option value="isNotEmpty">is not empty</option>
                                       </select>
                                     )}
-                                    {valueInput}
+                                    {!isNever && valueInput}
+                                    {isNever && (
+                                      <span className="text-[11px] text-rose-600 italic">(this row is hidden from the rendered schedule)</span>
+                                    )}
                                   </label>
                                 );
                               })()}
