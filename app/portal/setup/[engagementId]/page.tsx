@@ -499,6 +499,7 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                       <AllocationRow
                         label={(
                           <button
+                            type="button"
                             onClick={() => {
                               setExpandedFs(prev => {
                                 const next = new Set(prev);
@@ -506,11 +507,20 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                                 return next;
                               });
                             }}
-                            className="flex items-center gap-1.5 text-sm font-medium text-slate-800 hover:text-blue-700"
+                            // w-full + justify-start + text-left force
+                            // consistent left alignment regardless of
+                            // the browser's default button centering,
+                            // grid-cell stretch behaviour, or FS Line
+                            // name length. Without these, a short FS
+                            // Line name can appear centered in the
+                            // column while longer names look left-
+                            // aligned — which is what the user was
+                            // seeing on "one specific row".
+                            className="flex w-full items-center justify-start gap-1.5 text-left text-sm font-medium text-slate-800 hover:text-blue-700"
                           >
-                            {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
-                            {g.fsLineName}
-                            <span className="text-[11px] text-slate-400">({g.tbRows.length} TB)</span>
+                            {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />}
+                            <span className="truncate">{g.fsLineName}</span>
+                            <span className="text-[11px] text-slate-400 flex-shrink-0">({g.tbRows.length} TB)</span>
                           </button>
                         )}
                         staffOptions={approvedStaff}
