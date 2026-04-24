@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useRef, lazy, Suspense } from 'react';
+import React, { useState, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
 import { Plus, X, Loader2, Save, Download, Upload, Pencil, Trash2, GitBranch, Settings2, Search, Check, Copy, ListOrdered } from 'lucide-react';
 const TestFlowEditor = lazy(() => import('./TestFlowEditor').then(m => ({ default: m.TestFlowEditor })));
@@ -114,6 +114,33 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Framework filter for the Test Bank list — '' = all frameworks,
+  // any specific value narrows to tests whose framework matches OR is
+  // flagged 'ALL' (cross-framework tests that belong everywhere).
+  const [testBankFrameworkFilter, setTestBankFrameworkFilter] = useState<string>('');
+
+  // Per-test FS-line pills. Group allocations by testId and dedupe by
+  // fsLineId so a test allocated to (e.g.) Revenue across all three
+  // industries only shows one "Revenue" pill. fsLines is frozen for
+  // the session so this just needs to re-run when allocations change.
+  const allocatedFsLinesByTest = useMemo(() => {
+    const fsLineById = new Map<string, FsLineItem>();
+    for (const fl of fsLines) fsLineById.set(fl.id, fl);
+    const out = new Map<string, FsLineItem[]>();
+    for (const a of allocations) {
+      const fl = fsLineById.get(a.fsLineId);
+      if (!fl) continue;
+      if (!out.has(a.testId)) out.set(a.testId, []);
+      const list = out.get(a.testId)!;
+      if (!list.some(existing => existing.id === fl.id)) list.push(fl);
+    }
+    // Stable ordering: honour the FS-line admin's sortOrder for nicer
+    // pill rows. Falls back to alphabetical when sortOrder is equal.
+    for (const list of out.values()) {
+      list.sort((x, y) => (x.sortOrder - y.sortOrder) || x.name.localeCompare(y.name));
+    }
+    return out;
+  }, [allocations, fsLines]);
 
   // Allocation picker state
   const [allocPickerOpen, setAllocPickerOpen] = useState(false);
@@ -505,16 +532,31 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
             </div>
           </div>
           {uploadResult && <div className={`text-sm px-4 py-2 rounded-lg whitespace-pre-wrap ${uploadResult.includes('failed') || uploadResult.includes('rejected') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>{uploadResult}</div>}
-          <div className="relative mb-2">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-            <input
-              type="text"
-              value={testBankSearch}
-              onChange={e => setTestBankSearch(e.target.value)}
-              placeholder="Search tests by name or description..."
-              className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-300"
-            />
-            {testBankSearch && <button onClick={() => setTestBankSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
+          <div className="flex items-center gap-2 mb-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+              <input
+                type="text"
+                value={testBankSearch}
+                onChange={e => setTestBankSearch(e.target.value)}
+                placeholder="Search tests by name or description..."
+                className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-300"
+              />
+              {testBankSearch && <button onClick={() => setTestBankSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
+            </div>
+            {/* Accounting-framework filter. Tests tagged with 'ALL' are
+                always kept (they apply regardless of framework) so
+                picking e.g. FRS102 returns FRS102-specific tests PLUS
+                the framework-neutral ones. */}
+            <select
+              value={testBankFrameworkFilter}
+              onChange={e => setTestBankFrameworkFilter(e.target.value)}
+              className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-blue-300"
+              title="Filter by accounting framework — 'ALL'-framework tests are always included"
+            >
+              <option value="">All frameworks</option>
+              {frameworkOptions.map(fw => <option key={fw} value={fw}>{fw}</option>)}
+            </select>
           </div>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
@@ -525,15 +567,31 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-28">Action Type</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-32">Assertions</th>
                 <th className="text-left px-3 py-2 text-slate-600 font-semibold w-20">Framework</th>
+                <th className="text-left px-3 py-2 text-slate-600 font-semibold min-w-[160px]" title="FS lines this test is allocated to (from Test Allocations tab)">FS Lines</th>
                 <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12" title="Flow chart (legacy). Click to open existing flow, but new tests should use Pipeline.">Flow</th>
                 <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12" title="Action Pipeline (current). Click to open the pipeline editor.">Pipeline</th>
                 <th className="text-center px-3 py-2 text-slate-600 font-semibold w-10">Sig.</th>
                 <th className="w-20 px-3 py-2"></th>
               </tr></thead>
               <tbody>
-                {tests.filter(t => !testBankSearch || t.name.toLowerCase().includes(testBankSearch.toLowerCase()) || (t.description || '').toLowerCase().includes(testBankSearch.toLowerCase())).map((test, i) => {
+                {tests.filter(t => {
+                  // Search filter
+                  if (testBankSearch) {
+                    const q = testBankSearch.toLowerCase();
+                    if (!t.name.toLowerCase().includes(q) && !(t.description || '').toLowerCase().includes(q)) return false;
+                  }
+                  // Framework filter — tests marked 'ALL' are always kept
+                  // because they apply across every framework.
+                  if (testBankFrameworkFilter) {
+                    const tf = String(t.framework || '').toUpperCase();
+                    const sf = testBankFrameworkFilter.toUpperCase();
+                    if (tf !== 'ALL' && tf !== sf) return false;
+                  }
+                  return true;
+                }).map((test, i) => {
                   const tt = testTypes.find(t => t.code === test.testTypeCode);
                   const hasFlow = !!test.flow?.nodes?.length;
+                  const allocatedFsLines = allocatedFsLinesByTest.get(test.id) || [];
                   return (
                     <tr key={test.id} className={`border-b border-slate-50 hover:bg-slate-50/50 group ${i % 2 ? 'bg-slate-50/20' : ''}`}>
                       <td className="px-3 py-2"><div className="text-slate-700 text-xs font-medium">{test.name}</div>{test.description && <div className="text-slate-400 text-[10px] mt-0.5 line-clamp-1">{test.description}</div>}</td>
@@ -564,6 +622,40 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                       <td className="px-3 py-2">{tt && <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${tt.actionType === 'client_action' ? 'bg-amber-100 text-amber-700' : tt.actionType === 'ai_action' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{tt.name}</span>}</td>
                       <td className="px-3 py-2">{((test.assertions as string[]) || []).map((a, ai) => <span key={ai} className="text-[10px] px-1 py-0.5 bg-purple-100 text-purple-700 rounded mr-0.5">{assertionShortLabel(a)}</span>)}</td>
                       <td className="px-3 py-2 text-[10px] text-slate-500">{test.framework || 'All'}</td>
+                      {/* FS Lines — every FS line this test is allocated
+                          to, rendered as compact pills. Uses the
+                          allocatedFsLinesByTest memo (deduped across
+                          industries). Empty-state placeholder when the
+                          test has no allocations yet so the admin can
+                          see where a test needs wiring in. Pills are
+                          fs-category-coloured so P&L vs BS vs Notes
+                          are visually separable at a glance. */}
+                      <td className="px-3 py-2">
+                        {allocatedFsLines.length === 0 ? (
+                          <span className="text-[10px] text-slate-300 italic">Not allocated</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-0.5">
+                            {allocatedFsLines.map(fl => {
+                              const cat = (fl as any).fsCategory as string | undefined;
+                              const catClass =
+                                cat === 'pnl'           ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                cat === 'balance_sheet' ? 'bg-sky-50 text-sky-700 border-sky-200' :
+                                cat === 'cashflow'      ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                cat === 'notes'         ? 'bg-violet-50 text-violet-700 border-violet-200' :
+                                                          'bg-slate-50 text-slate-600 border-slate-200';
+                              return (
+                                <span
+                                  key={fl.id}
+                                  className={`text-[9px] px-1.5 py-0.5 rounded-full border ${catClass}`}
+                                  title={`${fl.name}${cat ? ` · ${FS_CATEGORY_LABELS[cat] || cat}` : ''}`}
+                                >
+                                  {fl.name}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </td>
                       {/* Flow icon — always visible so legacy flow tests stay reachable
                           as a fallback. Click opens the existing flow in the editor.
                           No new flow tests are created via the Add Test button (new tests
@@ -589,7 +681,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                     </tr>
                   );
                 })}
-                {tests.length === 0 && <tr><td colSpan={10} className="text-center py-8 text-slate-400 text-sm">No tests yet. Add tests or upload a CSV.</td></tr>}
+                {tests.length === 0 && <tr><td colSpan={11} className="text-center py-8 text-slate-400 text-sm">No tests yet. Add tests or upload a CSV.</td></tr>}
               </tbody>
             </table>
           </div>
