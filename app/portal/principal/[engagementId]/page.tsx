@@ -59,6 +59,15 @@ interface PrincipalDashboardData {
   };
 }
 
+interface PrincipalClientSummary {
+  id: string;
+  clientName: string;
+  auditType: string;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  setupCompletedAt?: string | null;
+}
+
 export default function PortalPrincipalDashboardPage({ params }: { params: Promise<{ engagementId: string }> }) {
   const { engagementId } = use(params);
   const searchParams = useSearchParams();
@@ -67,6 +76,44 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
   const [data, setData] = useState<PrincipalDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Multi-client multi-select: when the Portal Principal covers more
+  // than one engagement, surface every one as a toggleable pill at the
+  // top of the dashboard so they can aggregate metrics across clients
+  // (or just focus on one). Loaded once from /api/portal/my-engagements.
+  // The URL's engagementId is always the "anchor" and is included by
+  // default; additional engagements layer on via the `engagementIds`
+  // query param passed to the API.
+  const [principalEngagements, setPrincipalEngagements] = useState<PrincipalClientSummary[]>([]);
+  const [selectedEngagementIds, setSelectedEngagementIds] = useState<Set<string>>(new Set([engagementId]));
+  useEffect(() => {
+    if (!token) return;
+    fetch(`/api/portal/my-engagements?token=${token}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (Array.isArray(d?.principalFor)) {
+          setPrincipalEngagements(d.principalFor.filter((e: PrincipalClientSummary) => e.setupCompletedAt));
+        }
+      })
+      .catch(() => {});
+  }, [token]);
+  function toggleEngagement(id: string) {
+    setSelectedEngagementIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        // Don't allow deselecting the anchor engagement — the URL
+        // represents the caller's "home" dashboard. If they want a
+        // different anchor they can click its pill which routes to
+        // /portal/principal/<thatId>.
+        if (id === engagementId) return prev;
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setOffset(0);
+  }
 
   const [filterStatus, setFilterStatus] = useState<string>('');
   // Multi-select: Sets of selected FS Line IDs + TB account codes.
@@ -92,6 +139,12 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
     setError(null);
     try {
       const qp = new URLSearchParams({ token, engagementId, offset: String(offset), limit: '50' });
+      // When more than the anchor engagement is selected, pass the
+      // full list so the API aggregates. The anchor is always present
+      // in selectedEngagementIds (see toggleEngagement guard).
+      if (selectedEngagementIds.size > 1) {
+        qp.set('engagementIds', [...selectedEngagementIds].join(','));
+      }
       if (filterStatus) qp.set('status', filterStatus);
       if (filterFsLineIds.size > 0) qp.set('fsLineIds', [...filterFsLineIds].join(','));
       if (filterTbCodes.size > 0) qp.set('tbAccountCodes', [...filterTbCodes].join(','));
@@ -113,7 +166,7 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
     } finally {
       setLoading(false);
     }
-  }, [token, engagementId, offset, filterStatus, filterFsLineIds, filterTbCodes, filterAssignee, filterText, drillDown]);
+  }, [token, engagementId, offset, filterStatus, filterFsLineIds, filterTbCodes, filterAssignee, filterText, drillDown, selectedEngagementIds]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -141,25 +194,71 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="max-w-6xl mx-auto space-y-5">
-        {/* Header */}
-        <div className="flex items-start justify-between bg-white border border-slate-200 rounded-lg p-5">
-          <div>
-            <p className="text-xs text-slate-500 uppercase tracking-wide">Portal Principal Dashboard</p>
-            <h1 className="text-xl font-semibold text-slate-800 mt-0.5">Engagement requests &amp; responses</h1>
-            <p className="text-xs text-slate-500 mt-1">
-              SLA: <strong className="text-slate-700">{sla.days1}</strong> / <strong className="text-slate-700">{sla.days2}</strong> / <strong className="text-slate-700">{sla.days3}</strong> days
-              <span className="ml-2 text-slate-400">({sla.source.replace('-', ' ')})</span>
-            </p>
+        {/* Header — client name + SLA + action buttons on the right. */}
+        {/* The current engagement's client name is pulled from the     */}
+        {/* principalEngagements list (loaded separately) so we can     */}
+        {/* label the page clearly when the user Principals for multiple */}
+        {/* clients.                                                    */}
+        {(() => {
+          const currentEngagement = principalEngagements.find(e => e.id === engagementId);
+          return (
+            <div className="flex items-start justify-between bg-white border border-slate-200 rounded-lg p-5">
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Portal Principal Dashboard</p>
+                <h1 className="text-xl font-semibold text-slate-800 mt-0.5">
+                  {currentEngagement?.clientName || 'Engagement requests & responses'}
+                </h1>
+                <p className="text-xs text-slate-500 mt-1">
+                  SLA: <strong className="text-slate-700">{sla.days1}</strong> / <strong className="text-slate-700">{sla.days2}</strong> / <strong className="text-slate-700">{sla.days3}</strong> days
+                  <span className="ml-2 text-slate-400">({sla.source.replace('-', ' ')})</span>
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link href={`/portal/setup/${engagementId}?token=${token}`} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
+                  <Settings className="w-4 h-4" />Setup
+                </Link>
+                <button onClick={() => load()} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-700" disabled={loading}>
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />Refresh
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Multi-select of clients — when the Portal Principal covers  */}
+        {/* more than one engagement they can tick multiple and the     */}
+        {/* dashboard aggregates: totals sum, filter options union,     */}
+        {/* list shows requests across every selected engagement. The   */}
+        {/* URL always carries a single anchor engagementId for         */}
+        {/* bookmark stability; the multi-select layers additional     */}
+        {/* engagements on top via a query param.                       */}
+        {principalEngagements.length > 1 && (
+          <div className="bg-white border border-slate-200 rounded-lg p-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-medium text-slate-600 mr-1">Clients:</span>
+              {principalEngagements.map(e => {
+                const isSelected = selectedEngagementIds.has(e.id);
+                return (
+                  <button
+                    key={e.id}
+                    type="button"
+                    onClick={() => toggleEngagement(e.id)}
+                    className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-colors ${isSelected ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+                    title={`${e.clientName} · ${e.auditType}`}
+                  >
+                    {isSelected && <span className="inline-block w-1.5 h-1.5 rounded-full bg-white" />}
+                    {e.clientName}
+                  </button>
+                );
+              })}
+              {selectedEngagementIds.size > 1 && (
+                <span className="text-[11px] text-slate-500 ml-2">
+                  Aggregating across {selectedEngagementIds.size} engagements
+                </span>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Link href={`/portal/setup/${engagementId}?token=${token}`} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
-              <Settings className="w-4 h-4" />Setup
-            </Link>
-            <button onClick={() => load()} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-700" disabled={loading}>
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />Refresh
-            </button>
-          </div>
-        </div>
+        )}
 
         {/* KPI tiles — each one is a click-through to the list with the */}
         {/* matching status filter applied, so the whole header acts as a  */}

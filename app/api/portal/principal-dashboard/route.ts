@@ -28,8 +28,28 @@ export async function GET(req: Request) {
   const user = await resolvePortalUserFromToken(token);
   if (!user) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
 
-  const guard = await assertPortalPrincipal(user.id, engagementId);
-  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status || 403 });
+  // Multi-client aggregation: when the caller is Portal Principal
+  // for multiple engagements they may pass `engagementIds=X,Y,Z` to
+  // aggregate metrics across all of them. The anchor engagementId
+  // must always be present in the list; we validate Principal
+  // access per engagement before including it. Unauthorised ids
+  // are silently dropped (defensive) so one stale id in the list
+  // can't 403 the whole request.
+  const rawEngagementIds = searchParams.get('engagementIds') || '';
+  const requestedEngagementIds = [...new Set([engagementId, ...rawEngagementIds.split(',').map(s => s.trim()).filter(Boolean)])];
+  const validEngagementIds: string[] = [];
+  for (const id of requestedEngagementIds) {
+    const guard = await assertPortalPrincipal(user.id, id);
+    if (guard.ok) validEngagementIds.push(id);
+    else if (id === engagementId) {
+      // The anchor MUST be valid — otherwise the caller has no
+      // business being on this URL at all.
+      return NextResponse.json({ error: guard.error }, { status: guard.status || 403 });
+    }
+  }
+  if (validEngagementIds.length === 0) {
+    return NextResponse.json({ error: 'No accessible engagements for this caller.' }, { status: 403 });
+  }
 
   // Filters from query string — all optional; used to narrow the list
   // view without re-computing the summary metrics (which always cover
@@ -54,15 +74,27 @@ export async function GET(req: Request) {
   const limit = Math.min(200, Math.max(10, Number(searchParams.get('limit') || 50)));
   const offset = Math.max(0, Number(searchParams.get('offset') || 0));
 
+  // SLA is per-engagement, but when the caller multi-selects we take
+  // the anchor engagement's SLA for dashboard rendering (tooltip text
+  // below the header). The actual overdue classification uses each
+  // request's OWN engagement's SLA — see the per-request SLA map
+  // built below.
   const sla = await resolveEscalationDays(engagementId);
+  const slaByEngagement = new Map<string, Awaited<ReturnType<typeof resolveEscalationDays>>>();
+  slaByEngagement.set(engagementId, sla);
+  for (const id of validEngagementIds) {
+    if (!slaByEngagement.has(id)) slaByEngagement.set(id, await resolveEscalationDays(id));
+  }
   const now = new Date();
 
-  // All requests for the engagement. We fetch the full set so metric
-  // computation is client-server consistent; list view slices after
-  // filters are applied.
+  // All requests across every selected engagement. We fetch the full
+  // set so metric computation is client-server consistent; list view
+  // slices after filters are applied. When only the anchor is
+  // selected this is identical to the single-engagement query.
   const all = await prisma.portalRequest.findMany({
-    where: { engagementId },
+    where: { engagementId: { in: validEngagementIds } },
     select: {
+      engagementId: true,
       id: true,
       section: true,
       question: true,
@@ -84,38 +116,77 @@ export async function GET(req: Request) {
     orderBy: { requestedAt: 'desc' },
   }).catch(() => [] as any[]);
 
-  // Resolve FS Line names for filter pills + list rendering.
-  const fsLineIdsInRequests = [...new Set(all.map(r => r.routingFsLineId).filter(Boolean) as string[])];
-  const fsLines = fsLineIdsInRequests.length > 0
+  // Filter options source: the engagement's TB, NOT the fired-requests
+  // history. Previously the filter was populated only from routingFsLineId
+  // on actual PortalRequest rows — which meant a brand-new engagement
+  // showed "No matches" in the filter popover even when the Work
+  // Allocation screen listed dozens of FS Lines. Now we pull the
+  // same AuditTBRow set the Work Allocation screen uses (filtered to
+  // rows with both a description AND some classification) so the two
+  // screens show the same FS Line universe. Empty-description and
+  // unclassified rows are excluded — same rules as the setup screen.
+  // TB filter-options source: union across every selected engagement,
+  // so multi-select Principals see the full FS-Line universe of the
+  // clients they're viewing.
+  const tbAll = await prisma.auditTBRow.findMany({
+    where: { engagementId: { in: validEngagementIds } },
+    select: { accountCode: true, description: true, fsLineId: true, fsNoteLevel: true, fsLevel: true, engagementId: true },
+    orderBy: [{ fsLineId: 'asc' }, { accountCode: 'asc' }],
+  }).catch(() => [] as any[]);
+  const engForFirm = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { firmId: true },
+  });
+  const firmCatalogue = engForFirm?.firmId
     ? await prisma.methodologyFsLine.findMany({
-        where: { id: { in: fsLineIdsInRequests } },
+        where: { firmId: engForFirm.firmId, isActive: true },
         select: { id: true, name: true },
       })
     : [];
-  const fsNameById = new Map(fsLines.map(l => [l.id, l.name]));
+  const fsByName = new Map<string, { id: string; name: string }>();
+  for (const f of firmCatalogue) fsByName.set((f.name || '').trim().toLowerCase(), f);
 
-  // TB codes per FS Line — fed to the multi-select filter UI so the
-  // Principal can drill in past just FS Line. We resolve the codes
-  // from AuditTBRow (authoritative source) rather than from requests
-  // alone, so the filter shows every TB code under an FS Line even
-  // when no request has been raised against it yet.
-  const tbRowsForFilter = fsLineIdsInRequests.length > 0
-    ? await prisma.auditTBRow.findMany({
-        where: { engagementId, fsLineId: { in: fsLineIdsInRequests } },
-        select: { accountCode: true, description: true, fsLineId: true },
-        orderBy: [{ fsLineId: 'asc' }, { accountCode: 'asc' }],
-      })
-    : [];
+  // Resolve each TB row to a (fsLineId, fsLineName) — same fallback
+  // chain as the setup endpoint (canonical → fsNoteLevel name match
+  // → fsLevel name match). Rows that still have no classification
+  // AND no description are skipped.
   const tbByFsLine = new Map<string, Array<{ accountCode: string; description: string }>>();
-  for (const r of tbRowsForFilter) {
-    if (!r.fsLineId) continue;
-    if (!tbByFsLine.has(r.fsLineId)) tbByFsLine.set(r.fsLineId, []);
-    tbByFsLine.get(r.fsLineId)!.push({ accountCode: r.accountCode, description: r.description });
+  const fsLineNameById = new Map<string, string>();
+  for (const r of tbAll) {
+    const desc = (r.description || '').trim();
+    if (!desc) continue;
+    let resolvedId = r.fsLineId ?? null;
+    if (!resolvedId && r.fsNoteLevel) {
+      resolvedId = fsByName.get(r.fsNoteLevel.trim().toLowerCase())?.id ?? null;
+    }
+    if (!resolvedId && r.fsLevel) {
+      resolvedId = fsByName.get(r.fsLevel.trim().toLowerCase())?.id ?? null;
+    }
+    if (!resolvedId && !r.fsNoteLevel && !r.fsLevel) continue;
+    const groupKey = resolvedId || `note:${(r.fsNoteLevel || '').trim()}`;
+    const fsName = resolvedId
+      ? (firmCatalogue.find(f => f.id === resolvedId)?.name || r.fsNoteLevel || 'TBCYvPY Classified')
+      : (r.fsNoteLevel || 'TBCYvPY Classified');
+    if (!tbByFsLine.has(groupKey)) tbByFsLine.set(groupKey, []);
+    fsLineNameById.set(groupKey, fsName);
+    tbByFsLine.get(groupKey)!.push({ accountCode: r.accountCode, description: desc });
   }
 
-  // Staff name lookup for assignee rendering.
+  // `fsLines` is the catalogue the filter popover renders. Each entry
+  // carries its full list of TB codes. The `id` is either a real
+  // MethodologyFsLine.id or the `note:<fsNoteLevel>` synthetic key
+  // — the filter route treats them as opaque strings so both work.
+  const fsLines = [...tbByFsLine.entries()]
+    .map(([id, tbCodes]) => ({ id, name: fsLineNameById.get(id) || 'Unknown', tbCodes }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  // Legacy alias kept so other consumers of this response (list
+  // rendering below) can still look up a name by canonical id.
+  const fsNameById = new Map(fsLines.map(l => [l.id, l.name]));
+
+  // Staff name lookup for assignee rendering — union across every
+  // selected engagement so aggregated views can name every assignee.
   const staff = await prisma.clientPortalStaffMember.findMany({
-    where: { engagementId },
+    where: { engagementId: { in: validEngagementIds } },
     select: { portalUserId: true, name: true, email: true },
   });
   const nameByUser = new Map<string, string>();
@@ -134,7 +205,11 @@ export async function GET(req: Request) {
   const overdueRows = outstandingRows.filter(r => {
     if (!r.assignedAt) return false;
     const hours = (now.getTime() - new Date(r.assignedAt).getTime()) / 3_600_000;
-    const columnSla = r.escalationLevel === 0 ? sla.days1 : r.escalationLevel === 1 ? sla.days2 : sla.days3;
+    // Use the request's own engagement's SLA — different engagements
+    // may have different escalation-day overrides. Fall back to the
+    // anchor's SLA if the lookup misses for any reason.
+    const rSla = slaByEngagement.get(r.engagementId!) || sla;
+    const columnSla = r.escalationLevel === 0 ? rSla.days1 : r.escalationLevel === 1 ? rSla.days2 : rSla.days3;
     return hours > columnSla * 24;
   });
 
@@ -225,7 +300,8 @@ export async function GET(req: Request) {
     if (status === 'overdue') {
       if (r.status !== 'outstanding' || !r.assignedAt) return false;
       const hours = (now.getTime() - new Date(r.assignedAt).getTime()) / 3_600_000;
-      const columnSla = r.escalationLevel === 0 ? sla.days1 : r.escalationLevel === 1 ? sla.days2 : sla.days3;
+      const rSla = slaByEngagement.get(r.engagementId!) || sla;
+      const columnSla = r.escalationLevel === 0 ? rSla.days1 : r.escalationLevel === 1 ? rSla.days2 : rSla.days3;
       if (hours <= columnSla * 24) return false;
     }
     // Multi-select semantics: a request matches if EITHER its
@@ -294,13 +370,10 @@ export async function GET(req: Request) {
     filters: {
       // fsLines carries a nested `tbCodes` array so the filter UI
       // can render a multi-select popover with TB codes embedded
-      // under each FS Line. Empty tbCodes = FS Line has no TB rows
-      // (the filter just shows the FS Line itself, no children).
-      fsLines: fsLines.map(l => ({
-        id: l.id,
-        name: l.name,
-        tbCodes: tbByFsLine.get(l.id) || [],
-      })),
+      // under each FS Line. Sourced from AuditTBRow so it's
+      // populated as soon as the engagement has a TB — no need to
+      // wait for requests to be raised before the filter works.
+      fsLines,
       staff: [...nameByUser.entries()].map(([id, name]) => ({ id, name })),
     },
     list: {
