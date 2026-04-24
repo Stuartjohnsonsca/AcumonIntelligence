@@ -333,6 +333,21 @@ export function DynamicAppendixForm({
         const expr = raw.trim().slice(1);
         computed[q.id] = evaluateFormula(expr, withAliases, crossRefData);
       }
+      // Per-cell formulas in multi-column rows. Each cell with
+      // inputType='formula' has its own formulaExpression stored on
+      // q.columns[ci]. The row's aliases already expose col1..colN
+      // for this q.id (see template-aliases buildAliases), so a cell
+      // formula can freely reference `col1 * col2` or any other
+      // question / firm variable by identifier.
+      if (Array.isArray(q.columns) && q.columns.length > 0) {
+        for (let ci = 0; ci < q.columns.length; ci++) {
+          const colCfg = q.columns[ci];
+          if (colCfg?.inputType === 'formula' && colCfg.formulaExpression) {
+            const cellKey = `${q.id}_col${ci + 1}`;
+            computed[cellKey] = evaluateFormula(colCfg.formulaExpression, withAliases, crossRefData);
+          }
+        }
+      }
     }
     return computed;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -672,6 +687,23 @@ export function DynamicAppendixForm({
                                     onChange={e => handleChange(cellKey, e.target.checked)}
                                     className="w-4 h-4 rounded border-slate-300"
                                   />
+                                ) : cellInputType === 'formula' ? (
+                                  // Computed cell — value is evaluated
+                                  // in the useMemo above and rendered
+                                  // read-only. Purple ring so the user
+                                  // recognises it as a formula-driven
+                                  // cell, not editable input.
+                                  <div
+                                    className={`w-full border border-purple-200 bg-purple-50 rounded px-1.5 py-1 text-xs text-purple-900 min-h-[28px] ${refClass}`}
+                                    title={rowColCfg?.formulaExpression ? `= ${rowColCfg.formulaExpression}` : 'Computed'}
+                                  >
+                                    {(() => {
+                                      const v = computedValues[cellKey] ?? values[cellKey];
+                                      if (v === undefined || v === null || v === '') return <span className="text-purple-400 italic">—</span>;
+                                      if (typeof v === 'number') return v.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+                                      return String(v);
+                                    })()}
+                                  </div>
                                 ) : cellInputType === 'text' ? (
                                   <input
                                     type="text"

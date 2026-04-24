@@ -359,6 +359,11 @@ export interface TemplateQuestion {
 export interface TemplateQuestionColumn {
   inputType: QuestionInputType;
   dropdownOptions?: string[];
+  /** Formula expression when inputType is 'formula'. Same syntax as
+   *  the row-level formulaExpression (references identifiers from
+   *  elsewhere in the schedule or firm variables) — just scoped to
+   *  one cell in a multi-column row. */
+  formulaExpression?: string;
   validationMin?: number;
   validationMax?: number;
   placeholder?: string;

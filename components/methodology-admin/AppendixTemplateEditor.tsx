@@ -769,7 +769,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 const cellCount = Math.max(0, headers.length - 1);
                                 if (cellCount === 0) return null;
                                 type CellCondOp = NonNullable<NonNullable<TemplateQuestion['columns']>[number]['conditionalOn']>['operator'];
-                                function updateRowCol(ci: number, patch: Partial<{ inputType: QuestionInputType; dropdownOptions: string[]; placeholder: string; conditionalOn: { columnIndex: number; operator?: CellCondOp; value?: string } | undefined }>) {
+                                function updateRowCol(ci: number, patch: Partial<{ inputType: QuestionInputType; dropdownOptions: string[]; placeholder: string; formulaExpression: string; conditionalOn: { columnIndex: number; operator?: CellCondOp; value?: string } | undefined }>) {
                                   const current = (q.columns || []).slice();
                                   while (current.length <= ci) current.push({ inputType: 'textarea' } as any);
                                   current[ci] = { ...current[ci], ...patch };
@@ -803,8 +803,13 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                                 className="text-[10px] border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
                                                 title="Input type for this cell only (this row's version of this column)"
                                               >
+                                                {/* Formula IS available at cell level — lets a row
+                                                     compute one column from the others (e.g. col 3
+                                                     = col 1 × col 2). Sub-header / table_row /
+                                                     yes_only remain excluded because they only make
+                                                     sense at row level, not per-cell. */}
                                                 {INPUT_TYPE_OPTIONS
-                                                  .filter(o => o.value !== 'subheader' && o.value !== 'table_row' && o.value !== 'formula' && o.value !== 'yes_only')
+                                                  .filter(o => o.value !== 'subheader' && o.value !== 'table_row' && o.value !== 'yes_only')
                                                   .map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                               </select>
                                               {cfg?.inputType === 'dropdown' && (
@@ -824,6 +829,29 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                                 className="text-[10px] border border-slate-200 rounded px-2 py-1 flex-1 min-w-[80px] focus:outline-none focus:border-blue-400"
                                               />
                                             </div>
+                                            {/* Per-cell formula editor — shown when this cell's
+                                                inputType is 'formula'. Same syntax as the row-level
+                                                formulaExpression; identifiers here can reference the
+                                                row's other columns (e.g. `row_col1 * row_col2`), the
+                                                question's slug, any other question in the schedule,
+                                                or firm variables. Matches the row-level editor's
+                                                quick-reference help so users aren't surprised. */}
+                                            {cfg?.inputType === 'formula' && (
+                                              <div className="bg-purple-50/80 border border-purple-200 rounded p-2 space-y-1">
+                                                <label className="block text-[10px] text-purple-700 font-medium">Formula for this cell</label>
+                                                <input
+                                                  type="text"
+                                                  value={cfg?.formulaExpression || ''}
+                                                  onChange={e => updateRowCol(ci, { formulaExpression: e.target.value })}
+                                                  placeholder="e.g. col1 * col2,  sum_of(revenue),  audit_fee * 1.2"
+                                                  className="w-full text-[11px] font-mono border border-purple-200 rounded px-2 py-1 focus:outline-none focus:border-purple-400"
+                                                />
+                                                <p className="text-[10px] text-purple-600 leading-snug">
+                                                  Reference other cells on THIS row as <code>col1</code>, <code>col2</code>, <code>col3</code> etc,
+                                                  other questions by their slug, or any firm variable by name. Same syntax as row-level formulas.
+                                                </p>
+                                              </div>
+                                            )}
                                             {/* Per-cell conditional —
                                                 hide THIS cell when another
                                                 cell in the SAME ROW doesn't
