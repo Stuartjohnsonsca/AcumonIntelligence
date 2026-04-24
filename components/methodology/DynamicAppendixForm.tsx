@@ -346,6 +346,41 @@ export function DynamicAppendixForm({
   /** Evaluate a `conditionalOn` rule against the current answers
    *  collection. Supports the full operator set; defaults to 'eq'
    *  when no operator is set (back-compat with old schemas). */
+  /**
+   * Per-cell visibility for a multi-column row. When a cell has a
+   * conditionalOn pointing at another column on the SAME row, we
+   * evaluate the other cell's current value against the operator +
+   * expected value. Returns true (show) when there's no condition or
+   * the condition passes; false (hide, render empty cell) otherwise.
+   */
+  function isCellVisible(q: TemplateQuestion, ci: number): boolean {
+    const cond = q.columns?.[ci]?.conditionalOn;
+    if (!cond) return true;
+    const { columnIndex, operator = 'eq', value = '' } = cond;
+    if (!Number.isFinite(columnIndex) || columnIndex < 1) return true;
+    const refKey = `${q.id}_col${columnIndex}`;
+    const refValue = values[refKey];
+    const refStr = refValue == null ? '' : String(refValue);
+    const expected = String(value ?? '');
+    const asNum = (v: string) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : NaN;
+    };
+    switch (operator) {
+      case 'eq':          return refStr === expected;
+      case 'ne':          return refStr !== expected;
+      case 'contains':    return refStr.toLowerCase().includes(expected.toLowerCase());
+      case 'notContains': return !refStr.toLowerCase().includes(expected.toLowerCase());
+      case 'isEmpty':     return refStr.trim().length === 0;
+      case 'isNotEmpty':  return refStr.trim().length > 0;
+      case 'gt':  { const a = asNum(refStr), b = asNum(expected); return Number.isFinite(a) && Number.isFinite(b) && a >  b; }
+      case 'gte': { const a = asNum(refStr), b = asNum(expected); return Number.isFinite(a) && Number.isFinite(b) && a >= b; }
+      case 'lt':  { const a = asNum(refStr), b = asNum(expected); return Number.isFinite(a) && Number.isFinite(b) && a <  b; }
+      case 'lte': { const a = asNum(refStr), b = asNum(expected); return Number.isFinite(a) && Number.isFinite(b) && a <= b; }
+      default:            return refStr === expected;
+    }
+  }
+
   function isVisible(q: TemplateQuestion): boolean {
     if (!q.conditionalOn) return true;
     const { questionId, value, operator = 'eq', columnIndex } = q.conditionalOn;
@@ -545,6 +580,25 @@ export function DynamicAppendixForm({
                             const colReferenced = isColumnReferenced(q, colN);
                             const colTitle = colReferenced ? referencedByTooltip(q, colN) : undefined;
                             const refClass = colReferenced ? 'ring-2 ring-red-500 ring-offset-1' : '';
+                            // Per-cell conditional — e.g. col2 is only
+                            // relevant when col1 is 'Y'. When the
+                            // condition fails we render an empty
+                            // greyed-out placeholder cell AND skip the
+                            // input widget, so the admin's "left-hand
+                            // response means no right-hand answer"
+                            // semantic is visible to the auditor. We
+                            // deliberately don't clear the stored
+                            // value — if the auditor toggles col1
+                            // back the previous col2 answer reappears.
+                            if (!isCellVisible(q, ci)) {
+                              return (
+                                <td key={ci} className="px-2 py-1 align-top">
+                                  <div className="w-full text-[10px] text-slate-300 italic text-center bg-slate-50 rounded border border-dashed border-slate-200 py-1">
+                                    —
+                                  </div>
+                                </td>
+                              );
+                            }
                             // Per-cell config is ROW-level — each
                             // question (row) has its own `columns`
                             // array describing what widget to render

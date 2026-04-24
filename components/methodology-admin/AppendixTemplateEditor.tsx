@@ -768,7 +768,8 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 // Cells = non-label columns (skip index 0).
                                 const cellCount = Math.max(0, headers.length - 1);
                                 if (cellCount === 0) return null;
-                                function updateRowCol(ci: number, patch: Partial<{ inputType: QuestionInputType; dropdownOptions: string[]; placeholder: string }>) {
+                                type CellCondOp = NonNullable<NonNullable<TemplateQuestion['columns']>[number]['conditionalOn']>['operator'];
+                                function updateRowCol(ci: number, patch: Partial<{ inputType: QuestionInputType; dropdownOptions: string[]; placeholder: string; conditionalOn: { columnIndex: number; operator?: CellCondOp; value?: string } | undefined }>) {
                                   const current = (q.columns || []).slice();
                                   while (current.length <= ci) current.push({ inputType: 'textarea' } as any);
                                   current[ci] = { ...current[ci], ...patch };
@@ -777,47 +778,136 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 return (
                                   <div className="col-span-2 w-full pt-2 mt-1 border-t border-slate-100">
                                     <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">Per-cell configuration for this row</div>
-                                    <div className="space-y-1">
+                                    <div className="space-y-2">
                                       {Array.from({ length: cellCount }).map((_, ci) => {
                                         const cfg = q.columns?.[ci];
                                         const header = headers[ci + 1] || `Column ${ci + 2}`;
+                                        const cond = cfg?.conditionalOn;
+                                        const condUnary = cond?.operator === 'isEmpty' || cond?.operator === 'isNotEmpty';
+                                        // Look up the referenced column's
+                                        // config so the value-input below
+                                        // matches the referenced cell's
+                                        // widget type (Y/N, dropdown, etc.).
+                                        const refCfg = cond?.columnIndex ? q.columns?.[cond.columnIndex - 1] : undefined;
+                                        const refInputType = refCfg?.inputType || q.inputType;
+                                        const refOptions = refCfg?.dropdownOptions && refCfg.dropdownOptions.length > 0 ? refCfg.dropdownOptions : q.dropdownOptions;
                                         return (
-                                          <div key={ci} className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-[10px] text-slate-500 w-32 truncate" title={header}>
-                                              <strong className="text-slate-700">Col {ci + 1}</strong> — {header}
-                                            </span>
-                                            <select
-                                              value={cfg?.inputType || q.inputType}
-                                              onChange={e => updateRowCol(ci, { inputType: e.target.value as QuestionInputType })}
-                                              className="text-[10px] border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
-                                              title="Input type for this cell only (this row's version of this column)"
-                                            >
-                                              {INPUT_TYPE_OPTIONS
-                                                .filter(o => o.value !== 'subheader' && o.value !== 'table_row' && o.value !== 'formula' && o.value !== 'yes_only')
-                                                .map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                            </select>
-                                            {cfg?.inputType === 'dropdown' && (
+                                          <div key={ci} className="bg-slate-50/60 border border-slate-100 rounded p-2 space-y-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                              <span className="text-[10px] text-slate-500 w-32 truncate" title={header}>
+                                                <strong className="text-slate-700">Col {ci + 1}</strong> — {header}
+                                              </span>
+                                              <select
+                                                value={cfg?.inputType || q.inputType}
+                                                onChange={e => updateRowCol(ci, { inputType: e.target.value as QuestionInputType })}
+                                                className="text-[10px] border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
+                                                title="Input type for this cell only (this row's version of this column)"
+                                              >
+                                                {INPUT_TYPE_OPTIONS
+                                                  .filter(o => o.value !== 'subheader' && o.value !== 'table_row' && o.value !== 'formula' && o.value !== 'yes_only')
+                                                  .map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                              </select>
+                                              {cfg?.inputType === 'dropdown' && (
+                                                <input
+                                                  type="text"
+                                                  value={(cfg?.dropdownOptions || []).join(', ')}
+                                                  onChange={e => updateRowCol(ci, { dropdownOptions: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                                                  placeholder="Option 1, Option 2, Option 3"
+                                                  className="text-[10px] border border-slate-200 rounded px-2 py-1 flex-1 min-w-[120px] focus:outline-none focus:border-blue-400"
+                                                />
+                                              )}
                                               <input
                                                 type="text"
-                                                value={(cfg?.dropdownOptions || []).join(', ')}
-                                                onChange={e => updateRowCol(ci, { dropdownOptions: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
-                                                placeholder="Option 1, Option 2, Option 3"
-                                                className="text-[10px] border border-slate-200 rounded px-2 py-1 flex-1 min-w-[120px] focus:outline-none focus:border-blue-400"
+                                                value={cfg?.placeholder || ''}
+                                                onChange={e => updateRowCol(ci, { placeholder: e.target.value })}
+                                                placeholder="Placeholder (optional)"
+                                                className="text-[10px] border border-slate-200 rounded px-2 py-1 flex-1 min-w-[80px] focus:outline-none focus:border-blue-400"
                                               />
-                                            )}
-                                            <input
-                                              type="text"
-                                              value={cfg?.placeholder || ''}
-                                              onChange={e => updateRowCol(ci, { placeholder: e.target.value })}
-                                              placeholder="Placeholder (optional)"
-                                              className="text-[10px] border border-slate-200 rounded px-2 py-1 flex-1 min-w-[80px] focus:outline-none focus:border-blue-400"
-                                            />
+                                            </div>
+                                            {/* Per-cell conditional —
+                                                hide THIS cell when another
+                                                cell in the SAME ROW doesn't
+                                                match a condition (e.g. Col 2
+                                                only when Col 1 is 'Y'). */}
+                                            <div className="flex items-center gap-2 flex-wrap text-[10px] text-slate-600">
+                                              <span className="text-[10px] text-slate-500 w-32 shrink-0">Show when:</span>
+                                              <select
+                                                value={cond?.columnIndex ? String(cond.columnIndex) : ''}
+                                                onChange={e => {
+                                                  const v = e.target.value;
+                                                  if (!v) { updateRowCol(ci, { conditionalOn: undefined }); return; }
+                                                  const nextColIndex = Number(v);
+                                                  const base = cond || { columnIndex: nextColIndex, operator: 'eq', value: '' };
+                                                  updateRowCol(ci, { conditionalOn: { columnIndex: nextColIndex, operator: base.operator || 'eq', value: base.value || '' } });
+                                                }}
+                                                className="text-[10px] border border-slate-200 rounded px-2 py-1 bg-white"
+                                              >
+                                                <option value="">— always show —</option>
+                                                {Array.from({ length: cellCount }).map((_, j) => {
+                                                  if (j === ci) return null; // can't reference itself
+                                                  return <option key={j + 1} value={String(j + 1)}>Col {j + 1} — {headers[j + 1] || `Column ${j + 2}`}</option>;
+                                                })}
+                                              </select>
+                                              {cond?.columnIndex && (
+                                                <select
+                                                  value={cond.operator || 'eq'}
+                                                  onChange={e => {
+                                                    const op = e.target.value as any;
+                                                    const isUnary = op === 'isEmpty' || op === 'isNotEmpty';
+                                                    updateRowCol(ci, { conditionalOn: { columnIndex: cond.columnIndex!, operator: op, value: isUnary ? '' : (cond.value || '') } });
+                                                  }}
+                                                  className="text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white"
+                                                >
+                                                  <option value="eq">equals</option>
+                                                  <option value="ne">does not equal</option>
+                                                  <option value="contains">contains</option>
+                                                  <option value="notContains">does not contain</option>
+                                                  <option value="gt">&gt;</option>
+                                                  <option value="gte">&gt;=</option>
+                                                  <option value="lt">&lt;</option>
+                                                  <option value="lte">&lt;=</option>
+                                                  <option value="isEmpty">is empty</option>
+                                                  <option value="isNotEmpty">is not empty</option>
+                                                </select>
+                                              )}
+                                              {cond?.columnIndex && !condUnary && (
+                                                refInputType === 'yesno' || refInputType === 'yna' || refInputType === 'checkbox' ? (
+                                                  <select
+                                                    value={cond.value || ''}
+                                                    onChange={e => updateRowCol(ci, { conditionalOn: { columnIndex: cond.columnIndex!, operator: cond.operator || 'eq', value: e.target.value } })}
+                                                    className="text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white w-20"
+                                                  >
+                                                    <option value="">—</option>
+                                                    <option value="Y">Y</option>
+                                                    <option value="N">N</option>
+                                                    <option value="N/A">N/A</option>
+                                                  </select>
+                                                ) : refInputType === 'dropdown' && Array.isArray(refOptions) && refOptions.length > 0 ? (
+                                                  <select
+                                                    value={cond.value || ''}
+                                                    onChange={e => updateRowCol(ci, { conditionalOn: { columnIndex: cond.columnIndex!, operator: cond.operator || 'eq', value: e.target.value } })}
+                                                    className="text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white"
+                                                  >
+                                                    <option value="">—</option>
+                                                    {refOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                                  </select>
+                                                ) : (
+                                                  <input
+                                                    type="text"
+                                                    value={cond.value || ''}
+                                                    onChange={e => updateRowCol(ci, { conditionalOn: { columnIndex: cond.columnIndex!, operator: cond.operator || 'eq', value: e.target.value } })}
+                                                    placeholder="value"
+                                                    className="text-[10px] border border-slate-200 rounded px-2 py-1 bg-white w-28"
+                                                  />
+                                                )
+                                              )}
+                                            </div>
                                           </div>
                                         );
                                       })}
                                     </div>
                                     <p className="text-[10px] text-slate-500 italic mt-1">
-                                      Leave alone to use the row&rsquo;s own input type ({INPUT_TYPE_OPTIONS.find(o => o.value === q.inputType)?.label || q.inputType}) for every cell; set per-cell to mix widgets in the same row.
+                                      Leave alone to use the row&rsquo;s own input type ({INPUT_TYPE_OPTIONS.find(o => o.value === q.inputType)?.label || q.inputType}) for every cell. Use &quot;Show when&quot; to hide a cell based on another cell on the same row (e.g. Col 2 only when Col 1 = Y).
                                     </p>
                                   </div>
                                 );

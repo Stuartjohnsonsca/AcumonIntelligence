@@ -362,6 +362,17 @@ export interface TemplateQuestionColumn {
   validationMin?: number;
   validationMax?: number;
   placeholder?: string;
+  /** Per-cell visibility. Condition is evaluated against ANOTHER
+   *  cell in the SAME ROW (not a different question) — so a row that
+   *  has "Have controls been tested?" in col 1 and "Test results" in
+   *  col 2 can hide col 2 when col 1 is "No". columnIndex is 1-based
+   *  and points at the cell whose answer drives the condition.
+   *  Leaving conditionalOn unset means the cell is always shown. */
+  conditionalOn?: {
+    columnIndex: number;
+    operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'notContains' | 'isEmpty' | 'isNotEmpty';
+    value?: string;
+  };
 }
 
 export type SectionLayout = 'standard' | 'table_4col' | 'table_3col' | 'table_5col';
