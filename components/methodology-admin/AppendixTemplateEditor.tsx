@@ -357,20 +357,54 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                 <span className="text-xs text-slate-400 flex-shrink-0">({sorted.length})</span>
               </div>
               <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                {/* Section Layout dropdown */}
+                {/* Section Layout dropdown — switching between 3/4/5-
+                    col resizes the columnHeaders array to the new count
+                    (preserving the admin's existing header text where it
+                    still fits, padding the remainder with the layout's
+                    defaults) and trims each question's per-row
+                    q.columns array to match. Without this, bumping up
+                    to 4-col then back to 3-col left the section still
+                    rendering 4 columns because the headers array kept
+                    its old length. */}
                 <select
                   value={sectionMeta[sectionKey]?.layout || 'standard'}
                   onChange={e => {
-                    const layout = e.target.value as SectionLayout;
+                    const newLayout = e.target.value as SectionLayout;
+                    const targetCount =
+                      newLayout === 'table_3col' ? 3 :
+                      newLayout === 'table_4col' ? 4 :
+                      newLayout === 'table_5col' ? 5 : 0;
+                    const existingHeaders = sectionMeta[sectionKey]?.columnHeaders || [];
+                    const defaults = LAYOUT_DEFAULT_HEADERS[newLayout] || [];
+                    // Resize: keep admin-edited header text up to
+                    // targetCount, pad with defaults for any new slots.
+                    const nextHeaders: string[] = [];
+                    if (targetCount > 0) {
+                      for (let i = 0; i < targetCount; i++) {
+                        if (i < existingHeaders.length && existingHeaders[i]) nextHeaders.push(existingHeaders[i]);
+                        else nextHeaders.push(defaults[i] || `Column ${i + 1}`);
+                      }
+                    }
                     updateSectionMeta(sectionKey, {
-                      layout,
-                      columnHeaders: sectionMeta[sectionKey]?.columnHeaders || LAYOUT_DEFAULT_HEADERS[layout] || [],
+                      layout: newLayout,
+                      columnHeaders: nextHeaders,
                       signOff: sectionMeta[sectionKey]?.signOff ?? true,
                     });
+                    // Trim / extend each question's q.columns in this
+                    // section so they match the new cell count
+                    // (targetCount - 1, since column 0 is the label).
+                    const cellCount = Math.max(0, targetCount - 1);
+                    setQuestions(prev => prev.map(q => {
+                      if (q.sectionKey !== sectionKey) return q;
+                      if (!q.columns && cellCount === 0) return q;
+                      const next = (q.columns || []).slice(0, cellCount);
+                      return { ...q, columns: cellCount === 0 ? undefined : next };
+                    }));
+                    setSaved(false);
                   }}
                   onClick={e => e.stopPropagation()}
                   className="text-[10px] border border-slate-200 rounded px-1.5 py-0.5 bg-white text-slate-600 focus:outline-none focus:border-blue-400"
-                  title="Section layout type"
+                  title="Section layout type. Switching between 3/4/5-col resizes the column headers and per-row cell config — your header text is preserved where it still fits."
                 >
                   {LAYOUT_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                 </select>
