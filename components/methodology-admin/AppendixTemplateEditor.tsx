@@ -517,29 +517,66 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                               />
                             </div>
                             <div>
-                              <label className="block text-xs text-slate-500 mb-1 font-medium">Response Type</label>
-                              <select
-                                value={q.inputType}
-                                onChange={e => updateQuestion(q.id, { inputType: e.target.value as QuestionInputType })}
-                                className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                              >
-                                {INPUT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                              </select>
+                              {/* Response Type is hidden for rows inside a
+                                  table-layout section — each cell in that
+                                  section has its own input type configured
+                                  in the per-cell block below, so a row-
+                                  level Response Type would be redundant
+                                  and potentially misleading. */}
+                              {(() => {
+                                const parentMeta = sectionMeta[q.sectionKey];
+                                const inTable = parentMeta?.layout && parentMeta.layout !== 'standard';
+                                if (inTable) return (
+                                  <div className="text-[10px] text-slate-400 italic pt-1">
+                                    Response type is set per-cell below (this row sits in a table-layout section).
+                                  </div>
+                                );
+                                return (
+                                  <>
+                                    <label className="block text-xs text-slate-500 mb-1 font-medium">Response Type</label>
+                                    <select
+                                      value={q.inputType}
+                                      onChange={e => updateQuestion(q.id, { inputType: e.target.value as QuestionInputType })}
+                                      className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                    >
+                                      {INPUT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                    </select>
+                                  </>
+                                );
+                              })()}
                             </div>
                             <div>
-                              <label className="block text-xs text-slate-500 mb-1 font-medium">Section</label>
-                              <select
-                                value={q.sectionKey}
-                                onChange={e => updateQuestion(q.id, { sectionKey: e.target.value })}
-                                className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                              >
-                                {Array.from(sections.keys()).map(s => <option key={s} value={s}>{s}</option>)}
-                                {sectionOptions.filter(s => !sections.has(s)).map(s => <option key={s} value={s}>{s}</option>)}
-                              </select>
+                              {/* Section picker doubles as a "move to
+                                  another section" shortcut. Hidden for
+                                  table-layout rows too — the row already
+                                  lives visually under its section heading
+                                  and the admin edits the whole section's
+                                  layout there. */}
+                              {(() => {
+                                const parentMeta = sectionMeta[q.sectionKey];
+                                const inTable = parentMeta?.layout && parentMeta.layout !== 'standard';
+                                if (inTable) return null;
+                                return (
+                                  <>
+                                    <label className="block text-xs text-slate-500 mb-1 font-medium">Section</label>
+                                    <select
+                                      value={q.sectionKey}
+                                      onChange={e => updateQuestion(q.id, { sectionKey: e.target.value })}
+                                      className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                    >
+                                      {Array.from(sections.keys()).map(s => <option key={s} value={s}>{s}</option>)}
+                                      {sectionOptions.filter(s => !sections.has(s)).map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                  </>
+                                );
+                              })()}
                             </div>
 
-                            {/* Dropdown options editor */}
-                            {q.inputType === 'dropdown' && (
+                            {/* Dropdown options editor — only shown when
+                                row is NOT in a table layout (table cells
+                                configure their own dropdown options
+                                per-cell in the per-row column block). */}
+                            {q.inputType === 'dropdown' && !(sectionMeta[q.sectionKey]?.layout && sectionMeta[q.sectionKey].layout !== 'standard') && (
                               <DropdownOptionsEditor
                                 key={q.id + '-dropdown'}
                                 options={q.dropdownOptions || []}
@@ -751,8 +788,8 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                   </div>
                                 );
                               })()}
-                              <label
-                                className="flex items-center gap-1.5 text-xs text-slate-500"
+                              <div
+                                className="col-span-2 w-full flex items-center gap-2 pt-2 mt-1 border-t border-slate-100"
                                 title={
                                   'Cross-reference this question to another schedule, so its value is pulled live from there (read-only here). Format: <schedule>.<questionKey> — e.g.\n' +
                                   '  ethics.independence_confirmed\n' +
@@ -762,10 +799,18 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                   'Letter aliases also work: appendix_a = permanentFile, appendix_b = ethics, appendix_c = continuance, appendix_e = materiality.'
                                 }
                               >
-                                Cross-ref:
-                                <input type="text" value={q.crossRef || ''} onChange={e => updateQuestion(q.id, { crossRef: e.target.value || undefined })}
-                                  className="border border-slate-200 rounded px-2 py-1 text-xs w-56 font-mono" placeholder="ethics.independence_confirmed" />
-                              </label>
+                                <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold w-28 shrink-0">Cross-ref</span>
+                                <input
+                                  type="text"
+                                  value={q.crossRef || ''}
+                                  onChange={e => updateQuestion(q.id, { crossRef: e.target.value || undefined })}
+                                  className="border border-slate-200 rounded px-2 py-1 text-xs w-80 font-mono"
+                                  placeholder="e.g. permanentFile.entity_address"
+                                />
+                                <span className="text-[10px] text-slate-400 italic">
+                                  Pulls value live from another schedule (read-only here).
+                                </span>
+                              </div>
                               {/* Conditional on: only show this question when ANOTHER
                                   question on this schedule satisfies an operator-based
                                   check. Three dropdowns + an optional value:
@@ -776,30 +821,53 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 const cond = q.conditionalOn;
                                 const condParentId = cond?.questionId || '';
                                 const condOperator = (cond?.operator || 'eq') as NonNullable<typeof cond>['operator'];
+                                const condColumnIndex = cond?.columnIndex;
                                 const parent = questions.find(p => p.id === condParentId);
                                 const siblings = questions.filter(p => p.id !== q.id);
                                 const isUnary = condOperator === 'isEmpty' || condOperator === 'isNotEmpty';
+                                // If the PARENT question sits in a table
+                                // layout, let the admin target a specific
+                                // COLUMN's value rather than the row-level
+                                // one. Populated from the parent's section
+                                // metadata.
+                                const parentMeta = parent ? sectionMeta[parent.sectionKey] : undefined;
+                                const parentTableHeaders = parentMeta?.layout && parentMeta.layout !== 'standard'
+                                  ? (parentMeta.columnHeaders || LAYOUT_DEFAULT_HEADERS[parentMeta.layout] || [])
+                                  : [];
+                                const parentCellCount = Math.max(0, parentTableHeaders.length - 1);
+                                // When the parent is column-aware we read
+                                // its per-cell config to determine the
+                                // value-input widget; otherwise the row-
+                                // level inputType/dropdownOptions are used.
+                                const parentColumnCfg = parent && typeof condColumnIndex === 'number' && condColumnIndex >= 1
+                                  ? parent.columns?.[condColumnIndex - 1]
+                                  : undefined;
+                                const effectiveParentInputType = parentColumnCfg?.inputType || parent?.inputType;
+                                const effectiveParentOptions = parentColumnCfg?.dropdownOptions && parentColumnCfg.dropdownOptions.length > 0
+                                  ? parentColumnCfg.dropdownOptions
+                                  : parent?.dropdownOptions;
 
                                 function patchCond(patch: Partial<NonNullable<typeof q.conditionalOn>>) {
                                   const base = q.conditionalOn || { questionId: '', value: '' };
                                   updateQuestion(q.id, { conditionalOn: { ...base, ...patch } });
                                 }
 
-                                // Value-input adapts to parent's input type.
+                                // Value-input adapts to parent's (possibly
+                                // per-column) input type.
                                 const valueInput = (() => {
                                   if (!parent || isUnary) return null;
                                   const current = cond?.value || '';
                                   const onValueChange = (v: string) => patchCond({ value: v });
-                                  if (parent.inputType === 'dropdown' && Array.isArray(parent.dropdownOptions) && parent.dropdownOptions.length > 0) {
+                                  if (effectiveParentInputType === 'dropdown' && Array.isArray(effectiveParentOptions) && effectiveParentOptions.length > 0) {
                                     return (
                                       <select value={current} onChange={e => onValueChange(e.target.value)}
                                         className="border border-slate-200 rounded px-2 py-1 text-xs w-32">
                                         <option value="">— answer —</option>
-                                        {parent.dropdownOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                        {effectiveParentOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                                       </select>
                                     );
                                   }
-                                  if (parent.inputType === 'yesno' || parent.inputType === 'yes_only' || parent.inputType === 'yna' || parent.inputType === 'checkbox') {
+                                  if (effectiveParentInputType === 'yesno' || effectiveParentInputType === 'yes_only' || effectiveParentInputType === 'yna' || effectiveParentInputType === 'checkbox') {
                                     return (
                                       <select value={current} onChange={e => onValueChange(e.target.value)}
                                         className="border border-slate-200 rounded px-2 py-1 text-xs w-24">
@@ -849,6 +917,24 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                         </option>
                                       ))}
                                     </select>
+                                    {condParentId && parentCellCount > 0 && (
+                                      <select
+                                        value={condColumnIndex ? String(condColumnIndex) : ''}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          patchCond({ columnIndex: v ? Number(v) : undefined });
+                                        }}
+                                        className="border border-slate-200 rounded px-1.5 py-1 text-xs"
+                                        title="When the parent is in a table section, pick which column's answer drives this condition. Leave as 'row-level answer' to read the main value."
+                                      >
+                                        <option value="">row-level answer</option>
+                                        {Array.from({ length: parentCellCount }).map((_, i) => (
+                                          <option key={i + 1} value={String(i + 1)}>
+                                            Col {i + 1} — {parentTableHeaders[i + 1] || `Column ${i + 2}`}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
                                     {condParentId && (
                                       <select
                                         value={condOperator}

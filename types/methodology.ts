@@ -329,11 +329,20 @@ export interface TemplateQuestion {
   /** Show this question only when another question on the same
    *  schedule satisfies the operator+value check. `operator` defaults
    *  to 'eq' when absent for back-compat with the original
-   *  equality-only implementation. */
+   *  equality-only implementation.
+   *
+   *  For table-layout sections the dependency can target a specific
+   *  CELL of the parent question via `columnIndex`:
+   *    - undefined → parent's main value (standard layout / row-level
+   *      answer)
+   *    - 1, 2, 3 … → parent's `<questionId>_col<N>` cell value
+   *  So a row can be hidden until e.g. column 2 of another row shows
+   *  "Y". */
   conditionalOn?: {
     questionId: string;
     value: string;
     operator?: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'notContains' | 'isEmpty' | 'isNotEmpty';
+    columnIndex?: number;
   };
   mergedWith?: string;
   isBold?: boolean; // For conclusion/header rows in tables

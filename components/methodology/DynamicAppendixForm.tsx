@@ -348,8 +348,15 @@ export function DynamicAppendixForm({
    *  when no operator is set (back-compat with old schemas). */
   function isVisible(q: TemplateQuestion): boolean {
     if (!q.conditionalOn) return true;
-    const { questionId, value, operator = 'eq' } = q.conditionalOn;
-    const depValue = values[questionId];
+    const { questionId, value, operator = 'eq', columnIndex } = q.conditionalOn;
+    // When columnIndex is set the condition reads the parent's
+    // per-cell value (stored as `<questionId>_col<N>`) instead of
+    // the row-level answer. Used for table-layout sections where a
+    // row's visibility depends on a specific cell of another row.
+    const depKey = typeof columnIndex === 'number' && columnIndex >= 1
+      ? `${questionId}_col${columnIndex}`
+      : questionId;
+    const depValue = values[depKey];
     const depStr = depValue == null ? '' : String(depValue);
     const expected = String(value ?? '');
     // Numeric operators coerce both sides via Number() — NaN short-
