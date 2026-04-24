@@ -50,6 +50,14 @@ model Firm {
   powerAppsClientFilterDesc String?   @map("power_apps_client_filter_desc") // Natural language description of the filter
   timesheetLastSyncedAt     DateTime? @map("timesheet_last_synced_at") // Last time jca_totalunits was synced from CRM
 
+  // Portal Principal escalation-day defaults. Each one sets how long a
+  // column-N staff member has to respond before the next column is
+  // notified. Engagements can override these on the Opening tab. When
+  // null / unset, the hard-coded default is 3 days per column.
+  defaultPortalEscalationDays1 Int @default(3) @map("default_portal_escalation_days_1")
+  defaultPortalEscalationDays2 Int @default(3) @map("default_portal_escalation_days_2")
+  defaultPortalEscalationDays3 Int @default(3) @map("default_portal_escalation_days_3")
+
   users                     User[]
   ethicsPartner             User?                      @relation("FirmEthicsPartner", fields: [ethicsPartnerId], references: [id])
   clients                   Client[]
@@ -1094,9 +1102,11 @@ model ClientPortalUser {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  client          Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  twoFactorCodes  ClientPortalTwoFactor[]
-  evidenceUploads EvidenceUpload[]
+  client                      Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  twoFactorCodes              ClientPortalTwoFactor[]
+  evidenceUploads             EvidenceUpload[]
+  portalPrincipalEngagements  AuditEngagement[]       @relation("PortalPrincipalForEngagement")
+  portalStaffMemberships      ClientPortalStaffMember[] @relation("StaffMemberPortalUser")
 
   @@unique([clientId, email])
   @@index([sessionToken])
@@ -1137,6 +1147,25 @@ model PortalRequest {
   chatHistory     Json?     @map("chat_history") // Array of { from, name, message, timestamp }
   evidenceTag     String?   @map("evidence_tag") // Structured tag for evidence type (e.g. bank_statements, invoices)
 
+  // Portal Principal routing: FS Line / TB code this request relates
+  // to, if any. Used by the work-allocation engine to pick the
+  // assignee. Null routingFsLineId AND null routingTbAccountCode →
+  // request is not associated with an FS area, so it routes to the
+  // Portal Principal who can manually assign it.
+  routingFsLineId        String?   @map("routing_fs_line_id")
+  routingTbAccountCode   String?   @map("routing_tb_account_code")
+
+  // Live assignment. Updated as escalations progress. When null, the
+  // request is effectively sitting with the Portal Principal.
+  assignedPortalUserId   String?   @map("assigned_portal_user_id")
+  assignedAt             DateTime? @map("assigned_at")
+
+  // Escalation state. 0 = assigned to column-1 staff; 1 = also notified
+  // column-2; 2 = also notified column-3; 3 = escalated to Portal
+  // Principal after all three columns elapsed without response.
+  escalationLevel        Int       @default(0) @map("escalation_level")
+  escalationLog          Json?     @map("escalation_log") // [{ at, fromUserId, toUserId, reason }]
+
   client  Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
   uploads PortalUpload[]
 
@@ -1144,7 +1173,67 @@ model PortalRequest {
   @@index([clientId, status])
   @@index([engagementId])
   @@index([engagementId, evidenceTag])
+  @@index([assignedPortalUserId])
+  @@index([engagementId, status, escalationLevel])
   @@map("portal_requests")
+}
+
+// ─── Portal Principal: Staff Members & Work Allocation ────────────────────────
+// One row per client-side staff member that the Portal Principal has
+// approved for an engagement. `accessConfirmed` is the strict gate —
+// until it's true, the linked ClientPortalUser cannot log in for this
+// engagement (enforced at /api/portal/auth/login). Staff members carry
+// forward from prior period / sibling group company when the Portal
+// Principal kicks off setup.
+model ClientPortalStaffMember {
+  id                    String   @id @default(uuid())
+  clientId              String   @map("client_id")
+  engagementId          String   @map("engagement_id")
+  portalUserId          String?  @map("portal_user_id")          // linked once the Portal Principal has a matching ClientPortalUser
+  name                  String
+  email                 String
+  role                  String?  // free text — e.g. "Payroll Manager", "CFO"
+  accessConfirmed       Boolean  @default(false) @map("access_confirmed")
+  isActive              Boolean  @default(true)  @map("is_active")
+  inheritedFromEngagementId String? @map("inherited_from_engagement_id")  // prior period / sibling group carry-forward
+  addedByPortalUserId   String?  @map("added_by_portal_user_id")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  engagement AuditEngagement   @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  portalUser ClientPortalUser? @relation("StaffMemberPortalUser", fields: [portalUserId], references: [id], onDelete: SetNull)
+
+  @@unique([engagementId, email])
+  @@index([engagementId])
+  @@index([portalUserId])
+  @@map("client_portal_staff_members")
+}
+
+// Per-engagement work allocation. One row per (FS Line, optional TB
+// code) — three staff slots (escalation columns) pointing at
+// ClientPortalUser rows. When tbAccountCode is null the row covers
+// the whole FS Line; when set it overrides for that specific TB code
+// (which is only visible when the FS Line row is expanded). fsLineId
+// is nullable to allow a catch-all row for requests with no FS Line
+// context, though in practice the Portal Principal picker handles
+// those by default.
+model ClientPortalWorkAllocation {
+  id             String   @id @default(uuid())
+  clientId       String   @map("client_id")
+  engagementId   String   @map("engagement_id")
+  fsLineId       String?  @map("fs_line_id")
+  tbAccountCode  String?  @map("tb_account_code")
+  staff1UserId   String?  @map("staff1_user_id")
+  staff2UserId   String?  @map("staff2_user_id")
+  staff3UserId   String?  @map("staff3_user_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@unique([engagementId, fsLineId, tbAccountCode])
+  @@index([engagementId])
+  @@map("client_portal_work_allocations")
 }
 
 // ─── Audit Evidence Requests ──────────────────────────────────────────────────
@@ -1831,6 +1920,24 @@ model AuditEngagement {
   startedAt               DateTime? @map("started_at")
   completedAt             DateTime? @map("completed_at")
   priorPeriodEngagementId String?   @map("prior_period_engagement_id")
+
+  // Portal Principal (ClientPortalUser.id) designated by the audit team
+  // on the Opening tab. This person is the single contact who sets up
+  // staff access + work allocations for the client side. When unset,
+  // portal requests fall back to "all client admins" behaviour.
+  portalPrincipalId       String?   @map("portal_principal_id")
+
+  // Per-engagement override of the firm-wide escalation-day defaults.
+  // Null = fall back to Firm.defaultPortalEscalationDaysN.
+  portalEscalationDays1   Int?      @map("portal_escalation_days_1")
+  portalEscalationDays2   Int?      @map("portal_escalation_days_2")
+  portalEscalationDays3   Int?      @map("portal_escalation_days_3")
+
+  // When the Portal Principal completed their first-sign-in setup
+  // (staff list + work allocation + per-staff access confirmation).
+  // Null = setup incomplete → no staff member can log in yet.
+  portalSetupCompletedAt  DateTime? @map("portal_setup_completed_at")
+
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @updatedAt @map("updated_at")
 
@@ -1841,6 +1948,9 @@ model AuditEngagement {
   methodologyVersion    MethodologyConfig?        @relation(fields: [methodologyVersionId], references: [id])
   priorPeriodEngagement AuditEngagement?          @relation("EngagementPriorPeriod", fields: [priorPeriodEngagementId], references: [id], onDelete: SetNull)
   nextPeriodEngagements AuditEngagement[]         @relation("EngagementPriorPeriod")
+  portalPrincipal       ClientPortalUser?         @relation("PortalPrincipalForEngagement", fields: [portalPrincipalId], references: [id], onDelete: SetNull)
+  portalStaffMembers    ClientPortalStaffMember[]
+  portalWorkAllocations ClientPortalWorkAllocation[]
   teamMembers           AuditTeamMember[]
   memberIndependence    AuditMemberIndependence[]
   specialists           AuditSpecialist[]

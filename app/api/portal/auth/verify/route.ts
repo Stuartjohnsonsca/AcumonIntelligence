@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { issuePortalSessionToken } from '@/lib/portal-session';
+import { decidePortalAccess } from '@/lib/portal-principal';
 
 /**
  * POST /api/portal/auth/verify
@@ -40,6 +41,21 @@ export async function POST(req: Request) {
       where: { id: twoFactor.id },
       data: { used: true },
     });
+
+    // Re-check the Portal Principal gate — the allocation state may
+    // have changed between the login POST and this verify POST (e.g.
+    // the Portal Principal revoked access in the intervening minutes).
+    // Cheap query, strict default, matches what login already does.
+    const access = await decidePortalAccess(twoFactor.user.id, twoFactor.user.clientId);
+    if (!access.allowed) {
+      const message =
+        access.reason === 'awaiting-setup'
+          ? 'Portal Principal setup is still outstanding. Please ask your Portal Principal to complete their first-sign-in steps.'
+          : access.reason === 'access-not-confirmed'
+            ? 'Your Portal Principal has not confirmed your access.'
+            : 'Portal access is not available.';
+      return NextResponse.json({ error: message, reason: access.reason }, { status: 403 });
+    }
 
     // Issue a server-stamped session token — persisted on the user
     // record so downstream endpoints can validate it. This replaces

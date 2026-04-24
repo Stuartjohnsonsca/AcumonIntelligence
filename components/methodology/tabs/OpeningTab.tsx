@@ -8,6 +8,7 @@ import { TeamPanel } from '../panels/TeamPanel';
 import { ClientContactsPanel } from '../panels/ClientContactsPanel';
 import { ConnectorSetupModal } from '../panels/ConnectorSetupModal';
 import { AuditTimetablePanel } from '../panels/AuditTimetablePanel';
+import { PortalPrincipalPanel } from '../panels/PortalPrincipalPanel';
 
 // Extended type for info requests that may have a receivedAt field
 type InfoRequestWithReceived = { receivedAt?: string | null };
@@ -307,6 +308,11 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
             }))}
             initialSpecialists={engagement.specialists}
           />
+        </div>
+
+        {/* Portal Principal — designate client-side gatekeeper + SLA overrides */}
+        <div>
+          <PortalPrincipalPanel engagementId={engagement.id} />
         </div>
       </div>
 

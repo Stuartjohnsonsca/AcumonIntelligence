@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { sendPortalVerificationCode } from '@/lib/email-portal';
 import { issuePortalSessionToken } from '@/lib/portal-session';
+import { decidePortalAccess } from '@/lib/portal-principal';
 
 /**
  * POST /api/portal/auth/login
@@ -43,6 +44,24 @@ export async function POST(req: Request) {
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+    }
+
+    // Portal Principal gate — staff members can't log in until their
+    // engagement's Portal Principal has (a) completed setup and (b)
+    // ticked accessConfirmed for this user. Portal Principals themselves
+    // always pass this gate. Decision made BEFORE a 2FA code is sent
+    // so we don't spam codes to users who couldn't use them anyway.
+    const access = await decidePortalAccess(user.id, user.clientId);
+    if (!access.allowed) {
+      const message =
+        access.reason === 'awaiting-setup'
+          ? 'Your organisation\u2019s Portal Principal has not yet completed setup. Please ask them to finish their first-sign-in steps before trying again.'
+          : access.reason === 'access-not-confirmed'
+            ? 'Your Portal Principal has not confirmed your access to this engagement yet. Please ask them to approve you on their dashboard.'
+            : access.reason === 'no-allocation'
+              ? 'You are not yet allocated to any active engagement for this client. Please contact your Portal Principal or the audit team.'
+              : 'Portal access is not available. Please contact the audit team.';
+      return NextResponse.json({ error: message, reason: access.reason }, { status: 403 });
     }
 
     // Check if 2FA is disabled (for testing)
