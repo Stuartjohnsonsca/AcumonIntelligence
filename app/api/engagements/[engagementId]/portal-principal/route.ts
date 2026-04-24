@@ -108,10 +108,30 @@ export async function PUT(
   if (portalEscalationDays3 !== undefined) data.portalEscalationDays3 = normaliseDays(portalEscalationDays3);
 
   try {
-    await prisma.auditEngagement.update({ where: { id: engagementId }, data });
+    // Explicit `select: { id: true }` so Prisma doesn't implicit-SELECT *
+    // on AuditEngagement after the UPDATE — that would include columns
+    // a client may not have migrated yet (P2022) and always 500. This
+    // pattern matches the fix applied to /api/engagements earlier.
+    await prisma.auditEngagement.update({
+      where: { id: engagementId },
+      data,
+      select: { id: true },
+    });
   } catch (err: any) {
-    console.error('[portal-principal] PUT failed:', err?.message || err);
-    return NextResponse.json({ error: 'Failed to save — the Portal Principal columns may not yet be live in this database. Run scripts/sql/portal-principal.sql and retry.' }, { status: 500 });
+    const code = err?.code || 'unknown';
+    const message = err?.message || String(err);
+    console.error('[portal-principal] PUT failed:', { code, message, meta: err?.meta });
+    let hint: string;
+    if (code === 'P2022') {
+      hint = 'Column missing in database — run scripts/sql/portal-principal.sql in Supabase SQL Editor and retry.';
+    } else if (code === 'P2003') {
+      hint = 'Foreign-key violation — the selected Portal Principal user does not exist or belongs to a different client.';
+    } else if (code === 'P2025') {
+      hint = 'Engagement not found.';
+    } else {
+      hint = `Database error ${code}. Check server logs for detail.`;
+    }
+    return NextResponse.json({ error: hint, code, detail: message.slice(0, 300) }, { status: 500 });
   }
 
   const resolved = await resolveEscalationDays(engagementId);

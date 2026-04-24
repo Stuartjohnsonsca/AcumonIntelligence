@@ -60,10 +60,18 @@ export async function PUT(req: Request) {
   };
 
   try {
-    await prisma.firm.update({ where: { id: session.user.firmId }, data });
+    await prisma.firm.update({
+      where: { id: session.user.firmId },
+      data,
+      select: { id: true },
+    });
     return NextResponse.json({ ok: true, ...{ days1: data.defaultPortalEscalationDays1, days2: data.defaultPortalEscalationDays2, days3: data.defaultPortalEscalationDays3 } });
   } catch (err: any) {
-    console.error('[portal-escalation-defaults] PUT failed:', err?.message || err);
-    return NextResponse.json({ error: 'Failed to save — columns may not yet be live. Run scripts/sql/portal-principal.sql and retry.' }, { status: 500 });
+    const code = err?.code || 'unknown';
+    console.error('[portal-escalation-defaults] PUT failed:', { code, message: err?.message, meta: err?.meta });
+    const hint = code === 'P2022'
+      ? 'Column missing — run scripts/sql/portal-principal.sql in Supabase SQL Editor and retry.'
+      : `Database error ${code}.`;
+    return NextResponse.json({ error: hint, code, detail: (err?.message || '').slice(0, 300) }, { status: 500 });
   }
 }

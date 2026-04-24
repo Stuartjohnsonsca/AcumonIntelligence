@@ -71,7 +71,13 @@ export function PortalPrincipalPanel({ engagementId }: Props) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || `Save failed (${res.status})`);
+        // Compose a diagnostic error combining the backend's hint,
+        // Prisma code, and (where present) raw detail — otherwise
+        // "Failed to save" obscures the real root cause.
+        const parts = [data?.error || `Save failed (${res.status})`];
+        if (data?.code && data.code !== 'unknown') parts.push(`[${data.code}]`);
+        if (data?.detail) parts.push(data.detail);
+        throw new Error(parts.join(' '));
       }
       await load();
     } catch (err: any) {
