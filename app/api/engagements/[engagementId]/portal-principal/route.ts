@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { resolveEscalationDays } from '@/lib/portal-principal';
+import { sendPortalPrincipalDesignationEmail } from '@/lib/email-portal';
 
 /**
  * Portal Principal designation + escalation-day overrides for an
@@ -89,16 +90,30 @@ export async function PUT(
   const body = await req.json().catch(() => ({}));
   const { portalPrincipalId, portalEscalationDays1, portalEscalationDays2, portalEscalationDays3 } = body;
 
+  // Read the current principal BEFORE the update so we can detect a
+  // true transition (null → X, or userA → userB) and only email the
+  // NEW principal when designation actually changed. Re-saving the
+  // same principal must not re-send the designation email.
+  const before = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { portalPrincipalId: true },
+  }).catch(() => null) as { portalPrincipalId: string | null } | null;
+  const previousPrincipalId = before?.portalPrincipalId ?? null;
+
   // Validate the picked portal user belongs to this client — prevents
-  // cross-tenant leakage if the UI sends a stale ID.
+  // cross-tenant leakage if the UI sends a stale ID. Also pull the
+  // candidate's name + email so we can email them without a second
+  // round-trip after the update.
+  let pickedUser: { id: string; name: string; email: string } | null = null;
   if (portalPrincipalId) {
     const candidate = await prisma.clientPortalUser.findUnique({
       where: { id: portalPrincipalId },
-      select: { clientId: true, isActive: true },
+      select: { id: true, clientId: true, isActive: true, name: true, email: true },
     });
     if (!candidate || candidate.clientId !== access.clientId || !candidate.isActive) {
       return NextResponse.json({ error: 'Portal Principal candidate not valid for this client.' }, { status: 400 });
     }
+    pickedUser = { id: candidate.id, name: candidate.name, email: candidate.email };
   }
 
   const data: Record<string, any> = {};
@@ -132,6 +147,42 @@ export async function PUT(
       hint = `Database error ${code}. Check server logs for detail.`;
     }
     return NextResponse.json({ error: hint, code, detail: message.slice(0, 300) }, { status: 500 });
+  }
+
+  // Fire the "you've been designated Portal Principal" email only on
+  // a genuine transition to a new non-null principal. No email on:
+  //   - same principal re-saved (no change)
+  //   - unsetting the principal (null-out — no-one to notify)
+  //   - escalation-day-only update (principal unchanged)
+  // We await the email inline so the user sees the principal's
+  // greenlight status immediately after save — failing silently if
+  // email fails so the core save still succeeds.
+  if (pickedUser && portalPrincipalId && portalPrincipalId !== previousPrincipalId) {
+    try {
+      const eng = await prisma.auditEngagement.findUnique({
+        where: { id: engagementId },
+        select: {
+          auditType: true,
+          client: { select: { clientName: true } },
+          period: { select: { startDate: true, endDate: true } },
+          firm:   { select: { name: true } },
+        },
+      });
+      const periodLabel = eng?.period
+        ? `${new Date(eng.period.startDate).toLocaleDateString('en-GB')} – ${new Date(eng.period.endDate).toLocaleDateString('en-GB')}`
+        : '';
+      const base = process.env.NEXTAUTH_URL || 'https://acumon-website.vercel.app';
+      const setupUrl = `${base}/portal/setup/${engagementId}`;
+      await sendPortalPrincipalDesignationEmail(pickedUser.email, pickedUser.name, {
+        clientName: eng?.client?.clientName || 'your client',
+        periodLabel,
+        auditType: eng?.auditType || '',
+        setupUrl,
+        firmName: eng?.firm?.name ?? null,
+      });
+    } catch (err) {
+      console.error('[portal-principal] designation email failed (non-blocking):', (err as any)?.message || err);
+    }
   }
 
   const resolved = await resolveEscalationDays(engagementId);

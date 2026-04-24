@@ -130,37 +130,36 @@ export function PortalPrincipalPanel({ engagementId }: Props) {
         <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>
       )}
 
-      {/* Principal picker */}
+      {/* Principal picker. The candidate list is already active
+          ClientPortalUsers, so every candidate has previously received
+          the portal welcome email with their temp password. When this
+          picker first designates someone, the PUT endpoint sends an
+          additional one-off "you've been designated Portal Principal"
+          email — no mailto button needed. */}
       <div>
         <label className="block text-xs font-medium text-slate-700 mb-1">Portal Principal (client-side)</label>
-        <div className="flex items-center gap-2">
-          <select
-            className="flex-1 text-sm border border-slate-300 rounded-md px-3 py-2 bg-white"
-            value={state.portalPrincipalId || ''}
-            disabled={saving}
-            onChange={e => save({ portalPrincipalId: e.target.value || null })}
-          >
-            <option value="">— Not set —</option>
-            {candidates.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.name} — {c.email}{c.role ? ` (${c.role})` : ''}
-              </option>
-            ))}
-          </select>
-          {principal && (
-            <a
-              href={`mailto:${principal.email}?subject=Your%20audit%20portal%20access`}
-              className="text-xs text-blue-600 hover:underline whitespace-nowrap"
-            >
-              Email
-            </a>
-          )}
-        </div>
-        {candidates.length === 0 && (
+        <select
+          className="w-full text-sm border border-slate-300 rounded-md px-3 py-2 bg-white"
+          value={state.portalPrincipalId || ''}
+          disabled={saving}
+          onChange={e => save({ portalPrincipalId: e.target.value || null })}
+        >
+          <option value="">— Not set —</option>
+          {candidates.map(c => (
+            <option key={c.id} value={c.id}>
+              {c.name} — {c.email}{c.role ? ` (${c.role})` : ''}
+            </option>
+          ))}
+        </select>
+        {candidates.length === 0 ? (
           <p className="text-xs text-amber-700 mt-1">
             No active portal users found for this client. Set one up in Client Contacts first.
           </p>
-        )}
+        ) : principal ? (
+          <p className="text-[11px] text-slate-500 mt-1">
+            {principal.name} already has portal access. An additional notification email was sent when they were designated as Portal Principal.
+          </p>
+        ) : null}
       </div>
 
       {/* Escalation days */}

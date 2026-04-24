@@ -81,6 +81,63 @@ export async function sendPortalWelcomeEmail(email: string, name: string, tempPa
   );
 }
 
+/**
+ * One-off notification sent when a client portal user is newly designated
+ * as the Portal Principal for an engagement. This is ADDITIONAL to the
+ * welcome email they received when their portal account was first
+ * provisioned — different content, different purpose: it explains the
+ * gate-keeper responsibility (curate staff list, approve access, handle
+ * work allocation) and links to the setup screen.
+ *
+ * Only fire on a fresh designation (null → userX or userA → userB).
+ * Re-saving the same principal must NOT re-send this email.
+ */
+export async function sendPortalPrincipalDesignationEmail(
+  email: string,
+  name: string,
+  opts: { clientName: string; periodLabel: string; auditType: string; setupUrl: string; firmName?: string | null },
+): Promise<void> {
+  const firmSignoff = opts.firmName ? `— the ${opts.firmName} audit team` : '— your audit team';
+  await sendEmail(
+    email,
+    `You've been designated Portal Principal for ${opts.clientName}`,
+    `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px">
+      <h2 style="color:#1e40af;margin-bottom:4px">Acumon Client Portal</h2>
+      <p style="color:#475569;font-size:14px">Hi ${name},</p>
+      <p style="color:#475569;font-size:14px">
+        You have been designated as the <strong>Portal Principal</strong> for the audit of
+        <strong>${opts.clientName}</strong> (${opts.auditType}, period ${opts.periodLabel}).
+      </p>
+      <p style="color:#475569;font-size:14px">
+        As Portal Principal you curate which of your colleagues can access the portal for this engagement,
+        approve each person individually, and set the work-allocation grid that routes audit requests to the
+        right team member. Until you complete setup, your staff cannot log in.
+      </p>
+      <div style="background:#f1f5f9;border-left:4px solid #2563eb;border-radius:4px;padding:12px 16px;margin:16px 0">
+        <p style="margin:0;color:#1e3a8a;font-size:13px">
+          <strong>Next step:</strong> log in to the portal and open the Portal Principal setup screen.
+          You'll see a list of colleagues inherited from the prior period (if any), add or remove
+          anyone who doesn't belong, confirm their access, and map FS Lines to named staff.
+        </p>
+      </div>
+      <p style="color:#475569;font-size:14px;margin:16px 0">
+        <a href="${opts.setupUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">
+          Open Portal Principal Setup
+        </a>
+      </p>
+      <p style="color:#64748b;font-size:12px;margin-top:24px">
+        Use the same credentials you've used for the portal before — the link above will drop you onto the
+        setup screen after you log in. If you need a password reset, use the "Forgot your password?" link
+        on the login page.
+      </p>
+      <p style="color:#94a3b8;font-size:12px;margin-top:16px">
+        If this designation is unexpected, reply to this email and let us know — we'll investigate and
+        reassign if needed. ${firmSignoff}
+      </p>
+    </div>`,
+  );
+}
+
 export async function sendEvidenceUploadNotification(
   firmEmail: string,
   clientName: string,
