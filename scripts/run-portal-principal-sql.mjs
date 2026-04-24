@@ -12,7 +12,19 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SQL_PATH = resolve(__dirname, 'sql', 'portal-principal.sql');
+// Accept a CLI arg to run any SQL file in scripts/sql/; defaults to
+// portal-principal.sql. Usage:
+//   node scripts/run-portal-principal-sql.mjs                    # default
+//   node scripts/run-portal-principal-sql.mjs independence-gate  # by basename
+//   node scripts/run-portal-principal-sql.mjs ./scripts/sql/foo.sql  # by path
+const argPath = process.argv[2];
+const SQL_PATH = argPath
+  ? (argPath.includes('/') || argPath.includes('\\') || argPath.endsWith('.sql'))
+    ? resolve(argPath)
+    : resolve(__dirname, 'sql', argPath + '.sql')
+  : resolve(__dirname, 'sql', 'portal-principal.sql');
+
+console.log(`Running SQL: ${SQL_PATH}`);
 
 const raw = readFileSync(SQL_PATH, 'utf8');
 
