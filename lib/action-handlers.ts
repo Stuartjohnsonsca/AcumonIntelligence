@@ -102,6 +102,18 @@ async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<Action
     select: { name: true, email: true },
   });
 
+  // Portal Principal routing — derive (fsLineId, tbAccountCode) from
+  // the test's configured area so the new request auto-assigns to the
+  // right staff member per the work-allocation grid. Silent fallback:
+  // if the routing module can't find a match it returns null assignee
+  // and the request sits with the Portal Principal (who can reassign).
+  const { buildRoutingForNewRequest } = await import('@/lib/portal-request-routing');
+  const routing = await buildRoutingForNewRequest({
+    engagementId,
+    routingFsLineId: ctx.config.fsLineId || null,
+    routingTbAccountCode: null,
+  });
+
   // Create a portal request for the client
   try {
     const portalRequest = await prisma.portalRequest.create({
@@ -114,7 +126,8 @@ async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<Action
         requestedById: ctx.config.userId,
         requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
         evidenceTag: inputs.area_of_work || ctx.config.fsLine,
-      },
+        ...routing,
+      } as any,
     });
 
     // Create outstanding item to track
@@ -3606,6 +3619,14 @@ async function handleRequestPortalQuestions(ctx: ActionHandlerContext): Promise<
       select: { name: true, email: true },
     });
 
+    // Portal Principal auto-routing — same pattern as handleRequestDocuments.
+    const { buildRoutingForNewRequest } = await import('@/lib/portal-request-routing');
+    const routing = await buildRoutingForNewRequest({
+      engagementId,
+      routingFsLineId: config.fsLineId || null,
+      routingTbAccountCode: null,
+    });
+
     const portalRequest = await prisma.portalRequest.create({
       data: {
         clientId: engagement.clientId,
@@ -3616,7 +3637,8 @@ async function handleRequestPortalQuestions(ctx: ActionHandlerContext): Promise<
         requestedById: config.userId,
         requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
         evidenceTag: inputs.area_of_work || config.fsLine,
-      },
+        ...routing,
+      } as any,
     });
     await prisma.outstandingItem.create({
       data: {

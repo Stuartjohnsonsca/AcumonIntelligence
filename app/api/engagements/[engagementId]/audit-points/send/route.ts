@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { sendEmail } from '@/lib/email';
 import { logEngagementAction, resolveActor } from '@/lib/engagement-action-log';
 import { AUDIT_POINT_SAFE_SELECT } from '@/lib/audit-points-select';
+import { buildRoutingForNewRequest } from '@/lib/portal-request-routing';
 
 /**
  * POST /api/engagements/[engagementId]/audit-points/send
@@ -83,6 +84,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       },
     ];
 
+    // Portal Principal routing — RI matters don't carry FS-Line
+    // context by design (they're cross-cutting), so the routing
+    // helper will land this with the Portal Principal who can then
+    // manually reassign if it's actually FS-specific. That matches
+    // the spec's "messages outside FS Lines go to the Principal".
+    const routing = await buildRoutingForNewRequest({ engagementId });
+
     const created = await prisma.portalRequest.create({
       data: {
         clientId: eng.clientId,
@@ -93,7 +101,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         requestedById: session.user.id,
         requestedByName: session.user.name || session.user.email || '',
         chatHistory: initialChat as any,
-      },
+        ...routing,
+      } as any,
     });
 
     if (actor) {
