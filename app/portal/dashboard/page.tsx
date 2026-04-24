@@ -6,7 +6,7 @@ import Link from 'next/link';
 import {
   ClipboardCheck, Calculator, Briefcase, Receipt, Monitor,
   Users, Plus, Trash2, Loader2, Calendar, Check, ChevronDown, ChevronRight,
-  ShieldCheck, AlertTriangle, ArrowRight,
+  ShieldCheck, AlertTriangle, ArrowRight, BarChart3,
 } from 'lucide-react';
 
 interface PrincipalEngagementSummary {
@@ -190,26 +190,39 @@ function DashboardContent() {
               </div>
             </div>
           )}
-          {principalFor.filter(p => p.setupCompletedAt).length > 0 && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-              <div className="flex items-start gap-2">
-                <ShieldCheck className="h-4 w-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                <div className="flex-1 text-xs text-emerald-800">
-                  You are the Portal Principal for {principalFor.filter(p => p.setupCompletedAt).length} active engagement{principalFor.filter(p => p.setupCompletedAt).length === 1 ? '' : 's'}.
-                  <div className="mt-1 space-y-1">
-                    {principalFor.filter(p => p.setupCompletedAt).map(e => (
-                      <div key={e.id} className="flex items-center gap-3">
-                        <span className="font-medium">{e.clientName}</span>
-                        <Link href={`/portal/principal/${e.id}?token=${token}`} className="text-emerald-700 hover:underline">Dashboard</Link>
-                        <span className="text-emerald-300">·</span>
-                        <Link href={`/portal/setup/${e.id}?token=${token}`} className="text-emerald-700 hover:underline">Manage staff</Link>
-                      </div>
-                    ))}
+          {/* Horizontal Dashboard bar — only shown to Portal Principals
+              who've completed setup. Replaces the tiny green "Dashboard"
+              link the previous build used. Full-width, gives prominence
+              to the Principal Dashboard CTA; the Manage Staff flow is
+              now a tile in the 2×3 grid below, not a link here. */}
+          {principalFor.filter(p => p.setupCompletedAt).length > 0 && (() => {
+            const completed = principalFor.filter(p => p.setupCompletedAt);
+            // With a single completed engagement we link straight to it.
+            // With multiple we route to the first — the Principal
+            // Dashboard's own multi-client switcher handles the rest.
+            const target = completed[0];
+            return (
+              <Link
+                href={`/portal/principal/${target.id}?token=${token}`}
+                className="block bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-xl p-4 hover:shadow-md hover:border-emerald-400 transition-all"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="bg-emerald-100 rounded-xl p-3 flex-shrink-0">
+                    <BarChart3 className="h-6 w-6 text-emerald-700" />
                   </div>
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-base font-semibold text-slate-900">Portal Principal Dashboard</h2>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      {completed.length === 1
+                        ? `Review requests, responses and staff performance for ${target.clientName}.`
+                        : `Review requests, responses and staff performance across ${completed.length} engagements (${completed.map(c => c.clientName).join(', ')}).`}
+                    </p>
+                  </div>
+                  <ArrowRight className="h-5 w-5 text-emerald-600 flex-shrink-0" />
                 </div>
-              </div>
-            </div>
-          )}
+              </Link>
+            );
+          })()}
         </div>
       )}
 
@@ -239,6 +252,26 @@ function DashboardContent() {
               <p className="text-sm text-slate-600">{tile.description}</p>
             </Link>
           ))}
+          {/* 6th tile — Manage Staff. Only rendered for Portal
+              Principals (they're the only ones with a setup flow to
+              click into). Routes to the setup screen for whichever
+              completed engagement comes first; additional engagements
+              are reachable via the multi-client switcher on that screen. */}
+          {principalFor.filter(p => p.setupCompletedAt).length > 0 && (() => {
+            const target = principalFor.filter(p => p.setupCompletedAt)[0];
+            return (
+              <Link
+                href={`/portal/setup/${target.id}?token=${token}`}
+                className="group block p-8 rounded-xl border-2 transition-all shadow-sm hover:shadow-lg bg-rose-50 border-rose-200 hover:bg-rose-100 hover:border-rose-400"
+              >
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-rose-100 mb-4 group-hover:scale-110 transition-transform">
+                  <Users className="h-7 w-7 text-rose-600" />
+                </div>
+                <h2 className="text-lg font-semibold text-slate-900 mb-1">Manage Staff</h2>
+                <p className="text-sm text-slate-600">Curate who can access the portal, confirm each staff member, and map them to FS Lines / TB codes.</p>
+              </Link>
+            );
+          })()}
         </div>
       )}
 
