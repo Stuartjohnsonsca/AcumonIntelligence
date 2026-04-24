@@ -17,6 +17,25 @@
 
 import { prisma } from '@/lib/db';
 
+export type ChartType   = 'bar' | 'line' | 'pie' | 'none';
+export type ChartGroupBy = 'assignee' | 'fsLine' | 'status' | 'escalationLevel' | 'day' | 'tbCode' | 'returnedForMore';
+export type ChartMetric  = 'count' | 'avgResponseHours' | 'overdueCount' | 'medianResponseHours';
+
+/**
+ * Optional chart spec the AI may emit alongside the filter. The
+ * dashboard aggregates the filtered request list client-side
+ * against this spec and renders a simple SVG visualisation — no
+ * extra data round-trip needed. `type: 'none'` means the query
+ * isn't a good fit for a chart (e.g. a narrow lookup like "the
+ * audit query about bank statements") and nothing renders.
+ */
+export interface ChartSpec {
+  type: ChartType;
+  groupBy: ChartGroupBy | null;
+  metric: ChartMetric;
+  title: string;
+}
+
 export interface InterpretedFilters {
   status: 'outstanding' | 'responded' | 'escalated' | 'overdue' | null;
   fsLineIds: string[];
@@ -25,6 +44,8 @@ export interface InterpretedFilters {
   textMatch: string | null;
   /** Human-readable explanation so the UI can render "Interpreted as…". */
   reasoning: string;
+  /** Optional chart spec — see ChartSpec. */
+  chart: ChartSpec | null;
 }
 
 export interface AiSearchContext {
@@ -34,8 +55,8 @@ export interface AiSearchContext {
   staff: Array<{ id: string; name: string }>;
 }
 
-const SYSTEM = `You are a filter-builder for a portal dashboard listing client-audit requests.
-Convert the user's natural-language query into a structured JSON filter.
+const SYSTEM = `You are a filter-builder AND chart-suggester for a portal dashboard listing client-audit requests.
+Convert the user's natural-language query into a structured JSON filter + optional chart spec.
 
 STRICT rules:
 - Return ONLY JSON matching the schema. No prose, no markdown fences.
@@ -45,7 +66,24 @@ STRICT rules:
 - textMatch is a case-insensitive substring used when the user wants to match words in the
   request text that AREN'T captured by FS Line / TB / staff — e.g. "bank statements",
   "right-to-work evidence". Null when the query is fully handled by the structured fields.
-- reasoning is a ONE short sentence explaining what you interpreted (shown to the user).
+- reasoning is ONE short sentence explaining what you interpreted (shown to the user).
+
+CHART spec guidance:
+- Set chart.type = "none" when the user clearly wants a LOOKUP (e.g. "find the request about bank
+  statements") — no chart makes sense. When the user asks for analysis, counts, patterns, comparisons,
+  or uses words like "how many", "show me", "compare", "by", "over time", pick the right chart:
+    - "bar"  — comparing counts across categorical groups (assignee, status, FS Line, TB code)
+    - "line" — time-series, "over time", "trend", "last 30 days"
+    - "pie"  — proportions of a total (status mix, escalation level mix)
+- chart.groupBy must be one of:
+    "assignee" | "fsLine" | "status" | "escalationLevel" | "day" | "tbCode" | "returnedForMore"
+  or null when chart.type is "none".
+- chart.metric is one of:
+    "count"              — how many requests per group (default)
+    "avgResponseHours"   — mean response time per group
+    "medianResponseHours"— median response time
+    "overdueCount"       — overdue requests per group
+- chart.title is a short phrase the dashboard renders above the chart (under 60 chars).
 
 Schema:
 {
@@ -54,10 +92,16 @@ Schema:
   "tbAccountCodes": [string],
   "assigneeIds": [string],
   "textMatch": string | null,
-  "reasoning": string
+  "reasoning": string,
+  "chart": {
+    "type":   "bar" | "line" | "pie" | "none",
+    "groupBy": "assignee" | "fsLine" | "status" | "escalationLevel" | "day" | "tbCode" | "returnedForMore" | null,
+    "metric": "count" | "avgResponseHours" | "medianResponseHours" | "overdueCount",
+    "title":  string
+  } | null
 }
 
-If the query is vague, prefer a broader match (empty arrays, textMatch) over a narrow guess.`;
+If the query is vague, prefer a broader match (empty arrays, textMatch, chart: null) over a narrow guess.`;
 
 function buildUserPrompt(query: string, ctx: AiSearchContext): string {
   const fsBlock = ctx.fsLines.length === 0
@@ -134,6 +178,30 @@ export async function interpretSearchQuery(query: string, ctx: AiSearchContext):
     const staffAllowed = new Set(ctx.staff.map(s => s.id));
     const allowedStatus = new Set(['outstanding', 'responded', 'escalated', 'overdue']);
     const status = typeof json.status === 'string' && allowedStatus.has(json.status) ? json.status : null;
+    // Post-validate the chart spec — strict allow-lists on every
+    // field so a hallucinated groupBy / metric can never reach the
+    // client. type="none" is the safe default when anything looks off.
+    const allowedTypes: ChartType[] = ['bar', 'line', 'pie', 'none'];
+    const allowedGroupBy: ChartGroupBy[] = ['assignee', 'fsLine', 'status', 'escalationLevel', 'day', 'tbCode', 'returnedForMore'];
+    const allowedMetrics: ChartMetric[] = ['count', 'avgResponseHours', 'overdueCount', 'medianResponseHours'];
+    let chart: ChartSpec | null = null;
+    if (json.chart && typeof json.chart === 'object') {
+      const t = json.chart.type;
+      if (allowedTypes.includes(t)) {
+        const gb = allowedGroupBy.includes(json.chart.groupBy) ? json.chart.groupBy : null;
+        const m  = allowedMetrics.includes(json.chart.metric)  ? json.chart.metric  : 'count';
+        chart = {
+          type: t as ChartType,
+          groupBy: t === 'none' ? null : gb,
+          metric: m,
+          title: typeof json.chart.title === 'string' ? String(json.chart.title).slice(0, 60) : '',
+        };
+        // Enforce coherence: if groupBy is null but type isn't 'none',
+        // bump to 'none' rather than render a broken chart.
+        if (chart.type !== 'none' && !chart.groupBy) chart.type = 'none';
+      }
+    }
+
     return {
       status: (status || null) as InterpretedFilters['status'],
       fsLineIds: Array.isArray(json.fsLineIds) ? json.fsLineIds.filter((x: any) => typeof x === 'string' && fsAllowed.has(x)) : [],
@@ -141,6 +209,7 @@ export async function interpretSearchQuery(query: string, ctx: AiSearchContext):
       assigneeIds: Array.isArray(json.assigneeIds) ? json.assigneeIds.filter((x: any) => typeof x === 'string' && staffAllowed.has(x)) : [],
       textMatch: typeof json.textMatch === 'string' && json.textMatch.trim() ? String(json.textMatch).trim().slice(0, 200) : null,
       reasoning: typeof json.reasoning === 'string' ? String(json.reasoning).slice(0, 300) : '',
+      chart,
     };
   } catch (err) {
     console.error('[portal-ai-search] interpretSearchQuery failed, falling back to substring:', (err as any)?.message || err);
@@ -156,6 +225,7 @@ function fallback(query: string): InterpretedFilters {
     assigneeIds: [],
     textMatch: query.trim().slice(0, 200),
     reasoning: 'AI unavailable — using plain substring match over question text.',
+    chart: null,
   };
 }
 
