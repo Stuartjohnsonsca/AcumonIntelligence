@@ -1154,4 +1154,71 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
     ],
   },
+
+  // ─── Payroll Actions ───────────────────────────────────────────────────────
+
+  {
+    code: 'extract_payroll_data',
+    name: 'Extract Payroll Data',
+    description: 'Parses payroll files returned by the client (zip / PDF payslips / Excel or CSV payroll reports / HMRC FPS submissions) and produces a single normalised data_table. One row per payslip (or per employee-per-period) with the core columns — Gross Pay, Employer NI / Social Security, PAYE, Benefits in Kind, Other — plus any additional columns the AI detects (pension, student loan, statutory payments, etc.). Rows outside the requested period are filtered out of the output (their count is reported separately). A summary row with per-column totals is emitted alongside the row-level data so the next step can reconcile to the trial balance without a second pass.',
+    category: 'evidence',
+    handlerName: 'extractPayrollData',
+    icon: 'Users',
+    color: '#0891b2',
+    isSystem: true,
+    inputSchema: [
+      { code: 'source_documents', label: 'Source Documents', type: 'file', required: true, source: 'auto', autoMapFrom: '$prev.documents', group: 'Input', description: 'Payroll files returned by the client. Any combination of zip archives, PDF payslips, Excel/CSV payroll exports, HMRC FPS files.' },
+      { code: 'period_start', label: 'Period Start', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodStart', group: 'Period' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Period' },
+      { code: 'required_columns', label: 'Required Columns', type: 'multiselect', required: false, source: 'user', group: 'Columns', defaultValue: ['gross_pay','employer_ni','paye','benefits_in_kind','other'], description: 'Columns the summary spreadsheet must include. Additional columns the AI detects on the payslips are appended automatically.', options: [
+        { value: 'gross_pay',          label: 'Gross Pay' },
+        { value: 'employer_ni',        label: 'Employer NI / Social Security' },
+        { value: 'employee_ni',        label: 'Employee NI / Social Security' },
+        { value: 'paye',               label: 'PAYE / Income Tax' },
+        { value: 'benefits_in_kind',   label: 'Benefits in Kind' },
+        { value: 'pension_ee',         label: 'Pension (Employee)' },
+        { value: 'pension_er',         label: 'Pension (Employer)' },
+        { value: 'student_loan',       label: 'Student Loan' },
+        { value: 'statutory_pay',      label: 'Statutory Payments (SSP / SMP / SPP)' },
+        { value: 'other',              label: 'Other' },
+      ]},
+      { code: 'currency', label: 'Currency', type: 'select', required: false, source: 'user', group: 'Columns', defaultValue: 'GBP', options: [
+        { value: 'GBP', label: 'GBP' }, { value: 'USD', label: 'USD' }, { value: 'EUR', label: 'EUR' },
+      ]},
+    ],
+    outputSchema: [
+      { code: 'data_table', label: 'Payroll Rows (in period)', type: 'data_table', description: 'One row per payslip / employee-period. Columns: period_date, employee_ref, employee_name, plus every column in required_columns + any AI-detected extras.' },
+      { code: 'summary_totals', label: 'Column Totals (spreadsheet header)', type: 'data_table', description: 'Single-row summary with the total for each column across all in-period rows. This is what feeds the next step\u2019s TB reconciliation.' },
+      { code: 'columns_detected', label: 'Columns in Output', type: 'json', description: 'Ordered list of column codes actually present on the returned data_table. The required columns are always listed first.' },
+      { code: 'out_of_period_rows', label: 'Out-of-Period Rows (filtered)', type: 'data_table', description: 'Rows dropped because their period_date fell outside period_start..period_end. Preserved here for audit trail, not in the main data_table.' },
+      { code: 'out_of_period_count', label: 'Out-of-Period Count', type: 'number' },
+      { code: 'extraction_issues', label: 'Extraction Issues', type: 'data_table', description: 'Files or rows that couldn\u2019t be parsed / matched. Severity + recommendation per row.' },
+      { code: 'pass_fail', label: 'Extraction OK', type: 'pass_fail' },
+    ],
+  },
+
+  {
+    code: 'payroll_totals_to_tb',
+    name: 'Payroll Totals → Trial Balance',
+    description: 'Reconciles each payroll column total against the trial balance account mapped to that cost head. Admin supplies the column→TB-account mapping once per firm; defaults are looked up from firm_variables. Emits a per-column marker: green when |difference| ≤ tolerance (hover: "Agrees to TB"), red otherwise (hover: "<TB account> — difference £X"). Red differences are formatted for the Findings & Conclusions section so the auditor can book them to the error schedule with one click.',
+    category: 'verification',
+    handlerName: 'payrollTotalsToTb',
+    icon: 'Scale',
+    color: '#059669',
+    isSystem: true,
+    inputSchema: [
+      { code: 'summary_totals', label: 'Payroll Column Totals', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.summary_totals', group: 'Data' },
+      { code: 'column_account_map', label: 'Column → TB Account Mapping', type: 'json_table', required: false, source: 'user', group: 'Reconciliation', description: 'Per-column mapping of { column, account_codes } — account_codes is comma-separated TB codes whose sum at period end should match the column total. Unmapped columns are skipped (shown grey on the schedule). Admins can persist defaults in Methodology Admin \u2192 Firm-Wide Assumptions.' },
+      { code: 'tolerance_gbp', label: 'Tolerance (GBP)', type: 'number', required: false, source: 'user', group: 'Thresholds', defaultValue: 1, description: 'Absolute variance allowed between column total and TB sum before the marker flips red. Per-column tolerances live on the mapping above when the firm needs them.' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+    ],
+    outputSchema: [
+      { code: 'reconciliation', label: 'Reconciliation', type: 'data_table', description: 'One row per column: column_code, column_label, payroll_total, tb_total, tb_accounts, difference, marker ("green" | "red" | "skipped"), tooltip.' },
+      { code: 'data_table', label: 'Reconciliation (alias)', type: 'data_table' },
+      { code: 'red_count', label: 'Red Columns (differences)', type: 'number' },
+      { code: 'green_count', label: 'Green Columns', type: 'number' },
+      { code: 'findings', label: 'Findings (Differences)', type: 'data_table', description: 'Red markers formatted for the Evidence & Conclusions section — ready to book to the Error Schedule.' },
+      { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
+    ],
+  },
 ];
