@@ -46,6 +46,12 @@ export async function POST(req: Request) {
           where: { id: existing.id },
           data: { isActive: true },
         });
+        // Same staff-list propagation as a fresh creation — if the
+        // user was previously deactivated and is coming back, they
+        // should re-appear on the Principal's pending-approval list.
+        await propagateStaffAutoAdd(existing.id, existing.email, existing.name, clientId, existing.role ?? null).catch(err => {
+          console.error('[portal/users] staff re-add skipped:', err?.message || err);
+        });
         return NextResponse.json({
           id: existing.id,
           email: existing.email,
@@ -79,6 +85,16 @@ export async function POST(req: Request) {
         ...(isClientAdmin && { isClientAdmin: true }),
         ...(role && { role }),
       },
+    });
+
+    // Push this new portal user into the Portal Principal's staff list
+    // for every engagement on the client that already has a Principal
+    // designated. accessConfirmed=false — the Principal still holds the
+    // gate, but they'll see "pending approval" in their staff tab
+    // without having to hunt for the user. Non-blocking: a schema-drift
+    // or FK issue here shouldn't fail contact creation.
+    await propagateStaffAutoAdd(user.id, user.email, user.name, clientId, role ?? null).catch(err => {
+      console.error('[portal/users] staff auto-add skipped:', err?.message || err);
     });
 
     // Send welcome email with temp password
@@ -183,6 +199,15 @@ export async function DELETE(req: Request) {
       data: { isActive: false },
     });
 
+    // Mirror the deactivation on every staff-member row for this
+    // client so the Portal Principal's setup screen no longer shows
+    // them as approved. accessConfirmed also cleared — if the user
+    // is later reactivated, the Principal must re-approve (safer
+    // default than silently restoring access). Non-blocking.
+    await propagateStaffDeactivate(user.id).catch(err => {
+      console.error('[portal/users] staff deactivate-propagate skipped:', err?.message || err);
+    });
+
     return NextResponse.json({ success: true, message: 'Portal access deactivated' });
   } catch (error) {
     console.error('Deactivate portal user error:', error);
@@ -215,4 +240,80 @@ export async function PATCH(req: Request) {
     console.error('Update portal user error:', error);
     return NextResponse.json({ error: 'Failed to update portal user' }, { status: 500 });
   }
+}
+
+// ─── Portal Principal staff-list propagation ──────────────────────────────
+
+/**
+ * Whenever a ClientPortalUser is created (or re-activated) via the
+ * Opening tab's Contacts panel, insert them as a pending-approval
+ * ClientPortalStaffMember on every engagement of the same client
+ * that already has a Portal Principal designated. accessConfirmed is
+ * LEFT FALSE so the Principal still holds the gate — they just see
+ * the new contact in their setup screen ready to approve, instead of
+ * having to re-add the person manually from the suggestions list.
+ *
+ * Engagements without a Principal are skipped — we can't pick the
+ * right engagement in isolation, and the setup screen will surface
+ * these users as suggestions when the Principal is eventually
+ * designated.
+ *
+ * Idempotent on (engagementId, email) thanks to the @@unique on
+ * ClientPortalStaffMember — re-running doesn't duplicate rows.
+ */
+async function propagateStaffAutoAdd(
+  portalUserId: string,
+  email: string,
+  name: string,
+  clientId: string,
+  role: string | null,
+): Promise<void> {
+  const engagements = await prisma.auditEngagement.findMany({
+    where: { clientId, portalPrincipalId: { not: null } },
+    select: { id: true },
+  });
+  if (engagements.length === 0) return;
+
+  const normEmail = email.toLowerCase();
+  for (const eng of engagements) {
+    const existing = await prisma.clientPortalStaffMember.findUnique({
+      where: { engagementId_email: { engagementId: eng.id, email: normEmail } },
+      select: { id: true, accessConfirmed: true, isActive: true },
+    }).catch(() => null);
+    if (existing) {
+      // Re-activate but don't touch accessConfirmed — if the Principal
+      // previously approved this person, keep them approved.
+      if (!existing.isActive) {
+        await prisma.clientPortalStaffMember.update({
+          where: { id: existing.id },
+          data: { isActive: true, portalUserId, name, role },
+        });
+      }
+      continue;
+    }
+    await prisma.clientPortalStaffMember.create({
+      data: {
+        clientId,
+        engagementId: eng.id,
+        portalUserId,
+        name,
+        email: normEmail,
+        role,
+        accessConfirmed: false,
+        isActive: true,
+      },
+    });
+  }
+}
+
+/**
+ * Mirror of propagateStaffAutoAdd — when the audit team revokes
+ * portal access on a contact, deactivate every matching staff row
+ * (and clear accessConfirmed so they're re-gated if reactivated).
+ */
+async function propagateStaffDeactivate(portalUserId: string): Promise<void> {
+  await prisma.clientPortalStaffMember.updateMany({
+    where: { portalUserId, isActive: true },
+    data: { isActive: false, accessConfirmed: false },
+  });
 }

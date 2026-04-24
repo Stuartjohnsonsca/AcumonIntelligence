@@ -34,11 +34,12 @@ interface Staff {
   inheritedFromEngagementId: string | null;
 }
 interface Suggestion {
-  sourceEngagementId: string;
+  sourceEngagementId: string | null;
   portalUserId: string | null;
   name: string;
   email: string;
   role: string | null;
+  source?: 'prior_period' | 'contacts';
 }
 interface FsGroup {
   fsLineId: string | null;
@@ -144,7 +145,31 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
   }
 
   // ── Allocation actions ─────────────────────────────────────────────
-  async function saveAllocation(alloc: Partial<Allocation> & { fsLineId: string | null; tbAccountCode: string | null; }) {
+  // Optimistic save: update local state FIRST so the dropdown commits
+  // instantly, fire the server save in the background, and only
+  // reconcile if the server echoes something different or errors.
+  // Previously we called load() after every save, which refetched the
+  // whole page (staff list + suggestions + FS Lines + TB rows + all
+  // allocations + escalation days) and felt slow when changing
+  // dropdowns in rapid succession.
+  async function saveAllocation(alloc: Partial<Allocation> & { fsLineId: string | null; tbAccountCode: string | null; staff1UserId: string | null; staff2UserId: string | null; staff3UserId: string | null; }) {
+    // 1) Optimistic local update — merge the new row into state.allocations.
+    setState((prev: any) => {
+      if (!prev) return prev;
+      const list: Allocation[] = Array.isArray(prev.allocations) ? prev.allocations : [];
+      const idx = list.findIndex(a => a.fsLineId === alloc.fsLineId && a.tbAccountCode === alloc.tbAccountCode);
+      const merged: Allocation = idx >= 0
+        ? { ...list[idx], ...alloc }
+        : { id: `pending-${alloc.fsLineId || 'catch'}-${alloc.tbAccountCode || 'all'}`, fsLineId: alloc.fsLineId, tbAccountCode: alloc.tbAccountCode, staff1UserId: alloc.staff1UserId, staff2UserId: alloc.staff2UserId, staff3UserId: alloc.staff3UserId };
+      const next = idx >= 0
+        ? [...list.slice(0, idx), merged, ...list.slice(idx + 1)]
+        : [...list, merged];
+      return { ...prev, allocations: next };
+    });
+
+    // 2) Background server save. On success, swap the optimistic row
+    //    for the server-authoritative one (mainly to pick up the real
+    //    id). On failure, roll back + surface the error.
     try {
       const r = await fetch(`/api/portal/setup/allocation?token=${encodeURIComponent(token)}`, {
         method: 'PUT',
@@ -155,9 +180,21 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
         const data = await r.json().catch(() => ({}));
         throw new Error(data?.error || `Failed (${r.status})`);
       }
-      await load();
+      const body = await r.json().catch(() => null);
+      if (body?.allocation) {
+        setState((prev: any) => {
+          if (!prev) return prev;
+          const list: Allocation[] = Array.isArray(prev.allocations) ? prev.allocations : [];
+          const idx = list.findIndex(a => a.fsLineId === alloc.fsLineId && a.tbAccountCode === alloc.tbAccountCode);
+          if (idx < 0) return prev;
+          return { ...prev, allocations: [...list.slice(0, idx), body.allocation, ...list.slice(idx + 1)] };
+        });
+      }
     } catch (err: any) {
       setError(err?.message || 'Save failed');
+      // Hard reload only on failure so the UI reflects the true
+      // server state — optimistic update on the happy path stays.
+      await load();
     }
   }
 
@@ -295,24 +332,56 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
 
           {openStaff && (
             <div className="border-t border-slate-200 p-5 space-y-4">
-              {/* Suggestions */}
+              {/* Suggestions — split by source. Prior-period pills are
+                  blue (strong recommendation: same team, same client);
+                  contacts pills are slate (weaker: the audit team added
+                  them but there's no prior history to vouch for them). */}
               {state.suggestions.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-slate-600 mb-2">Suggested from prior period or related group company</p>
-                  <div className="flex flex-wrap gap-2">
-                    {state.suggestions.map((s: Suggestion) => (
-                      <button
-                        key={s.email}
-                        onClick={() => addStaff(s.name, s.email, s.role || '', s.sourceEngagementId, true)}
-                        disabled={adding}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-                        title={`Add ${s.name} (${s.email}) with access pre-confirmed`}
-                      >
-                        <UserPlus className="w-3 h-3" />
-                        {s.name} {s.role ? `— ${s.role}` : ''}
-                      </button>
-                    ))}
-                  </div>
+                <div className="space-y-3">
+                  {state.suggestions.some((s: Suggestion) => s.source !== 'contacts') && (
+                    <div>
+                      <p className="text-xs font-medium text-slate-600 mb-2">Suggested from prior period or related group company</p>
+                      <div className="flex flex-wrap gap-2">
+                        {state.suggestions
+                          .filter((s: Suggestion) => s.source !== 'contacts')
+                          .map((s: Suggestion) => (
+                            <button
+                              key={s.email}
+                              onClick={() => addStaff(s.name, s.email, s.role || '', s.sourceEngagementId || undefined, true)}
+                              disabled={adding}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                              title={`Add ${s.name} (${s.email}) with access pre-confirmed`}
+                            >
+                              <UserPlus className="w-3 h-3" />
+                              {s.name} {s.role ? `— ${s.role}` : ''}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                  {state.suggestions.some((s: Suggestion) => s.source === 'contacts') && (
+                    <div>
+                      <p className="text-xs font-medium text-slate-600 mb-2">
+                        Added by your audit team via the Contacts list — approve to grant engagement access
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {state.suggestions
+                          .filter((s: Suggestion) => s.source === 'contacts')
+                          .map((s: Suggestion) => (
+                            <button
+                              key={s.email}
+                              onClick={() => addStaff(s.name, s.email, s.role || '', undefined, true)}
+                              disabled={adding}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              title={`Add ${s.name} (${s.email}) with access pre-confirmed`}
+                            >
+                              <UserPlus className="w-3 h-3" />
+                              {s.name} {s.role ? `— ${s.role}` : ''}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

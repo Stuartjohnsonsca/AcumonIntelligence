@@ -61,11 +61,47 @@ export async function GET(req: Request) {
     orderBy: [{ accessConfirmed: 'desc' }, { name: 'asc' }],
   }).catch(() => [] as any[]);
 
-  // Prior-period / sibling-group suggestions — exclude anyone already on
-  // the staff list (by normalised email) so the UI doesn't show dupes.
+  // Suggestions come from three places, de-duplicated by email so the
+  // Principal never sees the same person twice:
+  //
+  //   1. Prior-period / sibling-group carry-forward (existing behaviour)
+  //   2. Active ClientPortalUsers for this client that aren't yet on
+  //      the engagement's staff list — catches people the audit team
+  //      added via the Opening tab's Contacts panel BEFORE the
+  //      Principal was designated (the POST /api/portal/users side
+  //      now auto-inserts them forward from the moment a Principal
+  //      IS set, but for back-fill we still need to surface them here)
   const already = new Set(staff.map(s => (s.email || '').toLowerCase().trim()));
   const rawSuggestions = await suggestStaffCarryForward(engagementId);
-  const suggestions = rawSuggestions.filter(s => !already.has((s.email || '').toLowerCase().trim()));
+  const contactsList = await prisma.clientPortalUser.findMany({
+    where: { clientId: eng.clientId, isActive: true },
+    select: { id: true, name: true, email: true, role: true },
+  }).catch(() => [] as any[]);
+
+  interface Suggestion { sourceEngagementId: string | null; portalUserId: string | null; name: string; email: string; role: string | null; source: 'prior_period' | 'contacts'; }
+  const seen = new Set<string>();
+  const suggestions: Suggestion[] = [];
+  // Carry-forward first — they're the more specific signal.
+  for (const s of rawSuggestions) {
+    const key = (s.email || '').toLowerCase().trim();
+    if (!key || already.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push({ ...s, source: 'prior_period' });
+  }
+  // Then backfill from client-level Contacts-panel users.
+  for (const c of contactsList) {
+    const key = (c.email || '').toLowerCase().trim();
+    if (!key || already.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push({
+      sourceEngagementId: null,
+      portalUserId: c.id,
+      name: c.name,
+      email: c.email,
+      role: c.role ?? null,
+      source: 'contacts',
+    });
+  }
 
   // FS Lines + TB rows for the work-allocation grid. Group by fsLineId.
   // Also surface the list of TB rows that don't yet have an FS Line
