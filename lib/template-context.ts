@@ -578,6 +578,10 @@ export async function buildTemplateContext(engagementId: string, opts: { include
     interface ListItem {
       question: string; key: string; answer: any;
       section: string | null; sortOrder: number;
+      // Multi-column layout extras — spread in per-question when the
+      // section uses table_3col / 4col / 5col layout. Templates can
+      // reference {{col1}}, {{col2}} etc. inside {{#each asList}}.
+      [colN: `col${number}`]: any;
       // Derived fields populated in the post-pass below. They let
       // dynamic-table filters express "include the explanation only
       // when the preceding Y/N question was Y" and similar chained
@@ -620,6 +624,33 @@ export async function buildTemplateContext(engagementId: string, opts: { include
         if (!bySection[sec]) bySection[sec] = {};
         bySection[sec][keyResolved] = value ?? null;
       }
+
+      // Multi-column layout: when a section's layout is table_3col /
+      // 4col / 5col, DynamicAppendixForm stores each extra column under
+      // `<questionId>_col<N>` in the same values map. Expose those
+      // values alongside the primary answer so document templates can
+      // address them directly:
+      //   {{questionnaires.materiality.revenue_col1}}  ← planning amount
+      //   {{questionnaires.materiality.revenue_col2}}  ← final amount
+      // Also attached to the asList item as `col1` / `col2` / ... so
+      // {{#each asList}} loops can render an N-column table cleanly.
+      const colValues: Record<string, any> = {};
+      for (const [rk, rv] of Object.entries(raw)) {
+        if (!rk.startsWith(`${item.id}_col`)) continue;
+        const n = Number(rk.slice(`${item.id}_col`.length));
+        if (!Number.isFinite(n) || n < 1) continue;
+        const colKey = `col${n}`;
+        colValues[colKey] = rv;
+        // Flat aliases: keyResolved_col1 etc. for direct placeholder use.
+        out[`${keyResolved}_${colKey}`] = rv;
+        if (item.key && keyResolved !== item.key) out[`${item.key}_${colKey}`] = rv;
+        if (item.sectionKey) {
+          const sec = slugify(item.sectionKey);
+          if (!bySection[sec]) bySection[sec] = {};
+          bySection[sec][`${keyResolved}_${colKey}`] = rv;
+        }
+      }
+
       // Every question — answered or not — goes into asList so
       // templates that iterate ({{#each …asList}}) see the full shape
       // of the questionnaire, not just the rows the auditor has
@@ -631,6 +662,7 @@ export async function buildTemplateContext(engagementId: string, opts: { include
         answer: value ?? null,
         section: item.sectionKey ? String(item.sectionKey) : null,
         sortOrder: Number(item.sortOrder) || 0,
+        ...colValues, // col1, col2, col3 ... spread alongside 'answer'
       });
     }
     asList.sort((a, b) => (a.sortOrder - b.sortOrder) || a.question.localeCompare(b.question));

@@ -420,22 +420,90 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
               </div>
             </div>
 
-            {/* Column headers editor — shown for table layouts */}
-            {!isCollapsed && sectionMeta[sectionKey]?.layout && sectionMeta[sectionKey].layout !== 'standard' && (
-              <div className="px-4 py-2 bg-blue-50/30 border-b border-slate-200 flex items-center gap-2">
-                <span className="text-[10px] text-blue-600 font-medium shrink-0">Columns:</span>
-                {(sectionMeta[sectionKey]?.columnHeaders || []).map((h, hi) => (
-                  <input key={hi} value={h}
-                    onChange={e => {
-                      const headers = [...(sectionMeta[sectionKey]?.columnHeaders || [])];
-                      headers[hi] = e.target.value;
-                      updateSectionMeta(sectionKey, { columnHeaders: headers });
-                    }}
-                    className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white flex-1 min-w-[60px] focus:outline-none focus:border-blue-400"
-                  />
-                ))}
-              </div>
-            )}
+            {/* Column editor — shown for table layouts. Each non-label
+                column has its own header text + input type + optional
+                dropdown options. Column 0 is always the question/row
+                label (read-only) and just has a header; columns 1..N-1
+                are the editable cells so each can be configured
+                independently (e.g. a 5-col Materiality section can be
+                [Particulars | Planning Amount: currency | Final Amount:
+                currency | Comment: textarea | WP Ref: text]). */}
+            {!isCollapsed && sectionMeta[sectionKey]?.layout && sectionMeta[sectionKey].layout !== 'standard' && (() => {
+              const layout = sectionMeta[sectionKey]!.layout;
+              const headers = sectionMeta[sectionKey]?.columnHeaders || LAYOUT_DEFAULT_HEADERS[layout] || [];
+              const columnsConfig = sectionMeta[sectionKey]?.columns || [];
+              function updateHeader(ci: number, value: string) {
+                const next = [...(sectionMeta[sectionKey]?.columnHeaders || LAYOUT_DEFAULT_HEADERS[layout] || [])];
+                next[ci] = value;
+                updateSectionMeta(sectionKey, { columnHeaders: next });
+                // Keep columns[ci-1].header in sync if the admin's already set one.
+                if (ci >= 1) {
+                  const cols = [...(sectionMeta[sectionKey]?.columns || [])];
+                  if (cols[ci - 1]) { cols[ci - 1] = { ...cols[ci - 1], header: value }; updateSectionMeta(sectionKey, { columns: cols }); }
+                }
+              }
+              function updateColumn(colIdx: number, patch: Partial<{ inputType: QuestionInputType; dropdownOptions: string[]; placeholder: string }>) {
+                const cols: any[] = [...(sectionMeta[sectionKey]?.columns || [])];
+                // Pad out with defaults so colIdx is always addressable.
+                while (cols.length <= colIdx) {
+                  const hi = cols.length + 1; // +1 because column 0 is the label
+                  cols.push({ header: headers[hi] || `Column ${hi + 1}`, inputType: 'textarea' });
+                }
+                cols[colIdx] = { ...cols[colIdx], ...patch, header: cols[colIdx]?.header || headers[colIdx + 1] || `Column ${colIdx + 2}` };
+                updateSectionMeta(sectionKey, { columns: cols });
+              }
+              return (
+                <div className="px-4 py-2 bg-blue-50/30 border-b border-slate-200 space-y-1.5">
+                  {headers.map((h, hi) => (
+                    <div key={hi} className="flex items-center gap-2">
+                      <span className="text-[10px] text-blue-600 font-medium shrink-0 w-16">
+                        {hi === 0 ? 'Col 0 (label):' : `Col ${hi}:`}
+                      </span>
+                      <input
+                        value={h}
+                        onChange={e => updateHeader(hi, e.target.value)}
+                        className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white w-40 focus:outline-none focus:border-blue-400"
+                        placeholder="Column heading"
+                      />
+                      {hi >= 1 && (
+                        <>
+                          <select
+                            value={columnsConfig[hi - 1]?.inputType || 'textarea'}
+                            onChange={e => updateColumn(hi - 1, { inputType: e.target.value as QuestionInputType })}
+                            className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
+                            title="Input type for every cell in this column"
+                          >
+                            {INPUT_TYPE_OPTIONS.filter(o => o.value !== 'subheader' && o.value !== 'table_row' && o.value !== 'formula' && o.value !== 'yes_only').map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                          {columnsConfig[hi - 1]?.inputType === 'dropdown' && (
+                            <input
+                              type="text"
+                              value={(columnsConfig[hi - 1]?.dropdownOptions || []).join(', ')}
+                              onChange={e => updateColumn(hi - 1, { dropdownOptions: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                              placeholder="Option 1, Option 2, Option 3"
+                              className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white flex-1 focus:outline-none focus:border-blue-400"
+                            />
+                          )}
+                          <input
+                            type="text"
+                            value={columnsConfig[hi - 1]?.placeholder || ''}
+                            onChange={e => updateColumn(hi - 1, { placeholder: e.target.value })}
+                            placeholder="Placeholder (optional)"
+                            className="text-[10px] border border-blue-200 rounded px-2 py-1 bg-white flex-1 min-w-[80px] focus:outline-none focus:border-blue-400"
+                          />
+                        </>
+                      )}
+                    </div>
+                  ))}
+                  <p className="text-[10px] text-blue-700 italic pt-1 border-t border-blue-100">
+                    Each non-label column has its own input type and options. Change the dropdown to Currency / Date / Y-N / etc. per column.
+                    Templates reference cell values as <code className="font-mono bg-white px-1 rounded border border-blue-200">{'{{questionnaires.<schedule>.<key>_col1}}'}</code>, <code className="font-mono bg-white px-1 rounded border border-blue-200">_col2</code>, etc.
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* Questions */}
             {!isCollapsed && (

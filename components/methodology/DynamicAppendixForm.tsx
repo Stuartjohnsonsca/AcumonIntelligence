@@ -94,6 +94,30 @@ export function DynamicAppendixForm({
 
   useEffect(() => { setValues(initialData); }, [initialData]);
 
+  // ── Template-reference highlight ─────────────────────────────────
+  // Every cell on this schedule whose placeholder path is referenced
+  // by at least one document OR email template on the firm gets a
+  // red outline at runtime. Purpose: make it obvious to the auditor
+  // which answers end up in generated documents, so they know these
+  // fields matter beyond the schedule itself. Fetched once on mount;
+  // failing silently is fine — no highlights is a sensible default.
+  const [referencedPaths, setReferencedPaths] = useState<Set<string>>(new Set());
+  const [referencedByPath, setReferencedByPath] = useState<Record<string, Array<{ templateId: string; templateName: string; kind: string }>>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/methodology-admin/template-references');
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (Array.isArray(data.paths)) setReferencedPaths(new Set(data.paths));
+        if (data.byPath && typeof data.byPath === 'object') setReferencedByPath(data.byPath);
+      } catch { /* silent — no highlights */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // ── Validation rules ─────────────────────────────────────────────
   // Firm-wide rules set up by the Methodology Admin (Methodology
   // Admin → Validation Rules). Each rule has a formula-engine
@@ -147,6 +171,78 @@ export function DynamicAppendixForm({
   /** Resolve a `<appendix>.<field>` cross-ref against the loaded map.
    *  Returns null when the reference can't be resolved — the UI treats
    *  that as an empty value. */
+  /**
+   * True when the question's answer is referenced by at least one
+   * document / email template. We check:
+   *   - the canonical path (questionnaires.<schedule>.<key>)
+   *   - the schedule-by-section variant (bySection.<section>.<key>)
+   *   - any col<N> variants — for multi-column sections, any of the
+   *     sub-column paths counts as a reference
+   * Accepts either the question's .key or its slugified text as the
+   * key part; the context builder exposes both aliases.
+   */
+  function isQuestionReferenced(q: TemplateQuestion): boolean {
+    if (referencedPaths.size === 0) return false;
+    const candidates: string[] = [];
+    const qKey = (q as any).key as string | undefined;
+    const keys: string[] = [];
+    if (qKey && qKey.trim()) keys.push(qKey.trim());
+    const slug = slugifyQuestionText(q.questionText);
+    if (slug && !keys.includes(slug)) keys.push(slug);
+    const sec = q.sectionKey ? String(q.sectionKey).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null;
+    for (const k of keys) {
+      candidates.push(`questionnaires.${questionnaireKey}.${k}`);
+      if (sec) candidates.push(`questionnaires.${questionnaireKey}.bySection.${sec}.${k}`);
+      // Check col1..col10 for multi-column references.
+      for (let i = 1; i <= 10; i++) {
+        candidates.push(`questionnaires.${questionnaireKey}.${k}_col${i}`);
+      }
+    }
+    for (const p of candidates) {
+      if (referencedPaths.has(p)) return true;
+    }
+    return false;
+  }
+
+  /** Same but for a specific column — used on multi-column table rows
+   *  so only the cell that's actually referenced goes red, not the
+   *  whole row. */
+  function isColumnReferenced(q: TemplateQuestion, colN: number): boolean {
+    if (referencedPaths.size === 0) return false;
+    const qKey = (q as any).key as string | undefined;
+    const keys: string[] = [];
+    if (qKey && qKey.trim()) keys.push(qKey.trim());
+    const slug = slugifyQuestionText(q.questionText);
+    if (slug && !keys.includes(slug)) keys.push(slug);
+    for (const k of keys) {
+      if (referencedPaths.has(`questionnaires.${questionnaireKey}.${k}_col${colN}`)) return true;
+    }
+    return false;
+  }
+
+  /** Build a tooltip listing which templates reference a given path. */
+  function referencedByTooltip(q: TemplateQuestion, colN?: number): string {
+    const qKey = (q as any).key as string | undefined;
+    const keys: string[] = [];
+    if (qKey && qKey.trim()) keys.push(qKey.trim());
+    const slug = slugifyQuestionText(q.questionText);
+    if (slug && !keys.includes(slug)) keys.push(slug);
+    const hits: string[] = [];
+    for (const k of keys) {
+      const paths = colN
+        ? [`questionnaires.${questionnaireKey}.${k}_col${colN}`]
+        : [`questionnaires.${questionnaireKey}.${k}`];
+      for (const p of paths) {
+        const refs = referencedByPath[p];
+        if (refs) {
+          for (const r of refs) hits.push(`${r.kind}: ${r.templateName}`);
+        }
+      }
+    }
+    if (hits.length === 0) return '';
+    return `Referenced by:\n  • ${hits.join('\n  • ')}`;
+  }
+
   function resolveCrossRef(ref: string | undefined | null): any {
     if (!ref || !crossSchedules) return null;
     const trimmed = ref.trim();
@@ -427,28 +523,104 @@ export function DynamicAppendixForm({
                             </div>
                           </td>
                           {/* Remaining columns — editable cells. Stored as
-                              <questionId>_col<N> in the same values map so
-                              autosave picks them up with no plumbing
-                              changes. */}
+                              <questionId>_col<N> in the same values map.
+                              Each column has its own admin-configured
+                              input type + dropdown options + validation
+                              (meta.columns[ci]), so col1 could be
+                              currency, col2 could be a dropdown, col3
+                              could be free-text, etc. — independent per
+                              column, not inherited from the question's
+                              inputType. Red ring = this specific column
+                              is referenced by a document / email template. */}
                           {tableHeaders.slice(1).map((_, ci) => {
-                            const cellKey = `${q.id}_col${ci + 1}`;
+                            const colN = ci + 1;
+                            const cellKey = `${q.id}_col${colN}`;
+                            const colReferenced = isColumnReferenced(q, colN);
+                            const colTitle = colReferenced ? referencedByTooltip(q, colN) : undefined;
+                            const refClass = colReferenced ? 'ring-2 ring-red-500 ring-offset-1' : '';
+                            // Per-column config lives on meta.columns
+                            // and describes the NON-label columns
+                            // (index 0 = the column immediately after
+                            // the label). Fall back to the question's
+                            // own inputType so older sections without
+                            // per-column config still render.
+                            const colConfig = meta?.columns?.[ci];
+                            const cellInputType = colConfig?.inputType || q.inputType;
+                            const cellOptions = colConfig?.dropdownOptions && colConfig.dropdownOptions.length > 0
+                              ? colConfig.dropdownOptions
+                              : q.dropdownOptions;
+                            const cellPlaceholder = colConfig?.placeholder;
                             return (
-                              <td key={ci} className="px-2 py-1 align-top">
-                                {q.isBold ? null : q.inputType === 'dropdown' && q.dropdownOptions ? (
+                              <td key={ci} className="px-2 py-1 align-top" title={colTitle}>
+                                {q.isBold ? null : cellInputType === 'dropdown' && cellOptions ? (
                                   <select
                                     value={(values[cellKey] as string) || ''}
                                     onChange={e => handleChange(cellKey, e.target.value)}
-                                    className="w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300"
+                                    className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 ${refClass}`}
                                   >
                                     <option value="">Select...</option>
-                                    {q.dropdownOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                    {cellOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                                   </select>
+                                ) : cellInputType === 'yesno' ? (
+                                  <select
+                                    value={(values[cellKey] as string) || ''}
+                                    onChange={e => handleChange(cellKey, e.target.value)}
+                                    className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 ${refClass}`}
+                                  >
+                                    <option value="">Select...</option>
+                                    <option value="Y">Y</option>
+                                    <option value="N">N</option>
+                                  </select>
+                                ) : cellInputType === 'yna' ? (
+                                  <select
+                                    value={(values[cellKey] as string) || ''}
+                                    onChange={e => handleChange(cellKey, e.target.value)}
+                                    className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 ${refClass}`}
+                                  >
+                                    <option value="">Select...</option>
+                                    <option value="Y">Y</option>
+                                    <option value="N">N</option>
+                                    <option value="N/A">N/A</option>
+                                  </select>
+                                ) : cellInputType === 'number' || cellInputType === 'currency' ? (
+                                  <input
+                                    type="number"
+                                    value={values[cellKey] === null || values[cellKey] === undefined || values[cellKey] === '' ? '' : Number(values[cellKey])}
+                                    onChange={e => handleChange(cellKey, e.target.value === '' ? null : Number(e.target.value))}
+                                    min={colConfig?.validationMin}
+                                    max={colConfig?.validationMax}
+                                    placeholder={cellPlaceholder}
+                                    className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 ${refClass}`}
+                                  />
+                                ) : cellInputType === 'date' ? (
+                                  <input
+                                    type="date"
+                                    value={typeof values[cellKey] === 'string' ? (values[cellKey] as string).split('T')[0] : ''}
+                                    onChange={e => handleChange(cellKey, e.target.value || null)}
+                                    className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 ${refClass}`}
+                                  />
+                                ) : cellInputType === 'checkbox' ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={values[cellKey] === true || values[cellKey] === 'true'}
+                                    onChange={e => handleChange(cellKey, e.target.checked)}
+                                    className="w-4 h-4 rounded border-slate-300"
+                                  />
+                                ) : cellInputType === 'text' ? (
+                                  <input
+                                    type="text"
+                                    value={(values[cellKey] as string) || ''}
+                                    onChange={e => handleChange(cellKey, e.target.value)}
+                                    placeholder={cellPlaceholder}
+                                    className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 ${refClass}`}
+                                  />
                                 ) : (
                                   <textarea
                                     value={(values[cellKey] as string) || ''}
                                     onChange={e => handleChange(cellKey, e.target.value)}
                                     rows={1}
-                                    className="w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 min-h-[28px] resize-y"
+                                    placeholder={cellPlaceholder}
+                                    className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 min-h-[28px] resize-y ${refClass}`}
                                   />
                                 )}
                               </td>
@@ -559,7 +731,10 @@ export function DynamicAppendixForm({
                         </div>
                       )}
                     </div>
-                    <div className={`flex-1 px-2 py-1.5 ${outline} relative`}>
+                    <div
+                      className={`flex-1 px-2 py-1.5 ${outline} relative ${isQuestionReferenced(q) ? 'ring-2 ring-red-500 ring-offset-0 rounded' : ''}`}
+                      title={isQuestionReferenced(q) ? referencedByTooltip(q) : undefined}
+                    >
                       <FormField
                         questionId={q.id}
                         inputType={q.inputType}
