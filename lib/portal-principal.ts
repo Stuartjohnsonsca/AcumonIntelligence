@@ -259,3 +259,34 @@ export async function suggestStaffCarryForward(engagementId: string): Promise<Ar
   }
   return out;
 }
+
+// ─── Principal-only guard (for /api/portal/setup/* endpoints) ───────────────
+
+export interface PrincipalGuardResult {
+  ok: boolean;
+  portalUserId?: string;
+  clientId?: string;
+  error?: string;
+  status?: number;
+}
+
+/**
+ * Assert that the given portal user is the Portal Principal for the
+ * given engagement. Used by every /api/portal/setup/* endpoint so a
+ * staff member can't elevate themselves by calling the setup APIs
+ * directly.
+ */
+export async function assertPortalPrincipal(portalUserId: string, engagementId: string): Promise<PrincipalGuardResult> {
+  const eng = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { clientId: true, portalPrincipalId: true },
+  }).catch(() => null);
+  if (!eng) return { ok: false, error: 'Engagement not found', status: 404 };
+  if (!eng.portalPrincipalId) {
+    return { ok: false, error: 'No Portal Principal is designated for this engagement yet. Ask the audit team to nominate one on the Opening tab.', status: 409 };
+  }
+  if (eng.portalPrincipalId !== portalUserId) {
+    return { ok: false, error: 'Only the Portal Principal can perform this action.', status: 403 };
+  }
+  return { ok: true, portalUserId, clientId: eng.clientId };
+}

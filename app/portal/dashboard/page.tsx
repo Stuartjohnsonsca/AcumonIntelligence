@@ -6,7 +6,17 @@ import Link from 'next/link';
 import {
   ClipboardCheck, Calculator, Briefcase, Receipt, Monitor,
   Users, Plus, Trash2, Loader2, Calendar, Check, ChevronDown, ChevronRight,
+  ShieldCheck, AlertTriangle, ArrowRight,
 } from 'lucide-react';
+
+interface PrincipalEngagementSummary {
+  id: string;
+  clientName: string;
+  auditType: string;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  setupCompletedAt?: string | null;
+}
 
 interface PortalUser {
   id: string;
@@ -41,6 +51,10 @@ function DashboardContent() {
   const [activeTab, setActiveTab] = useState<'services' | 'team'>('services');
   const [isAdmin, setIsAdmin] = useState(false);
 
+  // Portal Principal state — drives the "Finish setup" banner and
+  // per-engagement setup links at the top of the dashboard.
+  const [principalFor, setPrincipalFor] = useState<PrincipalEngagementSummary[]>([]);
+
   // Team management state
   const [clients, setClients] = useState<ClientInfo[]>([]);
   const [selectedClientId, setSelectedClientId] = useState('');
@@ -53,6 +67,16 @@ function DashboardContent() {
   const [adding, setAdding] = useState(false);
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
+
+  // Load Portal Principal state — surfaces the "Finish setup" banner
+  // when this user is the Portal Principal for one or more engagements.
+  useEffect(() => {
+    if (!token) return;
+    fetch(`/api/portal/my-engagements?token=${token}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.principalFor) setPrincipalFor(data.principalFor); })
+      .catch(() => {});
+  }, [token]);
 
   // Load user info to check admin status
   useEffect(() => {
@@ -130,12 +154,59 @@ function DashboardContent() {
     setTeamMembers(prev => prev.map(u => u.id === userId ? { ...u, role } : u));
   }
 
+  const principalOutstanding = principalFor.filter(p => !p.setupCompletedAt);
+
   return (
     <div>
       <div className="text-center mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Welcome to your Client Portal</h1>
         <p className="text-sm text-slate-500 mt-1">Manage your services and team</p>
       </div>
+
+      {/* Portal Principal banner — surfaces engagements where this user */}
+      {/* is the Portal Principal, with outstanding-setup ones highlighted. */}
+      {principalFor.length > 0 && (
+        <div className="max-w-4xl mx-auto mb-6 space-y-2">
+          {principalOutstanding.length > 0 && (
+            <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-amber-800">
+                    Portal Principal setup outstanding
+                  </p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    You are the Portal Principal for {principalOutstanding.length} engagement{principalOutstanding.length === 1 ? '' : 's'}. Staff members cannot log in until you complete setup (staff list + work allocation + access confirmations).
+                  </p>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {principalOutstanding.map(e => (
+                      <Link key={e.id} href={`/portal/setup/${e.id}?token=${token}`} className="inline-flex items-center gap-1 text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-md">
+                        Finish setup — {e.clientName}
+                        <ArrowRight className="h-3 w-3" />
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {principalFor.filter(p => p.setupCompletedAt).length > 0 && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <div className="flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 text-xs text-emerald-800">
+                  You are the Portal Principal for {principalFor.filter(p => p.setupCompletedAt).length} active engagement{principalFor.filter(p => p.setupCompletedAt).length === 1 ? '' : 's'}.
+                  <span className="ml-2">
+                    {principalFor.filter(p => p.setupCompletedAt).map(e => (
+                      <Link key={e.id} href={`/portal/setup/${e.id}?token=${token}`} className="text-emerald-700 hover:underline mr-3">Manage — {e.clientName}</Link>
+                    ))}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex justify-center mb-8">
