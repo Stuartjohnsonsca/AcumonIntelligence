@@ -196,11 +196,16 @@ function DashboardContent() {
                 <ShieldCheck className="h-4 w-4 text-emerald-600 flex-shrink-0 mt-0.5" />
                 <div className="flex-1 text-xs text-emerald-800">
                   You are the Portal Principal for {principalFor.filter(p => p.setupCompletedAt).length} active engagement{principalFor.filter(p => p.setupCompletedAt).length === 1 ? '' : 's'}.
-                  <span className="ml-2">
+                  <div className="mt-1 space-y-1">
                     {principalFor.filter(p => p.setupCompletedAt).map(e => (
-                      <Link key={e.id} href={`/portal/setup/${e.id}?token=${token}`} className="text-emerald-700 hover:underline mr-3">Manage — {e.clientName}</Link>
+                      <div key={e.id} className="flex items-center gap-3">
+                        <span className="font-medium">{e.clientName}</span>
+                        <Link href={`/portal/principal/${e.id}?token=${token}`} className="text-emerald-700 hover:underline">Dashboard</Link>
+                        <span className="text-emerald-300">·</span>
+                        <Link href={`/portal/setup/${e.id}?token=${token}`} className="text-emerald-700 hover:underline">Manage staff</Link>
+                      </div>
                     ))}
-                  </span>
+                  </div>
                 </div>
               </div>
             </div>
