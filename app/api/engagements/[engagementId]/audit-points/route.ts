@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { logEngagementAction, resolveActor } from '@/lib/engagement-action-log';
+import { AUDIT_POINT_SAFE_SELECT } from '@/lib/audit-points-select';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -25,14 +26,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
   if (pointType) where.pointType = pointType;
   if (status) where.status = status;
 
-  const points = await prisma.auditPoint.findMany({
-    where,
-    // Newest activity first: most recently updated wins. updatedAt
-    // ticks on every response/close/colour change so an item that
-    // got a new reply this morning rises above a quieter one. Closed
-    // items still appear but sink to the bottom via the status sort.
-    orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }],
-  });
+  // Explicit select because production Supabase is currently missing
+  // the `linked_from_type` + `linked_from_id` columns on this table —
+  // same drift as audit_error_schedules. Without the select, Prisma
+  // tries to fetch those columns and the query 500s, taking down the
+  // RI Matters / Review Points / Management / Representation panels.
+  // Belt-and-braces fallback catches any other unexpected drift.
+  let points: any[] = [];
+  try {
+    points = await prisma.auditPoint.findMany({
+      where,
+      // Newest activity first: most recently updated wins. updatedAt
+      // ticks on every response/close/colour change so an item that
+      // got a new reply this morning rises above a quieter one. Closed
+      // items still appear but sink to the bottom via the status sort.
+      orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }],
+      select: AUDIT_POINT_SAFE_SELECT,
+    });
+  } catch (err: any) {
+    console.error('[audit-points] findMany failed — returning empty list:', err?.message || err);
+    points = [];
+  }
 
   return NextResponse.json({ points });
 }
@@ -98,7 +112,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
   const { id, action } = body;
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const existing = await prisma.auditPoint.findUnique({ where: { id } });
+  const existing = await prisma.auditPoint.findUnique({ where: { id }, select: { ...AUDIT_POINT_SAFE_SELECT } });
   if (!existing || existing.engagementId !== engagementId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   if (__eqrGuard.role === 'EQR' && existing.pointType !== 'review_point') {

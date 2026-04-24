@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { AUDIT_POINT_SAFE_SELECT } from '@/lib/audit-points-select';
 
 /**
  * POST /api/engagements/[engagementId]/audit-points/summarise
@@ -30,7 +31,7 @@ export async function POST(req: Request, ctx: Ctx) {
   const { id } = body as { id: string };
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const point = await prisma.auditPoint.findUnique({ where: { id } });
+  const point = await prisma.auditPoint.findUnique({ where: { id }, select: { ...AUDIT_POINT_SAFE_SELECT } });
   if (!point || point.engagementId !== engagementId) {
     return NextResponse.json({ error: 'Audit point not found' }, { status: 404 });
   }

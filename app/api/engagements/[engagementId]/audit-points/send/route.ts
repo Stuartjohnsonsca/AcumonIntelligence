@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { sendEmail } from '@/lib/email';
 import { logEngagementAction, resolveActor } from '@/lib/engagement-action-log';
+import { AUDIT_POINT_SAFE_SELECT } from '@/lib/audit-points-select';
 
 /**
  * POST /api/engagements/[engagementId]/audit-points/send
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   };
   if (!id || !target) return NextResponse.json({ error: 'id and target required' }, { status: 400 });
 
-  const point = await prisma.auditPoint.findUnique({ where: { id } });
+  const point = await prisma.auditPoint.findUnique({ where: { id }, select: { ...AUDIT_POINT_SAFE_SELECT } });
   if (!point || point.engagementId !== engagementId) {
     return NextResponse.json({ error: 'Audit point not found' }, { status: 404 });
   }
