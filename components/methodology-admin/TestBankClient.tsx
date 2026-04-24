@@ -119,6 +119,53 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   // flagged 'ALL' (cross-framework tests that belong everywhere).
   const [testBankFrameworkFilter, setTestBankFrameworkFilter] = useState<string>('');
 
+  // Multi-select FS-line filter. Empty set = no filter (show all
+  // tests). Otherwise a test passes if any of its allocated FS lines
+  // is in the selected set (OR semantics — matches admin intuition
+  // of 'show me tests for these areas'). Controlled popover so the
+  // admin can search + toggle without losing position.
+  const [testBankFsLineFilter, setTestBankFsLineFilter] = useState<Set<string>>(new Set());
+  const [fsLineFilterOpen, setFsLineFilterOpen] = useState(false);
+  const [fsLineFilterSearch, setFsLineFilterSearch] = useState('');
+  const fsLineFilterRef = useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!fsLineFilterOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (!fsLineFilterRef.current) return;
+      if (fsLineFilterRef.current.contains(e.target as Node)) return;
+      setFsLineFilterOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [fsLineFilterOpen]);
+
+  // Group FS lines by category so the popover is readable. Filter by
+  // the local search box applied to the line name.
+  const fsLineFilterGroups = useMemo(() => {
+    const q = fsLineFilterSearch.trim().toLowerCase();
+    const filtered = q
+      ? fsLines.filter(fl => fl.name.toLowerCase().includes(q))
+      : fsLines;
+    const byCat = new Map<string, FsLineItem[]>();
+    for (const fl of filtered) {
+      const cat = fl.fsCategory || 'other';
+      if (!byCat.has(cat)) byCat.set(cat, []);
+      byCat.get(cat)!.push(fl);
+    }
+    for (const list of byCat.values()) list.sort((a, b) => (a.sortOrder - b.sortOrder) || a.name.localeCompare(b.name));
+    // Preserve the canonical category order, then any oddball cats.
+    const ordered: Array<{ cat: string; label: string; items: FsLineItem[] }> = [];
+    for (const cat of FS_CATEGORY_ORDER) {
+      const items = byCat.get(cat);
+      if (items && items.length > 0) ordered.push({ cat, label: FS_CATEGORY_LABELS[cat] || cat, items });
+    }
+    for (const [cat, items] of byCat.entries()) {
+      if (FS_CATEGORY_ORDER.includes(cat)) continue;
+      ordered.push({ cat, label: FS_CATEGORY_LABELS[cat] || cat, items });
+    }
+    return ordered;
+  }, [fsLines, fsLineFilterSearch]);
+
   // Per-test FS-line pills. Group allocations by testId and dedupe by
   // fsLineId so a test allocated to (e.g.) Revenue across all three
   // industries only shows one "Revenue" pill. fsLines is frozen for
@@ -557,6 +604,103 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
               <option value="">All frameworks</option>
               {frameworkOptions.map(fw => <option key={fw} value={fw}>{fw}</option>)}
             </select>
+
+            {/* FS Lines multi-select. Click to open a categorised
+                checkbox popover; filters tests down to those allocated
+                to ANY of the selected lines (OR semantics). 'Clear'
+                resets the set. */}
+            <div className="relative" ref={fsLineFilterRef}>
+              <button
+                type="button"
+                onClick={() => setFsLineFilterOpen(v => !v)}
+                className={`text-xs border rounded-lg px-3 py-1.5 bg-white focus:outline-none flex items-center gap-1.5 ${testBankFsLineFilter.size > 0 ? 'border-blue-400 text-blue-700 bg-blue-50' : 'border-slate-200 text-slate-700'}`}
+                title="Filter by FS line allocation"
+              >
+                FS Lines
+                {testBankFsLineFilter.size > 0 && (
+                  <span className="bg-blue-600 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full leading-none">
+                    {testBankFsLineFilter.size}
+                  </span>
+                )}
+                <svg className={`h-3 w-3 transition-transform ${fsLineFilterOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" /></svg>
+              </button>
+              {fsLineFilterOpen && (
+                <div className="absolute z-20 mt-1 right-0 w-80 bg-white border border-slate-200 rounded-lg shadow-lg max-h-[420px] flex flex-col">
+                  <div className="p-2 border-b border-slate-100 flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />
+                      <input
+                        type="text"
+                        value={fsLineFilterSearch}
+                        onChange={e => setFsLineFilterSearch(e.target.value)}
+                        placeholder="Search FS lines..."
+                        className="w-full pl-6 pr-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:border-blue-300"
+                      />
+                    </div>
+                    {testBankFsLineFilter.size > 0 && (
+                      <button
+                        onClick={() => { setTestBankFsLineFilter(new Set()); setFsLineFilterSearch(''); }}
+                        className="text-[10px] text-blue-600 hover:text-blue-800 px-1.5 py-1 whitespace-nowrap"
+                        title="Clear all"
+                      >
+                        Clear ({testBankFsLineFilter.size})
+                      </button>
+                    )}
+                  </div>
+                  <div className="overflow-y-auto flex-1 p-1">
+                    {fsLineFilterGroups.length === 0 && (
+                      <div className="text-xs text-slate-400 text-center py-4">No FS lines match &ldquo;{fsLineFilterSearch}&rdquo;</div>
+                    )}
+                    {fsLineFilterGroups.map(g => (
+                      <div key={g.cat} className="mb-2">
+                        <div className="flex items-center justify-between px-2 py-1 sticky top-0 bg-slate-50 border-b border-slate-100">
+                          <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">{g.label}</span>
+                          <button
+                            onClick={() => {
+                              setTestBankFsLineFilter(prev => {
+                                const next = new Set(prev);
+                                const ids = g.items.map(fl => fl.id);
+                                const allSelected = ids.every(id => next.has(id));
+                                if (allSelected) for (const id of ids) next.delete(id);
+                                else for (const id of ids) next.add(id);
+                                return next;
+                              });
+                            }}
+                            className="text-[9px] text-blue-600 hover:text-blue-800"
+                          >
+                            {g.items.every(fl => testBankFsLineFilter.has(fl.id)) ? 'Clear group' : 'Select group'}
+                          </button>
+                        </div>
+                        {g.items.map(fl => {
+                          const selected = testBankFsLineFilter.has(fl.id);
+                          return (
+                            <label
+                              key={fl.id}
+                              className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-slate-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => {
+                                  setTestBankFsLineFilter(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(fl.id)) next.delete(fl.id);
+                                    else next.add(fl.id);
+                                    return next;
+                                  });
+                                }}
+                                className="w-3.5 h-3.5 rounded border-slate-300"
+                              />
+                              <span className="flex-1 text-slate-700">{fl.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
@@ -586,6 +730,13 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                     const tf = String(t.framework || '').toUpperCase();
                     const sf = testBankFrameworkFilter.toUpperCase();
                     if (tf !== 'ALL' && tf !== sf) return false;
+                  }
+                  // FS-line multi-select — OR semantics. A test passes
+                  // if at least one of its allocated FS lines is in
+                  // the selected set. Empty set = no filter.
+                  if (testBankFsLineFilter.size > 0) {
+                    const allocated = allocatedFsLinesByTest.get(t.id) || [];
+                    if (!allocated.some(fl => testBankFsLineFilter.has(fl.id))) return false;
                   }
                   return true;
                 }).map((test, i) => {
