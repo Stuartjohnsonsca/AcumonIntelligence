@@ -27,7 +27,14 @@ export async function GET(req: Request) {
       const engagement = await prisma.auditEngagement.findFirst({
         where,
         orderBy: { createdAt: 'desc' },
-        include: {
+        select: {
+          id: true,
+          clientId: true,
+          periodId: true,
+          firmId: true,
+          auditType: true,
+          status: true,
+          createdAt: true,
           client: { select: { clientName: true } },
           period: { select: { startDate: true, endDate: true } },
         },
@@ -73,11 +80,40 @@ export async function GET(req: Request) {
   }
 
   try {
+    // Explicit select (rather than include) so Prisma doesn't
+    // implicit-SELECT every column on AuditEngagement — including new
+    // Portal Principal columns that may not yet be in the live DB.
+    // The list below mirrors what hooks/useEngagement.ts + the
+    // methodology tabs actually consume.
     const engagement = await prisma.auditEngagement.findUnique({
       where: {
         clientId_periodId_auditType: { clientId, periodId, auditType },
       },
-      include: {
+      select: {
+        id: true,
+        clientId: true,
+        periodId: true,
+        firmId: true,
+        auditType: true,
+        status: true,
+        methodologyVersionId: true,
+        infoRequestType: true,
+        hardCloseDate: true,
+        isGroupAudit: true,
+        isNewClient: true,
+        tbViewMode: true,
+        tbXeroSummary: true,
+        planCreated: true,
+        farEnabled: true,
+        farAssetType: true,
+        farScope: true,
+        farCategories: true,
+        createdById: true,
+        startedAt: true,
+        completedAt: true,
+        priorPeriodEngagementId: true,
+        createdAt: true,
+        updatedAt: true,
         teamMembers: { include: { user: { select: { id: true, name: true, email: true } } }, orderBy: { joinedAt: 'asc' } },
         specialists: { orderBy: { specialistType: 'asc' } },
         contacts: { orderBy: { isMainContact: 'desc' } },
@@ -89,9 +125,14 @@ export async function GET(req: Request) {
     });
 
     return NextResponse.json({ engagement });
-  } catch (err) {
-    console.error('Error fetching engagement:', err);
-    return NextResponse.json({ error: 'Failed to fetch engagement' }, { status: 500 });
+  } catch (err: any) {
+    const code = err?.code || 'unknown';
+    console.error('[engagements/GET] findUnique failed:', { code, message: err?.message, meta: err?.meta });
+    return NextResponse.json({
+      error: 'Failed to fetch engagement',
+      code,
+      detail: (err?.message || '').slice(0, 300),
+    }, { status: 500 });
   }
 }
 
@@ -178,7 +219,13 @@ export async function POST(req: Request) {
       ? (infoTemplate.items as string[])
       : DEFAULT_INFO_REQUEST_STANDARD;
 
-    // Create engagement with seeded data
+    // Create engagement with seeded data.
+    // Explicit select on the return to avoid implicit SELECT * — the
+    // 2026-04-24 Portal Principal migration added columns that may
+    // not yet exist in every database, and Prisma would otherwise
+    // SELECT them after the INSERT and throw P2022. This scalar
+    // list covers exactly what the client needs; no new fields
+    // flow into the create output unless explicitly added here.
     const engagement = await prisma.auditEngagement.create({
       data: {
         clientId,
@@ -211,7 +258,20 @@ export async function POST(req: Request) {
           })),
         },
       },
-      include: {
+      select: {
+        id: true,
+        clientId: true,
+        periodId: true,
+        firmId: true,
+        auditType: true,
+        status: true,
+        methodologyVersionId: true,
+        isGroupAudit: true,
+        isNewClient: true,
+        infoRequestType: true,
+        createdById: true,
+        createdAt: true,
+        updatedAt: true,
         teamMembers: { include: { user: { select: { id: true, name: true, email: true } } } },
         specialists: true,
         contacts: true,
@@ -223,8 +283,25 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ engagement }, { status: 201 });
-  } catch (err) {
-    console.error('Error creating engagement:', err);
-    return NextResponse.json({ error: 'Failed to create engagement' }, { status: 500 });
+  } catch (err: any) {
+    // Surface Prisma error detail so schema-drift issues (P2022,
+    // P2021, P2002 unique collisions) are diagnosable without
+    // ssh'ing into logs. "Failed to create engagement" on its own
+    // obscured a migration-missing root cause earlier today.
+    const code = err?.code || 'unknown';
+    const message = err?.message || String(err);
+    console.error('[engagements/POST] create failed:', { code, message, meta: err?.meta });
+    let hint: string | null = null;
+    if (code === 'P2022') {
+      hint = 'A column referenced by Prisma is missing in the database. Run scripts/sql/portal-principal.sql (and any other pending migrations) in Supabase SQL Editor, then retry.';
+    } else if (code === 'P2002') {
+      hint = 'An engagement with this client / period / audit type already exists.';
+    }
+    return NextResponse.json({
+      error: 'Failed to create engagement',
+      code,
+      detail: message.slice(0, 300),
+      hint,
+    }, { status: 500 });
   }
 }
