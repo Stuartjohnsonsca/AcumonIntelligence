@@ -47,7 +47,7 @@ export async function POST(req: Request) {
   // Dispatch extraction batch
   after(async () => {
     try {
-      const baseUrl = process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app';
+      const baseUrl = process.env.NEXTAUTH_URL || 'https://acumon-website.vercel.app';
       await fetch(`${baseUrl}/api/extraction/process-batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

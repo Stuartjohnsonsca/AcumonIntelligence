@@ -19,14 +19,23 @@ export async function GET(req: Request) {
   if (!guard.ok) return guard.response;
 
   try {
-    // Find engagements for this client that are active (started but not archived)
+    // Explicit select — must not use implicit-all-fields because the
+    // 2026-04-24 Portal Principal migration added columns (portal_principal_id
+    // etc) that a freshly-deployed build expects but prod may not yet have.
+    // Without explicit select, Prisma emits SELECT * and blows up with
+    // P2022 ("column not in DB") → the catch below returned an empty
+    // list silently → portal showed "No open periods" even when
+    // engagements were clearly active.
     const engagements = await prisma.auditEngagement.findMany({
       where: {
         clientId,
         status: { in: ['active', 'review'] }, // Started but not complete/archived
       },
-      include: {
+      select: {
+        id: true,
+        status: true,
         period: { select: { id: true, startDate: true, endDate: true } },
+        createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -51,7 +60,16 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ periods: unique });
   } catch (err) {
-    console.error('Failed to load portal periods:', err);
-    return NextResponse.json({ periods: [] });
+    // Surface the error detail in logs — previous version swallowed
+    // every error into `[]` which made the "No open periods" bug
+    // invisible. We still return an empty list because breaking the
+    // portal shell over a schema blip is worse, but at least the
+    // server logs now tell us what happened.
+    console.error('[portal/periods] findMany failed:', {
+      message: (err as any)?.message,
+      code: (err as any)?.code,
+      meta: (err as any)?.meta,
+    });
+    return NextResponse.json({ periods: [], error: (err as any)?.code || 'load-failed' });
   }
 }

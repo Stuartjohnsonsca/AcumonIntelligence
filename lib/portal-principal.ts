@@ -21,6 +21,7 @@ export interface PortalAccessDecision {
   reason:
     | 'ok'
     | 'portal-principal'                   // caller is the Portal Principal for at least one engagement → always allowed
+    | 'legacy-client'                      // client hasn't onboarded Portal Principal yet → fall back to old behaviour
     | 'no-allocation'                      // no engagement allocates this user — block
     | 'awaiting-setup'                     // allocated but Portal Principal hasn't completed setup
     | 'access-not-confirmed'               // allocated but Portal Principal hasn't ticked accessConfirmed for this user
@@ -80,6 +81,32 @@ export async function decidePortalAccess(portalUserId: string, clientId: string)
         allowed: true,
         reason: 'ok',
         engagementIds: memberships.map(m => m.engagementId),
+        isPortalPrincipalFor: [],
+      };
+    }
+
+    // Legacy-client bridge — if the client has never been onboarded
+    // to the Portal Principal feature (no engagements with a Portal
+    // Principal designated AND no staff-member rows exist for this
+    // client anywhere), we fall back to the old login behaviour: any
+    // active ClientPortalUser for the client can log in. This stops
+    // the Phase 1a deploy from silently locking out every pre-existing
+    // portal user until their audit team nominates a Portal Principal.
+    // Once anyone on the client opts in to the new feature, the
+    // strict gate re-engages for that client.
+    const [clientPrincipalCount, clientStaffCount] = await Promise.all([
+      prisma.auditEngagement.count({
+        where: { clientId, portalPrincipalId: { not: null } },
+      }).catch(() => 0),
+      prisma.clientPortalStaffMember.count({
+        where: { engagement: { clientId } },
+      }).catch(() => 0),
+    ]);
+    if (clientPrincipalCount === 0 && clientStaffCount === 0) {
+      return {
+        allowed: true,
+        reason: 'legacy-client',
+        engagementIds: [],
         isPortalPrincipalFor: [],
       };
     }

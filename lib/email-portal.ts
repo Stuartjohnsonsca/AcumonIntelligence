@@ -62,7 +62,7 @@ export async function sendPortalPasswordResetCode(email: string, name: string, c
 }
 
 export async function sendPortalWelcomeEmail(email: string, name: string, tempPassword: string): Promise<void> {
-  const portalUrl = `${process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app'}/portal`;
+  const portalUrl = `${process.env.NEXTAUTH_URL || 'https://acumon-website.vercel.app'}/portal`;
   await sendEmail(
     email,
     'Your Audit Portal Access',
@@ -101,7 +101,7 @@ export async function sendEvidenceUploadNotification(
         }
       </p>
       <p style="color:#475569;font-size:14px">
-        <a href="${process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app'}/tools/sampling" style="color:#2563eb">View in Acumon</a>
+        <a href="${process.env.NEXTAUTH_URL || 'https://acumon-website.vercel.app'}/tools/sampling" style="color:#2563eb">View in Acumon</a>
       </p>
     </div>`,
   );

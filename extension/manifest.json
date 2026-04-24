@@ -17,7 +17,7 @@
   "content_scripts": [
     {
       "matches": [
-        "*://acumon-intelligence.vercel.app/*",
+        "*://acumon-website.vercel.app/*",
         "*://www.acumonintelligence.com/*",
         "http://localhost/*"
       ],

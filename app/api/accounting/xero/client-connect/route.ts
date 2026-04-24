@@ -24,7 +24,7 @@ export async function GET(req: Request) {
   }
 
   const redirectUri = process.env.XERO_REDIRECT_URI
-    || `${process.env.NEXTAUTH_URL || 'https://acumon-intelligence.vercel.app'}/api/accounting/xero/callback`;
+    || `${process.env.NEXTAUTH_URL || 'https://acumon-website.vercel.app'}/api/accounting/xero/callback`;
 
   const state = JSON.stringify({
     clientId: request.clientId,

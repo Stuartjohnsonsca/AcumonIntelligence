@@ -35,7 +35,7 @@ export async function GET(req: Request) {
             Access will be <strong>read-only</strong> and will automatically expire after <strong>30 days</strong>.
           </p>
           <div style="text-align: center; margin: 30px 0;">
-            <a href="https://acumon-intelligence.vercel.app/xero-authorise/test-token-12345" style="background: #13b5ea; color: white; padding: 14px 36px; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600;">Authorise Xero Access</a>
+            <a href="https://acumon-website.vercel.app/xero-authorise/test-token-12345" style="background: #13b5ea; color: white; padding: 14px 36px; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600;">Authorise Xero Access</a>
           </div>
           <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 16px; margin: 20px 0;">
             <p style="color: #92400e; font-size: 14px; margin: 0;">

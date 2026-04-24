@@ -9,7 +9,7 @@ document.documentElement.setAttribute('data-acumon-ext', '1.0.0');
 
 // Allowed origins for security
 const ALLOWED_ORIGINS = [
-  'https://acumon-intelligence.vercel.app',
+  'https://acumon-website.vercel.app',
   'https://www.acumonintelligence.com',
   'http://localhost:3000',
 ];
