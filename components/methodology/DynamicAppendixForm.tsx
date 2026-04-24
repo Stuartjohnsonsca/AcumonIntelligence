@@ -153,9 +153,23 @@ export function DynamicAppendixForm({
     questionnaires: Record<string, Record<string, any>>;
     aliases: Record<string, string>;
   } | null>(null);
+  // We fetch cross-schedule data whenever the schedule has EITHER
+  // a cross-ref field OR a formula — because formulas can now reach
+  // into the synthetic `engagement` bucket (period_end, hard_close,
+  // team_<role>_name, etc.) or any other appendix via
+  // `{appendix.field}` syntax.
   const hasCrossRefs = useMemo(() => questions.some(q => typeof (q as any).crossRef === 'string' && (q as any).crossRef.trim()), [questions]);
+  const hasFormulas = useMemo(() => questions.some(q => {
+    if (q.inputType === 'formula' && q.formulaExpression) return true;
+    if (Array.isArray(q.columns)) {
+      for (const c of q.columns) {
+        if (c?.inputType === 'formula' && c.formulaExpression) return true;
+      }
+    }
+    return false;
+  }), [questions]);
   useEffect(() => {
-    if (!hasCrossRefs || !engagementId) return;
+    if ((!hasCrossRefs && !hasFormulas) || !engagementId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -166,7 +180,7 @@ export function DynamicAppendixForm({
       } catch { /* tolerant — crossRef fields will just render empty */ }
     })();
     return () => { cancelled = true; };
-  }, [engagementId, hasCrossRefs]);
+  }, [engagementId, hasCrossRefs, hasFormulas]);
 
   /** Resolve a `<appendix>.<field>` cross-ref against the loaded map.
    *  Returns null when the reference can't be resolved — the UI treats
@@ -309,6 +323,14 @@ export function DynamicAppendixForm({
   const computedValues = useMemo(() => {
     const merged: FormValues = { ...firmVariablesMap, ...(externalValues || {}), ...values };
     const withAliases = buildFormulaValues(questions, merged);
+    // Merge cross-ref sources so formulas can reference either a
+    // parent-component-supplied context (rare) OR the live data the
+    // form fetched itself — the latter carries `engagement` (Opening
+    // tab data) and every other completed appendix on this engagement.
+    const effectiveCrossRef: Record<string, FormValues> = {
+      ...(crossRefData || {}),
+      ...(crossSchedules?.questionnaires || {}),
+    };
     const computed: FormValues = {};
     for (const q of questions) {
       // crossRef questions: value comes from another schedule. Wins over
@@ -322,7 +344,7 @@ export function DynamicAppendixForm({
       }
       // Formula-typed questions: always evaluate via the template's formulaExpression.
       if (q.inputType === 'formula' && q.formulaExpression) {
-        computed[q.id] = evaluateFormula(q.formulaExpression, withAliases, crossRefData);
+        computed[q.id] = evaluateFormula(q.formulaExpression, withAliases, effectiveCrossRef);
         continue;
       }
       // Ad-hoc formulas: if the saved answer is a string starting with '='
@@ -331,7 +353,7 @@ export function DynamicAppendixForm({
       const raw = values[q.id];
       if (typeof raw === 'string' && raw.trim().startsWith('=')) {
         const expr = raw.trim().slice(1);
-        computed[q.id] = evaluateFormula(expr, withAliases, crossRefData);
+        computed[q.id] = evaluateFormula(expr, withAliases, effectiveCrossRef);
       }
       // Per-cell formulas in multi-column rows. Each cell with
       // inputType='formula' has its own formulaExpression stored on
@@ -344,7 +366,7 @@ export function DynamicAppendixForm({
           const colCfg = q.columns[ci];
           if (colCfg?.inputType === 'formula' && colCfg.formulaExpression) {
             const cellKey = `${q.id}_col${ci + 1}`;
-            computed[cellKey] = evaluateFormula(colCfg.formulaExpression, withAliases, crossRefData);
+            computed[cellKey] = evaluateFormula(colCfg.formulaExpression, withAliases, effectiveCrossRef);
           }
         }
       }
