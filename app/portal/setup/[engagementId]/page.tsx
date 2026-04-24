@@ -477,6 +477,23 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                   const key = g.fsLineId ?? '__unmapped__';
                   const isExpanded = expandedFs.has(key);
                   const alloc = getAllocationFor(g.fsLineId, null);
+                  // Per-column child coverage: for each of the 3 columns,
+                  // do ALL TB codes under this FS Line have a non-null
+                  // staff? If yes, the FS-Line-level dropdown renders
+                  // "— assigned (via TB codes) —" because requests at
+                  // the TB-code level route directly and the FS-Line
+                  // fallback never fires. FS Lines with zero TB rows
+                  // (shouldn't normally happen but defensive) get all
+                  // false so the original "unassigned" text shows.
+                  const childCoverageByColumn: [boolean, boolean, boolean] = g.tbRows.length === 0
+                    ? [false, false, false]
+                    : ([1, 2, 3] as const).map(col => {
+                        const k = `staff${col}UserId` as 'staff1UserId' | 'staff2UserId' | 'staff3UserId';
+                        return g.tbRows.every(tb => {
+                          const tbAlloc = getAllocationFor(g.fsLineId, tb.accountCode);
+                          return !!(tbAlloc && tbAlloc[k]);
+                        });
+                      }) as [boolean, boolean, boolean];
                   return (
                     <div key={key}>
                       <AllocationRow
@@ -499,6 +516,7 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                         staffOptions={approvedStaff}
                         principalOption={principalOption}
                         alloc={alloc}
+                        childCoverageByColumn={childCoverageByColumn}
                         onChange={(staffSlot, userId) => saveAllocation({
                           fsLineId: g.fsLineId,
                           tbAccountCode: null,
@@ -560,23 +578,42 @@ interface AllocationRowProps {
   principalOption: { id: string | null; label: string };
   alloc: Allocation | null;
   onChange: (staffSlot: 1 | 2 | 3, userId: string | null) => void;
+  /**
+   * Per-column coverage status from child (TB-code) allocations, for the
+   * parent (FS-Line) row only. Index 0 = column 1, etc. When an entry is
+   * true, the FS-Line row's dropdown — if still null at this level —
+   * swaps its placeholder from "unassigned" to "assigned (via TB codes)"
+   * because every TB code underneath already has a named staff member
+   * for that column. TB-code rows (no children) pass undefined and keep
+   * the original placeholder.
+   */
+  childCoverageByColumn?: [boolean, boolean, boolean];
 }
 
-function AllocationRow({ label, staffOptions, principalOption, alloc, onChange }: AllocationRowProps) {
+function AllocationRow({ label, staffOptions, principalOption, alloc, onChange, childCoverageByColumn }: AllocationRowProps) {
   return (
     <div className="grid grid-cols-[minmax(200px,3fr)_1fr_1fr_1fr] gap-3 px-5 py-2 items-center hover:bg-slate-50">
       <div>{label}</div>
       {([1, 2, 3] as const).map(col => {
         const key = `staff${col}UserId` as 'staff1UserId' | 'staff2UserId' | 'staff3UserId';
         const current = (alloc?.[key] as string | null) ?? null;
+        const childrenFull = !!childCoverageByColumn?.[col - 1];
+        // Placeholder logic:
+        //   current set   → the value overrides; dropdown shows the name
+        //   current null + childrenFull → "— assigned (via TB codes) —"
+        //   current null + !childrenFull → "— unassigned (falls back) —"
+        const placeholder = childrenFull
+          ? '— assigned (via TB codes) —'
+          : '— unassigned (falls back) —';
         return (
           <select
             key={col}
             value={current || ''}
             onChange={e => onChange(col, e.target.value || null)}
-            className="text-xs border border-slate-300 rounded-md px-2 py-1.5 bg-white"
+            className={`text-xs border rounded-md px-2 py-1.5 bg-white ${childrenFull && !current ? 'border-emerald-300 text-emerald-700' : 'border-slate-300'}`}
+            title={childrenFull && !current ? 'All TB codes under this FS Line are allocated for this column — requests at TB level route directly; the FS-Line fallback is not needed.' : undefined}
           >
-            <option value="">— unassigned (falls back) —</option>
+            <option value="">{placeholder}</option>
             {principalOption.id && <option value={principalOption.id}>{principalOption.label}</option>}
             {staffOptions.map(s => (
               <option key={s.portalUserId || s.id} value={s.portalUserId || ''}>{s.name}</option>
