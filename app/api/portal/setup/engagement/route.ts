@@ -36,6 +36,7 @@ export async function GET(req: Request) {
     select: {
       id: true,
       clientId: true,
+      firmId: true,
       portalPrincipalId: true,
       portalSetupCompletedAt: true,
       auditType: true,
@@ -103,25 +104,91 @@ export async function GET(req: Request) {
     });
   }
 
-  // FS Lines + TB rows for the work-allocation grid. Group by fsLineId.
-  // Also surface the list of TB rows that don't yet have an FS Line
-  // mapping as "Unmapped" so they can still be allocated.
-  const tbRows = await prisma.auditTBRow.findMany({
+  // FS Lines + TB rows for the work-allocation grid.
+  //
+  // Two data-quality rules the Portal Principal relies on:
+  //  (1) TB codes with no description aren't presented — it's unfair
+  //      to ask someone to allocate staff to a blank-description
+  //      account. We count them separately and return a warning so
+  //      the audit team knows to fix the import.
+  //  (2) No "Unmapped" bucket. If a row's canonical fsLineId is null
+  //      we fall back to its TBCYvPY-populated fsNoteLevel (or fsLevel
+  //      as a further backstop), resolve that name against the firm's
+  //      MethodologyFsLine catalogue case-insensitively, and group
+  //      accordingly. Rows with NONE of (fsLineId, fsNoteLevel,
+  //      fsLevel) are dropped from the grid and counted as
+  //      "unclassified" — the audit team should run TB classification
+  //      before handing the engagement to the Portal Principal.
+  //
+  // Descriptions are read with the full field set so the classifier
+  // fallback has everything it needs.
+  const tbRowsRaw = await prisma.auditTBRow.findMany({
     where: { engagementId },
-    select: { id: true, accountCode: true, description: true, fsLineId: true, sortOrder: true },
+    select: {
+      id: true,
+      accountCode: true,
+      description: true,
+      fsLineId: true,
+      fsNoteLevel: true,
+      fsLevel: true,
+      fsStatement: true,
+      sortOrder: true,
+    },
     orderBy: [{ fsLineId: 'asc' }, { sortOrder: 'asc' }, { accountCode: 'asc' }],
   });
-  const fsLineIds = [...new Set(tbRows.map(r => r.fsLineId).filter(Boolean) as string[])];
-  const fsLines = fsLineIds.length > 0
-    ? await prisma.methodologyFsLine.findMany({
-        where: { id: { in: fsLineIds } },
-        select: { id: true, name: true, fsLevelName: true, fsStatementName: true, sortOrder: true },
-      })
-    : [];
-  const fsById = new Map(fsLines.map(l => [l.id, l]));
+
+  // Pull the firm's whole active FS Line catalogue so we can resolve
+  // TBCYvPY fsNoteLevel strings (e.g. "Trade Debtors") to real
+  // MethodologyFsLine IDs. This keeps allocations stable even when
+  // the TB row lost its canonical fsLineId.
+  const firmCatalogue = await prisma.methodologyFsLine.findMany({
+    where: { firmId: eng.firmId, isActive: true },
+    select: { id: true, name: true, fsLevelName: true, fsStatementName: true, sortOrder: true },
+  }).catch(() => [] as any[]);
+  const fsByName = new Map<string, typeof firmCatalogue[number]>();
+  for (const f of firmCatalogue) fsByName.set((f.name || '').trim().toLowerCase(), f);
+  const fsById = new Map(firmCatalogue.map(l => [l.id, l]));
+
+  const droppedNoDescription: string[] = [];
+  const droppedUnclassified: string[] = [];
+  const tbRows: Array<{ accountCode: string; description: string; fsLineId: string | null; fsNoteLevel: string | null; sortOrder: number }> = [];
+  for (const r of tbRowsRaw) {
+    const desc = (r.description || '').trim();
+    if (!desc) {
+      droppedNoDescription.push(r.accountCode);
+      continue;
+    }
+    // Classifier fallback: prefer canonical fsLineId, else resolve
+    // TBCYvPY's fsNoteLevel → fsLineId, else fsLevel. Drop rows that
+    // have no classification at all — they can't be grouped honestly.
+    let resolvedFsLineId = r.fsLineId ?? null;
+    if (!resolvedFsLineId && r.fsNoteLevel) {
+      const match = fsByName.get(r.fsNoteLevel.trim().toLowerCase());
+      if (match) resolvedFsLineId = match.id;
+    }
+    if (!resolvedFsLineId && r.fsLevel) {
+      const match = fsByName.get(r.fsLevel.trim().toLowerCase());
+      if (match) resolvedFsLineId = match.id;
+    }
+    // If we still don't have a canonical match BUT TBCYvPY provides a
+    // fsNoteLevel string, we'll keep the row and group it under that
+    // string-name synthetic group. Only rows with no classification
+    // at all get dropped.
+    if (!resolvedFsLineId && !r.fsNoteLevel && !r.fsLevel) {
+      droppedUnclassified.push(r.accountCode);
+      continue;
+    }
+    tbRows.push({
+      accountCode: r.accountCode,
+      description: desc,
+      fsLineId: resolvedFsLineId,
+      fsNoteLevel: r.fsNoteLevel,
+      sortOrder: r.sortOrder,
+    });
+  }
 
   interface FsGroup {
-    fsLineId: string | null;
+    fsLineId: string | null;              // canonical id when resolvable, else null
     fsLineName: string;
     fsStatementName: string | null;
     fsLevelName: string | null;
@@ -130,19 +197,21 @@ export async function GET(req: Request) {
   }
   const grouped = new Map<string, FsGroup>();
   for (const r of tbRows) {
-    const key = r.fsLineId ?? '__unmapped__';
-    if (!grouped.has(key)) {
+    // Grouping key preference: canonical fsLineId → TBCYvPY
+    // fsNoteLevel string → (never null because we filter above).
+    const groupKey = r.fsLineId || `note:${(r.fsNoteLevel || '').trim()}`;
+    if (!grouped.has(groupKey)) {
       const fs = r.fsLineId ? fsById.get(r.fsLineId) : null;
-      grouped.set(key, {
+      grouped.set(groupKey, {
         fsLineId: r.fsLineId,
-        fsLineName: fs?.name ?? 'Unmapped (no FS Line assigned)',
+        fsLineName: fs?.name ?? r.fsNoteLevel ?? 'TBCYvPY Classified',
         fsStatementName: fs?.fsStatementName ?? null,
         fsLevelName: fs?.fsLevelName ?? null,
         sortOrder: fs?.sortOrder ?? 9999,
         tbRows: [],
       });
     }
-    grouped.get(key)!.tbRows.push({ accountCode: r.accountCode, description: r.description });
+    grouped.get(groupKey)!.tbRows.push({ accountCode: r.accountCode, description: r.description });
   }
   const fsLineGroups = [...grouped.values()].sort((a, b) => a.sortOrder - b.sortOrder);
 
@@ -175,5 +244,14 @@ export async function GET(req: Request) {
     fsLineGroups,
     allocations,
     escalationDays: resolved,
+    // Data-quality signals — non-blocking, but worth warning the
+    // Portal Principal about since they directly affect whether
+    // the grid is complete / coherent.
+    dataQuality: {
+      droppedNoDescription: droppedNoDescription.slice(0, 50), // cap for response size
+      droppedNoDescriptionCount: droppedNoDescription.length,
+      droppedUnclassified: droppedUnclassified.slice(0, 50),
+      droppedUnclassifiedCount: droppedUnclassified.length,
+    },
   });
 }

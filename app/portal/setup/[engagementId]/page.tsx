@@ -461,6 +461,39 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
 
           {openAlloc && (
             <div className="border-t border-slate-200">
+              {/* Data-quality warnings — surface any TB rows we dropped
+                  from the grid so the Portal Principal knows to chase
+                  the audit team. "No description" = unfair to ask
+                  about; "unclassified" = TBCYvPY never ran. */}
+              {(state.dataQuality?.droppedNoDescriptionCount > 0 || state.dataQuality?.droppedUnclassifiedCount > 0) && (
+                <div className="bg-amber-50 border-b border-amber-200 px-5 py-3 text-xs text-amber-800">
+                  <p className="font-medium mb-1">Some TB codes were not included in the grid</p>
+                  <ul className="space-y-0.5 list-disc pl-5">
+                    {state.dataQuality.droppedNoDescriptionCount > 0 && (
+                      <li>
+                        <strong>{state.dataQuality.droppedNoDescriptionCount}</strong> TB code{state.dataQuality.droppedNoDescriptionCount === 1 ? '' : 's'} with a blank description — you can&apos;t reasonably allocate staff without a description.
+                        Ask the audit team to fix the TB import.
+                        {state.dataQuality.droppedNoDescription?.length > 0 && (
+                          <span className="block text-[11px] mt-0.5 text-amber-700">
+                            Examples: {state.dataQuality.droppedNoDescription.slice(0, 8).join(', ')}{state.dataQuality.droppedNoDescription.length > 8 ? ` … (+${state.dataQuality.droppedNoDescription.length - 8} more)` : ''}
+                          </span>
+                        )}
+                      </li>
+                    )}
+                    {state.dataQuality.droppedUnclassifiedCount > 0 && (
+                      <li>
+                        <strong>{state.dataQuality.droppedUnclassifiedCount}</strong> TB code{state.dataQuality.droppedUnclassifiedCount === 1 ? '' : 's'} have no FS Line classification at all. Ask the audit team to run TBCYvPY classification on the engagement.
+                        {state.dataQuality.droppedUnclassified?.length > 0 && (
+                          <span className="block text-[11px] mt-0.5 text-amber-700">
+                            Examples: {state.dataQuality.droppedUnclassified.slice(0, 8).join(', ')}{state.dataQuality.droppedUnclassified.length > 8 ? ` … (+${state.dataQuality.droppedUnclassified.length - 8} more)` : ''}
+                          </span>
+                        )}
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
               {/* Column header with escalation days */}
               <div className="grid grid-cols-[minmax(200px,3fr)_1fr_1fr_1fr] gap-3 px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-600">
                 <div className="font-medium">FS Line / TB code</div>
