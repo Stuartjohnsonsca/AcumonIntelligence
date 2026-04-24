@@ -6,6 +6,8 @@ import { seedAccrualsTest } from '@/lib/accruals-test-seed';
 import { seedUnrecordedLiabilitiesTest } from '@/lib/unrecorded-liabilities-test-seed';
 import { seedGrossMarginTest } from '@/lib/gross-margin-test-seed';
 import { seedPeriodicPayrollTest } from '@/lib/periodic-payroll-test-seed';
+import { seedPayrollLeaversTest } from '@/lib/payroll-leavers-test-seed';
+import { seedPayrollJoinersTest } from '@/lib/payroll-joiners-test-seed';
 import { seedBulkDraftTests, type BulkSeedResult } from '@/lib/bulk-draft-test-seed';
 
 /**
@@ -123,6 +125,8 @@ export async function POST(req: NextRequest) {
     let unrecordedLiabilitiesTestResult: { testId: string; created: boolean } | { error: string } | null = null;
     let grossMarginTestResult: { testId: string; created: boolean } | { error: string } | null = null;
     let periodicPayrollTestResult: { testId: string; created: boolean } | { error: string } | null = null;
+    let payrollLeaversTestResult: { testId: string; created: boolean } | { error: string } | null = null;
+    let payrollJoinersTestResult: { testId: string; created: boolean } | { error: string } | null = null;
     let bulkDraftTestsResult: BulkSeedResult | { error: string } | null = null;
     for (const def of SYSTEM_ACTIONS) {
       const existing = await prisma.actionDefinition.findFirst({
@@ -189,6 +193,18 @@ export async function POST(req: NextRequest) {
       console.error('[seed] seedPeriodicPayrollTest failed:', err);
       periodicPayrollTestResult = { error: err?.message || 'Periodic payroll test seed failed' };
     }
+    try {
+      payrollLeaversTestResult = await seedPayrollLeaversTest(session.user.firmId);
+    } catch (err: any) {
+      console.error('[seed] seedPayrollLeaversTest failed:', err);
+      payrollLeaversTestResult = { error: err?.message || 'Payroll leavers test seed failed' };
+    }
+    try {
+      payrollJoinersTestResult = await seedPayrollJoinersTest(session.user.firmId);
+    } catch (err: any) {
+      console.error('[seed] seedPayrollJoinersTest failed:', err);
+      payrollJoinersTestResult = { error: err?.message || 'Payroll joiners test seed failed' };
+    }
     // Bulk draft-test pack — 534 rows from lib/test-data/draft-test-bank.csv.
     // All rows land as isDraft: true, so they're hidden from engagement plans
     // until the Methodology Admin reviews and publishes them.
@@ -208,6 +224,8 @@ export async function POST(req: NextRequest) {
       unrecordedLiabilitiesTest: unrecordedLiabilitiesTestResult,
       grossMarginTest: grossMarginTestResult,
       periodicPayrollTest: periodicPayrollTestResult,
+      payrollLeaversTest: payrollLeaversTestResult,
+      payrollJoinersTest: payrollJoinersTestResult,
       bulkDraftTests: bulkDraftTestsResult,
     });
   }
