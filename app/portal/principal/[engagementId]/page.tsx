@@ -97,6 +97,106 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
       })
       .catch(() => {});
   }, [token]);
+  // Load the caller's saved searches + the firm's featured searches
+  // once per mount. Featured chips render alongside user saved chips
+  // on the dashboard, visually distinguished.
+  useEffect(() => {
+    if (!token) return;
+    fetch(`/api/portal/ai-search/saved?token=${encodeURIComponent(token)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d?.saved)) setSavedSearches(d.saved); })
+      .catch(() => {});
+    fetch(`/api/portal/ai-search/featured?token=${encodeURIComponent(token)}&engagementId=${encodeURIComponent(engagementId)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d?.featured)) setFeaturedSearches(d.featured); })
+      .catch(() => {});
+  }, [token, engagementId]);
+
+  // Apply an interpreted-filter object to the dashboard's filter
+  // state. Shared by "run AI search" and "replay saved search".
+  function applyInterpreted(i: any) {
+    setFilterStatus(i?.status || '');
+    setFilterFsLineIds(new Set(Array.isArray(i?.fsLineIds) ? i.fsLineIds : []));
+    setFilterTbCodes(new Set(Array.isArray(i?.tbAccountCodes) ? i.tbAccountCodes : []));
+    setFilterAssignee(Array.isArray(i?.assigneeIds) && i.assigneeIds[0] ? i.assigneeIds[0] : '');
+    setFilterText(i?.textMatch || '');
+    setAiInterpreted(i);
+    setOffset(0);
+  }
+
+  async function runAiSearch() {
+    if (!aiQuery.trim()) return;
+    setAiSearching(true); setAiError(null);
+    try {
+      const r = await fetch(`/api/portal/ai-search?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          engagementIds: [...selectedEngagementIds],
+          query: aiQuery,
+        }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d?.error || `Search failed (${r.status})`);
+      }
+      const d = await r.json();
+      applyInterpreted(d.interpreted);
+      setAiLogId(d.logId || null);
+    } catch (err: any) {
+      setAiError(err?.message || 'Search failed');
+    } finally {
+      setAiSearching(false);
+    }
+  }
+
+  function clearAiSearch() {
+    setAiQuery('');
+    setAiInterpreted(null);
+    setAiLogId(null);
+    setAiError(null);
+    setFilterStatus('');
+    setFilterFsLineIds(new Set());
+    setFilterTbCodes(new Set());
+    setFilterAssignee('');
+    setFilterText('');
+    setOffset(0);
+  }
+
+  async function saveCurrentSearch() {
+    if (!aiLogId || !saveLabelDraft.trim()) return;
+    try {
+      const r = await fetch(`/api/portal/ai-search/saved?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logId: aiLogId, label: saveLabelDraft.trim() }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || 'Save failed');
+      const d = await r.json();
+      setSavedSearches(prev => [d.saved, ...prev.filter(s => s.id !== d.saved.id)]);
+      setSaveLabelDraft('');
+      setShowSaveDialog(false);
+    } catch (err: any) {
+      setAiError(err?.message || 'Save failed');
+    }
+  }
+
+  async function deleteSavedSearch(id: string) {
+    try {
+      const r = await fetch(`/api/portal/ai-search/saved/${id}?token=${encodeURIComponent(token)}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error('Delete failed');
+      setSavedSearches(prev => prev.filter(s => s.id !== id));
+    } catch (err: any) {
+      setAiError(err?.message || 'Delete failed');
+    }
+  }
+
+  function runSavedSearch(s: SavedSearch) {
+    // Zero-AI replay — apply the cached interpretation directly.
+    setAiQuery(s.query);
+    applyInterpreted(s.interpretedFilters);
+  }
+
   function toggleEngagement(id: string) {
     setSelectedEngagementIds(prev => {
       const next = new Set(prev);
@@ -124,6 +224,29 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
   const [filterTbCodes, setFilterTbCodes] = useState<Set<string>>(new Set());
   const [filterAssignee, setFilterAssignee] = useState<string>('');
   const [filterText, setFilterText] = useState('');
+
+  // AI-powered natural-language search. The search box no longer
+  // filters as-you-type — users hit Enter (or click Search) and the
+  // query goes to /api/portal/ai-search, which returns a structured
+  // filter object + interpretation. The filter layers on top of the
+  // other filters (status / multi-select / etc), so a user can e.g.
+  // narrow by Revenue FS Line AND ask "anything about bank statements".
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiSearching, setAiSearching] = useState(false);
+  const [aiInterpreted, setAiInterpreted] = useState<any>(null);      // last interpretation
+  const [aiLogId, setAiLogId] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  // Per-user saved searches (zero-AI replays).
+  interface SavedSearch { id: string; query: string; savedLabel: string; interpretedFilters: any; }
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [saveLabelDraft, setSaveLabelDraft] = useState('');
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+
+  // Firm-featured searches — promoted by Methodology Admin. Also
+  // zero-AI replay (interpretedFilters cached on the log row).
+  interface FeaturedSearch { id: string; query: string; featuredLabel: string; interpretedFilters: any; }
+  const [featuredSearches, setFeaturedSearches] = useState<FeaturedSearch[]>([]);
   // Drill-down dimension: when set by clicking a chart, narrows the
   // list view to the chart segment. Orthogonal to the dropdown filters
   // so a user can stack them.
@@ -337,13 +460,137 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
           </div>
         </div>
 
-        {/* Filter bar */}
+        {/* AI search bar — natural-language, grounded on the engagement's
+            actual FS Lines / TB codes / staff (so the model can only
+            emit IDs that exist). Hitting Enter or clicking Search
+            sends one AI request, caches the interpretation so it can
+            be re-run for free later, and applies the resulting filter
+            on top of the dropdown filters below. */}
         <div className="bg-white border border-slate-200 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <Filter className="w-4 h-4 text-slate-500" />
-            <span className="text-sm font-medium text-slate-700">Filter requests</span>
+            <span className="text-sm font-medium text-slate-700">Search requests</span>
+            <span className="text-[11px] text-slate-400">— ask in plain English: &quot;overdue from Alice&quot;, &quot;bank statements outstanding&quot;, etc.</span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+          <div className="flex gap-2">
+            <input
+              value={aiQuery}
+              onChange={e => setAiQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') runAiSearch(); }}
+              placeholder="What are you looking for?"
+              disabled={aiSearching}
+              className="flex-1 text-sm border border-slate-300 rounded-md px-3 py-1.5"
+            />
+            <button
+              onClick={runAiSearch}
+              disabled={aiSearching || !aiQuery.trim()}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {aiSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Filter className="w-4 h-4" />}
+              Search
+            </button>
+            {aiInterpreted && (
+              <>
+                <button
+                  onClick={() => { setShowSaveDialog(v => !v); setSaveLabelDraft(''); }}
+                  disabled={!aiLogId}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                  title="Save this search for quick re-use"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={clearAiSearch}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
+                >Clear</button>
+              </>
+            )}
+          </div>
+
+          {/* AI interpretation pill + save dialog */}
+          {aiInterpreted?.reasoning && (
+            <div className="mt-2 text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-3 py-1.5">
+              <strong>Interpreted as:</strong> {aiInterpreted.reasoning}
+            </div>
+          )}
+          {aiError && (
+            <div className="mt-2 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-3 py-1.5">{aiError}</div>
+          )}
+          {showSaveDialog && aiLogId && (
+            <div className="mt-2 flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded p-2">
+              <span className="text-xs text-emerald-800 font-medium">Name this search:</span>
+              <input
+                autoFocus
+                value={saveLabelDraft}
+                onChange={e => setSaveLabelDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveCurrentSearch(); }}
+                placeholder="e.g. Overdue bank items for Alice"
+                className="flex-1 text-xs border border-emerald-300 rounded px-2 py-1"
+              />
+              <button
+                onClick={saveCurrentSearch}
+                disabled={!saveLabelDraft.trim()}
+                className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700 disabled:opacity-50"
+              >Save</button>
+              <button
+                onClick={() => { setShowSaveDialog(false); setSaveLabelDraft(''); }}
+                className="text-xs text-slate-600 hover:text-slate-900"
+              >Cancel</button>
+            </div>
+          )}
+
+          {/* Firm-featured chips (promoted by Methodology Admin) — */}
+          {/*   indigo, with a small star marker to distinguish from */}
+          {/*   user-saved chips. Same zero-AI replay mechanism.     */}
+          {featuredSearches.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-medium text-indigo-600">Featured by your audit team:</span>
+              {featuredSearches.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setAiQuery(s.query);
+                    applyInterpreted(s.interpretedFilters);
+                  }}
+                  className="inline-flex items-center gap-1 text-xs bg-indigo-50 border border-indigo-300 rounded-full px-2.5 py-1 text-indigo-800 hover:bg-indigo-100"
+                  title={`Replay: ${s.query}`}
+                >
+                  <span className="text-indigo-500">★</span>{s.featuredLabel}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Per-user saved-search chips — zero-AI replay. */}
+          {savedSearches.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-medium text-slate-500">Your saved searches:</span>
+              {savedSearches.map(s => (
+                <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-slate-100 border border-slate-300 rounded-full px-2.5 py-1 text-slate-700">
+                  <button
+                    onClick={() => runSavedSearch(s)}
+                    className="hover:text-blue-700"
+                    title={`Replay: ${s.query}`}
+                  >{s.savedLabel}</button>
+                  <button
+                    onClick={() => deleteSavedSearch(s.id)}
+                    className="text-slate-400 hover:text-red-600"
+                    title="Remove"
+                  ><X className="w-3 h-3" /></button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Filter bar — dropdowns compose ON TOP of AI search. Users */}
+        {/*  can pick a natural-language search AND tweak dropdowns.   */}
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Filter className="w-4 h-4 text-slate-500" />
+            <span className="text-sm font-medium text-slate-700">Narrow further</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
             <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setOffset(0); }} className="text-sm border border-slate-300 rounded-md px-3 py-1.5">
               <option value="">All statuses</option>
               <option value="outstanding">Outstanding</option>
@@ -361,7 +608,12 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
               <option value="">All assignees</option>
               {data.filters.staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            <input value={filterText} onChange={e => { setFilterText(e.target.value); setOffset(0); }} placeholder="Search question text" className="text-sm border border-slate-300 rounded-md px-3 py-1.5 md:col-span-2" />
+            <input
+              value={filterText}
+              onChange={e => { setFilterText(e.target.value); setOffset(0); }}
+              placeholder="Extra text filter (optional)"
+              className="text-sm border border-slate-300 rounded-md px-3 py-1.5"
+            />
           </div>
         </div>
 

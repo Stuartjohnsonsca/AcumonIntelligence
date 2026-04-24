@@ -90,6 +90,7 @@ model Firm {
   documentTemplates         DocumentTemplate[]
   firmDocumentSkeletons     FirmDocumentSkeleton[]
   actionDefinitions         ActionDefinition[]
+  portalSearchLogs          PortalSearchLog[]
 
   @@map("firms")
 }
@@ -1234,6 +1235,58 @@ model ClientPortalWorkAllocation {
   @@unique([engagementId, fsLineId, tbAccountCode])
   @@index([engagementId])
   @@map("client_portal_work_allocations")
+}
+
+// ─── Portal AI Search Log ────────────────────────────────────────────────────
+// Every free-text search the portal user runs on their Principal / Audit
+// dashboards gets logged here. Two uses:
+//   1. Tells the Methodology Admin which queries portal users actually
+//      type, so they can promote the popular / useful ones to "featured"
+//      — featured queries appear as one-click chips on the Principal
+//      dashboard (saves users re-typing common searches).
+//   2. Trains future work on query patterns — what portal users look for
+//      is a signal the methodology layer might want to expose natively.
+model PortalSearchLog {
+  id             String   @id @default(uuid())
+  firmId         String   @map("firm_id")
+  engagementId   String?  @map("engagement_id")              // may be null for multi-engagement queries
+  clientId       String?  @map("client_id")
+  portalUserId   String?  @map("portal_user_id")
+  firmUserId     String?  @map("firm_user_id")                // if a firm user ever runs portal search
+  query          String   @db.Text
+  queryNormalised String? @map("query_normalised") @db.Text  // lower-cased, trimmed, for dedup/aggregation
+  resultCount    Int      @default(0) @map("result_count")
+  // AI interpretation — the structured filter object the LLM produced
+  // from the natural-language query. Cached here so re-running a
+  // saved search doesn't need to call the model again. Shape matches
+  // the dashboard's filter state: { status, fsLineIds, tbAccountCodes,
+  // assigneeIds, textMatch, reasoning }.
+  interpretedFilters Json?  @map("interpreted_filters")
+  // Per-user saved search — when a user clicks "Save" on a search
+  // they ran, this log row gets the three fields below set. The
+  // Principal dashboard lists all rows where savedByPortalUserId =
+  // caller as quick-filter chips. Deleting a saved search just
+  // clears these three fields so we keep the log trail intact.
+  savedByPortalUserId String? @map("saved_by_portal_user_id")
+  savedLabel          String? @map("saved_label")
+  savedAt             DateTime? @map("saved_at")
+  // Featured = Methodology Admin promoted this query so it appears
+  // as a quick-filter chip on EVERY Principal dashboard for the firm.
+  // Featured rows also carry a display label + who promoted it + when.
+  featured       Boolean  @default(false)
+  featuredLabel  String?  @map("featured_label")
+  featuredById   String?  @map("featured_by_id")
+  featuredAt     DateTime? @map("featured_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@index([firmId])
+  @@index([firmId, featured])
+  @@index([firmId, queryNormalised])
+  @@index([engagementId])
+  @@index([savedByPortalUserId])
+  @@map("portal_search_logs")
 }
 
 // ─── Audit Evidence Requests ──────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, Search } from 'lucide-react';
 
 const tiles = [
   {
@@ -83,6 +83,14 @@ const tiles = [
     icon: AlertTriangle,
     color: 'bg-red-50 border-red-200 hover:bg-red-100',
     iconColor: 'text-red-600',
+  },
+  {
+    title: 'Portal Searches',
+    description: 'Review the free-text searches portal users run on their dashboards — promote the useful ones to featured quick-filter chips for the whole firm',
+    href: '/methodology-admin/portal-searches',
+    icon: Search,
+    color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100',
+    iconColor: 'text-cyan-600',
   },
   {
     title: 'Template Documents',
