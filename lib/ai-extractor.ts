@@ -1225,3 +1225,244 @@ export async function extractPayrollFromBase64(
     };
   }
 }
+
+// ─── Payroll Movement List (non-SR Leavers / Joiners) ──────────────────────
+
+export interface PayrollMovementRow {
+  employeeRef: string | null;
+  employeeName: string | null;
+  movementDate: string | null;           // ISO yyyy-mm-dd (leave_date or join_date)
+  amount: number | null;                  // final pay (leavers) or first pay (joiners)
+  notes: string | null;
+}
+
+export interface PayrollMovementExtractResult {
+  rows: PayrollMovementRow[];
+  confidence: number;
+  notes: string | null;
+  usage: AiTokenUsage;
+}
+
+function buildMovementPrompt(movementType: 'leavers' | 'joiners'): string {
+  const movementLabel = movementType === 'leavers' ? 'leaver' : 'joiner';
+  const dateLabel = movementType === 'leavers' ? 'leave_date' : 'start_date';
+  const amountLabel = movementType === 'leavers' ? 'final gross pay' : 'first gross pay';
+  return `You are extracting a list of ${movementLabel}s from a document supplied by an audit client.
+Return ONLY JSON (no prose, no markdown fences) matching this schema:
+
+{
+  "rows": [
+    {
+      "employeeRef": string | null,
+      "employeeName": string | null,
+      "movementDate": "YYYY-MM-DD" | null,   // the ${dateLabel} for this ${movementLabel}
+      "amount": number | null,                // ${amountLabel} (ignore currency symbol, decimal as dot, no thousand separators)
+      "notes": string | null
+    }
+  ],
+  "confidence": number,                       // 0..1
+  "notes": string | null
+}
+
+Principles:
+- One row per ${movementLabel}. Ignore total / header / footer rows.
+- If the document has multiple tables, flatten them into a single rows array.
+- Dates must be ISO yyyy-mm-dd. If only the month is shown, use the last day of that month for leavers or the first day for joiners.
+- If a field is genuinely missing, return null — don't guess.`;
+}
+
+/**
+ * Extract a leaver / joiner list from a single document. Used by the
+ * non-SR flavour of identify_payroll_movements when the client just
+ * sends a list rather than the full periodic reports.
+ */
+export async function extractPayrollMovementListFromBase64(
+  base64Data: string,
+  mimeType: string,
+  fileName: string,
+  movementType: 'leavers' | 'joiners',
+): Promise<PayrollMovementExtractResult> {
+  const prompt = buildMovementPrompt(movementType);
+
+  type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
+  let contentParts: ContentPart[];
+  let inputMode = 'image';
+
+  if (isPdf(mimeType)) {
+    const pdfBuffer = Buffer.from(base64Data, 'base64');
+    const pdfContent = await processPdf(pdfBuffer, 20);
+    if (pdfContent.mode === 'text' && pdfContent.text) {
+      inputMode = 'pdf-text';
+      contentParts = [
+        { type: 'text', text: `File name: ${fileName}\n\nDocument text content (${pdfContent.pageCount} pages):\n\n${pdfContent.text}\n\n${prompt}` },
+      ];
+    } else {
+      inputMode = 'pdf-raw';
+      contentParts = [
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+        { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
+      ];
+    }
+  } else {
+    contentParts = [
+      { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+      { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
+    ];
+  }
+
+  console.log(`[Movement:AI] Starting extraction | file=${fileName} | mode=${inputMode} | type=${movementType}`);
+
+  const requireVision = inputMode !== 'pdf-text';
+  const models = selectModels(EXTRACTION_PRIORITIES, requireVision);
+  let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+  let usedModel = models[0];
+  const errors: string[] = [];
+
+  for (const modelId of models) {
+    usedModel = modelId;
+    try {
+      result = await retryWithBackoff(
+        () => client.chat.completions.create({
+          model: modelId,
+          messages: [{ role: 'user', content: contentParts }],
+          max_tokens: 4096,
+        }),
+        `movement:${fileName}`,
+      );
+      break;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      errors.push(`${modelId}: ${errMsg}`);
+      console.warn(`[Movement:AI] Model ${modelId} failed for ${fileName}: ${errMsg}`);
+      if (isModelUnavailableError(err)) { markModelUnavailable(modelId); continue; }
+      if (err instanceof Error && err.message.includes('400')) { continue; }
+      throw err;
+    }
+  }
+  if (!result) throw new Error(`[movement:${fileName}] All models failed. ${errors.join(' | ')}`);
+
+  const usage = extractUsageMetadata(result);
+  usage.model = usedModel;
+
+  const text = result.choices[0]?.message?.content || '';
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/) || cleaned.match(/(\{[\s\S]*\})/);
+  const jsonText = jsonMatch ? jsonMatch[1] : cleaned;
+
+  try {
+    const parsed = JSON.parse(jsonText.trim());
+    const rawRows = Array.isArray(parsed.rows) ? parsed.rows : [];
+    const rows: PayrollMovementRow[] = rawRows.map((r: any) => ({
+      employeeRef:  r?.employeeRef  != null ? String(r.employeeRef)  : null,
+      employeeName: r?.employeeName != null ? String(r.employeeName) : null,
+      movementDate: r?.movementDate || null,
+      amount:       r?.amount != null && Number.isFinite(Number(r.amount)) ? Math.round(Number(r.amount) * 100) / 100 : null,
+      notes:        r?.notes || null,
+    }));
+    return {
+      rows,
+      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
+      notes: parsed.notes ?? null,
+      usage,
+    };
+  } catch (parseError) {
+    const snippet = text.substring(0, 200).replace(/\n/g, '\\n');
+    console.error(`[Movement:AI] JSON parse failed | file=${fileName} | error=${parseError instanceof Error ? parseError.message : 'Unknown'} | snippet="${snippet}"`);
+    return { rows: [], confidence: 0, notes: 'Extraction failed to parse', usage };
+  }
+}
+
+/**
+ * Parse a structured CSV / XLSX list of leavers or joiners against a
+ * tolerant column-pattern bank. Mirrors the shape of
+ * extractPayrollMovementListFromBase64 so callers can treat the two
+ * paths uniformly.
+ */
+export async function parsePayrollMovementListFromBuffer(
+  buffer: Buffer,
+  fileName: string,
+): Promise<{ rows: PayrollMovementRow[]; issues: Array<{ issue: string }>; }> {
+  const lower = fileName.toLowerCase();
+  const issues: Array<{ issue: string }> = [];
+  let rows: Array<Record<string, any>> = [];
+
+  try {
+    if (lower.endsWith('.csv')) {
+      const text = buffer.toString('utf8');
+      const lines = text.split(/\r?\n/).filter(l => l.length > 0);
+      if (lines.length < 2) return { rows: [], issues: [{ issue: 'CSV has no data rows' }] };
+      const split = (s: string): string[] => {
+        const out: string[] = [];
+        let cur = ''; let inQ = false;
+        for (let i = 0; i < s.length; i++) {
+          const c = s[i];
+          if (c === '"') { if (inQ && s[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+          else if (c === ',' && !inQ) { out.push(cur); cur = ''; }
+          else cur += c;
+        }
+        out.push(cur);
+        return out;
+      };
+      const headers = split(lines[0]).map(h => h.trim());
+      rows = lines.slice(1).map(line => {
+        const cells = split(line);
+        const r: Record<string, any> = {};
+        headers.forEach((h, i) => { r[h] = (cells[i] ?? '').trim(); });
+        return r;
+      });
+    } else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(buffer, { type: 'buffer' });
+      for (const sheetName of wb.SheetNames) {
+        const sheet = wb.Sheets[sheetName];
+        const sheetRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
+        for (const r of sheetRows) rows.push(r);
+      }
+    } else {
+      issues.push({ issue: `Unsupported structured format: ${fileName}` });
+      return { rows: [], issues };
+    }
+  } catch (err: any) {
+    return { rows: [], issues: [{ issue: err?.message || 'Parse failed' }] };
+  }
+
+  const refPatterns  = [/^employeeref$/, /^employeeid$/, /^payrollid$/, /^empno$/, /^employeenumber$/, /^ref$/, /^id$/];
+  const namePatterns = [/^employeename$/, /^name$/, /^fullname$/, /^employee$/];
+  const datePatterns = [/^leavedate$/, /^startdate$/, /^joindate$/, /^movementdate$/, /^date$/, /^perioddate$/];
+  const amtPatterns  = [/^finalpay$/, /^firstpay$/, /^grosspay$/, /^amount$/, /^pay$/, /^gross$/];
+
+  const findKey = (row: Record<string, any>, patterns: RegExp[]): string | null => {
+    return Object.keys(row).find(k => {
+      const norm = k.toLowerCase().replace(/[\s_\-\(\)\/]/g, '');
+      return patterns.some(p => p.test(norm));
+    }) || null;
+  };
+
+  const out: PayrollMovementRow[] = [];
+  for (const r of rows) {
+    const refKey  = findKey(r, refPatterns);
+    const nameKey = findKey(r, namePatterns);
+    const dateKey = findKey(r, datePatterns);
+    const amtKey  = findKey(r, amtPatterns);
+
+    const rawDate = dateKey ? r[dateKey] : null;
+    const d = rawDate ? new Date(rawDate) : null;
+    const rawAmt = amtKey ? Number(String(r[amtKey]).replace(/[£$,]/g, '')) : null;
+
+    const ref = refKey  && r[refKey]  ? String(r[refKey])  : null;
+    const name = nameKey && r[nameKey] ? String(r[nameKey]) : null;
+
+    // Skip empty rows / totals rows.
+    if (!ref && !name) continue;
+
+    out.push({
+      employeeRef: ref,
+      employeeName: name,
+      movementDate: d && !Number.isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null,
+      amount: rawAmt != null && Number.isFinite(rawAmt) ? Math.round(rawAmt * 100) / 100 : null,
+      notes: null,
+    });
+  }
+
+  return { rows: out, issues };
+}

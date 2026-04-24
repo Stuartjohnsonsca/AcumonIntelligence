@@ -72,6 +72,9 @@ const HANDLERS: Record<string, ActionHandler> = {
   assessGmExplanations: handleAssessGmExplanations,
   extractPayrollData: handleExtractPayrollData,
   payrollTotalsToTb: handlePayrollTotalsToTb,
+  identifyPayrollMovements: handleIdentifyPayrollMovements,
+  requestPortalQuestions: handleRequestPortalQuestions,
+  verifyPayrollMovements: handleVerifyPayrollMovements,
 };
 
 export function getActionHandler(handlerName: string): ActionHandler | null {
@@ -3194,6 +3197,860 @@ async function handlePayrollTotalsToTb(ctx: ActionHandlerContext): Promise<Actio
       green_count: green.length,
       findings,
       pass_fail: red.length === 0 ? 'pass' : 'fail',
+    },
+  };
+}
+
+// ─── Action: identify_payroll_movements ─────────────────────────────────────
+
+/**
+ * Leavers / Joiners population builder. Two modes:
+ *
+ *  SR mode (sr_mode = true)
+ *    Scan every periodic payroll report in source_documents, age each
+ *    employee across the runs, and surface:
+ *      leavers: employees whose last-seen run had a pay date within
+ *               the period but who are absent from every later run in
+ *               the period. The leave_date is the pay date of their
+ *               last appearance.
+ *      joiners: employees whose first-seen run had a pay date within
+ *               the period AND who are NOT on any prior-period report
+ *               (if supplied on `prior_period_report` / also detectable
+ *               from the docs themselves when out-of-period files are
+ *               included for the cross-check).
+ *
+ *  Non-SR mode (sr_mode = false)
+ *    Client supplies a flat list of leavers / joiners. CSV / XLSX are
+ *    parsed with a tolerant column bank; PDF goes through a dedicated
+ *    AI list extractor. No employee ageing — the client has already
+ *    done that work on their end.
+ */
+async function handleIdentifyPayrollMovements(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs } = ctx;
+
+  const movementType = String(inputs.movement_type || 'leavers').toLowerCase() as 'leavers' | 'joiners';
+  if (movementType !== 'leavers' && movementType !== 'joiners') {
+    return { action: 'error', outputs: {}, errorMessage: `movement_type must be 'leavers' or 'joiners' (got: ${inputs.movement_type})` };
+  }
+  const srMode = inputs.sr_mode === true || inputs.sr_mode === 'true';
+
+  const docs: Array<{ id?: string; storagePath?: string; containerName?: string; originalName?: string; mimeType?: string }>
+    = Array.isArray(inputs.source_documents) ? inputs.source_documents : [];
+  if (docs.length === 0) {
+    return { action: 'error', outputs: {}, errorMessage: 'No source documents provided.' };
+  }
+
+  const periodStart = inputs.period_start ? new Date(inputs.period_start) : null;
+  const periodEnd   = inputs.period_end   ? new Date(inputs.period_end)   : null;
+  if (!periodStart || !periodEnd || Number.isNaN(periodStart.getTime()) || Number.isNaN(periodEnd.getTime())) {
+    return { action: 'error', outputs: {}, errorMessage: 'Period start / end not resolved.' };
+  }
+
+  const issues: Array<Record<string, any>> = [];
+  const sources = await expandPayrollSources(docs, issues);
+  if (sources.length === 0) {
+    return { action: 'error', outputs: { extraction_issues: issues }, errorMessage: 'No readable documents.' };
+  }
+
+  // ── Non-SR: client-supplied flat list ─────────────────────────────────────
+  if (!srMode) {
+    const { extractPayrollMovementListFromBase64, parsePayrollMovementListFromBuffer } = await import('@/lib/ai-extractor');
+    interface MovementRow {
+      employee_ref: string | null;
+      employee_name: string | null;
+      movement_date: string | null;
+      amount: number | null;
+      source_document: string;
+      notes: string | null;
+    }
+    const inPeriod: MovementRow[] = [];
+    const outOfPeriod: MovementRow[] = [];
+
+    for (const src of sources) {
+      const lower = src.fileName.toLowerCase();
+      try {
+        let extractedRows: Array<{ employeeRef: string | null; employeeName: string | null; movementDate: string | null; amount: number | null; notes: string | null }> = [];
+        if (lower.endsWith('.csv') || lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+          const buf = Buffer.from(src.base64, 'base64');
+          const parsed = await parsePayrollMovementListFromBuffer(buf, src.fileName);
+          for (const i of parsed.issues) issues.push({ file: src.fileName, issue: i.issue });
+          extractedRows = parsed.rows;
+        } else {
+          const ai = await extractPayrollMovementListFromBase64(src.base64, src.mimeType, src.fileName, movementType);
+          if (ai.confidence < 0.3) issues.push({ file: src.fileName, issue: `Low movement-list confidence (${ai.confidence})` });
+          if (ai.notes) issues.push({ file: src.fileName, issue: `Extractor notes: ${ai.notes}` });
+          extractedRows = ai.rows;
+        }
+
+        for (const r of extractedRows) {
+          const row: MovementRow = {
+            employee_ref: r.employeeRef,
+            employee_name: r.employeeName,
+            movement_date: r.movementDate,
+            amount: r.amount,
+            source_document: src.fileName,
+            notes: r.notes,
+          };
+          if (!row.employee_ref && !row.employee_name) continue;
+          const d = r.movementDate ? new Date(r.movementDate) : null;
+          if (d && !Number.isNaN(d.getTime()) && (d < periodStart || d > periodEnd)) {
+            outOfPeriod.push(row);
+          } else {
+            inPeriod.push(row);
+          }
+        }
+      } catch (err: any) {
+        issues.push({ file: src.fileName, issue: err?.message || 'List extraction failed' });
+      }
+    }
+
+    return {
+      action: 'continue',
+      outputs: {
+        data_table: inPeriod,
+        movement_count: inPeriod.length,
+        out_of_period_rows: outOfPeriod,
+        extraction_issues: issues,
+        pass_fail: issues.filter(i => !/low|notes/i.test(String(i.issue))).length === 0 ? 'pass' : 'review',
+      },
+    };
+  }
+
+  // ── SR mode: derive population from the full set of periodic reports ──────
+  // Pull every employee-period row out of every report. Key each employee
+  // by a normalised ref+name composite so "EMP001"/"Alice Smith" and
+  // "emp001"/"Smith, Alice" land in the same bucket.
+  const { extractPayrollFromBase64 } = await import('@/lib/ai-extractor');
+
+  const normKey = (ref: any, name: any): string => {
+    const r = String(ref || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const n = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return r || n;
+  };
+
+  // employee -> sorted list of { runDate, pay, sourceDoc }
+  interface Sighting { runDate: Date; pay: number; sourceDoc: string; ref: string | null; name: string | null; }
+  const timeline = new Map<string, Sighting[]>();
+
+  for (const src of sources) {
+    const lower = src.fileName.toLowerCase();
+    try {
+      let rows: Array<{ periodDate: string | null; employeeRef: string | null; employeeName: string | null; columns: Record<string, number> }> = [];
+
+      if (lower.endsWith('.csv') || lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+        // Structured: one row per employee-period. Reuse the extract_payroll
+        // pattern-bank by treating the file as a payroll report.
+        const buf = Buffer.from(src.base64, 'base64');
+        if (lower.endsWith('.csv')) {
+          const text = buf.toString('utf8');
+          const lines = text.split(/\r?\n/).filter(l => l.length > 0);
+          if (lines.length < 2) continue;
+          const split = (s: string): string[] => {
+            const out: string[] = []; let cur = ''; let inQ = false;
+            for (let i = 0; i < s.length; i++) {
+              const c = s[i];
+              if (c === '"') { if (inQ && s[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+              else if (c === ',' && !inQ) { out.push(cur); cur = ''; }
+              else cur += c;
+            }
+            out.push(cur);
+            return out;
+          };
+          const headers = split(lines[0]).map(h => h.trim());
+          for (const line of lines.slice(1)) {
+            const cells = split(line);
+            const r: Record<string, any> = {};
+            headers.forEach((h, i) => { r[h] = (cells[i] ?? '').trim(); });
+            const gross = Number(String(findRowValue(r, STRUCTURED_COLUMN_PATTERNS.gross_pay) ?? '').replace(/[£$,]/g, ''));
+            const dateRaw = findRowValue(r, DATE_COLUMN_PATTERNS);
+            rows.push({
+              periodDate: dateRaw || null,
+              employeeRef: String(findRowValue(r, EMPLOYEE_REF_PATTERNS) ?? '') || null,
+              employeeName: String(findRowValue(r, EMPLOYEE_NAME_PATTERNS) ?? '') || null,
+              columns: Number.isFinite(gross) ? { gross_pay: gross } : {},
+            });
+          }
+        } else {
+          const XLSX = await import('xlsx');
+          const wb = XLSX.read(buf, { type: 'buffer' });
+          for (const sheetName of wb.SheetNames) {
+            const sheet = wb.Sheets[sheetName];
+            const sheetRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
+            for (const r of sheetRows) {
+              const gross = Number(String(findRowValue(r, STRUCTURED_COLUMN_PATTERNS.gross_pay) ?? '').replace(/[£$,]/g, ''));
+              rows.push({
+                periodDate: findRowValue(r, DATE_COLUMN_PATTERNS) || null,
+                employeeRef:  String(findRowValue(r, EMPLOYEE_REF_PATTERNS)  ?? '') || null,
+                employeeName: String(findRowValue(r, EMPLOYEE_NAME_PATTERNS) ?? '') || null,
+                columns: Number.isFinite(gross) ? { gross_pay: gross } : {},
+              });
+            }
+          }
+        }
+      } else {
+        const ext = await extractPayrollFromBase64(src.base64, src.mimeType, src.fileName, ['gross_pay']);
+        rows = ext.rows;
+        if (ext.confidence < 0.3) issues.push({ file: src.fileName, issue: `Low payroll extraction confidence (${ext.confidence}) — leaver/joiner detection may miss employees.` });
+      }
+
+      for (const r of rows) {
+        const key = normKey(r.employeeRef, r.employeeName);
+        if (!key) continue;
+        const d = r.periodDate ? new Date(r.periodDate) : null;
+        if (!d || Number.isNaN(d.getTime())) continue;
+        const pay = Number(r.columns?.gross_pay ?? 0) || 0;
+        const arr = timeline.get(key) || [];
+        arr.push({ runDate: d, pay, sourceDoc: src.fileName, ref: r.employeeRef, name: r.employeeName });
+        timeline.set(key, arr);
+      }
+    } catch (err: any) {
+      issues.push({ file: src.fileName, issue: err?.message || 'Extraction failed' });
+    }
+  }
+
+  // Build population.
+  interface MovementRow {
+    employee_ref: string | null;
+    employee_name: string | null;
+    movement_date: string | null;
+    amount: number | null;
+    payroll_ref_last_seen: string | null;     // last run pay date (leavers)
+    payroll_ref_first_seen: string | null;    // first run pay date (joiners)
+    source_document: string | null;
+    notes: string | null;
+  }
+  const inPeriod: MovementRow[] = [];
+  const outOfPeriod: MovementRow[] = [];
+
+  for (const [, sightings] of timeline) {
+    sightings.sort((a, b) => a.runDate.getTime() - b.runDate.getTime());
+    const first = sightings[0];
+    const last = sightings[sightings.length - 1];
+
+    if (movementType === 'leavers') {
+      // Leavers = last sighting is within the period AND no later sighting
+      // exists. We require at least one sighting within the period (so
+      // someone who left before period_start isn't re-surfaced).
+      if (last.runDate < periodStart || last.runDate > periodEnd) continue;
+      // If the last sighting date is essentially period_end (within 7
+      // days), they're probably still employed at year-end — treat as
+      // continuing. The 7-day tolerance absorbs final-run timing noise.
+      const daysToEnd = Math.round((periodEnd.getTime() - last.runDate.getTime()) / 86_400_000);
+      if (daysToEnd < 7) continue;
+
+      inPeriod.push({
+        employee_ref: last.ref,
+        employee_name: last.name,
+        movement_date: last.runDate.toISOString().slice(0, 10),
+        amount: Math.round(last.pay * 100) / 100,
+        payroll_ref_last_seen: last.sourceDoc,
+        payroll_ref_first_seen: null,
+        source_document: last.sourceDoc,
+        notes: sightings.length === 1 ? 'Only one payroll run visible — verify this is a genuine leaver, not a one-off starter/leaver in the same period.' : null,
+      });
+    } else {
+      // Joiners = first sighting within period_start..period_end AND no
+      // earlier sighting in the timeline (the timeline already incorporates
+      // the prior-period report if the caller supplied it via source_documents).
+      if (first.runDate < periodStart || first.runDate > periodEnd) continue;
+      inPeriod.push({
+        employee_ref: first.ref,
+        employee_name: first.name,
+        movement_date: first.runDate.toISOString().slice(0, 10),
+        amount: Math.round(first.pay * 100) / 100,
+        payroll_ref_last_seen: null,
+        payroll_ref_first_seen: first.sourceDoc,
+        source_document: first.sourceDoc,
+        notes: null,
+      });
+    }
+    void outOfPeriod;
+  }
+
+  // Joiners cross-check against explicit prior_period_report.
+  // inputs.prior_period_report is a file (same shape as source_documents).
+  if (movementType === 'joiners' && inputs.prior_period_report) {
+    try {
+      const priorDocs = Array.isArray(inputs.prior_period_report) ? inputs.prior_period_report : [inputs.prior_period_report];
+      const priorIssues: Array<Record<string, any>> = [];
+      const priorSources = await expandPayrollSources(priorDocs, priorIssues);
+      for (const i of priorIssues) issues.push(i);
+      const priorKeys = new Set<string>();
+      for (const src of priorSources) {
+        const lower = src.fileName.toLowerCase();
+        let rows: Array<{ employeeRef: string | null; employeeName: string | null }> = [];
+        if (lower.endsWith('.csv') || lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+          const buf = Buffer.from(src.base64, 'base64');
+          const XLSX = await import('xlsx');
+          const wb = lower.endsWith('.csv')
+            ? XLSX.read(buf.toString('utf8'), { type: 'string' })
+            : XLSX.read(buf, { type: 'buffer' });
+          for (const sheetName of wb.SheetNames) {
+            const sheet = wb.Sheets[sheetName];
+            const sheetRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
+            for (const r of sheetRows) {
+              rows.push({
+                employeeRef:  String(findRowValue(r, EMPLOYEE_REF_PATTERNS)  ?? '') || null,
+                employeeName: String(findRowValue(r, EMPLOYEE_NAME_PATTERNS) ?? '') || null,
+              });
+            }
+          }
+        } else {
+          const ext = await extractPayrollFromBase64(src.base64, src.mimeType, src.fileName, ['gross_pay']);
+          rows = ext.rows.map(r => ({ employeeRef: r.employeeRef, employeeName: r.employeeName }));
+        }
+        for (const r of rows) {
+          const key = normKey(r.employeeRef, r.employeeName);
+          if (key) priorKeys.add(key);
+        }
+      }
+      // Filter joiners: drop anyone already on the prior-period final run.
+      const filtered = inPeriod.filter(row => !priorKeys.has(normKey(row.employee_ref, row.employee_name)));
+      const removed = inPeriod.length - filtered.length;
+      if (removed > 0) {
+        issues.push({ file: 'prior_period_report', issue: `Cross-check dropped ${removed} false-positive joiner${removed === 1 ? '' : 's'} already on the prior-period final run.` });
+      }
+      inPeriod.length = 0;
+      inPeriod.push(...filtered);
+    } catch (err: any) {
+      issues.push({ file: 'prior_period_report', issue: err?.message || 'Prior-period cross-check failed' });
+    }
+  }
+
+  return {
+    action: 'continue',
+    outputs: {
+      data_table: inPeriod,
+      movement_count: inPeriod.length,
+      out_of_period_rows: [],
+      extraction_issues: issues,
+      pass_fail: issues.filter(i => !/low|notes|cross-check/i.test(String(i.issue))).length === 0 ? 'pass' : 'review',
+    },
+  };
+}
+
+// ─── Action: request_portal_questions ───────────────────────────────────────
+
+/**
+ * Structured questionnaire via the Client Portal.
+ *
+ * Phase model (same pattern as handleVerifyPropertyAssets):
+ *   new              → create PortalRequest with the questions inlined,
+ *                      pause with repeatOnResume so the step re-enters
+ *                      when the client responds.
+ *   awaiting_response → re-entered on resume. Look up the PortalRequest,
+ *                      AI-parse .response against the questions list,
+ *                      return data_table.
+ *
+ * Gate-on-count: if gate_on_count is true and gating_count === 0 we
+ * short-circuit immediately with skipped=true and an empty data_table
+ * so downstream steps still run but signal "nothing to ask".
+ */
+async function handleRequestPortalQuestions(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, inputs, pipelineState, stepIndex, config } = ctx;
+
+  const stepState = pipelineState[stepIndex] || {};
+  const phase: string = stepState.phase || 'new';
+
+  const rawQuestions: any = inputs.questions;
+  const questions: Array<{ code: string; question: string; answer_type: string; required: boolean }> =
+    Array.isArray(rawQuestions) ? rawQuestions.map((q, i) => ({
+      code: String(q?.code || `q${i + 1}`),
+      question: String(q?.question || ''),
+      answer_type: String(q?.answer_type || 'text'),
+      required: q?.required !== false,
+    })).filter(q => q.question) : [];
+
+  if (questions.length === 0) {
+    return { action: 'error', outputs: {}, errorMessage: 'request_portal_questions: at least one question required.' };
+  }
+
+  // ── Phase: new (first entry) ─────────────────────────────────────────────
+  if (phase === 'new') {
+    const gateOn = inputs.gate_on_count === true || inputs.gate_on_count === 'true';
+    const gatingCount = Number(inputs.gating_count);
+    if (gateOn && Number.isFinite(gatingCount) && gatingCount <= 0) {
+      return {
+        action: 'continue',
+        outputs: {
+          data_table: [],
+          skipped: 'pass',
+          portal_request_id: null,
+          notes: 'Step skipped — prior-step count was zero (gate_on_count=true).',
+        },
+      };
+    }
+
+    // Build a human-readable question body. We inline the questions
+    // into the portal request text because the portal UI doesn't yet
+    // render structured forms — the client will type their answers
+    // free-form and AI will re-align them on resume.
+    const questionLines = questions.map((q, i) => {
+      const hint = q.answer_type === 'yn'
+        ? ' (please answer Yes or No)'
+        : q.answer_type === 'yn_text'
+          ? ' (please answer Yes or No AND give a short explanation)'
+          : '';
+      return `${i + 1}. ${q.question}${hint}`;
+    }).join('\n');
+    const covering = inputs.message_to_client
+      ? `${inputs.message_to_client}\n\n`
+      : '';
+    const questionBody = `${covering}Please answer each question below. Copy each numbered question back and add your answer on the next line, or reply in the same order.\n\n${questionLines}`;
+
+    const engagement = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { clientId: true } });
+    if (!engagement) return { action: 'error', outputs: {}, errorMessage: 'Engagement not found.' };
+
+    const requestingUser = await prisma.user.findUnique({
+      where: { id: config.userId },
+      select: { name: true, email: true },
+    });
+
+    const portalRequest = await prisma.portalRequest.create({
+      data: {
+        clientId: engagement.clientId,
+        engagementId,
+        section: 'questionnaire',
+        question: questionBody,
+        status: 'outstanding',
+        requestedById: config.userId,
+        requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
+        evidenceTag: inputs.area_of_work || config.fsLine,
+      },
+    });
+    await prisma.outstandingItem.create({
+      data: {
+        engagementId,
+        executionId: ctx.executionId,
+        type: 'portal_request',
+        title: `Questionnaire: ${questions.length} question${questions.length === 1 ? '' : 's'}`,
+        description: inputs.message_to_client || 'Structured questionnaire for the client.',
+        source: 'flow',
+        assignedTo: 'client',
+        status: 'awaiting_client',
+        fsLine: config.fsLine,
+        testName: config.testDescription,
+        portalRequestId: portalRequest.id,
+      },
+    });
+
+    return {
+      action: 'pause',
+      outputs: {
+        phase: 'awaiting_response',
+        portal_request_id: portalRequest.id,
+        question_list: questions,
+        repeatOnResume: true,
+      },
+      pauseReason: 'portal_response',
+      pauseRefId: portalRequest.id,
+    };
+  }
+
+  // ── Phase: awaiting_response (re-entry after client response) ────────────
+  const portalRequestId = stepState.portal_request_id as string | undefined;
+  if (!portalRequestId) {
+    return { action: 'error', outputs: {}, errorMessage: 'Missing portal_request_id on resume.' };
+  }
+  const request = await prisma.portalRequest.findUnique({ where: { id: portalRequestId } });
+  if (!request || !request.response) {
+    // Nothing to parse yet — re-pause.
+    return {
+      action: 'pause',
+      outputs: { phase: 'awaiting_response', portal_request_id: portalRequestId, repeatOnResume: true },
+      pauseReason: 'portal_response',
+      pauseRefId: portalRequestId,
+    };
+  }
+
+  // AI-parse the response into {answer, supporting_text} per question.
+  // The prompt is grounded on the exact questions we asked, so the
+  // model can only produce an answer keyed by the question codes we
+  // supplied — no hallucinated questions.
+  let parsed: Array<{ code: string; question: string; answer: string; supporting_text: string }> = [];
+  try {
+    const OpenAI = (await import('openai')).default;
+    const client = new OpenAI({
+      apiKey: process.env.TOGETHER_DOC_SUMMARY_KEY || process.env.TOGETHER_API_KEY || '',
+      baseURL: 'https://api.together.xyz/v1',
+    });
+    const qList = questions.map((q, i) => `${i + 1}. [${q.code}] ${q.question} (type: ${q.answer_type})`).join('\n');
+    const system = 'You are an audit assistant aligning a client\'s free-text response to a structured questionnaire. Return ONLY JSON — no markdown, no prose. Never invent new questions — your output array length must equal the number of questions in the input. For yn / yn_text questions, "answer" must be "Yes", "No", or "Unclear". For text questions, "answer" is a short summary and "supporting_text" holds the verbatim explanation.';
+    const user = `Questions asked:\n${qList}\n\nClient response:\n"""\n${request.response}\n"""\n\nReturn JSON:\n{ "answers": [ { "code": "<question code>", "answer": "Yes|No|Unclear or short text", "supporting_text": "the client's words relevant to this question" } ] }`;
+    const resp = await client.chat.completions.create({
+      model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      max_tokens: 2000,
+      temperature: 0.1,
+    });
+    const text = resp.choices[0]?.message?.content || '';
+    const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/) || cleaned.match(/(\{[\s\S]*\})/);
+    const j = JSON.parse(jsonMatch ? jsonMatch[1] : cleaned);
+    const answers = Array.isArray(j?.answers) ? j.answers : [];
+    // Align to the questions list by code, falling back to index.
+    parsed = questions.map((q, i) => {
+      const a = answers.find((x: any) => String(x?.code) === q.code) || answers[i] || {};
+      return {
+        code: q.code,
+        question: q.question,
+        answer: String(a.answer || 'Unclear'),
+        supporting_text: String(a.supporting_text || ''),
+      };
+    });
+  } catch (err: any) {
+    // AI failure — fall back to a structure where the whole response
+    // is attached as supporting_text against the first question, and
+    // the rest are marked Unclear. Still auditable and the reviewer
+    // can clean it up manually.
+    parsed = questions.map((q, i) => ({
+      code: q.code,
+      question: q.question,
+      answer: 'Unclear',
+      supporting_text: i === 0 ? String(request.response || '') : '',
+    }));
+    console.error('[request_portal_questions] AI parse failed, raw response attached to q1:', err?.message);
+  }
+
+  const dataTable = parsed.map(r => ({
+    code: r.code,
+    question: r.question,
+    answer: r.answer,
+    supporting_text: r.supporting_text,
+    answered_at: request.respondedAt ? request.respondedAt.toISOString() : new Date().toISOString(),
+  }));
+
+  return {
+    action: 'continue',
+    outputs: {
+      data_table: dataTable,
+      skipped: 'fail',
+      portal_request_id: portalRequestId,
+    },
+  };
+}
+
+// ─── Action: verify_payroll_movements ───────────────────────────────────────
+
+/**
+ * R/O/G verifier for Leavers / Joiners samples.
+ *
+ * For each sample item:
+ *  (a) Evidence match — is there supporting paperwork in the current
+ *      step's evidence_documents that fuzzy-matches by employee name /
+ *      ref? For leavers we want a P45 / notice of termination; for
+ *      joiners we want a contract / RTW / starter checklist. The AI
+ *      extractor on extract_payroll (documents action) already captured
+ *      text off each doc; we do a name-based fuzzy match here.
+ *  (b) Apportionment — look back into the periodic reports to find
+ *      this employee's most recent regular-month pay, then check:
+ *        leavers:  final_pay ≈ regular_monthly × (working_days_to_leave / working_days_per_month)
+ *        joiners:  first_pay ≈ regular_monthly × (working_days_from_join / working_days_per_month)
+ *      The comparison is lenient (tolerance_gbp) because apportionment
+ *      conventions vary.
+ *
+ * Marker: red if evidence missing OR material apportionment variance,
+ * orange if evidence present but apportionment variance, green otherwise.
+ */
+async function handleVerifyPayrollMovements(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { executionId, stepIndex, inputs } = ctx;
+
+  const movementType = String(inputs.movement_type || 'leavers').toLowerCase() as 'leavers' | 'joiners';
+  const samples: Array<Record<string, any>> = Array.isArray(inputs.sample_items) ? inputs.sample_items : [];
+  if (samples.length === 0) {
+    return { action: 'error', outputs: {}, errorMessage: 'No sample items to verify.' };
+  }
+
+  const evidenceDocs: Array<Record<string, any>> = Array.isArray(inputs.evidence_documents) ? inputs.evidence_documents : [];
+  const questionnaireRows: Array<Record<string, any>> = Array.isArray(inputs.questionnaire_responses) ? inputs.questionnaire_responses : [];
+  const periodicReports: Array<Record<string, any>> = Array.isArray(inputs.periodic_reports) ? inputs.periodic_reports : [];
+
+  const amountTol = Math.max(0, Number(inputs.amount_tolerance_gbp ?? 5));
+  const workingDays = Math.max(1, Number(inputs.working_days_per_month ?? 20));
+
+  const norm = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const normKey = (ref: any, name: any) => {
+    const r = String(ref || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const n = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return r || n;
+  };
+  const parseDate = (s: any): Date | null => {
+    if (!s) return null;
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  // ── Build a timeline from the periodic reports so we can look up
+  //    an employee's recent regular-month pay. Same logic as
+  //    identify_payroll_movements; kept local so verify doesn't depend
+  //    on cached state from that step.
+  const { extractPayrollFromBase64 } = await import('@/lib/ai-extractor');
+  const issuesFromExtract: Array<Record<string, any>> = [];
+  const reportSources = periodicReports.length > 0
+    ? await expandPayrollSources(periodicReports as any, issuesFromExtract)
+    : [];
+
+  interface Sighting { runDate: Date; pay: number; sourceDoc: string; }
+  const timeline = new Map<string, Sighting[]>();
+  for (const src of reportSources) {
+    const lower = src.fileName.toLowerCase();
+    try {
+      let rows: Array<{ periodDate: string | null; employeeRef: string | null; employeeName: string | null; columns: Record<string, number> }> = [];
+      if (lower.endsWith('.csv') || lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+        const buf = Buffer.from(src.base64, 'base64');
+        const XLSX = await import('xlsx');
+        const wb = lower.endsWith('.csv') ? XLSX.read(buf.toString('utf8'), { type: 'string' }) : XLSX.read(buf, { type: 'buffer' });
+        for (const sheetName of wb.SheetNames) {
+          const sheet = wb.Sheets[sheetName];
+          const sheetRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
+          for (const r of sheetRows) {
+            const gross = Number(String(findRowValue(r, STRUCTURED_COLUMN_PATTERNS.gross_pay) ?? '').replace(/[£$,]/g, ''));
+            rows.push({
+              periodDate: findRowValue(r, DATE_COLUMN_PATTERNS) || null,
+              employeeRef:  String(findRowValue(r, EMPLOYEE_REF_PATTERNS)  ?? '') || null,
+              employeeName: String(findRowValue(r, EMPLOYEE_NAME_PATTERNS) ?? '') || null,
+              columns: Number.isFinite(gross) ? { gross_pay: gross } : {},
+            });
+          }
+        }
+      } else {
+        const ext = await extractPayrollFromBase64(src.base64, src.mimeType, src.fileName, ['gross_pay']);
+        rows = ext.rows;
+      }
+      for (const r of rows) {
+        const key = normKey(r.employeeRef, r.employeeName);
+        if (!key) continue;
+        const d = r.periodDate ? new Date(r.periodDate) : null;
+        if (!d || Number.isNaN(d.getTime())) continue;
+        const pay = Number(r.columns?.gross_pay ?? 0) || 0;
+        const arr = timeline.get(key) || [];
+        arr.push({ runDate: d, pay: Math.round(pay * 100) / 100, sourceDoc: src.fileName });
+        timeline.set(key, arr);
+      }
+    } catch (err: any) {
+      issuesFromExtract.push({ file: src.fileName, issue: err?.message || 'Periodic-report parse failed' });
+    }
+  }
+
+  interface Marker {
+    sample_item_ref: string;
+    employee_ref: string | null;
+    employee_name: string | null;
+    movement_date: string | null;
+    colour: 'red' | 'orange' | 'green';
+    marker_type: string;
+    reason: string;
+    evidence_match: string | null;
+    apportionment_variance: number | null;
+    recorded_vs_expected: string | null;
+    recommended_resolution: string;
+  }
+  const markers: Marker[] = [];
+
+  // Pre-compute evidence docs keyed by best-guess employee. Since the
+  // evidence request step pairs docs to sample items by employee, each
+  // doc's name usually includes the employee ref / surname. We do a
+  // loose includes() match below.
+  const evidenceMeta = evidenceDocs.map(d => ({
+    id: d.id,
+    name: String(d.originalName || d.name || d.id || ''),
+    normName: norm(d.originalName || d.name || d.id || ''),
+  }));
+
+  for (const s of samples) {
+    const sampleRef = String(s.id ?? s.ref ?? s.sample_id ?? s.employee_ref ?? normKey(s.employee_ref, s.employee_name) ?? JSON.stringify(s).slice(0, 32));
+    const empRef = s.employee_ref ?? null;
+    const empName = s.employee_name ?? null;
+    const movementDate = parseDate(s.movement_date);
+    const amount = s.amount != null ? Number(s.amount) : null;
+
+    // Evidence match — any evidence doc mentioning the ref or surname.
+    const empRefN = norm(empRef);
+    const empNameN = norm(empName);
+    const surname = empNameN.split(' ').slice(-1)[0] || '';
+    const evidenceHit = evidenceMeta.find(e =>
+      (empRefN && e.normName.includes(empRefN)) ||
+      (surname && surname.length > 2 && e.normName.includes(surname)),
+    );
+
+    // Apportionment — need the regular monthly baseline. Take the most
+    // recent run BEFORE the movement date for leavers, AFTER for joiners.
+    const key = normKey(empRef, empName);
+    const sightings = (timeline.get(key) || []).slice().sort((a, b) => a.runDate.getTime() - b.runDate.getTime());
+    let baselinePay: number | null = null;
+    let baselineDoc: string | null = null;
+    if (movementDate && sightings.length > 0) {
+      if (movementType === 'leavers') {
+        // Use the pay before the final one (the final one IS the
+        // apportioned run we're trying to verify).
+        if (sightings.length >= 2) {
+          const prior = sightings[sightings.length - 2];
+          baselinePay = prior.pay;
+          baselineDoc = prior.sourceDoc;
+        }
+      } else {
+        // Joiners: use the pay AFTER the first (the first IS the
+        // apportioned run); fall back to the first if only one exists.
+        if (sightings.length >= 2) {
+          baselinePay = sightings[1].pay;
+          baselineDoc = sightings[1].sourceDoc;
+        }
+      }
+    }
+
+    // Compute expected apportionment.
+    let expected: number | null = null;
+    let workingDaysWorked: number | null = null;
+    if (baselinePay && movementDate) {
+      // Find the run boundary for apportionment. Approximate: the
+      // calendar month the movement falls in.
+      const monthStart = new Date(Date.UTC(movementDate.getUTCFullYear(), movementDate.getUTCMonth(), 1));
+      const monthEndDate = new Date(Date.UTC(movementDate.getUTCFullYear(), movementDate.getUTCMonth() + 1, 0));
+      const daysInMonth = monthEndDate.getUTCDate();
+      const dayOfMonth = movementDate.getUTCDate();
+      // Proportional working days — we assume working_days_per_month is
+      // spread evenly across the calendar month.
+      const daysActive = movementType === 'leavers'
+        ? dayOfMonth
+        : (daysInMonth - dayOfMonth + 1);
+      workingDaysWorked = Math.round((workingDays * daysActive / daysInMonth) * 100) / 100;
+      expected = Math.round((baselinePay * daysActive / daysInMonth) * 100) / 100;
+      void monthStart;
+    }
+
+    const variance = (expected != null && amount != null)
+      ? Math.round((amount - expected) * 100) / 100
+      : null;
+    const aproMatch = variance != null && Math.abs(variance) <= amountTol;
+
+    // Decide colour.
+    let colour: 'red' | 'orange' | 'green' = 'green';
+    let markerType = 'Verified';
+    let reason = '';
+    if (!evidenceHit) {
+      colour = 'red';
+      markerType = movementType === 'leavers' ? 'Evidence Missing (P45 / termination notice)' : 'Evidence Missing (contract / RTW)';
+      reason = `No supporting paperwork could be matched to this ${movementType === 'leavers' ? 'leaver' : 'joiner'} by employee ref or surname. Request again from the client or re-upload.`;
+    } else if (variance == null || baselinePay == null) {
+      colour = 'orange';
+      markerType = 'Apportionment Not Computable';
+      reason = `Evidence found (${evidenceHit.name}) but we couldn't build a baseline monthly pay from the periodic reports, so daily-apportionment couldn't be checked. Review manually.`;
+    } else if (!aproMatch) {
+      colour = 'orange';
+      markerType = movementType === 'leavers' ? 'Final Pay Variance' : 'First Pay Variance';
+      reason = `Evidence found (${evidenceHit.name}). ${movementType === 'leavers' ? 'Final' : 'First'} pay £${(amount ?? 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} vs expected £${expected!.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (baseline £${baselinePay.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} × ${workingDaysWorked}/${workingDays} working days). Variance £${variance.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'always' } as any)} exceeds the £${amountTol} tolerance — capture a rationale in Evidence & Conclusions.`;
+    } else {
+      colour = 'green';
+      markerType = movementType === 'leavers' ? 'Leaver Verified' : 'Joiner Verified';
+      reason = `Evidence matched (${evidenceHit.name}); ${movementType === 'leavers' ? 'final' : 'first'} pay £${(amount ?? 0).toFixed(2)} within £${amountTol} of the expected £${expected!.toFixed(2)} apportionment.`;
+    }
+
+    // Layer on questionnaire findings — any "Yes" on dispute /
+    // termination_pay / share_based_comp / joining_payment / related_party
+    // bumps a green up to orange (informational escalation).
+    const qForThis = questionnaireRows.filter(q => q && (
+      normKey(q.employee_ref, q.employee_name) === key
+      || !q.employee_ref && !q.employee_name // questionnaire was asked generically
+    ));
+    const flagYes = qForThis.find(q =>
+      /yes/i.test(String(q.answer || ''))
+      && /dispute|termination|share|joining|related/i.test(String(q.code || q.question || '')),
+    );
+    if (flagYes && colour === 'green') {
+      colour = 'orange';
+      markerType = 'Questionnaire Flag';
+      reason = `${reason} Questionnaire flagged "${flagYes.code}" as Yes — capture a rationale in Evidence & Conclusions before signing off.`;
+    }
+
+    markers.push({
+      sample_item_ref: sampleRef,
+      employee_ref: empRef,
+      employee_name: empName,
+      movement_date: movementDate ? movementDate.toISOString().slice(0, 10) : null,
+      colour,
+      marker_type: markerType,
+      reason,
+      evidence_match: evidenceHit?.name || null,
+      apportionment_variance: variance,
+      recorded_vs_expected: expected != null && amount != null
+        ? `£${amount.toFixed(2)} vs £${expected.toFixed(2)}`
+        : null,
+      recommended_resolution: colour === 'red'
+        ? 'Request missing paperwork from the client or escalate if repeatedly unavailable.'
+        : colour === 'orange'
+          ? 'Capture a rationale in Evidence & Conclusions — book the variance to the Error Schedule if the explanation is insufficient.'
+          : 'Sign off once reviewer is satisfied.',
+    });
+  }
+
+  // Persist to sampleItemMarker so the UI can render R/O/G without a
+  // re-run, consistent with the accruals / GM handlers.
+  await Promise.all(markers.map(m =>
+    prisma.sampleItemMarker.upsert({
+      where: { executionId_stepIndex_sampleItemRef: { executionId, stepIndex, sampleItemRef: m.sample_item_ref } },
+      update: {
+        colour: m.colour,
+        reason: m.reason,
+        markerType: m.marker_type,
+        calcJson: {
+          employee_ref: m.employee_ref,
+          employee_name: m.employee_name,
+          movement_date: m.movement_date,
+          evidence_match: m.evidence_match,
+          apportionment_variance: m.apportionment_variance,
+          recorded_vs_expected: m.recorded_vs_expected,
+        } as any,
+        overriddenBy: null,
+        overriddenByName: null,
+        overriddenAt: null,
+        overrideReason: null,
+        originalColour: null,
+      },
+      create: {
+        executionId,
+        stepIndex,
+        sampleItemRef: m.sample_item_ref,
+        colour: m.colour,
+        reason: m.reason,
+        markerType: m.marker_type,
+        calcJson: {
+          employee_ref: m.employee_ref,
+          employee_name: m.employee_name,
+          movement_date: m.movement_date,
+          evidence_match: m.evidence_match,
+          apportionment_variance: m.apportionment_variance,
+          recorded_vs_expected: m.recorded_vs_expected,
+        } as any,
+      },
+    }),
+  ));
+
+  const red = markers.filter(m => m.colour === 'red');
+  const orange = markers.filter(m => m.colour === 'orange');
+  const green = markers.filter(m => m.colour === 'green');
+
+  const findings = red.map(m => ({
+    sample_item_ref: m.sample_item_ref,
+    employee: [m.employee_ref, m.employee_name].filter(Boolean).join(' / ') || m.sample_item_ref,
+    movement_date: m.movement_date,
+    marker: m.marker_type,
+    summary: m.reason,
+    recommended_resolution: m.recommended_resolution,
+  }));
+
+  return {
+    action: 'continue',
+    outputs: {
+      markers,
+      data_table: markers,
+      red_count: red.length,
+      orange_count: orange.length,
+      green_count: green.length,
+      findings,
+      pass_fail: red.length === 0 ? (orange.length === 0 ? 'pass' : 'review') : 'fail',
     },
   };
 }
