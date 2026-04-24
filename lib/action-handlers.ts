@@ -70,6 +70,8 @@ const HANDLERS: Record<string, ActionHandler> = {
   computeGmAnalysis: handleComputeGmAnalysis,
   requestGmExplanations: handleRequestGmExplanations,
   assessGmExplanations: handleAssessGmExplanations,
+  extractPayrollData: handleExtractPayrollData,
+  payrollTotalsToTb: handlePayrollTotalsToTb,
 };
 
 export function getActionHandler(handlerName: string): ActionHandler | null {
@@ -2613,5 +2615,585 @@ async function handleTeamReview(ctx: ActionHandlerContext): Promise<ActionHandle
     outputs: { status: 'awaiting_review', reviewer_role: inputs.reviewer_role },
     pauseReason: 'review',
     pauseRefId: `review_${ctx.stepIndex}`,
+  };
+}
+
+// ─── Periodic Payroll: shared helpers ───────────────────────────────────────
+
+/**
+ * One logical file inside a document set — either an original uploaded
+ * document, or a member expanded out of a zip. `source` traces the
+ * member back to its parent zip for issue reporting.
+ */
+interface PayrollSourceFile {
+  fileName: string;
+  mimeType: string;
+  base64: string;                           // file bytes, base64 encoded
+  source: string;                            // parent zip name if extracted, else same as fileName
+  originalDoc?: Record<string, any>;          // the original doc record it came from (for document_id trace)
+}
+
+/**
+ * Normalise + 1-level-expand a list of source_documents. Zip archives
+ * are opened and every non-metadata member is promoted to its own
+ * PayrollSourceFile so downstream parsers never have to know a file
+ * came from a zip. Files without a storagePath are dropped with an
+ * issue recorded.
+ *
+ * Mirrors lib/client-unzip.ts (which is the client-side equivalent)
+ * so the behaviour is consistent whether the client pre-expands on
+ * upload or sends the raw zip through the portal.
+ */
+async function expandPayrollSources(
+  docs: Array<{ id?: string; storagePath?: string; containerName?: string; originalName?: string; mimeType?: string }>,
+  issues: Array<Record<string, any>>,
+): Promise<PayrollSourceFile[]> {
+  const { getBlobAsBase64 } = await import('@/lib/azure-blob');
+  const out: PayrollSourceFile[] = [];
+
+  for (const doc of docs) {
+    const fileName = doc.originalName || doc.id || 'document';
+    if (!doc.storagePath) {
+      issues.push({ file: fileName, issue: 'No storage path available' });
+      continue;
+    }
+    let base64: string;
+    try {
+      base64 = await getBlobAsBase64(doc.storagePath, doc.containerName || 'upload-inbox');
+    } catch (err: any) {
+      issues.push({ file: fileName, issue: err?.message || 'Failed to download document' });
+      continue;
+    }
+
+    const lower = fileName.toLowerCase();
+    // Single-level zip expansion. Nested zips are left intact — recursion
+    // risks runaway memory on adversarial inputs.
+    if (lower.endsWith('.zip')) {
+      try {
+        const JSZip = (await import('jszip')).default;
+        const zip = await JSZip.loadAsync(Buffer.from(base64, 'base64'));
+        const skipPatterns = [/^__MACOSX\//, /\/\.DS_Store$/, /^\.DS_Store$/, /\/Thumbs\.db$/i];
+        for (const [path, entry] of Object.entries(zip.files)) {
+          if (entry.dir) continue;
+          if (skipPatterns.some(p => p.test(path))) continue;
+          const bytes = await entry.async('uint8array');
+          const memberMime = guessPayrollMime(path);
+          out.push({
+            fileName: path.split('/').pop() || path,
+            mimeType: memberMime,
+            base64: Buffer.from(bytes).toString('base64'),
+            source: fileName,
+            originalDoc: doc,
+          });
+        }
+      } catch (err: any) {
+        issues.push({ file: fileName, issue: `Invalid or corrupt zip: ${err?.message || 'unknown'}` });
+      }
+      continue;
+    }
+
+    out.push({
+      fileName,
+      mimeType: doc.mimeType || guessPayrollMime(fileName),
+      base64,
+      source: fileName,
+      originalDoc: doc,
+    });
+  }
+
+  return out;
+}
+
+function guessPayrollMime(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.pdf'))  return 'application/pdf';
+  if (lower.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (lower.endsWith('.xls'))  return 'application/vnd.ms-excel';
+  if (lower.endsWith('.csv'))  return 'text/csv';
+  if (lower.endsWith('.png'))  return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  return 'application/octet-stream';
+}
+
+/**
+ * Tolerant column discovery used for CSV / XLSX payroll exports. Normalises
+ * header text to compare across "Gross Pay", "gross_pay", "GROSS PAY", etc.
+ * Returns the first header whose normalised form matches any of the given
+ * patterns, or null.
+ */
+function findRowValue(row: Record<string, any>, patterns: RegExp[]): any {
+  const key = Object.keys(row).find(k => {
+    const norm = k.toLowerCase().replace(/[\s_\-\(\)\/]/g, '');
+    return patterns.some(p => p.test(norm));
+  });
+  return key ? row[key] : null;
+}
+
+/**
+ * Per-column regex bank for structured payroll exports. Covers the
+ * common British payroll names plus abbreviations. Add new entries
+ * here when firms surface new column names — the AI extractor handles
+ * anything we haven't anticipated.
+ */
+const STRUCTURED_COLUMN_PATTERNS: Record<string, RegExp[]> = {
+  gross_pay:    [/^grosspay$/, /^gross$/, /^grossearnings$/, /^totalgross$/],
+  employer_ni:  [/^employerni$/, /^erni$/, /^ernicni$/, /^eersni$/, /^enicemployer$/],
+  employee_ni:  [/^employeeni$/, /^eeni$/, /^nicemployee$/, /^eenicontributions$/],
+  paye:         [/^paye$/, /^incometax$/, /^tax$/, /^payededucted$/],
+  bik:          [/^bik$/, /^benefitsinkind$/, /^benefits$/, /^bikvalue$/],
+  pension_ee:   [/^pensionemployee$/, /^eepension$/, /^employeepension$/],
+  pension_er:   [/^pensionemployer$/, /^erpension$/, /^employerpension$/],
+  student_loan: [/^studentloan$/, /^sl$/, /^studentloandeduction$/],
+  statutory_pay:[/^ssp$/, /^smp$/, /^spp$/, /^statutorypay$/, /^statpay$/],
+  net_pay:      [/^netpay$/, /^net$/, /^takehome$/],
+  other:        [/^other$/, /^otherdeductions$/, /^otherpay$/],
+};
+
+const DATE_COLUMN_PATTERNS = [/^paydate$/, /^perioddate$/, /^date$/, /^payrolldate$/, /^period$/];
+const EMPLOYEE_REF_PATTERNS = [/^employeeref$/, /^employeeid$/, /^payrollid$/, /^empno$/, /^employeenumber$/, /^ref$/];
+const EMPLOYEE_NAME_PATTERNS = [/^employeename$/, /^name$/, /^fullname$/, /^employee$/];
+
+// ─── Action: extract_payroll_data ───────────────────────────────────────────
+
+/**
+ * Extract per-payslip rows from every supplied document into a single
+ * normalised data_table plus a summary row of column totals.
+ *
+ * Pipeline:
+ *   1. Download each doc; 1-level unzip to a flat list of payroll files.
+ *   2. CSV / XLSX: parse deterministically against the structured column
+ *      pattern bank.
+ *   3. PDF / image: delegate to extractPayrollFromBase64 (AI).
+ *   4. Filter out rows whose periodDate is outside the engagement
+ *      period; surface them on `out_of_period_rows` for audit trail.
+ *   5. Sum every column across in-period rows → summary_totals.
+ *
+ * `required_columns` drives the AI prompt but does NOT restrict the
+ * output — any extra column the doc surfaces (e.g. an employer pension
+ * contribution) is kept and totalled so the admin can map it to TB.
+ */
+async function handleExtractPayrollData(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs } = ctx;
+
+  const docs: Array<{ id?: string; storagePath?: string; containerName?: string; originalName?: string; mimeType?: string }>
+    = Array.isArray(inputs.source_documents) ? inputs.source_documents : [];
+  if (docs.length === 0) {
+    return { action: 'error', outputs: {}, errorMessage: 'No source documents provided for payroll extraction.' };
+  }
+
+  const requiredColumns: string[] = Array.isArray(inputs.required_columns) && inputs.required_columns.length > 0
+    ? inputs.required_columns.map((c: any) => String(c))
+    : ['gross_pay', 'employer_ni', 'paye', 'bik', 'other'];
+  const configuredCurrency = inputs.currency ? String(inputs.currency) : 'GBP';
+
+  const periodStart = inputs.period_start ? new Date(inputs.period_start) : null;
+  const periodEnd   = inputs.period_end   ? new Date(inputs.period_end)   : null;
+  if (!periodStart || Number.isNaN(periodStart.getTime()) || !periodEnd || Number.isNaN(periodEnd.getTime())) {
+    return { action: 'error', outputs: {}, errorMessage: 'Period start / end not resolved — cannot filter out-of-period rows.' };
+  }
+
+  const issues: Array<Record<string, any>> = [];
+  const sources = await expandPayrollSources(docs, issues);
+  if (sources.length === 0) {
+    return {
+      action: 'error',
+      outputs: { extraction_issues: issues },
+      errorMessage: 'No readable payroll documents after expanding zips.',
+    };
+  }
+
+  const { extractPayrollFromBase64 } = await import('@/lib/ai-extractor');
+
+  interface FlatRow {
+    period_date: string | null;
+    employee_ref: string | null;
+    employee_name: string | null;
+    source_document: string;
+    currency: string;
+    [col: string]: any;                // numeric columns keyed by column code
+  }
+
+  const inPeriod: FlatRow[] = [];
+  const outOfPeriod: FlatRow[] = [];
+  const columnsSeen = new Set<string>();
+
+  const parseDate = (s: any): Date | null => {
+    if (!s) return null;
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  for (const src of sources) {
+    const { fileName, mimeType, base64 } = src;
+    const lower = fileName.toLowerCase();
+    try {
+      // ── Structured exports: CSV / XLSX ────────────────────────────────
+      if (lower.endsWith('.csv') || lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+        let rows: Array<Record<string, any>> = [];
+        if (lower.endsWith('.csv')) {
+          const text = Buffer.from(base64, 'base64').toString('utf8');
+          const lines = text.split(/\r?\n/).filter(l => l.length > 0);
+          if (lines.length < 2) {
+            issues.push({ file: fileName, issue: 'CSV has no data rows' });
+            continue;
+          }
+          const split = (s: string): string[] => {
+            const out: string[] = [];
+            let cur = '';
+            let inQ = false;
+            for (let i = 0; i < s.length; i++) {
+              const c = s[i];
+              if (c === '"') { if (inQ && s[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+              else if (c === ',' && !inQ) { out.push(cur); cur = ''; }
+              else cur += c;
+            }
+            out.push(cur);
+            return out;
+          };
+          const headers = split(lines[0]).map(h => h.trim());
+          rows = lines.slice(1).map(line => {
+            const cells = split(line);
+            const r: Record<string, any> = {};
+            headers.forEach((h, i) => { r[h] = (cells[i] ?? '').trim(); });
+            return r;
+          });
+        } else {
+          const XLSX = await import('xlsx');
+          const wb = XLSX.read(Buffer.from(base64, 'base64'), { type: 'buffer' });
+          // Concatenate every sheet — multi-tab exports commonly spread
+          // runs across sheets keyed by pay date.
+          for (const sheetName of wb.SheetNames) {
+            const sheet = wb.Sheets[sheetName];
+            const sheetRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: null });
+            for (const r of sheetRows) rows.push({ ...r, __sheet: sheetName });
+          }
+        }
+
+        for (const r of rows) {
+          const rawDate = findRowValue(r, DATE_COLUMN_PATTERNS);
+          const periodDate = parseDate(rawDate);
+          const periodDateStr = periodDate ? periodDate.toISOString().slice(0, 10) : null;
+
+          const row: FlatRow = {
+            period_date: periodDateStr,
+            employee_ref: (findRowValue(r, EMPLOYEE_REF_PATTERNS) ?? '') ? String(findRowValue(r, EMPLOYEE_REF_PATTERNS)) : null,
+            employee_name: (findRowValue(r, EMPLOYEE_NAME_PATTERNS) ?? '') ? String(findRowValue(r, EMPLOYEE_NAME_PATTERNS)) : null,
+            source_document: fileName,
+            currency: configuredCurrency,
+          };
+
+          let anyNumeric = false;
+          for (const [colCode, patterns] of Object.entries(STRUCTURED_COLUMN_PATTERNS)) {
+            const raw = findRowValue(r, patterns);
+            if (raw == null || raw === '') continue;
+            const n = Number(String(raw).replace(/[£$,]/g, ''));
+            if (!Number.isFinite(n)) continue;
+            row[colCode] = Math.round(n * 100) / 100;
+            columnsSeen.add(colCode);
+            anyNumeric = true;
+          }
+
+          // Skip empty header / totals rows — they never have an employee
+          // reference AND at least one numeric column in normal exports.
+          if (!anyNumeric && !row.employee_ref && !row.employee_name) continue;
+
+          if (periodDate && (periodDate < periodStart || periodDate > periodEnd)) {
+            outOfPeriod.push(row);
+          } else {
+            inPeriod.push(row);
+          }
+        }
+        continue;
+      }
+
+      // ── AI extraction: PDF / image payslips ───────────────────────────
+      const ext = await extractPayrollFromBase64(base64, mimeType, fileName, requiredColumns);
+      for (const c of ext.columnsDetected) columnsSeen.add(c);
+      for (const r of ext.rows) {
+        const periodDate = parseDate(r.periodDate);
+        const row: FlatRow = {
+          period_date: periodDate ? periodDate.toISOString().slice(0, 10) : null,
+          employee_ref: r.employeeRef || null,
+          employee_name: r.employeeName || null,
+          source_document: fileName,
+          currency: r.currency || configuredCurrency,
+        };
+        for (const [col, val] of Object.entries(r.columns)) {
+          row[col] = Math.round(Number(val) * 100) / 100;
+          columnsSeen.add(col);
+        }
+        if (periodDate && (periodDate < periodStart || periodDate > periodEnd)) {
+          outOfPeriod.push(row);
+        } else {
+          inPeriod.push(row);
+        }
+      }
+      if (ext.confidence < 0.3) {
+        issues.push({ file: fileName, issue: `Low payroll extraction confidence (${ext.confidence}) — review manually.` });
+      }
+      if (ext.notes) {
+        issues.push({ file: fileName, issue: `Extractor notes: ${ext.notes}` });
+      }
+    } catch (err: any) {
+      issues.push({ file: fileName, issue: err?.message || 'Extraction failed' });
+    }
+  }
+
+  // ── Column ordering: required_columns first, then any AI / CSV extras.
+  const columnOrder: string[] = [
+    ...requiredColumns,
+    ...[...columnsSeen].filter(c => !requiredColumns.includes(c)).sort(),
+  ];
+
+  // ── summary_totals = single-row data_table with one field per column.
+  const summaryRow: Record<string, any> = { label: 'Column Totals' };
+  for (const col of columnOrder) {
+    let total = 0;
+    for (const r of inPeriod) {
+      const v = Number(r[col]);
+      if (Number.isFinite(v)) total += v;
+    }
+    summaryRow[col] = Math.round(total * 100) / 100;
+  }
+  const summary = [summaryRow];
+
+  return {
+    action: 'continue',
+    outputs: {
+      data_table: inPeriod,
+      summary_totals: summary,
+      columns_detected: columnOrder,
+      out_of_period_rows: outOfPeriod,
+      out_of_period_count: outOfPeriod.length,
+      extraction_issues: issues,
+      // pass when at least one in-period row was extracted — zero rows
+      // means either no payroll exists in the period (unlikely) or the
+      // upload didn't contain anything usable.
+      pass_fail: inPeriod.length > 0 ? 'pass' : 'fail',
+    },
+  };
+}
+
+// ─── Action: payroll_totals_to_tb ───────────────────────────────────────────
+
+/**
+ * Reconcile each payroll column total against the trial balance
+ * account(s) the admin mapped to it. Deterministic, no AI — the whole
+ * point of this step is a cleanly auditable marker per column.
+ *
+ * TB lookup: the BankToTBSession for the engagement's client+period is
+ * authoritative. If the firm hasn't run Bank-to-TB yet there's no TB
+ * to reconcile against — we surface every column as "skipped" with a
+ * clear tooltip rather than failing the pipeline.
+ *
+ * Marker rules per column:
+ *   skipped — no mapping OR no TB session → grey dot, "TB unavailable"
+ *   green   — |payroll_total − tb_total| ≤ tolerance_gbp
+ *   red     — difference exceeds tolerance (goes to findings)
+ */
+async function handlePayrollTotalsToTb(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, inputs, config } = ctx;
+
+  // summary_totals is a single-row data_table [{ label, gross_pay, employer_ni, ... }]
+  const summaryRows: Array<Record<string, any>> = Array.isArray(inputs.summary_totals) ? inputs.summary_totals : [];
+  if (summaryRows.length === 0) {
+    return { action: 'error', outputs: {}, errorMessage: 'No summary totals provided for TB reconciliation.' };
+  }
+  const totalsRow = summaryRows[0];
+  const tolerance = Math.max(0, Number(inputs.tolerance_gbp ?? 1));
+
+  // column_account_map is either:
+  //   [{ column: "gross_pay", account_codes: "7001,7002" }]
+  //   or keyed object form: { gross_pay: ["7001","7002"] }
+  const rawMap = inputs.column_account_map;
+  const columnAccountMap: Record<string, string[]> = {};
+  if (Array.isArray(rawMap)) {
+    for (const m of rawMap) {
+      if (!m || !m.column) continue;
+      const codes = typeof m.account_codes === 'string'
+        ? m.account_codes.split(',').map((c: string) => c.trim()).filter(Boolean)
+        : Array.isArray(m.account_codes) ? m.account_codes.map((c: any) => String(c).trim()).filter(Boolean) : [];
+      columnAccountMap[String(m.column)] = codes;
+    }
+  } else if (rawMap && typeof rawMap === 'object') {
+    for (const [k, v] of Object.entries(rawMap)) {
+      if (Array.isArray(v)) columnAccountMap[k] = v.map(x => String(x).trim()).filter(Boolean);
+      else if (typeof v === 'string') columnAccountMap[k] = v.split(',').map(c => c.trim()).filter(Boolean);
+    }
+  }
+
+  // Look up the active BankToTBSession for this engagement's client+period.
+  const eng = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { clientId: true, periodId: true, firmId: true },
+  });
+  if (!eng) {
+    return { action: 'error', outputs: {}, errorMessage: 'Engagement not found for TB reconciliation.' };
+  }
+
+  const btbSession = await prisma.bankToTBSession.findFirst({
+    where: {
+      clientId: eng.clientId,
+      periodId: eng.periodId,
+      firmId:   eng.firmId,
+      status:   { in: ['active', 'complete'] },
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: { id: true },
+  });
+
+  const entries = btbSession
+    ? await prisma.trialBalanceEntry.findMany({
+        where: { sessionId: btbSession.id },
+        select: { accountCode: true, accountName: true, combinedDebit: true, combinedCredit: true },
+      })
+    : [];
+  const tbByCode = new Map<string, { name: string; net: number }>();
+  for (const e of entries) {
+    const net = Math.round(((Number(e.combinedDebit) || 0) - (Number(e.combinedCredit) || 0)) * 100) / 100;
+    // Expense accounts are debits-positive, so `net` is the figure to
+    // reconcile against payroll column totals (which are all positive).
+    tbByCode.set(e.accountCode, { name: e.accountName, net });
+  }
+
+  // Build the reconciliation data_table. One row per column. We don't
+  // reconcile the `label` / string-valued summary fields.
+  interface ReconRow {
+    column_code: string;
+    column_label: string;
+    payroll_total: number;
+    tb_total: number | null;
+    tb_accounts: string;
+    tb_account_names: string;
+    difference: number | null;
+    marker: 'green' | 'red' | 'skipped';
+    tooltip: string;
+  }
+  const reconciliation: ReconRow[] = [];
+
+  const COLUMN_LABELS: Record<string, string> = {
+    gross_pay:    'Gross Pay',
+    employer_ni:  'Employer NI',
+    employee_ni:  'Employee NI',
+    paye:         'PAYE',
+    bik:          'Benefits in Kind',
+    pension_ee:   'Pension (Employee)',
+    pension_er:   'Pension (Employer)',
+    student_loan: 'Student Loan',
+    statutory_pay:'Statutory Pay',
+    net_pay:      'Net Pay',
+    other:        'Other',
+  };
+
+  for (const [col, raw] of Object.entries(totalsRow)) {
+    // Skip non-numeric metadata fields.
+    if (col === 'label' || col === 'source_document' || col === 'currency') continue;
+    const payrollTotal = Math.round((Number(raw) || 0) * 100) / 100;
+    const mappedCodes = columnAccountMap[col] || [];
+    const columnLabel = COLUMN_LABELS[col] || col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+    if (!btbSession) {
+      reconciliation.push({
+        column_code: col,
+        column_label: columnLabel,
+        payroll_total: payrollTotal,
+        tb_total: null,
+        tb_accounts: mappedCodes.join(', '),
+        tb_account_names: '',
+        difference: null,
+        marker: 'skipped',
+        tooltip: 'No active Bank-to-TB session for this engagement — reconcile later once the TB is loaded.',
+      });
+      continue;
+    }
+
+    if (mappedCodes.length === 0) {
+      reconciliation.push({
+        column_code: col,
+        column_label: columnLabel,
+        payroll_total: payrollTotal,
+        tb_total: null,
+        tb_accounts: '',
+        tb_account_names: '',
+        difference: null,
+        marker: 'skipped',
+        tooltip: `No TB account mapped to "${columnLabel}". Map one in Methodology Admin → Firm-Wide Assumptions → Payroll Mapping, or override on this engagement.`,
+      });
+      continue;
+    }
+
+    let tbTotal = 0;
+    const mappedNames: string[] = [];
+    const missingCodes: string[] = [];
+    for (const code of mappedCodes) {
+      const hit = tbByCode.get(code);
+      if (hit) {
+        tbTotal += hit.net;
+        mappedNames.push(hit.name);
+      } else {
+        missingCodes.push(code);
+      }
+    }
+    tbTotal = Math.round(tbTotal * 100) / 100;
+    const difference = Math.round((payrollTotal - tbTotal) * 100) / 100;
+    const agrees = Math.abs(difference) <= tolerance;
+
+    const accountsLabel = mappedCodes.map(c => {
+      const hit = tbByCode.get(c);
+      return hit ? `${c} (${hit.name})` : `${c} (not in TB)`;
+    }).join(', ');
+
+    let tooltip: string;
+    if (agrees) {
+      tooltip = `Agrees to TB — ${accountsLabel}`;
+    } else {
+      const sign = difference > 0 ? '+' : '−';
+      tooltip = `${accountsLabel}\u00A0\u2014 difference ${sign}£${Math.abs(difference).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      if (missingCodes.length > 0) {
+        tooltip += ` (account${missingCodes.length === 1 ? '' : 's'} not found in TB: ${missingCodes.join(', ')})`;
+      }
+    }
+
+    reconciliation.push({
+      column_code: col,
+      column_label: columnLabel,
+      payroll_total: payrollTotal,
+      tb_total: tbTotal,
+      tb_accounts: mappedCodes.join(', '),
+      tb_account_names: mappedNames.join(', '),
+      difference,
+      marker: agrees ? 'green' : 'red',
+      tooltip,
+    });
+  }
+
+  const red = reconciliation.filter(r => r.marker === 'red');
+  const green = reconciliation.filter(r => r.marker === 'green');
+
+  const findings = red.map(r => ({
+    column_code: r.column_code,
+    column_label: r.column_label,
+    payroll_total: r.payroll_total,
+    tb_total: r.tb_total,
+    tb_accounts: r.tb_account_names || r.tb_accounts,
+    difference: r.difference,
+    summary: `${r.column_label} — payroll total £${r.payroll_total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} vs TB £${(r.tb_total ?? 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (difference ${(r.difference ?? 0) >= 0 ? '+' : ''}£${(r.difference ?? 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}).`,
+    recommended_resolution: 'Book to Error Schedule, mark as "In TB (already accounted for elsewhere)", or record a rationale in Evidence & Conclusions.',
+  }));
+
+  // Referencing config.userId / config.firmId here is just to keep the
+  // linter happy — they're used for audit trail in other handlers.
+  void config;
+
+  return {
+    action: 'continue',
+    outputs: {
+      reconciliation,
+      data_table: reconciliation,
+      red_count: red.length,
+      green_count: green.length,
+      findings,
+      pass_fail: red.length === 0 ? 'pass' : 'fail',
+    },
   };
 }

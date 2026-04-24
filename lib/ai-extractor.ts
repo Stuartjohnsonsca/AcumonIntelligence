@@ -1025,3 +1025,203 @@ export async function extractAccrualSupportingEvidence(
     };
   }
 }
+
+// ─── Periodic Payroll Extraction ───────────────────────────────────────────
+
+export interface PayrollRow {
+  periodDate: string | null;          // ISO yyyy-mm-dd — pay date for the run this row came from
+  employeeRef: string | null;         // employee number / payroll ID
+  employeeName: string | null;
+  columns: Record<string, number>;    // keyed by column code (gross_pay, employer_ni, paye, bik, other, …)
+  currency: string | null;
+  notes: string | null;
+}
+
+export interface PayrollExtractResult {
+  rows: PayrollRow[];
+  columnsDetected: string[];          // codes in the order we saw them on the document
+  confidence: number;                  // 0..1 across the whole document
+  notes: string | null;
+  usage: AiTokenUsage;
+}
+
+const DEFAULT_PAYROLL_COLUMNS = ['gross_pay', 'employer_ni', 'paye', 'bik', 'other'];
+
+const PAYROLL_COLUMN_LABELS: Record<string, string> = {
+  gross_pay:    'Gross Pay',
+  employer_ni:  'Employer NI',
+  paye:         'PAYE (Income Tax withheld)',
+  bik:          'Benefits in Kind',
+  other:        'Other',
+  net_pay:      'Net Pay',
+  employee_ni:  'Employee NI',
+  pension_ee:   'Pension (Employee)',
+  pension_er:   'Pension (Employer)',
+  student_loan: 'Student Loan',
+  statutory_pay:'Statutory Pay (SSP / SMP / SPP)',
+};
+
+function buildPayrollPrompt(requiredColumns: string[]): string {
+  const cols = (requiredColumns.length > 0 ? requiredColumns : DEFAULT_PAYROLL_COLUMNS);
+  const colLines = cols.map(c => `  - "${c}"  (${PAYROLL_COLUMN_LABELS[c] || c})`).join('\n');
+  return `You are extracting structured payroll data from a payslip, payroll report or HMRC FPS submission.
+Return ONLY JSON (no prose, no markdown fences) matching this schema:
+
+{
+  "rows": [
+    {
+      "periodDate": "YYYY-MM-DD" | null,        // pay date for the run this row relates to
+      "employeeRef": string | null,              // payroll ID / employee number
+      "employeeName": string | null,
+      "columns": { "<column_code>": number },   // one entry per numeric column. Missing values = 0.
+      "currency": string | null,                 // ISO code if visible on the document
+      "notes": string | null
+    }
+  ],
+  "columnsDetected": [string],                   // every column code you used, in the order they appear on the document
+  "confidence": number,                          // 0..1 — how confident you are in the full extraction
+  "notes": string | null                         // free text for the reviewer (e.g. "two employees had their NI category swapped; flagged for review")
+}
+
+Required columns (emit each as a number on every row — zero if the document shows no value):
+${colLines}
+
+You may detect additional columns — include them with snake_case codes (e.g. "employee_ni", "pension_er", "statutory_pay"). Use the provided codes above when the concept matches; invent new codes only for genuinely new concepts.
+
+Principles:
+- One row per payslip (one employee, one pay run). If a single PDF contains multiple payslips, emit one row per payslip.
+- A multi-tab Excel / CSV export typically has one row per employee-period already — parse it row by row.
+- Dates must be ISO yyyy-mm-dd. If only the month is shown (e.g. "June 2026"), use the last day of that month.
+- Amounts are numbers (no currency symbols, no thousand separators). Use a dot as the decimal separator.
+- If an amount is not on the document, use 0 (not null) so the downstream totalling logic doesn't break.
+- If a field is genuinely unknowable (employee name redacted on anonymised sample), use null.`;
+}
+
+/**
+ * Extract structured payroll data from a single document for the Periodic
+ * Payroll Test pipeline. Handles PDF payslips, image payslips, and falls
+ * through to the caller (CSV / XLSX) if the mime type is structured —
+ * those are parsed deterministically outside the AI call.
+ *
+ * Shares model selection, PDF handling and retry logic with the other
+ * domain extractors.
+ */
+export async function extractPayrollFromBase64(
+  base64Data: string,
+  mimeType: string,
+  fileName: string,
+  requiredColumns: string[] = DEFAULT_PAYROLL_COLUMNS,
+): Promise<PayrollExtractResult> {
+  const prompt = buildPayrollPrompt(requiredColumns);
+
+  type ContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
+  let contentParts: ContentPart[];
+  let inputMode = 'image';
+
+  if (isPdf(mimeType)) {
+    const pdfBuffer = Buffer.from(base64Data, 'base64');
+    const pdfContent = await processPdf(pdfBuffer, 20);
+    if (pdfContent.mode === 'text' && pdfContent.text) {
+      inputMode = 'pdf-text';
+      contentParts = [
+        { type: 'text', text: `File name: ${fileName}\n\nDocument text content (extracted from PDF, ${pdfContent.pageCount} pages):\n\n${pdfContent.text}\n\n${prompt}` },
+      ];
+    } else {
+      inputMode = 'pdf-raw';
+      contentParts = [
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+        { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
+      ];
+    }
+  } else {
+    contentParts = [
+      { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+      { type: 'text', text: `File name: ${fileName}\n\n${prompt}` },
+    ];
+  }
+
+  console.log(`[Payroll:AI] Starting extraction | file=${fileName} | mode=${inputMode}`);
+
+  const requireVision = inputMode !== 'pdf-text';
+  const models = selectModels(EXTRACTION_PRIORITIES, requireVision);
+  let result: OpenAI.Chat.Completions.ChatCompletion | null = null;
+  let usedModel = models[0];
+  const errors: string[] = [];
+
+  for (const modelId of models) {
+    usedModel = modelId;
+    try {
+      result = await retryWithBackoff(
+        () => client.chat.completions.create({
+          model: modelId,
+          messages: [{ role: 'user', content: contentParts }],
+          // Payroll documents can list dozens of employees; allow more
+          // room than the accruals / invoice extractors.
+          max_tokens: 8192,
+        }),
+        `payroll:${fileName}`,
+      );
+      break;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      errors.push(`${modelId}: ${errMsg}`);
+      console.warn(`[Payroll:AI] Model ${modelId} failed for ${fileName}: ${errMsg}`);
+      if (isModelUnavailableError(err)) { markModelUnavailable(modelId); continue; }
+      if (err instanceof Error && err.message.includes('400')) { continue; }
+      throw err;
+    }
+  }
+
+  if (!result) {
+    throw new Error(`[payroll:${fileName}] All models failed. ${errors.join(' | ')}`);
+  }
+
+  const usage = extractUsageMetadata(result);
+  usage.model = usedModel;
+
+  const text = result.choices[0]?.message?.content || '';
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/) || cleaned.match(/(\{[\s\S]*\})/);
+  const jsonText = jsonMatch ? jsonMatch[1] : cleaned;
+
+  try {
+    const parsed = JSON.parse(jsonText.trim());
+    const rawRows = Array.isArray(parsed.rows) ? parsed.rows : [];
+    const rows: PayrollRow[] = rawRows.map((r: any) => {
+      const cols: Record<string, number> = {};
+      const srcCols = (r && typeof r.columns === 'object' && r.columns !== null) ? r.columns : {};
+      for (const [k, v] of Object.entries(srcCols)) {
+        const n = Number(v);
+        if (Number.isFinite(n)) cols[String(k)] = Math.round(n * 100) / 100;
+      }
+      return {
+        periodDate:   r?.periodDate || null,
+        employeeRef:  r?.employeeRef != null ? String(r.employeeRef) : null,
+        employeeName: r?.employeeName != null ? String(r.employeeName) : null,
+        columns:      cols,
+        currency:     r?.currency || null,
+        notes:        r?.notes || null,
+      };
+    });
+    const detected = Array.isArray(parsed.columnsDetected)
+      ? parsed.columnsDetected.map((c: any) => String(c))
+      : Array.from(new Set(rows.flatMap(r => Object.keys(r.columns))));
+    return {
+      rows,
+      columnsDetected: detected,
+      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
+      notes: parsed.notes ?? null,
+      usage,
+    };
+  } catch (parseError) {
+    const snippet = text.substring(0, 200).replace(/\n/g, '\\n');
+    console.error(`[Payroll:AI] JSON parse failed | file=${fileName} | error=${parseError instanceof Error ? parseError.message : 'Unknown'} | snippet="${snippet}"`);
+    return {
+      rows: [],
+      columnsDetected: [],
+      confidence: 0,
+      notes: 'Extraction failed to parse',
+      usage,
+    };
+  }
+}
