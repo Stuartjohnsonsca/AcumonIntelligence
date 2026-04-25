@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown, Copy, Check, Sparkles } from 'lucide-react';
 import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { slugifyQuestionText } from '@/lib/formula-engine';
+import { DISPLAY_FORMAT_OPTIONS } from '@/lib/format-display';
 import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 
 interface Props {
@@ -729,6 +730,37 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                               </div>
                             )}
 
+                            {/* Display format — applies to formula / number /
+                                currency cells. Storage stays raw, only the
+                                schedule's render layer formats. So a cell
+                                that computes to 0.343 can show as "0.343%"
+                                without breaking other formulas that read
+                                the underlying number. */}
+                            {(q.inputType === 'formula' || q.inputType === 'number' || q.inputType === 'currency') && (
+                              <div className="col-span-2 space-y-1">
+                                <label className="block text-xs text-slate-500 font-medium">Display Format</label>
+                                <select
+                                  value={(q as any).displayFormat || ''}
+                                  onChange={e => updateQuestion(q.id, ({ displayFormat: e.target.value || undefined } as any))}
+                                  className="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                >
+                                  {DISPLAY_FORMAT_OPTIONS.map(opt => (
+                                    <option key={opt.value || 'raw'} value={opt.value}>
+                                      {opt.label} — e.g. {opt.example}
+                                    </option>
+                                  ))}
+                                </select>
+                                <p className="text-[10px] text-slate-500">
+                                  Only changes how the cell DISPLAYS the value —
+                                  storage and references to this field from
+                                  other formulas / templates stay raw. Tick
+                                  <em> Percent</em> when the formula already
+                                  multiplies by 100; the engine doesn&rsquo;t
+                                  multiply again.
+                                </p>
+                              </div>
+                            )}
+
                             {/* Number validation */}
                             {(q.inputType === 'number' || q.inputType === 'currency') && (
                               <div className="col-span-2 grid grid-cols-3 gap-2">
@@ -884,6 +916,27 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                                   other questions by their slug, Opening-tab data as <code>{'{engagement.*}'}</code>,
                                                   or any firm variable by name.
                                                 </p>
+                                              </div>
+                                            )}
+                                            {/* Per-cell display format. Same vocabulary as the
+                                                row-level format dropdown; lets one cell of a
+                                                multi-column row render as percent while a
+                                                neighbour shows currency. Only visible for the
+                                                inputType families where formatting is meaningful. */}
+                                            {(cfg?.inputType === 'formula' || cfg?.inputType === 'number' || cfg?.inputType === 'currency') && (
+                                              <div className="space-y-1">
+                                                <label className="block text-[10px] text-slate-500 font-medium">Cell display format</label>
+                                                <select
+                                                  value={(cfg as any)?.displayFormat || ''}
+                                                  onChange={e => updateRowCol(ci, ({ displayFormat: e.target.value || undefined } as any))}
+                                                  className="w-full text-[10px] border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
+                                                >
+                                                  {DISPLAY_FORMAT_OPTIONS.map(opt => (
+                                                    <option key={opt.value || 'raw'} value={opt.value}>
+                                                      {opt.label} — e.g. {opt.example}
+                                                    </option>
+                                                  ))}
+                                                </select>
                                               </div>
                                             )}
                                             {/* Per-cell conditional —

@@ -13,6 +13,7 @@ import { evaluateRulesForSchedule, type ValidationRule, type RuleEvaluation } fr
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 import { DEFAULT_COLUMN_HEADERS } from '@/types/methodology';
 import { subscribeTemplateRefsChanged } from '@/lib/template-references-bus';
+import { formatDisplayValue } from '@/lib/format-display';
 
 /**
  * Endpoint → `questionnaires.<key>` mapping for the merge-field path shown
@@ -790,6 +791,12 @@ export function DynamicAppendixForm({
                                     {(() => {
                                       const v = computedValues[cellKey] ?? values[cellKey];
                                       if (v === undefined || v === null || v === '') return <span className="text-purple-400 italic">—</span>;
+                                      // Apply per-cell display format when configured —
+                                      // takes precedence over the default 2dp number
+                                      // rendering. Empty / unset format falls back to
+                                      // the historic toLocaleString behaviour.
+                                      const fmt = (rowColCfg as any)?.displayFormat as string | undefined;
+                                      if (fmt) return String(formatDisplayValue(v, fmt));
                                       if (typeof v === 'number') return v.toLocaleString('en-GB', { maximumFractionDigits: 2 });
                                       return String(v);
                                     })()}
@@ -929,7 +936,16 @@ export function DynamicAppendixForm({
                         value={values[q.id] ?? null}
                         onChange={v => handleChange(q.id, v)}
                         dropdownOptions={q.dropdownOptions}
-                        computedValue={computedValues[q.id]}
+                        // Computed value passed PRE-FORMATTED so display
+                        // shows e.g. "0.343%" while computedValues stays
+                        // raw for cross-references. Formatting only fires
+                        // when q.displayFormat is set; otherwise the raw
+                        // value passes through.
+                        computedValue={
+                          computedValues[q.id] !== undefined
+                            ? (formatDisplayValue(computedValues[q.id], (q as any).displayFormat) as any)
+                            : undefined
+                        }
                         // Treat as formula (read-only, computed value shown)
                         // when any of:
                         //   - question type is 'formula'

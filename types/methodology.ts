@@ -326,6 +326,17 @@ export interface TemplateQuestion {
   validationMin?: number;
   validationMax?: number;
   validationDecimals?: number;
+  /** How to format the value when rendering it (admin display ONLY —
+   *  storage and cross-references stay raw). Most relevant for
+   *  formula / number / currency cells where the auditor wants the
+   *  output dressed up:
+   *    'percent' / 'percent:N'   →  "12.345%" (already-percent value;
+   *                                  N defaults to 2)
+   *    'currency' / 'currency:N' →  "£1,234.50" (£ prefix, N defaults
+   *                                  to 0; negatives in parens)
+   *    'number' / 'number:N'     →  "1,234.50" (locale-formatted)
+   *  Empty / unset = raw value (the historic behaviour). */
+  displayFormat?: string;
   /** Show this question only when another question on the same
    *  schedule satisfies the operator+value check. `operator` defaults
    *  to 'eq' when absent for back-compat with the original
@@ -370,6 +381,10 @@ export interface TemplateQuestionColumn {
    *  elsewhere in the schedule or firm variables) — just scoped to
    *  one cell in a multi-column row. */
   formulaExpression?: string;
+  /** Per-cell display format. Same vocabulary as the row-level
+   *  TemplateQuestion.displayFormat. Lets one cell of a multi-column
+   *  row render as "12.5%" while the next cell renders as "£1,234". */
+  displayFormat?: string;
   validationMin?: number;
   validationMax?: number;
   placeholder?: string;
