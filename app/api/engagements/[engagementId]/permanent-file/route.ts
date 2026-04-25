@@ -60,15 +60,40 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   if (__eqrGuard instanceof NextResponse) return __eqrGuard;
 
   const body = await req.json();
-  const { data, fieldMeta, sectionKey } = body as { data: Record<string, unknown>; fieldMeta?: Record<string, unknown>; sectionKey?: string };
+  const { data, fieldMeta, sectionKey, replace } = body as { data: Record<string, unknown>; fieldMeta?: Record<string, unknown>; sectionKey?: string; replace?: boolean };
 
-  // Save form data — use explicit sectionKey if provided, otherwise default to 'all'
+  // Save form data — use explicit sectionKey if provided, otherwise
+  // default to 'all'.
+  //
+  // ── MERGE semantics on update ──────────────────────────────────────
+  // Historical bug: this handler did `update: { data: data as object }`
+  // which REPLACED the entire JSON blob with whatever the caller sent.
+  // Multiple components share the 'all' bucket (any PUT without an
+  // explicit sectionKey lands there) and partial saves from one writer
+  // silently wiped keys the other writers cared about. The most visible
+  // symptom was the Permanent File's Entity Address Block (read by
+  // `{{client.registeredAddress}}` in document templates) disappearing
+  // after the user entered it — a later autosave from another path
+  // trampled the row.
+  //
+  // The new default merges the incoming `data` shallowly over the
+  // existing row's data, so callers can update their own fields without
+  // wiping keys they don't know about. Callers that genuinely want to
+  // replace the whole row (rare — only when the caller is authoritative
+  // for the entire section) can opt in with `{ replace: true }`.
   if (data && typeof data === 'object') {
     const key = sectionKey || 'all';
+    const existing = await prisma.auditPermanentFile.findUnique({
+      where: { engagementId_sectionKey: { engagementId, sectionKey: key } },
+    });
+    const existingData = (existing?.data && typeof existing.data === 'object' && !Array.isArray(existing.data))
+      ? existing.data as Record<string, unknown>
+      : {};
+    const merged: Record<string, unknown> = replace ? data : { ...existingData, ...data };
     await prisma.auditPermanentFile.upsert({
       where: { engagementId_sectionKey: { engagementId, sectionKey: key } },
-      create: { engagementId, sectionKey: key, data: data as object },
-      update: { data: data as object },
+      create: { engagementId, sectionKey: key, data: merged as object },
+      update: { data: merged as object },
     });
   }
 
