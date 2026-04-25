@@ -273,18 +273,33 @@ export async function POST(req: NextRequest) {
   // Per-section column-headers catalog. The AI uses this to resolve
   // queries like "the WP Reference column", "the Conclusion column on
   // the procedures section" — matching admin descriptions to header
-  // text the firm has actually configured. Indexed by sequence: col0
-  // is the row-label column (rendered as {{question}} inside the
-  // loop), col1..colN are the editable cells (rendered as {{col1}}..
-  // {{colN}} inside the loop).
+  // text the firm has actually configured.
+  //
+  // Storage layout (CRITICAL — admins and storage disagree on whether
+  // the label column counts as a column):
+  //   • header[0] = label column → render as {{question}} (it's the
+  //     row's questionText, NOT a stored cell)
+  //   • header[1] → cell stored at <id>_col1 → render as {{col1}} (or
+  //     a slug alias if the header text is set)
+  //   • header[2] → cell stored at <id>_col2 → render as {{col2}}
+  //   • etc.
+  // So the FIRST data cell — the cell admins often call "column 2"
+  // because they count the label column as #1 — is col1, not col2.
+  // The AI must look up the header in this catalog rather than
+  // mapping admin "column N" speech to col<N>.
+  function slugifyHeader(h: string): string {
+    return String(h || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  }
   const sectionColumnsCatalog = sectionColumns.length === 0
     ? '  (no multi-column sections configured)'
     : sectionColumns.map(s => {
         const headers = s.columnHeaders.map((h, i) => {
-          const placeholder = i === 0 ? '{{question}}' : `{{col${i}}}`;
-          return `col${i}=${placeholder}${h ? ' "' + h.replace(/"/g, '\\"') + '"' : ''}`;
-        }).join(', ');
-        return `- questionnaires.${s.questionnaireKey} · "${s.sectionName}" (layout=${s.layout}): ${headers}`;
+          if (i === 0) return `col0={{question}} "${(h || 'Item').replace(/"/g, '\\"')}" [LABEL — row question text, not a cell]`;
+          const slug = slugifyHeader(h);
+          const slugAlias = slug ? `, alias {{${slug}}}` : '';
+          return `col${i}={{col${i}}}${slugAlias} "${(h || '').replace(/"/g, '\\"')}"`;
+        }).join('\n    ');
+        return `- questionnaires.${s.questionnaireKey} · "${s.sectionName}" (layout=${s.layout}):\n    ${headers}`;
       }).join('\n');
 
   const menu = `Static catalog (fixed paths):
@@ -439,15 +454,27 @@ Example E — "Rows in a 4-column section where column 2 is 'Y', render columns 
   Example B.
 ============================================================
 
+OUTPUT FORMAT RULES (always apply):
+- Snippets are HTML + Handlebars. NEVER emit Markdown syntax. \`**bold**\`, \`__italic__\`, \`# Heading\`, \`* bullet\` all render as LITERAL TEXT in the editor — they are bugs, not formatting. Use <strong>…</strong>, <em>…</em>, <h2>…</h2>, <ul><li>…</li></ul> instead.
+- Inside a <table>, when {{#each}} / {{/each}} / {{#if}} / {{/if}} sit DIRECTLY between <table>/<tbody>/<thead>/<tr>/<tfoot>, wrap them in HTML comments — \`<!--{{#each …}}-->\` etc. The renderer strips the comments before compiling. Inside <td>, <p>, <div>, <li>, <span>, no wrapper is needed.
+
 Choose the right idiom:
 - Admin says "table of <section name>" → Example B shape (filterBySection, sometimes filterWhere for Y-only items).
 - Admin says "list each …" → Example A shape (<ul><li>).
 - Admin says "each section's …" (across all sections) → plain {{#each asList}}.
 - Admin describes a single value/question → a single {{placeholder}}, wrapped in a formatter when useful.
 - Admin asks for a total / sum → sumField / sumFieldWhere.
-- Admin says "where column N is Y/Yes" / "rows with col N = …" / "only where the <header> column is …" → Example E shape. Use filterWhere on "col<N>" and render with {{col1}} / {{col2}} / {{col3}} / {{col4}} / {{col5}} inside the loop. The filter field name is literally "col2" (or col1 / col3 / …), matching how the per-column cells are stored.
-- Admin names a column by its HEADER TEXT (e.g. "the Conclusion column", "the WP Reference column") → consult the "Section column headers" catalog above to map that header to its col<N> position, then render {{col<N>}} inside the loop. If multiple sections share the same header text, ask the admin to specify the section in your rationale and pick the most likely.
-- Admin asks for "the column headers" or "the field names of <section>" → emit a <thead><tr> row pulling header strings literally from the Section column headers catalog (those header strings are STATIC text, not Handlebars references).
+- Admin names a column by its HEADER TEXT (e.g. "the Conclusion column", "the WP Reference column", "the Threat column") → CONSULT THE SECTION COLUMN HEADERS CATALOG ABOVE. The catalog tells you which col<N> each header maps to, AND the slug alias to prefer. NEVER infer from a count like "column 2" — the admin and storage disagree on whether the label column counts.
+
+CRITICAL — column-index off-by-one rule:
+The label column (col0) is the row's question text and has NO stored cell. Storage cells are col1, col2, col3, ... The admin's "column 2" almost always means the SECOND VISIBLE COLUMN, which is col1 in storage (because the label column is column 1 to them). When the admin says "column 2 called Threats", the catalog will show col1="Threat" — use col1, not col2. ALWAYS resolve the header text via the catalog rather than the admin's column number.
+
+Prefer the SLUG alias over col<N> when both exist:
+  good:  {{#each (filterWhere (filterBySection questionnaires.ethics.asList "Non Audit Services") "threat" "eq" "Y")}}<tr><td>{{threat_description}}</td><td>{{safeguard}}</td></tr>{{/each}}
+  okay:  {{#each (filterWhere (filterBySection questionnaires.ethics.asList "Non Audit Services") "col1" "eq" "Y")}}<tr><td>{{col2}}</td><td>{{col3}}</td></tr>{{/each}}
+The slug form is admin-readable and survives column reordering; the col<N> form is a fallback when no header is set.
+
+- Admin asks for "the column headers" or "the field names of <section>" → emit a <thead><tr> row pulling header strings literally from the Section column headers catalog (those header strings are STATIC text inside <th>, not Handlebars references).
 
 CONSTRUCTIVE FALLBACKS — DO NOT GIVE UP EASILY:
 The catalog is comprehensive — every static path PLUS every firm-specific question PLUS every section + column-header. Before returning the empty "no match" response, try:

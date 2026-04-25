@@ -508,9 +508,27 @@ export async function buildTemplateContext(engagementId: string, opts: { include
     },
   });
   const schemaByType = new Map<string, any[]>();
+  // Per-templateType sectionMeta — keyed first by templateType, then
+  // by the literal sectionKey. Carries each section's columnHeaders so
+  // enrichQuestionnaire can emit header-slug aliases on each asList
+  // row (e.g. {{threat}} / {{safeguard}} alongside {{col1}} / {{col2}}).
+  // Templates with the legacy flat-array shape have no sectionMeta and
+  // therefore no slug aliases — they keep working through col<N>.
+  const sectionMetaByType = new Map<string, Record<string, any>>();
   for (const s of qSchemas) {
-    const items = Array.isArray(s.items) ? s.items as any[] : [];
-    schemaByType.set(s.templateType, items);
+    if (Array.isArray(s.items)) {
+      schemaByType.set(s.templateType, s.items as any[]);
+      sectionMetaByType.set(s.templateType, {});
+    } else if (s.items && typeof s.items === 'object') {
+      const items = s.items as any;
+      const questions = Array.isArray(items.questions) ? items.questions
+        : Array.isArray(items) ? items : [];
+      schemaByType.set(s.templateType, questions);
+      sectionMetaByType.set(s.templateType, (items.sectionMeta && typeof items.sectionMeta === 'object') ? items.sectionMeta : {});
+    } else {
+      schemaByType.set(s.templateType, []);
+      sectionMetaByType.set(s.templateType, {});
+    }
   }
 
   /** Map a `*_questions` templateType to both its Prisma model name
@@ -573,8 +591,47 @@ export async function buildTemplateContext(engagementId: string, opts: { include
    */
   function enrichQuestionnaire(raw: Record<string, any>, schemaTemplateType: string): Record<string, any> {
     const schema = schemaByType.get(schemaTemplateType) || [];
+    const sectionMeta = sectionMetaByType.get(schemaTemplateType) || {};
     const out: Record<string, any> = { ...raw };
     const bySection: Record<string, Record<string, any>> = {};
+
+    /**
+     * For a given section, return a Map<colKey, slug[]> — e.g. for the
+     * Ethics "Non Audit Services" section with columnHeaders
+     * ["Item", "Threat", "Threat Description", "Safeguard"], emit:
+     *   col1 → ["threat"]
+     *   col2 → ["threat_description"]
+     *   col3 → ["safeguard"]
+     * (col0 is the question-text column, no storage column to alias.)
+     *
+     * Returns an empty Map when the section has no metadata or no
+     * column headers — older templates without sectionMeta keep
+     * working through the existing col<N> aliases unchanged.
+     */
+    function headerSlugsForSection(sectionKeyRaw: string | null | undefined): Map<string, string[]> {
+      const out = new Map<string, string[]>();
+      if (!sectionKeyRaw) return out;
+      // sectionMeta may be keyed by the literal sectionKey OR by the
+      // slugified form — try both for tolerance to historical data.
+      const meta = sectionMeta[sectionKeyRaw] || sectionMeta[slugify(sectionKeyRaw)];
+      const headers = Array.isArray(meta?.columnHeaders) ? meta.columnHeaders : null;
+      if (!headers || headers.length < 2) return out;
+      const seen = new Map<string, number>();
+      for (let i = 1; i < headers.length; i++) {
+        const slug = slugify(String(headers[i] || ''));
+        if (!slug || slug === 'section') continue;
+        // Same header text used twice in the same section → suffix the
+        // duplicate so only the first wins the bare slug, the second
+        // becomes <slug>_2 etc. Avoids silent overwrites.
+        const count = (seen.get(slug) || 0) + 1;
+        seen.set(slug, count);
+        const finalSlug = count === 1 ? slug : `${slug}_${count}`;
+        const colKey = `col${i}`;
+        if (!out.has(colKey)) out.set(colKey, []);
+        out.get(colKey)!.push(finalSlug);
+      }
+      return out;
+    }
     interface ListItem {
       question: string; key: string; answer: any;
       section: string | null; sortOrder: number;
@@ -635,6 +692,15 @@ export async function buildTemplateContext(engagementId: string, opts: { include
       // Also attached to the asList item as `col1` / `col2` / ... so
       // {{#each asList}} loops can render an N-column table cleanly.
       const colValues: Record<string, any> = {};
+      // Header-slug aliases keyed by colN — populated below from
+      // section column headers so {{threat}}, {{threat_description}},
+      // {{safeguard}} resolve to the underlying col1/col2/col3 cell
+      // values inside the asList loop. Computed once per question
+      // because all rows in a section share the same headers.
+      const slugMap = headerSlugsForSection(item.sectionKey);
+      // Header-slug values to spread on the asList item — keyed by
+      // header slug, valued by the cell value at the matching col<N>.
+      const slugValues: Record<string, any> = {};
       for (const [rk, rv] of Object.entries(raw)) {
         if (!rk.startsWith(`${item.id}_col`)) continue;
         const n = Number(rk.slice(`${item.id}_col`.length));
@@ -649,6 +715,14 @@ export async function buildTemplateContext(engagementId: string, opts: { include
           if (!bySection[sec]) bySection[sec] = {};
           bySection[sec][`${keyResolved}_${colKey}`] = rv;
         }
+        // Header-slug aliases for THIS column. A column may carry one
+        // (or rarely several) slugs depending on whether the section's
+        // header text was unique. They live alongside col1/col2/col3
+        // on the asList row.
+        const slugs = slugMap.get(colKey);
+        if (slugs && slugs.length > 0) {
+          for (const slug of slugs) slugValues[slug] = rv;
+        }
       }
 
       // Every question — answered or not — goes into asList so
@@ -662,7 +736,8 @@ export async function buildTemplateContext(engagementId: string, opts: { include
         answer: value ?? null,
         section: item.sectionKey ? String(item.sectionKey) : null,
         sortOrder: Number(item.sortOrder) || 0,
-        ...colValues, // col1, col2, col3 ... spread alongside 'answer'
+        ...colValues,   // col1, col2, col3 ... spread alongside 'answer'
+        ...slugValues,  // header-slug aliases (e.g. threat / safeguard)
       });
     }
     asList.sort((a, b) => (a.sortOrder - b.sortOrder) || a.question.localeCompare(b.question));
