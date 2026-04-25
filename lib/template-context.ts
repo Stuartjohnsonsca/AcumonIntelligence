@@ -752,7 +752,24 @@ export async function buildTemplateContext(engagementId: string, opts: { include
       const keyResolved = typeof item.key === 'string' && item.key.trim()
         ? item.key
         : (slugifyQuestionText(item.questionText) || String(item.id));
-      const rawValue = raw[item.id];
+      // Storage convention varies by renderer:
+      //   • DynamicAppendixForm-based tabs save answers under the
+      //     question UUID — raw[item.id]
+      //   • Bespoke tabs (the Materiality tab is the loud example,
+      //     but Trial Balance's tax-line picker and a couple of
+      //     legacy schedules behave the same way) save directly
+      //     under the schema's slug key — raw[item.key] /
+      //     raw[questionTextSlug]
+      // We try the UUID first (it's the canonical / dynamic form),
+      // then fall back to whichever slug is set so the bespoke
+      // renderers' answers also flow through enrichment.
+      // Without this fallback, every Materiality-tab field showed
+      // up as null on `questionnaires.materiality.<key>` —
+      // {{#if (eq questionnaires.materiality.basisChanged "Y")}}
+      // never matched even when the auditor had clearly answered Y.
+      const rawValue = raw[item.id]
+        ?? (item.key ? raw[item.key] : undefined)
+        ?? raw[keyResolved];
       // Yes/No normalisation: when a question's inputType says it's a
       // yes/no variant, canonicalise the saved value to "Y" / "N" /
       // null so document templates can write `(eq value "Y")`
