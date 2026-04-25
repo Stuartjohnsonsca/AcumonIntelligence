@@ -123,8 +123,9 @@ export async function POST(req: Request) {
   ];
   for (const f of ENGAGEMENT_FIELDS) catalogue.push({ id: f.id, label: f.label, source: 'engagement' });
 
-  // 4. Firm variables — pulled from the Firm Variables template if
-  //    present. Shape is { name, value }[].
+  // 4. Firm variables — pulled from the firm_variables risk-table
+  //    row + the legacy firm_variables methodology template (older
+  //    firms may still hold variables there). Shape is { name }[].
   try {
     const fvTemplate = await prisma.methodologyTemplate.findFirst({
       where: { firmId: session.user.firmId, templateType: 'firm_variables' },
@@ -134,6 +135,23 @@ export async function POST(req: Request) {
     for (const item of items) {
       if (!item?.name) continue;
       catalogue.push({ id: String(item.name), label: `Firm variable — ${item.name}`, source: 'firm' });
+    }
+  } catch {}
+  // 5. Min-fee-per-hour by audit type (Firm Wide Assumptions →
+  //    "Minimum Average Fee per Hour"). Surface every audit type
+  //    so formulas can pick the right one for the engagement context.
+  try {
+    const minRow = await prisma.methodologyRiskTable.findFirst({
+      where: { firmId: session.user.firmId, tableType: 'min_avg_fee_per_hour' },
+      select: { data: true },
+    });
+    const byAuditType = (minRow?.data as any)?.byAuditType;
+    if (byAuditType && typeof byAuditType === 'object') {
+      for (const auditType of Object.keys(byAuditType)) {
+        const name = `min_avg_fee_per_hour_${String(auditType).toLowerCase()}`;
+        catalogue.push({ id: name, label: `Min average fee/hour — ${auditType}`, source: 'firm' });
+      }
+      catalogue.push({ id: 'min_avg_fee_per_hour', label: 'Min average fee/hour (default = SME)', source: 'firm' });
     }
   } catch {}
 

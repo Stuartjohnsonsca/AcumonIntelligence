@@ -14,7 +14,9 @@ import type {
   InherentRiskTable,
   ControlRiskTable,
   AssertionsTable,
+  AuditType,
 } from '@/types/methodology';
+import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 
 interface Props {
   firmId: string;
@@ -36,6 +38,10 @@ interface Props {
   initialFirmFees?: number;
   /** Firm-wide hard-coded numeric variables referenced from schedule formulas */
   initialFirmVariables?: Array<{ name: string; label: string; value: number }>;
+  /** Minimum average fee/hour by audit type — used as a recoverability
+   *  assumption so engagements can flag where the modelled fee is below
+   *  what the firm needs to cover that audit type's typical cost-base. */
+  initialMinAvgFeePerHour?: Record<string, number>;
   /** Firm-wide Independence Questions — every team member must answer these
    *  before they can view or interact with an engagement. */
   initialIndependenceQuestions?: IndependenceQuestion[];
@@ -128,6 +134,7 @@ export function FirmAssumptionsClient({
   initialLargeUnusualScoring,
   initialFirmFees,
   initialFirmVariables,
+  initialMinAvgFeePerHour,
   initialIndependenceQuestions,
   initialIndependenceRefreshRules,
 }: Props) {
@@ -167,6 +174,19 @@ export function FirmAssumptionsClient({
       return [{ name: 'firm_fees', label: 'Firm Annual Fee Income', value: initialFirmFees }];
     }
     return [];
+  });
+  // Minimum average fee per hour, per audit type. Stored as
+  // { SME: 100, PIE: 150, ... } in the min_avg_fee_per_hour risk
+  // table. A zero / missing entry means "no minimum set" — schedule
+  // formulas treating this as a threshold should fall back to NaN
+  // (which sorts to "no recoverability flag") rather than 0.
+  const [minAvgFeePerHour, setMinAvgFeePerHour] = useState<Record<AuditType, number>>(() => {
+    const init = initialMinAvgFeePerHour || {};
+    const out = {} as Record<AuditType, number>;
+    for (const at of Object.keys(AUDIT_TYPE_LABELS) as AuditType[]) {
+      out[at] = Number(init[at]) > 0 ? Number(init[at]) : 0;
+    }
+    return out;
   });
   const [luPatterns, setLuPatterns] = useState<{ pattern: string; category: string; weight: number }[]>(
     initialLargeUnusualScoring?.descriptionPatterns || []
@@ -299,6 +319,7 @@ export function FirmAssumptionsClient({
       const errors: string[] = [];
       for (const [tableType, data] of [
         ['firm_variables', { variables: cleanedFirmVariables }],
+        ['min_avg_fee_per_hour', { byAuditType: minAvgFeePerHour }],
         ['inherent', inherentRisk],
         ['control', controlRisk],
         ['assertions', assertions],
@@ -956,6 +977,72 @@ export function FirmAssumptionsClient({
               }
               return null;
             })()}
+          </div>
+        )}
+      </div>
+
+      {/* Minimum average fee/hour by audit type — recoverability assumption.
+          Each engagement's planned-hours / planned-fee schedules can compare
+          their modelled fee/hour against the firm's minimum for that audit
+          type and flag a recoverability concern when the modelled value is
+          below the minimum. Zero means "no minimum set" — admin opts in
+          per type. */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('minFeePerHour')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Minimum Average Fee per Hour</h2>
+          {expandedSections.minFeePerHour ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.minFeePerHour && (
+          <div className="p-4 space-y-3">
+            <p className="text-sm text-slate-500">
+              Per audit type, set the minimum fee/hour the firm is willing to engage at. Used as a recoverability check on each engagement&apos;s planned-fee / planned-hours figures.
+              Leave at <strong>0</strong> to mean &quot;no minimum&quot; — the recoverability flag won&apos;t fire for that audit type.
+              Schedule formulas can read these values via firm-variable references like
+              <code className="ml-1 bg-slate-100 px-1 rounded text-xs">min_avg_fee_per_hour_sme</code>,
+              <code className="ml-1 bg-slate-100 px-1 rounded text-xs">min_avg_fee_per_hour_pie</code>, etc.
+            </p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-500 border-b border-slate-200">
+                  <th className="text-left font-medium py-2">Audit type</th>
+                  <th className="text-right font-medium pr-2">Min average fee / hour</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(Object.keys(AUDIT_TYPE_LABELS) as AuditType[]).map(at => (
+                  <tr key={at} className="border-b border-slate-100 last:border-0">
+                    <td className="py-2 text-slate-800">
+                      {AUDIT_TYPE_LABELS[at]}
+                      <span className="text-[10px] text-slate-400 ml-2 font-mono">{at}</span>
+                    </td>
+                    <td className="py-2 pr-2 text-right">
+                      <div className="inline-flex items-center gap-1">
+                        <span className="text-xs text-slate-500">£</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={minAvgFeePerHour[at] || 0}
+                          onChange={e => {
+                            const v = Math.max(0, Number(e.target.value) || 0);
+                            setMinAvgFeePerHour(prev => ({ ...prev, [at]: v }));
+                            setSaved(false);
+                          }}
+                          className="w-28 text-right border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-400"
+                        />
+                        <span className="text-xs text-slate-500 ml-1">/ hr</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[11px] text-slate-400 italic">
+              Saved with the rest of Firm Wide Assumptions when you click Save All at the bottom of the page.
+            </p>
           </div>
         )}
       </div>

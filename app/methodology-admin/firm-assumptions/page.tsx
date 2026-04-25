@@ -43,6 +43,10 @@ export default async function FirmAssumptionsPage() {
   const firmVariables: Array<{ name: string; label: string; value: number }> = Array.isArray(tablesMap.firm_variables?.variables)
     ? (tablesMap.firm_variables.variables as Array<{ name: string; label: string; value: number }>)
     : [];
+  // Minimum average fee per hour by audit type — drives a recoverability
+  // assertion on each engagement. Stored as a single risk-table row keyed
+  // by AuditType. Default zero per type means "no minimum set".
+  const minAvgFeePerHour: Record<string, number> = (tablesMap.min_avg_fee_per_hour?.byAuditType as Record<string, number>) || {};
 
   // Independence Questions — firm-wide questionnaire each team member must
   // confirm before they can access an engagement. Seeded with a sensible
@@ -73,6 +77,7 @@ export default async function FirmAssumptionsPage() {
         initialLargeUnusualScoring={largeUnusualScoring}
         initialFirmFees={firmFees}
         initialFirmVariables={firmVariables}
+        initialMinAvgFeePerHour={minAvgFeePerHour}
         initialIndependenceQuestions={initialIndependenceQuestions}
         initialIndependenceRefreshRules={initialIndependenceRefreshRules}
       />
