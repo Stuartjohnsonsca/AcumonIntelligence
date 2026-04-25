@@ -30,43 +30,64 @@ export function slugifyQuestionText(text: string | null | undefined): string {
  * the result to evaluateFormula.
  */
 export function buildFormulaValues(
-  questions: Array<{ id: string; questionText?: string | null }>,
+  questions: Array<{ id: string; key?: string | null; questionText?: string | null }>,
   values: FormValues,
 ): FormValues {
   const out: FormValues = { ...values };
   const used = new Set<string>(Object.keys(out));
-  for (const q of questions) {
-    if (!q.id) continue;
-    const baseSlug = slugifyQuestionText(q.questionText);
-    if (!baseSlug) continue;
-    // Don't clobber an existing exact match (happens when a question's id
-    // itself is already snake_case, e.g. seeded templates).
-    if (baseSlug === q.id) continue;
-    let slug = baseSlug;
-    let n = 2;
-    while (used.has(slug) && out[slug] !== values[q.id]) {
-      slug = `${baseSlug}_${n++}`;
-    }
-    used.add(slug);
-    out[slug] = values[q.id] ?? null;
 
-    // Multi-column rows: expose `<slug>_col<N>` aliases pointing at
-    // the same cell keys the renderer writes (`<id>_col<N>`). This
-    // lets formulas reference a specific column of another row in
-    // the schedule using the slug — e.g.
-    //   preparation_of_accounts_services_col2
-    // rather than having to know the UUID. We probe up to col10
-    // which covers every layout currently supported (standard + 3/4/5-col
-    // tables, with headroom). Missing keys resolve to null like any
-    // other reference.
+  // Per-question alias generator. Used twice so we expose BOTH the
+  // explicit `q.key` (when the admin set one — e.g. `fee_audit`,
+  // `fee_non_audit`) AND the slug derived from `q.questionText`
+  // (e.g. `audit_fee`). Historically only the questionText slug was
+  // exposed, so a formula like `=fee_audit + fee_non_audit` left
+  // those identifiers unresolved and quietly returned null. The
+  // schema's `key` is the exact name admins use in formulas they
+  // hand-write, so it MUST resolve.
+  function addAlias(rawAlias: string, q: { id: string }) {
+    if (!rawAlias) return;
+    if (rawAlias === q.id) return; // already covered by the canonical id key
+    let alias = rawAlias;
+    let n = 2;
+    while (used.has(alias) && out[alias] !== values[q.id]) {
+      alias = `${rawAlias}_${n++}`;
+    }
+    used.add(alias);
+    out[alias] = values[q.id] ?? null;
+
+    // Multi-column rows: expose `<alias>_col<N>` aliases pointing at
+    // the same cell keys the renderer writes (`<id>_col<N>`). Lets
+    // formulas reference a specific column of another row using the
+    // alias — e.g. `preparation_of_accounts_services_col2` or
+    // `nas_advisory_col1` — rather than having to know the UUID.
+    // We probe up to col10 (every layout currently supported has
+    // ≤5 cells, headroom for future). Missing keys resolve to null
+    // like any other reference.
     for (let colN = 1; colN <= 10; colN++) {
       const sourceKey = `${q.id}_col${colN}`;
       if (!(sourceKey in values)) continue;
-      const aliasKey = `${slug}_col${colN}`;
+      const aliasKey = `${alias}_col${colN}`;
       if (used.has(aliasKey)) continue;
       used.add(aliasKey);
       out[aliasKey] = values[sourceKey] ?? null;
     }
+  }
+
+  for (const q of questions) {
+    if (!q.id) continue;
+    // 1. Explicit `key` from the schema (when present). This is the
+    //    canonical name admins use when hand-writing formulas. Take
+    //    precedence over the questionText slug because the admin
+    //    chose it deliberately.
+    const explicitKey = typeof q.key === 'string' ? q.key.trim() : '';
+    if (explicitKey) addAlias(explicitKey, q);
+
+    // 2. Slug derived from question text — secondary alias so
+    //    auto-generated questions (admin didn't set an explicit key)
+    //    still resolve. When BOTH a key and a slug exist they're
+    //    both pointed at the same value — formulas can use either.
+    const textSlug = slugifyQuestionText(q.questionText);
+    if (textSlug && textSlug !== explicitKey) addAlias(textSlug, q);
   }
   return out;
 }
