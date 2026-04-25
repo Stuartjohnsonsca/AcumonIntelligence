@@ -9,6 +9,7 @@ import {
   Layout, Link2,
 } from 'lucide-react';
 import { BackButton } from './BackButton';
+import { notifyTemplateRefsChanged } from '@/lib/template-references-bus';
 
 // ─── Available merge fields from system data ─────────────────────
 const MERGE_FIELD_CATEGORIES = [
@@ -886,6 +887,9 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
             setSelected(newTemplate);
             setIsCreating(false);
             setIsEditing(false);
+            // Tell every open schedule form to re-fetch references so
+            // red outlines reflect the new template immediately.
+            notifyTemplateRefsChanged();
           }
         } else if (selected) {
           const res = await fetch(`/api/methodology-admin/template-documents/${selected.id}`, {
@@ -898,6 +902,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
             setTemplates(templates.map((t) => (t.id === updated.id ? updated : t)));
             setSelected(updated);
             setIsEditing(false);
+            notifyTemplateRefsChanged();
           }
         }
       } finally {
@@ -915,6 +920,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
         setSelected(null);
         setIsEditing(false);
       }
+      notifyTemplateRefsChanged();
     }
   }
 
@@ -934,6 +940,7 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
     if (res.ok) {
       const newTemplate = await res.json();
       setTemplates([...templates, newTemplate]);
+      notifyTemplateRefsChanged();
     }
   }
 
@@ -947,6 +954,9 @@ export function TemplateDocumentsClient({ initialTemplates, initialCategories }:
       const updated = await res.json();
       setTemplates(templates.map((t) => (t.id === updated.id ? updated : t)));
       if (selected?.id === updated.id) setSelected(updated);
+      // isActive flips whether the template is included in the
+      // references API result — outlines must update immediately.
+      notifyTemplateRefsChanged();
     }
   }
 

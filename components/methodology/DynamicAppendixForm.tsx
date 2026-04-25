@@ -12,6 +12,7 @@ import { evaluateFormula, buildFormulaValues, slugifyQuestionText } from '@/lib/
 import { evaluateRulesForSchedule, type ValidationRule, type RuleEvaluation } from '@/lib/validation-rules';
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 import { DEFAULT_COLUMN_HEADERS } from '@/types/methodology';
+import { subscribeTemplateRefsChanged } from '@/lib/template-references-bus';
 
 /**
  * Endpoint → `questionnaires.<key>` mapping for the merge-field path shown
@@ -105,7 +106,11 @@ export function DynamicAppendixForm({
   const [referencedByPath, setReferencedByPath] = useState<Record<string, Array<{ templateId: string; templateName: string; kind: string }>>>({});
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    // Pulled out so the same fetch can run on mount AND on every
+    // template-saved notification from the bus. State updates are
+    // gated by `cancelled` so a slow fetch from a stale subscription
+    // can't overwrite fresh state after the component unmounts.
+    async function loadRefs() {
       try {
         const res = await fetch('/api/methodology-admin/template-references');
         if (!res.ok) return;
@@ -114,8 +119,20 @@ export function DynamicAppendixForm({
         if (Array.isArray(data.paths)) setReferencedPaths(new Set(data.paths));
         if (data.byPath && typeof data.byPath === 'object') setReferencedByPath(data.byPath);
       } catch { /* silent — no highlights */ }
-    })();
-    return () => { cancelled = true; };
+    }
+    loadRefs();
+
+    // Live refresh: any template create / update / delete /
+    // duplicate / activate-toggle in another tab (or this tab) fires
+    // an invalidation through the bus, which calls loadRefs() again.
+    // Auditors with a schedule open see red outlines update the
+    // moment an admin saves a template, no page reload needed.
+    const unsubscribe = subscribeTemplateRefsChanged(() => {
+      if (cancelled) return;
+      loadRefs();
+    });
+
+    return () => { cancelled = true; unsubscribe(); };
   }, []);
 
   // ── Validation rules ─────────────────────────────────────────────

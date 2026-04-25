@@ -13,6 +13,7 @@ import {
 import { mergeFieldsByGroup, MERGE_FIELDS, type MergeField } from '@/lib/template-merge-fields';
 import { AUDIT_TYPE_LABELS, type AuditType } from '@/types/methodology';
 import type { Skeleton } from './FirmSkeletonManager';
+import { notifyTemplateRefsChanged } from '@/lib/template-references-bus';
 
 /**
  * Document-template editor.
@@ -1047,6 +1048,11 @@ export function DocumentTemplateEditor({
       if (res.ok) {
         const updated = await res.json();
         onSaved(updated);
+        // Tell every open schedule form to re-fetch references — the
+        // template's content has changed, so the outline targets may
+        // have shifted (added/removed col<N> body refs, new
+        // filterBySection target, etc.).
+        notifyTemplateRefsChanged();
       }
     } finally {
       setSaving(false);
