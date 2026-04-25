@@ -110,6 +110,26 @@ export async function POST(req: NextRequest) {
     return stem.replace(/\b\w/g, c => c.toUpperCase()) + ' Questionnaire';
   }
 
+  // Per-section column-header catalog. Surfacing this lets the AI
+  // resolve queries like "the WP Reference column on the procedures
+  // section" — historically those failed because column header text
+  // (Item / Procedures Performed / Conclusion / WP Reference) lives
+  // on sectionMeta, not on the questions themselves.
+  type SectionColumnEntry = {
+    questionnaireKey: string;       // ctxKey, e.g. 'ethics'
+    questionnaireLabel: string;     // human label, e.g. 'Ethics Questionnaire'
+    sectionName: string;            // section's verbatim name
+    sectionSlug: string;            // slugified for filterBySection / bySection
+    columnHeaders: string[];        // header text per column (col0..colN)
+    layout: string;                 // 'standard' | 'table_3col' | 'table_4col' | 'table_5col'
+  };
+  const sectionColumns: SectionColumnEntry[] = [];
+
+  /** Slugify section name to match what filterBySection / bySection expects. */
+  function slugifySection(s: string): string {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  }
+
   try {
     const schemas = await prisma.methodologyTemplate.findMany({
       where: {
@@ -120,14 +140,38 @@ export async function POST(req: NextRequest) {
     for (const schema of schemas) {
       const ctxKey = contextKeyFor(schema.templateType);
       const typeLabel = labelFor(schema.templateType);
-      const items = Array.isArray(schema.items) ? schema.items as any[] : [];
-      for (const item of items) {
-        // Newer questionnaire schemas nest questions inside groups:
-        // items = [{ id, title, questions: [{ id, key?, text, answerType }] }]
-        // Older schemas store questions flat. Handle both shapes.
-        const questions: any[] = Array.isArray(item?.questions) ? item.questions : [item];
-        const groupTitle: string = item?.title || '';
-        for (const q of questions) {
+
+      // ── Items shape detection ────────────────────────────────────
+      // Two production shapes:
+      //   1. Array<TemplateQuestion> — flat list, each question carries
+      //      its sectionKey. No top-level sectionMeta.
+      //   2. { questions: TemplateQuestion[], sectionMeta: Record<sectionKey,
+      //      { columnHeaders, layout, label, ... }> } — newer shape that
+      //      lets a section declare table-layout + column headers.
+      let questions: any[] = [];
+      let sectionMeta: Record<string, any> = {};
+      if (Array.isArray(schema.items)) {
+        questions = schema.items as any[];
+      } else if (schema.items && typeof schema.items === 'object') {
+        const items = schema.items as any;
+        questions = Array.isArray(items.questions) ? items.questions
+          : Array.isArray(items) ? items : [];
+        sectionMeta = (items.sectionMeta && typeof items.sectionMeta === 'object') ? items.sectionMeta : {};
+      }
+
+      // Index sections we've seen so we record one column-headers
+      // entry per (schedule, section) pair even when the same
+      // sectionKey appears across many questions.
+      const seenSections = new Set<string>();
+
+      for (const rawItem of questions) {
+        // Legacy "grouped" shape — items = [{ title, questions: [...] }] —
+        // is handled inside the same loop by descending into rawItem.questions
+        // when present. Keeps back-compat with very old firm schemas.
+        const innerQs: any[] = Array.isArray(rawItem?.questions) ? rawItem.questions : [rawItem];
+        const groupTitle: string = rawItem?.title || '';
+
+        for (const q of innerQs) {
           if (!q) continue;
           // Prefer an explicit `key`; fall back to slugified text for
           // legacy schemas that only stored question text.
@@ -137,8 +181,7 @@ export async function POST(req: NextRequest) {
           }
           if (!key) continue;
           const questionText: string = q.text || q.questionText || q.label || key;
-          // Map answerType → scalar/date/currency so the AI can pick
-          // the right formatter helper (formatDate for dates, etc.).
+          const sectionName: string = q.sectionKey || groupTitle || '';
           const answerType: string = q.answerType || '';
           const kind: 'scalar' | 'date' | 'currency' =
             /date/i.test(answerType) ? 'date'
@@ -147,21 +190,49 @@ export async function POST(req: NextRequest) {
           dynamicEntries.push({
             path: `questionnaires.${ctxKey}.${key}`,
             label: questionText,
-            group: `${typeLabel}${groupTitle ? ' · ' + groupTitle : ''}`,
+            group: `${typeLabel}${sectionName ? ' · ' + sectionName : ''}`,
             type: kind,
             description: answerType ? `answer type: ${answerType}` : undefined,
           });
-          // And the prior-period counterpart — attached under the
-          // top-level `priorPeriod.*` mirror that buildTemplateContext
-          // creates for us. Suffix the label so the AI picks the
-          // right one when the admin says "prior period …".
+          // Prior-period mirror.
           dynamicEntries.push({
             path: `priorPeriod.questionnaires.${ctxKey}.${key}`,
             label: `${questionText} (prior period)`,
-            group: `${typeLabel}${groupTitle ? ' · ' + groupTitle : ''} (prior period)`,
+            group: `${typeLabel}${sectionName ? ' · ' + sectionName : ''} (prior period)`,
             type: kind,
             description: answerType ? `answer type: ${answerType} — prior period` : 'prior period value',
           });
+
+          // Record this section's column metadata once. `sectionMeta`
+          // is keyed by the literal sectionKey OR by the slug — try
+          // both lookups for tolerance to older firm data.
+          if (sectionName && !seenSections.has(sectionName)) {
+            seenSections.add(sectionName);
+            const slug = slugifySection(sectionName);
+            const meta = sectionMeta[sectionName] || sectionMeta[slug];
+            const layout = meta?.layout || 'standard';
+            // Column headers come from sectionMeta when set; otherwise
+            // we infer the count from any question's `columns` array
+            // (rows in a multi-col layout always have one entry per
+            // column) and emit blank header strings — better than
+            // dropping the section entirely.
+            let columnHeaders: string[] = [];
+            if (Array.isArray(meta?.columnHeaders) && meta.columnHeaders.length > 0) {
+              columnHeaders = meta.columnHeaders.map((h: any) => String(h || ''));
+            } else if (Array.isArray(q?.columns) && q.columns.length > 0) {
+              columnHeaders = q.columns.map((_: any, i: number) => `Column ${i + 1}`);
+            }
+            if (columnHeaders.length > 0) {
+              sectionColumns.push({
+                questionnaireKey: ctxKey,
+                questionnaireLabel: typeLabel,
+                sectionName,
+                sectionSlug: slug,
+                columnHeaders,
+                layout,
+              });
+            }
+          }
         }
       }
     }
@@ -199,7 +270,34 @@ export async function POST(req: NextRequest) {
         .map(([ck, set]) => `- questionnaires.${ck}: [${Array.from(set).map(s => `"${s}"`).join(', ')}]`)
         .join('\n');
 
-  const menu = `Static catalog (fixed paths):\n${staticMenu}\n\nFirm-specific questionnaire questions (match on QUESTION text — these are LIVE questions in this firm's questionnaire schemas, always prefer one of these when the admin describes a specific question):\n${dynamicMenu}\n\nQuestionnaire sections available for filterBySection:\n${sectionsCatalog}`;
+  // Per-section column-headers catalog. The AI uses this to resolve
+  // queries like "the WP Reference column", "the Conclusion column on
+  // the procedures section" — matching admin descriptions to header
+  // text the firm has actually configured. Indexed by sequence: col0
+  // is the row-label column (rendered as {{question}} inside the
+  // loop), col1..colN are the editable cells (rendered as {{col1}}..
+  // {{colN}} inside the loop).
+  const sectionColumnsCatalog = sectionColumns.length === 0
+    ? '  (no multi-column sections configured)'
+    : sectionColumns.map(s => {
+        const headers = s.columnHeaders.map((h, i) => {
+          const placeholder = i === 0 ? '{{question}}' : `{{col${i}}}`;
+          return `col${i}=${placeholder}${h ? ' "' + h.replace(/"/g, '\\"') + '"' : ''}`;
+        }).join(', ');
+        return `- questionnaires.${s.questionnaireKey} · "${s.sectionName}" (layout=${s.layout}): ${headers}`;
+      }).join('\n');
+
+  const menu = `Static catalog (fixed paths):
+${staticMenu}
+
+Firm-specific questionnaire questions (match on QUESTION text — these are LIVE questions in this firm's questionnaire schemas, always prefer one of these when the admin describes a specific question):
+${dynamicMenu}
+
+Questionnaire sections available for filterBySection:
+${sectionsCatalog}
+
+Section column headers (for table-layout sections — use these to map "the <header-text> column" descriptions to {{col1}} / {{col2}} / … inside an asList loop, and to render <thead><th> rows verbatim):
+${sectionColumnsCatalog}`;
 
   const systemPrompt = `You are a merge-field matcher AND Handlebars-snippet generator for a UK audit platform's document template editor. The admin types a natural-language description of what they want to appear in the template. Your job is to return a snippet they can paste directly into the editor.
 
@@ -348,6 +446,16 @@ Choose the right idiom:
 - Admin describes a single value/question → a single {{placeholder}}, wrapped in a formatter when useful.
 - Admin asks for a total / sum → sumField / sumFieldWhere.
 - Admin says "where column N is Y/Yes" / "rows with col N = …" / "only where the <header> column is …" → Example E shape. Use filterWhere on "col<N>" and render with {{col1}} / {{col2}} / {{col3}} / {{col4}} / {{col5}} inside the loop. The filter field name is literally "col2" (or col1 / col3 / …), matching how the per-column cells are stored.
+- Admin names a column by its HEADER TEXT (e.g. "the Conclusion column", "the WP Reference column") → consult the "Section column headers" catalog above to map that header to its col<N> position, then render {{col<N>}} inside the loop. If multiple sections share the same header text, ask the admin to specify the section in your rationale and pick the most likely.
+- Admin asks for "the column headers" or "the field names of <section>" → emit a <thead><tr> row pulling header strings literally from the Section column headers catalog (those header strings are STATIC text, not Handlebars references).
+
+CONSTRUCTIVE FALLBACKS — DO NOT GIVE UP EASILY:
+The catalog is comprehensive — every static path PLUS every firm-specific question PLUS every section + column-header. Before returning the empty "no match" response, try:
+  1. Did the admin describe a question semantically? Match on QUESTION text in the dynamic catalog.
+  2. Did they describe a section? Match on the section names in the sections catalog and emit a filterBySection loop using \`asList\` with col1..colN cells.
+  3. Did they describe a column? Match on header text in the section-column-headers catalog and emit the corresponding {{col<N>}} reference.
+  4. Did they describe an array operation (each / list / table / total)? Map to the corresponding pattern in Examples A / B / C / D / E.
+  5. Even with a vaguely-worded request, propose your best guess at confidence ≥ 0.3 with a clear rationale — the admin can edit before pasting. Only return the empty response when the request is plainly OUTSIDE the audit file (e.g. firm admin settings, MyAccount data, hypothetical paths not in any catalog).
 
 Return ONLY JSON:
 {
@@ -359,8 +467,8 @@ Return ONLY JSON:
   "alternatives": [{"path": "...", "label": "...", "snippet": "..."}]   // up to 2 runners-up, or []
 }
 
-If the catalog has no suitable field at all, return:
-{ "snippet": "", "path": "", "label": "", "rationale": "No match in catalog.", "confidence": 0, "alternatives": [] }`;
+Reserve the empty response for genuinely off-catalog requests — and even then include 1-2 alternatives that are the closest in-catalog matches:
+{ "snippet": "", "path": "", "label": "", "rationale": "Outside the audit file — describe what audit-file data you want instead.", "confidence": 0, "alternatives": [/* closest 1-2 in-catalog suggestions */] }`;
 
   const userPrompt = currentSnippet
     ? `REFINE the snippet below according to the description. Preserve the parts that work; only change what the description asks for. Return the full revised snippet (not a diff) under "snippet" in the JSON response.

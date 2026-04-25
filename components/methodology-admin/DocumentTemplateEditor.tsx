@@ -1941,7 +1941,7 @@ export function DocumentTemplateEditor({
                   <div>
                     <div className="font-semibold mb-0.5">No match</div>
                     <div>{suggestError}</div>
-                    <div className="text-[10px] text-red-600 mt-1">If the field you need isn&rsquo;t in the catalog, ask Stuart to add it — or type any Handlebars path manually (Preview will tell you if it resolves against a live engagement).</div>
+                    <div className="text-[10px] text-red-600 mt-1">Try rewording the description (e.g. name the schedule and the section), or type a Handlebars path manually — Preview will tell you if it resolves against a live engagement.</div>
                   </div>
                 </div>
               )}
