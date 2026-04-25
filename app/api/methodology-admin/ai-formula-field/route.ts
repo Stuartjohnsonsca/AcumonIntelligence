@@ -138,20 +138,22 @@ export async function POST(req: Request) {
     }
   } catch {}
   // 5. Min-fee-per-hour by audit type (Firm Wide Assumptions →
-  //    "Minimum Average Fee per Hour"). Surface every audit type
-  //    so formulas can pick the right one for the engagement context.
+  //    "Minimum Average Fee per Hour"). Iterates the configurable
+  //    audit-type catalogue so custom types are surfaced too.
   try {
+    const { getFirmAuditTypes } = await import('@/lib/firm-audit-types');
+    const types = await getFirmAuditTypes(session.user.firmId);
     const minRow = await prisma.methodologyRiskTable.findFirst({
       where: { firmId: session.user.firmId, tableType: 'min_avg_fee_per_hour' },
       select: { data: true },
     });
     const byAuditType = (minRow?.data as any)?.byAuditType;
+    for (const t of types.filter(at => at.isActive)) {
+      const name = `min_avg_fee_per_hour_${t.code.toLowerCase()}`;
+      catalogue.push({ id: name, label: `Min average fee/hour — ${t.label} (${t.code})`, source: 'firm' });
+    }
     if (byAuditType && typeof byAuditType === 'object') {
-      for (const auditType of Object.keys(byAuditType)) {
-        const name = `min_avg_fee_per_hour_${String(auditType).toLowerCase()}`;
-        catalogue.push({ id: name, label: `Min average fee/hour — ${auditType}`, source: 'firm' });
-      }
-      catalogue.push({ id: 'min_avg_fee_per_hour', label: 'Min average fee/hour (default = SME)', source: 'firm' });
+      catalogue.push({ id: 'min_avg_fee_per_hour', label: 'Min average fee/hour (default)', source: 'firm' });
     }
   } catch {}
 

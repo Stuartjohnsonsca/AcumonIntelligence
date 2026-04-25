@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { FirmAssumptionsClient } from '@/components/methodology-admin/FirmAssumptionsClient';
 import { BackButton } from '@/components/methodology-admin/BackButton';
 import { getFirmIndependenceQuestions, defaultIndependenceQuestions, getFirmIndependenceRefreshRules } from '@/lib/independence';
+import { getFirmAuditTypes } from '@/lib/firm-audit-types';
 
 export default async function FirmAssumptionsPage() {
   const session = await auth();
@@ -48,6 +49,11 @@ export default async function FirmAssumptionsPage() {
   // by AuditType. Default zero per type means "no minimum set".
   const minAvgFeePerHour: Record<string, number> = (tablesMap.min_avg_fee_per_hour?.byAuditType as Record<string, number>) || {};
 
+  // Audit-type catalogue — admin-configurable list, with the original
+  // five built-in types as the default seed. Drives the Audit Types
+  // editor + the per-type Min Fee per Hour grid.
+  const auditTypes = await getFirmAuditTypes(firmId);
+
   // Independence Questions — firm-wide questionnaire each team member must
   // confirm before they can access an engagement. Seeded with a sensible
   // default set if the firm hasn't configured anything yet.
@@ -78,6 +84,7 @@ export default async function FirmAssumptionsPage() {
         initialFirmFees={firmFees}
         initialFirmVariables={firmVariables}
         initialMinAvgFeePerHour={minAvgFeePerHour}
+        initialAuditTypes={auditTypes}
         initialIndependenceQuestions={initialIndependenceQuestions}
         initialIndependenceRefreshRules={initialIndependenceRefreshRules}
       />

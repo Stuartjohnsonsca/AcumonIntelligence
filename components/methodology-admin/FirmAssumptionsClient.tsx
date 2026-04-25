@@ -14,9 +14,9 @@ import type {
   InherentRiskTable,
   ControlRiskTable,
   AssertionsTable,
-  AuditType,
 } from '@/types/methodology';
-import { AUDIT_TYPE_LABELS } from '@/types/methodology';
+import type { FirmAuditType } from '@/lib/firm-audit-types';
+import { defaultAuditTypes } from '@/lib/firm-audit-types';
 
 interface Props {
   firmId: string;
@@ -42,6 +42,9 @@ interface Props {
    *  assumption so engagements can flag where the modelled fee is below
    *  what the firm needs to cover that audit type's typical cost-base. */
   initialMinAvgFeePerHour?: Record<string, number>;
+  /** Firm-configurable audit-type catalogue. Built-in codes are
+   *  immutable; admin can add custom types and toggle active state. */
+  initialAuditTypes?: FirmAuditType[];
   /** Firm-wide Independence Questions — every team member must answer these
    *  before they can view or interact with an engagement. */
   initialIndependenceQuestions?: IndependenceQuestion[];
@@ -135,6 +138,7 @@ export function FirmAssumptionsClient({
   initialFirmFees,
   initialFirmVariables,
   initialMinAvgFeePerHour,
+  initialAuditTypes,
   initialIndependenceQuestions,
   initialIndependenceRefreshRules,
 }: Props) {
@@ -175,16 +179,27 @@ export function FirmAssumptionsClient({
     }
     return [];
   });
-  // Minimum average fee per hour, per audit type. Stored as
-  // { SME: 100, PIE: 150, ... } in the min_avg_fee_per_hour risk
-  // table. A zero / missing entry means "no minimum set" — schedule
-  // formulas treating this as a threshold should fall back to NaN
-  // (which sorts to "no recoverability flag") rather than 0.
-  const [minAvgFeePerHour, setMinAvgFeePerHour] = useState<Record<AuditType, number>>(() => {
+  // Audit-type catalogue — admin-configurable, with the built-in 5 as
+  // the default seed. Built-in codes are immutable (renaming would
+  // break existing engagements / formulas / templates that reference
+  // them), but the label and active state are editable. Custom codes
+  // are added by the admin here and become the suffix for firm
+  // variables like min_avg_fee_per_hour_<code>.
+  const [auditTypes, setAuditTypes] = useState<FirmAuditType[]>(() => {
+    return Array.isArray(initialAuditTypes) && initialAuditTypes.length > 0
+      ? initialAuditTypes
+      : defaultAuditTypes();
+  });
+
+  // Minimum average fee per hour, keyed by audit-type code. A zero /
+  // missing entry means "no minimum set" — schedule formulas treating
+  // this as a threshold fall back to "no recoverability flag" rather
+  // than 0. Now keyed by string so custom codes work.
+  const [minAvgFeePerHour, setMinAvgFeePerHour] = useState<Record<string, number>>(() => {
     const init = initialMinAvgFeePerHour || {};
-    const out = {} as Record<AuditType, number>;
-    for (const at of Object.keys(AUDIT_TYPE_LABELS) as AuditType[]) {
-      out[at] = Number(init[at]) > 0 ? Number(init[at]) : 0;
+    const out: Record<string, number> = {};
+    for (const at of (Array.isArray(initialAuditTypes) && initialAuditTypes.length > 0 ? initialAuditTypes : defaultAuditTypes())) {
+      out[at.code] = Number(init[at.code]) > 0 ? Number(init[at.code]) : 0;
     }
     return out;
   });
@@ -280,6 +295,12 @@ export function FirmAssumptionsClient({
       // any new / changed variables on the next DynamicAppendixForm render.
       const { invalidateFirmVariables } = await import('@/hooks/useFirmVariables');
       invalidateFirmVariables();
+      // And the audit-types memo so any sibling page that's consuming
+      // the list refreshes too.
+      try {
+        const { invalidateAuditTypes } = await import('@/hooks/useAuditTypes');
+        invalidateAuditTypes();
+      } catch {}
 
       // Dedup firm variables by name — keeps the LAST entry so an admin editing a
       // duplicate row sees their change take effect. Blank-name rows are PRESERVED
@@ -319,6 +340,7 @@ export function FirmAssumptionsClient({
       const errors: string[] = [];
       for (const [tableType, data] of [
         ['firm_variables', { variables: cleanedFirmVariables }],
+        ['audit_types', { items: auditTypes }],
         ['min_avg_fee_per_hour', { byAuditType: minAvgFeePerHour }],
         ['inherent', inherentRisk],
         ['control', controlRisk],
@@ -981,12 +1003,111 @@ export function FirmAssumptionsClient({
         )}
       </div>
 
+      {/* Audit Types — admin-configurable catalogue. The five built-in
+          codes (SME / PIE / SME_CONTROLS / PIE_CONTROLS / GROUP)
+          cannot be deleted or renamed because existing engagements,
+          formulas, and templates reference them. Custom types can be
+          added freely; their CODE becomes the suffix on firm-variable
+          identifiers (e.g. `min_avg_fee_per_hour_<code>`) and is
+          normalised to UPPER_SNAKE on save. */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('auditTypes')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Audit Types</h2>
+          {expandedSections.auditTypes ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.auditTypes && (
+          <div className="p-4 space-y-3">
+            <p className="text-sm text-slate-500">
+              The audit types every other page in the system uses (Min Fee per Hour, Schedules, Audit Tests, the Audit menu, etc).
+              Built-in types are <strong>immutable</strong> — you can rename their label or hide them, but the code stays the same so existing engagements keep resolving.
+              Custom types you add here become first-class throughout the system; their code is normalised to UPPER_SNAKE and used as the suffix on firm-variable identifiers (e.g. <code className="bg-slate-100 px-1 rounded text-xs">min_avg_fee_per_hour_grant_audit</code>).
+            </p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-500 border-b border-slate-200">
+                  <th className="text-left font-medium py-2">Code</th>
+                  <th className="text-left font-medium">Label</th>
+                  <th className="text-center font-medium">Active</th>
+                  <th className="text-right font-medium pr-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditTypes.map((at, idx) => (
+                  <tr key={at.code} className="border-b border-slate-100 last:border-0">
+                    <td className="py-2 font-mono text-xs text-slate-700">
+                      {at.code}
+                      {at.isBuiltIn && <span className="ml-1 text-[9px] text-slate-400">(built-in)</span>}
+                    </td>
+                    <td className="py-2">
+                      <input
+                        type="text"
+                        value={at.label}
+                        onChange={e => {
+                          setAuditTypes(prev => prev.map((x, i) => i === idx ? { ...x, label: e.target.value } : x));
+                          setSaved(false);
+                        }}
+                        className="w-full border border-slate-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-400"
+                      />
+                    </td>
+                    <td className="text-center">
+                      <input
+                        type="checkbox"
+                        checked={at.isActive}
+                        onChange={e => {
+                          setAuditTypes(prev => prev.map((x, i) => i === idx ? { ...x, isActive: e.target.checked } : x));
+                          setSaved(false);
+                        }}
+                        className="rounded border-slate-300"
+                      />
+                    </td>
+                    <td className="py-2 pr-2 text-right">
+                      {!at.isBuiltIn && (
+                        <button
+                          onClick={() => {
+                            setAuditTypes(prev => prev.filter(x => x.code !== at.code));
+                            setMinAvgFeePerHour(prev => { const c = { ...prev }; delete c[at.code]; return c; });
+                            setSaved(false);
+                          }}
+                          className="text-red-500 hover:text-red-700 text-xs"
+                          title="Remove this custom audit type"
+                        >Remove</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button
+              onClick={() => {
+                const code = prompt('Code for the new audit type (e.g. GRANT_AUDIT):')?.trim();
+                if (!code) return;
+                const cleanedCode = code.toUpperCase().replace(/[^A-Z0-9_]/g, '_').replace(/^_+|_+$/g, '').replace(/_{2,}/g, '_');
+                if (!cleanedCode) return;
+                if (auditTypes.some(a => a.code === cleanedCode)) {
+                  alert(`Code ${cleanedCode} already exists.`);
+                  return;
+                }
+                const label = prompt('Label to display:', cleanedCode.replace(/_/g, ' '))?.trim() || cleanedCode;
+                setAuditTypes(prev => [...prev, { code: cleanedCode, label, isActive: true, sortOrder: prev.length, isBuiltIn: false }]);
+                setMinAvgFeePerHour(prev => ({ ...prev, [cleanedCode]: 0 }));
+                setSaved(false);
+              }}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+            >+ Add Audit Type</button>
+          </div>
+        )}
+      </div>
+
       {/* Minimum average fee/hour by audit type — recoverability assumption.
           Each engagement's planned-hours / planned-fee schedules can compare
           their modelled fee/hour against the firm's minimum for that audit
           type and flag a recoverability concern when the modelled value is
           below the minimum. Zero means "no minimum set" — admin opts in
-          per type. */}
+          per type. Iterates the dynamic auditTypes list so custom types
+          appear automatically. */}
       <div className="border rounded-lg">
         <button
           onClick={() => toggleSection('minFeePerHour')}
@@ -1001,8 +1122,8 @@ export function FirmAssumptionsClient({
               Per audit type, set the minimum fee/hour the firm is willing to engage at. Used as a recoverability check on each engagement&apos;s planned-fee / planned-hours figures.
               Leave at <strong>0</strong> to mean &quot;no minimum&quot; — the recoverability flag won&apos;t fire for that audit type.
               Schedule formulas can read these values via firm-variable references like
-              <code className="ml-1 bg-slate-100 px-1 rounded text-xs">min_avg_fee_per_hour_sme</code>,
-              <code className="ml-1 bg-slate-100 px-1 rounded text-xs">min_avg_fee_per_hour_pie</code>, etc.
+              <code className="ml-1 bg-slate-100 px-1 rounded text-xs">min_avg_fee_per_hour_&lt;code&gt;</code>
+              (the &lt;code&gt; comes from the Audit Types section above).
             </p>
             <table className="w-full text-sm">
               <thead>
@@ -1012,11 +1133,11 @@ export function FirmAssumptionsClient({
                 </tr>
               </thead>
               <tbody>
-                {(Object.keys(AUDIT_TYPE_LABELS) as AuditType[]).map(at => (
-                  <tr key={at} className="border-b border-slate-100 last:border-0">
+                {auditTypes.filter(at => at.isActive).map(at => (
+                  <tr key={at.code} className="border-b border-slate-100 last:border-0">
                     <td className="py-2 text-slate-800">
-                      {AUDIT_TYPE_LABELS[at]}
-                      <span className="text-[10px] text-slate-400 ml-2 font-mono">{at}</span>
+                      {at.label}
+                      <span className="text-[10px] text-slate-400 ml-2 font-mono">{at.code}</span>
                     </td>
                     <td className="py-2 pr-2 text-right">
                       <div className="inline-flex items-center gap-1">
@@ -1025,10 +1146,10 @@ export function FirmAssumptionsClient({
                           type="number"
                           min={0}
                           step={1}
-                          value={minAvgFeePerHour[at] || 0}
+                          value={minAvgFeePerHour[at.code] || 0}
                           onChange={e => {
                             const v = Math.max(0, Number(e.target.value) || 0);
-                            setMinAvgFeePerHour(prev => ({ ...prev, [at]: v }));
+                            setMinAvgFeePerHour(prev => ({ ...prev, [at.code]: v }));
                             setSaved(false);
                           }}
                           className="w-28 text-right border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-400"
@@ -1038,6 +1159,9 @@ export function FirmAssumptionsClient({
                     </td>
                   </tr>
                 ))}
+                {auditTypes.filter(at => at.isActive).length === 0 && (
+                  <tr><td colSpan={2} className="py-3 text-xs text-slate-500 italic text-center">No active audit types — activate at least one in the section above.</td></tr>
+                )}
               </tbody>
             </table>
             <p className="text-[11px] text-slate-400 italic">

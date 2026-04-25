@@ -55,24 +55,41 @@ async function fetchOnce(): Promise<{ list: FirmVariable[]; map: VariableMap }> 
 
       // Expose min-fee-per-hour by audit type (Firm Wide Assumptions)
       // as firm variables so schedule formulas can reference them.
-      // Names: `min_avg_fee_per_hour_<audit_type_lowercase>`
-      // (e.g. min_avg_fee_per_hour_sme, min_avg_fee_per_hour_pie).
-      // Plus a bare `min_avg_fee_per_hour` defaulting to the SME value
-      // for formulas written without a type qualifier.
+      // Names: `min_avg_fee_per_hour_<code-lowercased>`. Iterates the
+      // firm's configurable audit-type list so custom types (Grant
+      // Audit, CASS Audit, ...) get a firm-variable too. Falls back
+      // to the codes present on min_avg_fee_per_hour itself if the
+      // audit-types row hasn't been saved yet.
       const minByType = tables.min_avg_fee_per_hour?.byAuditType;
+      const auditTypeRow = tables.audit_types?.items as Array<{ code: string; label: string; isActive: boolean }> | undefined;
+      const knownCodes: string[] = Array.isArray(auditTypeRow) && auditTypeRow.length > 0
+        ? auditTypeRow.filter(a => a.isActive).map(a => a.code)
+        : (minByType && typeof minByType === 'object' ? Object.keys(minByType) : []);
       if (minByType && typeof minByType === 'object') {
         const seen = new Set(list.map(v => v.name));
-        for (const [auditType, raw] of Object.entries(minByType)) {
-          const value = Number(raw);
+        for (const code of knownCodes) {
+          const value = Number((minByType as Record<string, unknown>)[code]);
           if (!Number.isFinite(value) || value <= 0) continue;
-          const name = `min_avg_fee_per_hour_${String(auditType).toLowerCase()}`;
+          const name = `min_avg_fee_per_hour_${code.toLowerCase()}`;
           if (seen.has(name)) continue;
-          list.push({ name, label: `Minimum average fee/hour — ${auditType}`, value });
+          list.push({ name, label: `Minimum average fee/hour — ${code}`, value });
           seen.add(name);
         }
+        // Bare alias defaults to SME (the original built-in primary
+        // audit type) so formulas written without a type qualifier
+        // keep working. If SME has no value set, fall back to the
+        // first code with a value.
         const sme = Number((minByType as Record<string, unknown>).SME);
         if (Number.isFinite(sme) && sme > 0 && !seen.has('min_avg_fee_per_hour')) {
           list.push({ name: 'min_avg_fee_per_hour', label: 'Minimum average fee/hour (default = SME)', value: sme });
+        } else if (!seen.has('min_avg_fee_per_hour')) {
+          for (const code of knownCodes) {
+            const v = Number((minByType as Record<string, unknown>)[code]);
+            if (Number.isFinite(v) && v > 0) {
+              list.push({ name: 'min_avg_fee_per_hour', label: `Minimum average fee/hour (default = ${code})`, value: v });
+              break;
+            }
+          }
         }
       }
 
