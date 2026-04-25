@@ -6,7 +6,29 @@ import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil
 import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { slugifyQuestionText } from '@/lib/formula-engine';
 import { DISPLAY_FORMAT_OPTIONS } from '@/lib/format-display';
+import { PlaceholderBadge } from '@/components/methodology/PlaceholderBadge';
 import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
+
+/**
+ * Convert a methodology template's `templateType` to the
+ * `questionnaires.<key>` namespace used in document templates.
+ * Mirrors the canonical mapping in lib/schedule-loader.ts so the
+ * Schedule Designer's hover badges show the same path admins will
+ * actually paste into a template.
+ */
+function ctxKeyForTemplateType(templateType: string): string {
+  const canonical: Record<string, string> = {
+    permanent_file_questions:    'permanentFile',
+    ethics_questions:            'ethics',
+    continuance_questions:       'continuance',
+    materiality_questions:       'materiality',
+    new_client_takeon_questions: 'newClientTakeOn',
+    subsequent_events_questions: 'subsequentEvents',
+  };
+  if (canonical[templateType]) return canonical[templateType];
+  const stem = templateType.replace(/_(questions|categories)$/, '');
+  return stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+}
 
 interface Props {
   firmId: string;
@@ -490,6 +512,21 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                 {sorted.map((q, i) => {
                   const isExpanded = expandedId === q.id;
                   const isSubheader = q.inputType === 'subheader';
+                  // Question's merge-field key — preferred from
+                  // q.key, falling back to the slugified question
+                  // text so auto-generated questions also get a
+                  // resolvable path. Sub-headers / bold rows have no
+                  // saved value; we still show a path so admins know
+                  // there's no merge field to paste.
+                  const qSlug = (q as any).key || slugifyQuestionText(q.questionText) || q.id;
+                  const ctxKey = ctxKeyForTemplateType(templateType);
+                  const rowPath = `questionnaires.${ctxKey}.${qSlug}`;
+                  // Section meta for column-header context — multi-
+                  // column rows ALSO get per-column badges in the
+                  // expanded edit form below. The row-level badge here
+                  // is the standard Q+A path; for table sections it's
+                  // still useful as the umbrella key (asList loops
+                  // iterate every row).
                   return (
                     <div key={q.id} className={`group ${isSubheader ? 'bg-slate-100/70 hover:bg-slate-200/60' : 'hover:bg-slate-50/50'}`}>
                       {/* Question / sub-header row */}
@@ -503,6 +540,19 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                         >
                           <span className="line-clamp-2">{q.questionText || <span className="italic text-slate-300">{isSubheader ? 'Sub-header text…' : 'New question...'}</span>}</span>
                         </button>
+                        {/* Copyable merge-field path — only for real
+                            questions (sub-headers don't have a saved
+                            value, no merge field to copy). One-click
+                            copies `{{questionnaires.<X>.<key>}}` to
+                            the clipboard so admins can paste the path
+                            straight into a document template body
+                            without leaving the Schedule Designer. */}
+                        {!isSubheader && (
+                          <PlaceholderBadge
+                            path={rowPath}
+                            title={`Merge-field placeholder — click to copy\n{{${rowPath}}}`}
+                          />
+                        )}
                         {inputTypeBadge(q.inputType)}
                         {/* Action buttons - always visible */}
                         <div className="flex items-center gap-0.5 ml-1 flex-shrink-0">
@@ -843,12 +893,34 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                         const refCfg = cond?.columnIndex ? q.columns?.[cond.columnIndex - 1] : undefined;
                                         const refInputType = refCfg?.inputType || q.inputType;
                                         const refOptions = refCfg?.dropdownOptions && refCfg.dropdownOptions.length > 0 ? refCfg.dropdownOptions : q.dropdownOptions;
+                                        // Per-cell merge-field path. col0 is the
+                                        // label column ({{question}}); cells start at
+                                        // col1 in storage even though admins count
+                                        // them as "Col 1" in the UI — keep the UI
+                                        // label unchanged so it matches what they see
+                                        // in the rendered schedule, but the badge
+                                        // shows the actual storage path.
+                                        const colN = ci + 1;
+                                        const cellPath = `questionnaires.${ctxKey}.${qSlug}_col${colN}`;
+                                        const headerSlug = header
+                                          ? String(header).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+                                          : '';
+                                        const cellTitle = headerSlug
+                                          ? `Merge-field placeholder — click to copy\n{{${cellPath}}}\n\nInside an asList loop, the column header "${header}" is also addressable as {{${headerSlug}}}.`
+                                          : `Merge-field placeholder — click to copy\n{{${cellPath}}}`;
                                         return (
-                                          <div key={ci} className="bg-slate-50/60 border border-slate-100 rounded p-2 space-y-1">
+                                          <div key={ci} className="bg-slate-50/60 border border-slate-100 rounded p-2 space-y-1 group">
                                             <div className="flex items-center gap-2 flex-wrap">
                                               <span className="text-[10px] text-slate-500 w-32 truncate" title={header}>
                                                 <strong className="text-slate-700">Col {ci + 1}</strong> — {header}
                                               </span>
+                                              {/* Hover badge for this specific cell —
+                                                  click copies the col<N> path. Visible
+                                                  always (admin-only view), so admins
+                                                  authoring per-cell config can grab the
+                                                  path right alongside the input-type
+                                                  selector. */}
+                                              <PlaceholderBadge path={cellPath} title={cellTitle} />
                                               <select
                                                 value={cfg?.inputType || q.inputType}
                                                 onChange={e => updateRowCol(ci, { inputType: e.target.value as QuestionInputType })}
