@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, Plus, X, Zap, Copy, Trash2 } from 'lucide-react';
 import {
@@ -93,10 +93,14 @@ const HARDCODED_APPENDIX_TEMPLATE_TYPES = [
 
 const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;
 // Fallback when the dynamic audit-types catalogue hasn't loaded yet
-// (initial render before useAuditTypes() resolves). 'ALL' is always
-// the first tab — schedules tagged 'ALL' apply to every audit type
-// and aren't part of the configurable catalogue.
-const FALLBACK_AUDIT_TYPES = ['ALL', 'SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS', 'GROUP'];
+// (initial render before useAuditTypes() resolves).
+//
+// Note: 'ALL' is intentionally NOT included. Schedules now belong to a
+// specific audit type — the legacy 'ALL' bucket has been migrated to
+// 'SME' via scripts/sql/migrate-all-to-sme.sql. The Schedule Designer
+// no longer offers 'ALL' as a tab; templates accidentally tagged 'ALL'
+// will simply not surface in the UI.
+const FALLBACK_AUDIT_TYPES = ['SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS', 'GROUP'];
 const FALLBACK_AUDIT_TYPE_LABELS: Record<string, string> = {
   ALL: 'All Types',
   SME: 'Statutory Audit',
@@ -119,15 +123,14 @@ const DEFAULT_ACTION_TRIGGERS = [
 
 export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: Props) {
   // Audit-type catalogue from the firm's configured list. Falls back
-  // to the historic hardcoded set during initial render. 'ALL' is
-  // ALWAYS prepended — it's the bucket for schedules that apply to
-  // every audit type and isn't a real audit type the admin can edit
-  // away.
+  // to the historic hardcoded set during initial render. 'ALL' is no
+  // longer a tab — every schedule now belongs to a specific audit
+  // type (SME by default).
   const dynamicAuditTypes = useAuditTypes();
   const AUDIT_TYPES = useMemo(() => {
     const active = dynamicAuditTypes.filter(a => a.isActive);
     if (active.length === 0) return FALLBACK_AUDIT_TYPES;
-    return ['ALL', ...active.map(a => a.code)];
+    return active.map(a => a.code);
   }, [dynamicAuditTypes]);
   const AUDIT_TYPE_LABELS = useMemo(() => {
     const map: Record<string, string> = { ALL: 'All Types' };
@@ -191,7 +194,20 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
   const [viewMode, setViewMode] = useState<ViewMode>('lists');
   const [activeTemplateType, setActiveTemplateType] = useState(TEMPLATE_TYPES[0].key);
   const [activeAppendixType, setActiveAppendixType] = useState(HARDCODED_APPENDIX_TEMPLATE_TYPES[0].key);
-  const [activeAuditType, setActiveAuditType] = useState('ALL');
+  // Default to Statutory Audit — historically schedules without a
+  // specific audit type were tagged 'ALL'; those have been migrated to
+  // 'SME' so SME is the natural starting tab.
+  const [activeAuditType, setActiveAuditType] = useState('SME');
+
+  // Self-heal if the dynamic catalogue resolves to a list that doesn't
+  // include the current selection (e.g. an admin disables SME on a
+  // bespoke firm). Pick the first available code so the editor never
+  // shows blank tabs against a stale activeAuditType.
+  useEffect(() => {
+    if (AUDIT_TYPES.length > 0 && !AUDIT_TYPES.includes(activeAuditType)) {
+      setActiveAuditType(AUDIT_TYPES[0]);
+    }
+  }, [AUDIT_TYPES, activeAuditType]);
   const [tabLabels, setTabLabels] = useState<Record<string, string>>(() => {
     const m: Record<string, string> = {};
     HARDCODED_APPENDIX_TEMPLATE_TYPES.forEach(t => { m[t.key] = t.label; });
@@ -452,7 +468,27 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
               copyDisabled={(currentAppendixQuestions || []).length === 0}
               onCopyTo={async (targetAuditType) => {
                 if (targetAuditType === activeAuditType) return;
-                if (!confirm(`Copy "${activeAppendixType}" from ${AUDIT_TYPE_LABELS[activeAuditType] || activeAuditType} to ${AUDIT_TYPE_LABELS[targetAuditType] || targetAuditType}? This will overwrite any existing schedule there.`)) return;
+
+                // Only prompt for confirmation when the target already
+                // has a saved schedule — the user explicitly asked for
+                // copies to be NEW entries by default, with overwrite
+                // confirmation reserved for the collision case.
+                const targetKey = `${activeAppendixType}|${targetAuditType}`;
+                const targetExistsInDb = initialTemplates.some(
+                  t => t.templateType === activeAppendixType && t.auditType === targetAuditType,
+                );
+                const targetExistsInState = appendixTemplates[targetKey] !== undefined
+                  && (appendixTemplates[targetKey] || []).length > 0;
+                const wouldOverwrite = targetExistsInDb || targetExistsInState;
+
+                if (wouldOverwrite) {
+                  if (!confirm(
+                    `A "${tabLabels[activeAppendixType] || activeAppendixType}" schedule already exists for `
+                    + `${AUDIT_TYPE_LABELS[targetAuditType] || targetAuditType}.\n\n`
+                    + `Overwrite it with the version from ${AUDIT_TYPE_LABELS[activeAuditType] || activeAuditType}?`,
+                  )) return;
+                }
+
                 const existingTemplate = initialTemplates.find(t => t.templateType === activeAppendixType && t.auditType === activeAuditType);
                 const existingItems = existingTemplate?.items as any;
                 const existingMeta = existingItems && !Array.isArray(existingItems) ? existingItems.sectionMeta : undefined;
@@ -466,18 +502,18 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
                   // Update the local templates map so the source-of-truth
                   // for the editor switching to the target audit type
                   // matches what the server now has.
-                  setAppendixTemplates(prev => ({ ...prev, [`${activeAppendixType}|${targetAuditType}`]: currentAppendixQuestions }));
-                  alert(`Copied to ${AUDIT_TYPE_LABELS[targetAuditType] || targetAuditType}.`);
+                  setAppendixTemplates(prev => ({ ...prev, [targetKey]: currentAppendixQuestions }));
+                  alert(
+                    wouldOverwrite
+                      ? `Overwrote ${AUDIT_TYPE_LABELS[targetAuditType] || targetAuditType}.`
+                      : `Copied to ${AUDIT_TYPE_LABELS[targetAuditType] || targetAuditType}.`,
+                  );
                 } else {
                   alert('Copy failed. Check the server logs.');
                 }
               }}
               onDelete={async () => {
-                if (activeAuditType === 'ALL') {
-                  alert('Cannot delete the "All Types" schedule from here. Switch to a specific audit type first.');
-                  return;
-                }
-                if (!confirm(`Delete "${activeAppendixType}" from ${AUDIT_TYPE_LABELS[activeAuditType] || activeAuditType}?\n\nThis only removes the copy under this audit type — copies under other audit types are unaffected.`)) return;
+                if (!confirm(`Delete "${tabLabels[activeAppendixType] || activeAppendixType}" from ${AUDIT_TYPE_LABELS[activeAuditType] || activeAuditType}?\n\nThis only removes the copy under this audit type — copies under other audit types are unaffected.`)) return;
                 const r = await fetch('/api/methodology-admin/templates', {
                   method: 'DELETE',
                   headers: { 'Content-Type': 'application/json' },
@@ -491,9 +527,16 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
                     delete c[`${activeAppendixType}|${activeAuditType}`];
                     return c;
                   });
-                  // Bounce back to ALL so the admin sees the cross-type
-                  // version (if any) instead of an empty editor.
-                  setActiveAuditType('ALL');
+                  // Bounce to the first OTHER audit type that has a
+                  // saved schedule for this tab — failing that, the
+                  // first available audit type — so the admin lands on
+                  // a meaningful editor rather than the now-empty tab.
+                  const fallback = AUDIT_TYPES.find(at => at !== activeAuditType
+                    && (initialTemplates.some(t => t.templateType === activeAppendixType && t.auditType === at)
+                      || (appendixTemplates[`${activeAppendixType}|${at}`] || []).length > 0))
+                    || AUDIT_TYPES.find(at => at !== activeAuditType)
+                    || AUDIT_TYPES[0];
+                  if (fallback) setActiveAuditType(fallback);
                 } else {
                   alert('Delete failed. Check the server logs.');
                 }
@@ -611,13 +654,15 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
  *
  * Renders next to the audit-type tab strip so admins can:
  *   - Copy the active schedule's items into another audit type
- *     (overwrites the target if one exists, after a confirm)
+ *     (creates a new entry by default; only confirms-overwrite when
+ *     the target already has a saved schedule)
  *   - Delete the schedule's copy under the active audit type
  *
- * 'ALL' is excluded as a copy target — it represents schedules that
- * span every audit type rather than a specific one. Delete is also
- * disabled when the active audit type IS 'ALL' (would orphan
- * everything else).
+ * Legacy 'ALL' is filtered out from copy targets defensively — the
+ * Schedule Designer no longer surfaces it as a tab post the
+ * migrate-all-to-sme.sql migration, but if an older audit-types
+ * catalogue still produces it we don't want it showing up as a
+ * destination.
  */
 function ScheduleAuditTypeActions({
   auditTypes,
@@ -671,9 +716,8 @@ function ScheduleAuditTypeActions({
       <button
         type="button"
         onClick={onDelete}
-        disabled={activeAuditType === 'ALL'}
-        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border border-red-300 text-red-700 bg-white hover:bg-red-50 disabled:opacity-40"
-        title={activeAuditType === 'ALL' ? 'Switch to a specific audit type first' : 'Delete this schedule from the current audit type only'}
+        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border border-red-300 text-red-700 bg-white hover:bg-red-50"
+        title="Delete this schedule from the current audit type only"
       >
         <Trash2 className="w-3 h-3" />Delete from this type
       </button>
