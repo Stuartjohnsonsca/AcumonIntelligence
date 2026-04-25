@@ -230,6 +230,29 @@ export function DocumentTemplateEditor({
   // so the editor treats it as structure rather than content.
   const [htmlOpen, setHtmlOpen] = useState(false);
   const [htmlDraft, setHtmlDraft] = useState('');
+  // Pre-existing block the modal opened to EDIT, if any. Set when the
+  // admin opens the modal with a non-empty selection (replace the
+  // selection on Insert) or with the caret inside a structural element
+  // such as a <table>, <ul>, <ol>, <blockquote>, <pre>, <figure>, or a
+  // heading (replace the element's outerHTML on Insert). Lets the
+  // admin click "insert HTML" again on a previously-pasted snippet to
+  // edit it in place rather than facing a blank textarea every time.
+  const [htmlReplaceTarget, setHtmlReplaceTarget] = useState<
+    | { kind: 'selection'; range: Range }
+    | { kind: 'element'; el: HTMLElement }
+    | null
+  >(null);
+  // AI-build mini-form state, shown inline INSIDE the Insert HTML
+  // modal. Distinct from the standalone "Ask AI for a placeholder"
+  // suggester (suggestOpen / suggestDescription / suggestResult): this
+  // one's specifically for generating / refining the snippet currently
+  // in the htmlDraft textarea — the admin describes what they want, AI
+  // returns a full Handlebars+HTML block, the textarea is updated and
+  // they can hand-tune before inserting.
+  const [aiBuildOpen, setAiBuildOpen] = useState(false);
+  const [aiBuildPrompt, setAiBuildPrompt] = useState('');
+  const [aiBuildLoading, setAiBuildLoading] = useState(false);
+  const [aiBuildError, setAiBuildError] = useState<string | null>(null);
   // Source-mode: swap the WYSIWYG contentEditable for a plain
   // textarea showing the raw HTML of the template. Lets the admin
   // hand-edit the whole template — adjust a comment-wrapped
@@ -446,6 +469,193 @@ export function DocumentTemplateEditor({
   function insertConditional() { insertRawHtml('{{#if condition}}<br>&nbsp;&nbsp;<br>{{else}}<br>&nbsp;&nbsp;<br>{{/if}}'); }
   function insertLoop() { insertRawHtml('{{#each errorSchedule}}<br>&nbsp;&nbsp;{{fsLine}} — {{formatCurrency amount}}: {{description}}<br>{{/each}}'); }
   function insertErrorTable() { insertRawHtml('{{{errorScheduleTable errorSchedule}}}'); }
+
+  // ── Insert HTML modal — open with smart pre-fill ─────────────────────────
+  /**
+   * Open the Insert HTML modal, pre-filling the textarea so the admin
+   * can EDIT what's there rather than always seeing a blank box.
+   *
+   * Three modes, in priority order:
+   *   1. There's a non-collapsed selection inside the editor → seed
+   *      the textarea with the selection's HTML and remember the range
+   *      so Insert replaces the selection.
+   *   2. The caret is inside (or descendant of) a structural block —
+   *      <table>, <ul>, <ol>, <blockquote>, <pre>, <figure>, <h1..h6>
+   *      — seed with that block's outerHTML and remember the element
+   *      so Insert replaces it.
+   *   3. Otherwise → blank textarea, insert at the saved caret on Insert.
+   *
+   * The classic "click the same button to come back to my snippet" UX
+   * works because the second click reuses mode 2 (the caret is inside
+   * the table / heading the previous insert produced).
+   */
+  function openInsertHtmlModal() {
+    setAiBuildOpen(false);
+    setAiBuildPrompt('');
+    setAiBuildError(null);
+
+    // Mode 1: non-collapsed selection.
+    if (typeof window !== 'undefined' && editorRef.current) {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (editorRef.current.contains(range.commonAncestorContainer) && !range.collapsed) {
+          const fragment = range.cloneContents();
+          const wrapper = document.createElement('div');
+          wrapper.appendChild(fragment);
+          setHtmlReplaceTarget({ kind: 'selection', range: range.cloneRange() });
+          setHtmlDraft(wrapper.innerHTML);
+          setHtmlOpen(true);
+          return;
+        }
+
+        // Mode 2: caret inside a structural block we know how to edit.
+        if (editorRef.current.contains(range.commonAncestorContainer)) {
+          const STRUCTURAL = new Set([
+            'TABLE', 'UL', 'OL', 'BLOCKQUOTE', 'PRE', 'FIGURE',
+            'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+          ]);
+          let node: Node | null = range.startContainer;
+          if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+          let found: HTMLElement | null = null;
+          while (node && node !== editorRef.current) {
+            if (node.nodeType === Node.ELEMENT_NODE && STRUCTURAL.has((node as HTMLElement).tagName)) {
+              found = node as HTMLElement;
+              break;
+            }
+            node = node.parentNode;
+          }
+          if (found) {
+            setHtmlReplaceTarget({ kind: 'element', el: found });
+            setHtmlDraft(found.outerHTML);
+            setHtmlOpen(true);
+            return;
+          }
+        }
+      }
+    }
+
+    // Mode 3: fresh insert at caret.
+    setHtmlReplaceTarget(null);
+    setHtmlDraft('');
+    setHtmlOpen(true);
+  }
+
+  /**
+   * Commit the contents of the Insert HTML modal back into the editor.
+   * Branches on htmlReplaceTarget set by openInsertHtmlModal:
+   *   • selection → restore the saved range, delete its contents, drop
+   *     the new HTML in its place.
+   *   • element   → swap the captured element's outerHTML.
+   *   • null      → insert at the saved caret (the original behaviour).
+   */
+  function commitInsertHtmlModal() {
+    const html = htmlDraft;
+    if (htmlReplaceTarget?.kind === 'element') {
+      const target = htmlReplaceTarget.el;
+      // The target may have been removed since the modal opened (e.g.
+      // the admin deleted the parent in the editor while the modal was
+      // hanging in front of it). Fall back to caret insert.
+      if (target.isConnected) {
+        // Use a temporary container to parse the new HTML, then swap.
+        const tmp = document.createElement('div');
+        tmp.innerHTML = html;
+        const replacement = document.createDocumentFragment();
+        while (tmp.firstChild) replacement.appendChild(tmp.firstChild);
+        target.replaceWith(replacement);
+        setDirtyTick(t => t + 1);
+      } else {
+        restoreSelection();
+        insertRawHtml(html);
+      }
+    } else if (htmlReplaceTarget?.kind === 'selection') {
+      // Restore the saved range, replace its contents.
+      const range = htmlReplaceTarget.range;
+      if (editorRef.current && editorRef.current.contains(range.startContainer)) {
+        editorRef.current.focus();
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+          // execCommand('insertHTML') replaces the selection AND interprets
+          // the HTML as structure — exactly what we want here.
+          try { document.execCommand('insertHTML', false, html); }
+          catch {
+            range.deleteContents();
+            const tmp = document.createElement('div');
+            tmp.innerHTML = html;
+            const frag = document.createDocumentFragment();
+            while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+            range.insertNode(frag);
+          }
+          setDirtyTick(t => t + 1);
+        }
+      } else {
+        // Range no longer valid — fall back to caret insert.
+        restoreSelection();
+        insertRawHtml(html);
+      }
+    } else {
+      // Plain insert at caret — original flow.
+      restoreSelection();
+      insertRawHtml(html);
+    }
+    setHtmlOpen(false);
+    setHtmlReplaceTarget(null);
+    setAiBuildOpen(false);
+    setAiBuildPrompt('');
+    setAiBuildError(null);
+  }
+
+  /**
+   * AI-build action — inside the Insert HTML modal. The admin types a
+   * description ("loop the Non Audit Services section, only Y rows,
+   * 2-column table"), AI produces a snippet, the textarea is updated.
+   * If the textarea currently has content we pass it as `currentSnippet`
+   * so the AI can refine rather than starting from scratch.
+   */
+  async function runAiBuild() {
+    const description = aiBuildPrompt.trim();
+    if (!description) return;
+    setAiBuildLoading(true);
+    setAiBuildError(null);
+    try {
+      const res = await fetch('/api/methodology-admin/template-documents/suggest-placeholder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description,
+          // Pass the current draft as `currentSnippet`. The endpoint
+          // will treat a non-empty value as a refine request: the AI
+          // is asked to MODIFY the snippet rather than generate from
+          // scratch. Older clients that don't pass it work as before.
+          currentSnippet: htmlDraft || undefined,
+          // Surrounding context from the editor so the AI knows whether
+          // the snippet is going into prose, a list, a table, etc.
+          context: (editorRef.current?.innerText || '').slice(-400),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAiBuildError(data.error || 'AI build failed');
+        return;
+      }
+      const snippet = String(data?.snippet || '').trim();
+      if (!snippet) {
+        setAiBuildError(data?.rationale || 'AI returned no snippet — try rewording.');
+        return;
+      }
+      // Replace the textarea content with the AI's snippet. The admin
+      // can hand-edit before clicking Insert.
+      setHtmlDraft(snippet);
+      setAiBuildOpen(false);
+      setAiBuildPrompt('');
+    } catch (err: any) {
+      setAiBuildError(err?.message || 'AI build failed');
+    } finally {
+      setAiBuildLoading(false);
+    }
+  }
 
   // ── Static-table editing ─────────────────────────────────────────────────
   /** Walk up from the current selection's anchor to find a particular
@@ -1144,8 +1354,8 @@ export function DocumentTemplateEditor({
           // loses focus the moment the modal opens, so without this the
           // eventual insert would happen at the document start.
           onMouseDown={e => { e.preventDefault(); captureSelection(); }}
-          onClick={() => { setHtmlOpen(true); setHtmlDraft(''); }}
-          title="Paste raw HTML / Handlebars — the editor's normal paste strips HTML, this keeps it as structure"
+          onClick={() => openInsertHtmlModal()}
+          title="Insert raw HTML / Handlebars, OR put the caret inside an existing block (table, list, heading, …) and click again to edit it"
           className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] bg-slate-100 border border-slate-200 text-slate-700 rounded hover:bg-slate-200"
         >
           <Code className="h-3 w-3" /> insert HTML
@@ -1559,7 +1769,7 @@ export function DocumentTemplateEditor({
       {htmlOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
-          onClick={() => setHtmlOpen(false)}
+          onClick={() => { setHtmlOpen(false); setHtmlReplaceTarget(null); }}
         >
           <div
             className="bg-white rounded-lg shadow-xl w-full max-w-2xl flex flex-col"
@@ -1567,13 +1777,19 @@ export function DocumentTemplateEditor({
           >
             <div className="px-4 py-3 border-b flex items-start justify-between">
               <div>
-                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Code className="h-4 w-4 text-slate-600" /> Insert HTML / Handlebars</h4>
+                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                  <Code className="h-4 w-4 text-slate-600" />
+                  {htmlReplaceTarget?.kind === 'element' ? 'Edit ' + htmlReplaceTarget.el.tagName.toLowerCase() + ' block'
+                    : htmlReplaceTarget?.kind === 'selection' ? 'Edit selected HTML'
+                    : 'Insert HTML / Handlebars'}
+                </h4>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Paste any HTML or a Handlebars snippet (loops, conditionals, colored tables, etc.).
-                  The normal paste strips HTML — this doesn't.
+                  {htmlReplaceTarget
+                    ? 'Tweak the markup below and hit Save — the existing block in the editor will be replaced. Or click Ask AI to rewrite it.'
+                    : 'Paste any HTML or a Handlebars snippet (loops, conditionals, coloured tables, etc.). The normal paste strips HTML — this doesn’t. Or click Ask AI to generate one from a description.'}
                 </p>
               </div>
-              <button onClick={() => setHtmlOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => { setHtmlOpen(false); setHtmlReplaceTarget(null); }} className="text-slate-400 hover:text-slate-600">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -1592,25 +1808,84 @@ export function DocumentTemplateEditor({
                 className="w-full border border-slate-200 rounded px-3 py-2 text-[11px] font-mono min-h-[220px] focus:outline-none focus:border-slate-400"
                 autoFocus
               />
+
+              {/* AI build / refine — inline panel. Opens with the small
+                  "Ask AI" button below; when open, the admin types a
+                  description, AI returns a Handlebars+HTML snippet
+                  that REPLACES the textarea content. If the textarea
+                  already has a snippet, AI is asked to refine it
+                  rather than start from scratch. */}
+              {aiBuildOpen && (
+                <div className="border border-fuchsia-200 bg-fuchsia-50/40 rounded p-3 space-y-2">
+                  <div className="text-[11px] font-semibold text-fuchsia-800 flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {htmlDraft.trim() ? 'Refine the snippet above' : 'Generate a new snippet'}
+                  </div>
+                  <textarea
+                    value={aiBuildPrompt}
+                    onChange={e => setAiBuildPrompt(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !aiBuildLoading) { e.preventDefault(); void runAiBuild(); } }}
+                    placeholder={htmlDraft.trim()
+                      ? 'e.g. add a third column showing the section name; only show rows where col2 is "Yes"; restyle the header row in slate'
+                      : 'e.g. table of every Non Audit Services question where the Y/N answer is "Y", showing the service name and the threats/safeguards in two columns'}
+                    className="w-full border border-fuchsia-200 rounded px-2 py-1.5 text-[11px] min-h-[60px] focus:outline-none focus:border-fuchsia-400 bg-white"
+                    autoFocus
+                    disabled={aiBuildLoading}
+                  />
+                  {aiBuildError && (
+                    <div className="text-[10px] text-red-700 flex items-start gap-1">
+                      <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                      <span>{aiBuildError}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setAiBuildOpen(false); setAiBuildPrompt(''); setAiBuildError(null); }}
+                      disabled={aiBuildLoading}
+                      className="text-[10px] px-2 py-0.5 text-slate-600 hover:text-slate-800"
+                    >Cancel</button>
+                    <button
+                      type="button"
+                      onClick={() => void runAiBuild()}
+                      disabled={aiBuildLoading || !aiBuildPrompt.trim()}
+                      className="inline-flex items-center gap-1 text-[10px] px-2.5 py-1 bg-fuchsia-600 text-white rounded disabled:opacity-50"
+                    >
+                      {aiBuildLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                      {htmlDraft.trim() ? 'Refine' : 'Generate'}
+                      <span className="text-[9px] opacity-70 ml-1">⌘⏎</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="px-4 py-3 border-t flex justify-end gap-2">
-              <button
-                onClick={() => setHtmlOpen(false)}
-                className="text-[11px] px-3 py-1 text-slate-600 hover:text-slate-800"
-              >Cancel</button>
-              <button
-                onClick={() => {
-                  // Restore caret so the insert lands where the admin
-                  // was working when they opened the modal.
-                  restoreSelection();
-                  insertRawHtml(htmlDraft);
-                  setHtmlOpen(false);
-                }}
-                disabled={!htmlDraft.trim()}
-                className="inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-slate-700 text-white rounded disabled:opacity-50 hover:bg-slate-800"
-              >
-                <Check className="h-3 w-3" /> Insert
-              </button>
+            <div className="px-4 py-3 border-t flex items-center gap-2">
+              {/* Ask AI — left-aligned so it's clearly an alternative
+                  way to populate the textarea, not a confirmation
+                  action. */}
+              {!aiBuildOpen && (
+                <button
+                  type="button"
+                  onClick={() => { setAiBuildOpen(true); setAiBuildError(null); }}
+                  className="inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-fuchsia-50 border border-fuchsia-200 text-fuchsia-700 rounded hover:bg-fuchsia-100"
+                  title="Describe the snippet you want — AI generates the Handlebars+HTML for you. If the textarea already has content, it will be refined."
+                >
+                  <Sparkles className="h-3 w-3" /> Ask AI
+                </button>
+              )}
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={() => { setHtmlOpen(false); setHtmlReplaceTarget(null); }}
+                  className="text-[11px] px-3 py-1 text-slate-600 hover:text-slate-800"
+                >Cancel</button>
+                <button
+                  onClick={commitInsertHtmlModal}
+                  disabled={!htmlDraft.trim()}
+                  className="inline-flex items-center gap-1 text-[11px] px-3 py-1 bg-slate-700 text-white rounded disabled:opacity-50 hover:bg-slate-800"
+                >
+                  <Check className="h-3 w-3" /> {htmlReplaceTarget ? 'Save' : 'Insert'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

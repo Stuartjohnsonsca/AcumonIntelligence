@@ -38,6 +38,13 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const description = typeof body?.description === 'string' ? body.description.trim() : '';
   const surroundingContext = typeof body?.context === 'string' ? body.context.trim().slice(0, 600) : '';
+  // Optional: when the admin is refining an existing snippet inside
+  // the Insert HTML modal, the client passes the current draft so the
+  // AI can MODIFY it rather than start from scratch ("add a third
+  // column showing the section name", "only show rows where col2 is
+  // 'Yes'", "restyle the header row in slate", etc.). Empty / missing
+  // means "generate a new snippet" — the original behaviour.
+  const currentSnippet = typeof body?.currentSnippet === 'string' ? body.currentSnippet.trim().slice(0, 4000) : '';
   if (!description) return NextResponse.json({ error: 'description is required' }, { status: 400 });
 
   // ── Static catalog ─────────────────────────────────────────────────
@@ -355,7 +362,16 @@ Return ONLY JSON:
 If the catalog has no suitable field at all, return:
 { "snippet": "", "path": "", "label": "", "rationale": "No match in catalog.", "confidence": 0, "alternatives": [] }`;
 
-  const userPrompt = `Description: ${description}${surroundingContext ? `\n\nSurrounding text in the template (for context): ${surroundingContext}` : ''}`;
+  const userPrompt = currentSnippet
+    ? `REFINE the snippet below according to the description. Preserve the parts that work; only change what the description asks for. Return the full revised snippet (not a diff) under "snippet" in the JSON response.
+
+Existing snippet:
+\`\`\`
+${currentSnippet}
+\`\`\`
+
+Description of the change wanted: ${description}${surroundingContext ? `\n\nSurrounding text in the template (for context): ${surroundingContext}` : ''}`
+    : `Description: ${description}${surroundingContext ? `\n\nSurrounding text in the template (for context): ${surroundingContext}` : ''}`;
 
   try {
     const OpenAI = (await import('openai')).default;
