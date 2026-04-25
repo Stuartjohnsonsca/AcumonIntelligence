@@ -151,6 +151,38 @@ const NAMED_COLOURS: Record<string, string> = {
   aqua: '00FFFF', teal: '008080', navy: '000080', fuchsia: 'FF00FF',
   purple: '800080',
 };
+/**
+ * Resolve a CSS background colour from a parsed-style map, accepting
+ * BOTH the long form `background-color: #xxx` and the shorthand
+ * `background: #xxx` (which is what hand-written HTML in our editor
+ * tends to emit). The shorthand can also carry image / position /
+ * repeat tokens (`background: url(...) center no-repeat #fff`); we
+ * extract the first thing parseColour can recognise as a colour.
+ *
+ * Used by both the inline-run state machine (text highlight) and the
+ * table cell <w:shd> emitter (cell fill).
+ */
+function resolveBackgroundColour(style: Record<string, string>): string | null {
+  if (!style) return null;
+  const direct = parseColour(style['background-color']);
+  if (direct) return direct;
+  const shorthand = style['background'];
+  if (!shorthand) return null;
+  // Try the whole value first — covers the common case of just
+  // `background: #fff` or `background: red`.
+  const whole = parseColour(shorthand);
+  if (whole) return whole;
+  // Fallback: scan tokens. A `background` shorthand with an image
+  // and a colour together (`background: url(x.png) #fff`) won't
+  // parse as a single colour but each space-separated token will,
+  // and the colour token is the one we want.
+  for (const tok of shorthand.split(/\s+/)) {
+    const c = parseColour(tok);
+    if (c) return c;
+  }
+  return null;
+}
+
 function parseColour(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = String(raw).trim().toLowerCase();
@@ -272,8 +304,12 @@ function applyInlineStyles(state: InlineState, style: Record<string, string>): P
     const c = parseColour(style.color);
     if (c) { before.color = state.color; state.color = c; }
   }
-  if (style['background-color']) {
-    const c = parseColour(style['background-color']);
+  // Inline highlight — accept either `background-color: #xxx` (long
+  // form) or `background: #xxx` (shorthand). The shorthand is what
+  // hand-written HTML in our template editor tends to emit, e.g.
+  // `<th style="background:#f1f9f8">`.
+  if (style['background-color'] || style['background']) {
+    const c = resolveBackgroundColour(style);
     if (c) { before.backgroundColor = state.backgroundColor; state.backgroundColor = c; }
   }
   if (style['font-size']) {
@@ -700,7 +736,11 @@ export function htmlToDocxBody(html: string): string {
             // `width:Npx` / `Npt` / `N%` on the cell.
             const cellStyle = parseStyle(currentCellAttrs?.style);
             const rowStyle = parseStyle(currentRowAttrs?.style);
-            const bg = parseColour(cellStyle['background-color']) || parseColour(rowStyle['background-color']);
+            // Cell shading — accept either `background-color: #xxx`
+            // (long form) or `background: #xxx` (shorthand) on the cell
+            // OR the row. Hand-written HTML in our editor tends to use
+            // the shorthand (`<th style="background:#f1f9f8">`).
+            const bg = resolveBackgroundColour(cellStyle) || resolveBackgroundColour(rowStyle);
             const shd = bg ? `<w:shd w:val="clear" w:color="auto" w:fill="${bg}"/>` : '';
             // Width — twips (1pt = 20 twips; 1px ≈ 15 twips).
             let tcW = '<w:tcW w:w="0" w:type="auto"/>';
