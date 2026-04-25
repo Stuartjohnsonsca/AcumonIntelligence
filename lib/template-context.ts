@@ -12,6 +12,7 @@
 import { prisma } from '@/lib/db';
 import { ERROR_SCHEDULE_SAFE_SELECT } from '@/lib/error-schedule-select';
 import { slugifyQuestionText } from '@/lib/formula-engine';
+import { loadFirmSchedules } from '@/lib/schedule-loader';
 
 /** A single RMM row rendered into template context — every useful
  *  field from AuditRMMRow. Templates can show a minimal view (just
@@ -468,6 +469,14 @@ export async function buildTemplateContext(engagementId: string, opts: { include
   //   {{formatDate questionnaires.continuance.<uuid> "dd MMMM yyyy"}}  ← still works
   async function loadQ(table: string): Promise<Record<string, any>> {
     try {
+      // Empty / unknown table name → no answers to load. Lets
+      // schedules WITHOUT a dedicated audit_* answers table (generic
+      // `questionnaire` rows, `_categories` schedules, custom admin
+      // schedules) still surface their schema (questions / sections /
+      // column headers) under `questionnaires.<ctxKey>` — document
+      // templates that reference those keys render placeholder /
+      // empty values rather than failing.
+      if (!table) return {};
       const model = (prisma as any)[table];
       if (!model) return {};
 
@@ -497,60 +506,55 @@ export async function buildTemplateContext(engagementId: string, opts: { include
     } catch { return {}; }
   }
 
-  // Load the firm's questionnaire schemas dynamically — any
-  // MethodologyTemplate row whose `templateType` ends in `_questions`
-  // is a questionnaire. Firms can add new ones (new client take-on,
-  // subsequent events, audit summary memo, etc.) without code changes.
-  const qSchemas = await prisma.methodologyTemplate.findMany({
-    where: {
-      firmId: engagement.firm.id,
-      templateType: { endsWith: '_questions' },
-    },
-  });
+  // Load EVERY schedule the firm has — _questions, _categories,
+  // generic `questionnaire`, custom slugs, anything with question-
+  // shaped items. The shared schedule loader applies a single
+  // detection rule so the AI search, red outlines, preview, and live
+  // render all see the same set of schedules. Non-schedule rows
+  // (specialist_roles, validation_rules, audit_type_schedules, …)
+  // are filtered out by items-shape inspection.
+  const schedules = await loadFirmSchedules(engagement.firm.id);
   const schemaByType = new Map<string, any[]>();
   // Per-templateType sectionMeta — keyed first by templateType, then
   // by the literal sectionKey. Carries each section's columnHeaders so
   // enrichQuestionnaire can emit header-slug aliases on each asList
   // row (e.g. {{threat}} / {{safeguard}} alongside {{col1}} / {{col2}}).
-  // Templates with the legacy flat-array shape have no sectionMeta and
-  // therefore no slug aliases — they keep working through col<N>.
   const sectionMetaByType = new Map<string, Record<string, any>>();
-  for (const s of qSchemas) {
-    if (Array.isArray(s.items)) {
-      schemaByType.set(s.templateType, s.items as any[]);
-      sectionMetaByType.set(s.templateType, {});
-    } else if (s.items && typeof s.items === 'object') {
-      const items = s.items as any;
-      const questions = Array.isArray(items.questions) ? items.questions
-        : Array.isArray(items) ? items : [];
-      schemaByType.set(s.templateType, questions);
-      sectionMetaByType.set(s.templateType, (items.sectionMeta && typeof items.sectionMeta === 'object') ? items.sectionMeta : {});
-    } else {
-      schemaByType.set(s.templateType, []);
-      sectionMetaByType.set(s.templateType, {});
-    }
+  // Loader output → existing internal maps. Loader has already
+  // flattened the three input shapes (flat array, { questions,
+  // sectionMeta }, { groups }) into a single questions[] list, so
+  // this loop doesn't have to re-handle items-shape detection.
+  for (const s of schedules) {
+    schemaByType.set(s.templateType, s.questions);
+    sectionMetaByType.set(s.templateType, s.sectionMeta);
+  }
+  // ctxKey for templates that bypass the per-templateType lookups
+  // (used by prismaAndCtxKeysFor below as a fallback). Loader picks
+  // the right ctxKey for canonical types AND for `questionnaire`-
+  // named schedules etc.
+  const ctxKeyByTemplateType = new Map<string, string>();
+  const prismaModelByTemplateType = new Map<string, string | null>();
+  for (const s of schedules) {
+    ctxKeyByTemplateType.set(s.templateType, s.ctxKey);
+    prismaModelByTemplateType.set(s.templateType, s.prismaModel);
   }
 
-  /** Map a `*_questions` templateType to both its Prisma model name
-   *  (to load answers) and the camelCase key used in the context
-   *  (`questionnaires.<key>`). Known canonical mappings take priority;
-   *  anything else is derived by stripping `_questions` and
-   *  camelCasing. Missing Prisma tables are tolerated — the schema
-   *  (questions + keys) is still surfaced even if there are no
-   *  stored answers yet. */
+  /** Resolve a templateType to its Prisma model name (for loading
+   *  saved answers) and the Handlebars-context key used by document
+   *  templates (`questionnaires.<key>`).
+   *
+   *  Sourced from the shared schedule loader — canonical _questions
+   *  types map to their dedicated audit_* tables, and non-canonical
+   *  ones (`questionnaire`, `*_categories`, custom admin schedules)
+   *  return `prismaModel: ''` so loadQ() short-circuits and the
+   *  schedule still gets exposed under `questionnaires.<ctxKey>`
+   *  with empty answers. The schema's questions / sections / column
+   *  headers all still resolve, so document templates that reference
+   *  them render placeholder values rather than failing. */
   function prismaAndCtxKeysFor(templateType: string): { prismaModel: string; ctxKey: string } {
-    const canonical: Record<string, { prismaModel: string; ctxKey: string }> = {
-      permanent_file_questions:    { prismaModel: 'auditPermanentFile',    ctxKey: 'permanentFile' },
-      ethics_questions:            { prismaModel: 'auditEthics',           ctxKey: 'ethics' },
-      continuance_questions:       { prismaModel: 'auditContinuance',      ctxKey: 'continuance' },
-      materiality_questions:       { prismaModel: 'auditMateriality',      ctxKey: 'materiality' },
-      new_client_takeon_questions: { prismaModel: 'auditNewClientTakeOn',  ctxKey: 'newClientTakeOn' },
-      subsequent_events_questions: { prismaModel: 'auditSubsequentEvents', ctxKey: 'subsequentEvents' },
-    };
-    if (canonical[templateType]) return canonical[templateType];
-    const stem = templateType.replace(/_questions$/, '');
-    const ctxKey = stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
-    const prismaModel = 'audit' + ctxKey.charAt(0).toUpperCase() + ctxKey.slice(1);
+    const ctxKey = ctxKeyByTemplateType.get(templateType)
+      || templateType.replace(/_(questions|categories)$/, '').replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+    const prismaModel = prismaModelByTemplateType.get(templateType) ?? '';
     return { prismaModel, ctxKey };
   }
 

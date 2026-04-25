@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { MERGE_FIELDS } from '@/lib/template-merge-fields';
 import { prisma } from '@/lib/db';
+import { loadFirmSchedules } from '@/lib/schedule-loader';
 
 /**
  * AI placeholder-lookup for the document-template editor.
@@ -85,31 +86,6 @@ export async function POST(req: NextRequest) {
   };
   const dynamicEntries: QuestionnaireMenuEntry[] = [];
 
-  /** Convert a `*_questions` templateType to the key used in the
-   *  template context (`questionnaires.<key>`). The four canonical
-   *  ones have well-known camelCase forms; everything else is
-   *  derived by stripping `_questions` and camelCasing the rest. */
-  function contextKeyFor(templateType: string): string {
-    const canonical: Record<string, string> = {
-      permanent_file_questions:   'permanentFile',
-      ethics_questions:           'ethics',
-      continuance_questions:      'continuance',
-      materiality_questions:      'materiality',
-      new_client_takeon_questions:'newClientTakeOn',
-      subsequent_events_questions:'subsequentEvents',
-      audit_summary_memo_questions:'auditSummaryMemo',
-    };
-    if (canonical[templateType]) return canonical[templateType];
-    const stem = templateType.replace(/_questions$/, '');
-    // snake_case → camelCase
-    return stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
-  }
-  /** Best-effort human label for the group header. */
-  function labelFor(templateType: string): string {
-    const stem = templateType.replace(/_questions$/, '').replace(/_/g, ' ');
-    return stem.replace(/\b\w/g, c => c.toUpperCase()) + ' Questionnaire';
-  }
-
   // Per-section column-header catalog. Surfacing this lets the AI
   // resolve queries like "the WP Reference column on the procedures
   // section" — historically those failed because column header text
@@ -131,33 +107,16 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const schemas = await prisma.methodologyTemplate.findMany({
-      where: {
-        firmId: session.user.firmId,
-        templateType: { endsWith: '_questions' },
-      },
-    });
-    for (const schema of schemas) {
-      const ctxKey = contextKeyFor(schema.templateType);
-      const typeLabel = labelFor(schema.templateType);
-
-      // ── Items shape detection ────────────────────────────────────
-      // Two production shapes:
-      //   1. Array<TemplateQuestion> — flat list, each question carries
-      //      its sectionKey. No top-level sectionMeta.
-      //   2. { questions: TemplateQuestion[], sectionMeta: Record<sectionKey,
-      //      { columnHeaders, layout, label, ... }> } — newer shape that
-      //      lets a section declare table-layout + column headers.
-      let questions: any[] = [];
-      let sectionMeta: Record<string, any> = {};
-      if (Array.isArray(schema.items)) {
-        questions = schema.items as any[];
-      } else if (schema.items && typeof schema.items === 'object') {
-        const items = schema.items as any;
-        questions = Array.isArray(items.questions) ? items.questions
-          : Array.isArray(items) ? items : [];
-        sectionMeta = (items.sectionMeta && typeof items.sectionMeta === 'object') ? items.sectionMeta : {};
-      }
+    // ── Load EVERY schedule the firm has, normalised ────────────────
+    // The shared loader picks up any methodology_template whose items
+    // look like a question schema — _questions, _categories, generic
+    // `questionnaire`, custom admin-added schedules, anything. Filters
+    // out config rows (specialist_roles, validation_rules, etc.).
+    // Means new schedules an admin creates show up in AI search the
+    // very next time someone runs a suggester query, no code change.
+    const schedules = await loadFirmSchedules(session.user.firmId);
+    for (const schedule of schedules) {
+      const { ctxKey, typeLabel, questions, sectionMeta } = schedule;
 
       // Index sections we've seen so we record one column-headers
       // entry per (schedule, section) pair even when the same

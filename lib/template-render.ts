@@ -16,6 +16,7 @@ import { buildTemplateContext } from '@/lib/template-context';
 import { renderBody, extractReferencedPaths } from '@/lib/template-handlebars';
 import { htmlToDocxBody } from '@/lib/template-html-to-docx';
 import { contextHasPath, buildSampleContext } from '@/lib/template-merge-fields';
+import { loadFirmSchedules } from '@/lib/schedule-loader';
 
 // Dynamic imports for server-only packages (docxtemplater + pizzip
 // use Node APIs that must not be bundled into client chunks).
@@ -261,34 +262,18 @@ async function buildDynamicSampleContext(firmId: string): Promise<Record<string,
   const base: Record<string, any> = buildSampleContext();
 
   try {
-    const schemas = await prisma.methodologyTemplate.findMany({
-      where: { firmId, templateType: { endsWith: '_questions' } },
-    });
-    if (schemas.length === 0) return base;
+    // Same schedule loader the live render path uses — picks up
+    // every schedule-shaped template (`_questions`, `_categories`,
+    // generic `questionnaire`, custom admin schedules) and gives us
+    // back a normalised `{ questions, sectionMeta, ctxKey }`. So a
+    // brand-new schedule the admin creates flows through to Preview
+    // automatically, no code change.
+    const schedules = await loadFirmSchedules(firmId);
+    if (schedules.length === 0) return base;
 
     const questionnaires: Record<string, any> = { ...(base.questionnaires || {}) };
-    for (const schema of schemas) {
-      const ctxKey = templateTypeToCtxKey(schema.templateType);
-
-      // ── Items shape detection ────────────────────────────────────
-      // Two production shapes:
-      //   1. Array<TemplateQuestion> — flat list, each question carries
-      //      its sectionKey. No top-level sectionMeta.
-      //   2. { questions: TemplateQuestion[], sectionMeta: Record<sectionKey,
-      //      { columnHeaders, layout, label, ... }> } — newer shape that
-      //      lets a section declare table-layout + column headers.
-      // Generic detection here so any new firm-defined schedule
-      // automatically gets a populated preview without code changes.
-      let items: any[] = [];
-      let sectionMeta: Record<string, any> = {};
-      if (Array.isArray(schema.items)) {
-        items = schema.items as any[];
-      } else if (schema.items && typeof schema.items === 'object') {
-        const root = schema.items as any;
-        items = Array.isArray(root.questions) ? root.questions
-          : Array.isArray(root) ? root : [];
-        sectionMeta = (root.sectionMeta && typeof root.sectionMeta === 'object') ? root.sectionMeta : {};
-      }
+    for (const schedule of schedules) {
+      const { ctxKey, questions: items, sectionMeta } = schedule;
       if (items.length === 0) { questionnaires[ctxKey] = questionnaires[ctxKey] || { asList: [] }; continue; }
 
       // Stable sort by sortOrder so previousAnswer / nextAnswer
@@ -500,23 +485,6 @@ function placeholderAnswerFor(item: any): string | number | boolean {
   if (key) return `[sample: ${key}]`;
   if (qtext) return `[sample answer for "${qtext.slice(0, 60)}${qtext.length > 60 ? '…' : ''}"]`;
   return '[sample answer]';
-}
-
-/** Turn `permanent_file_questions` into `permanentFile`. Mirrors the
- *  canonical mapping in template-context.ts so the preview exposes
- *  the same `questionnaires.<key>` keys the live path uses. */
-function templateTypeToCtxKey(templateType: string): string {
-  const canonical: Record<string, string> = {
-    permanent_file_questions: 'permanentFile',
-    ethics_questions: 'ethics',
-    continuance_questions: 'continuance',
-    materiality_questions: 'materiality',
-    new_client_takeon_questions: 'newClientTakeOn',
-    subsequent_events_questions: 'subsequentEvents',
-  };
-  if (canonical[templateType]) return canonical[templateType];
-  const stem = templateType.replace(/_questions$/, '');
-  return stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
 }
 
 function slugifySection(s: string): string {

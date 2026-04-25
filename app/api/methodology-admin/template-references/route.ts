@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { extractReferencedPaths, extractTemplateOutputs, type TemplateOutputRef } from '@/lib/template-handlebars';
+import { loadFirmSchedules } from '@/lib/schedule-loader';
 
 /**
  * GET /api/methodology-admin/template-references
@@ -121,47 +122,31 @@ export async function GET() {
 }
 
 /**
- * Pull every `*_questions` schedule's sectionMeta and index it as
- * { ctxKey → sectionName → meta }. Tolerant of both items shapes
- * (flat array, no sectionMeta vs. { questions, sectionMeta } object).
+ * Pull sectionMeta for EVERY firm schedule (not just `_questions`-
+ * suffixed ones — also `_categories`, `questionnaire`, custom slugs).
+ * Indexed as { ctxKey → sectionName → meta }. Backed by
+ * `loadFirmSchedules` so the same schedule-detection rule applies
+ * here as in the AI catalog and live render path.
  */
 async function loadSectionMetaForFirm(firmId: string): Promise<Map<string, Map<string, any>>> {
   const out = new Map<string, Map<string, any>>();
   try {
-    const schemas = await prisma.methodologyTemplate.findMany({
-      where: { firmId, templateType: { endsWith: '_questions' } },
-      select: { templateType: true, items: true },
-    });
-    for (const s of schemas) {
-      const ctxKey = ctxKeyFor(s.templateType);
-      let sectionMeta: Record<string, any> = {};
-      if (s.items && typeof s.items === 'object' && !Array.isArray(s.items)) {
-        const root = s.items as any;
-        sectionMeta = (root.sectionMeta && typeof root.sectionMeta === 'object') ? root.sectionMeta : {};
-      }
-      const map = new Map<string, any>();
-      for (const [k, v] of Object.entries(sectionMeta)) map.set(k, v);
-      out.set(ctxKey, map);
+    const schedules = await loadFirmSchedules(firmId);
+    for (const s of schedules) {
+      const map = out.get(s.ctxKey) || new Map<string, any>();
+      // Multiple rows could share a ctxKey (e.g. several
+      // `questionnaire` rows whose names slugified the same). Merge
+      // their sectionMeta — last write wins per sectionName, which
+      // is acceptable since collisions are rare and the loader's
+      // ctxKey rule prefers items.name to keep them distinct.
+      for (const [k, v] of Object.entries(s.sectionMeta)) map.set(k, v);
+      out.set(s.ctxKey, map);
     }
   } catch {
     // Best-effort — empty map means slug refs won't resolve, the
     // existing fully-qualified path matching still works.
   }
   return out;
-}
-
-function ctxKeyFor(templateType: string): string {
-  const canonical: Record<string, string> = {
-    permanent_file_questions: 'permanentFile',
-    ethics_questions: 'ethics',
-    continuance_questions: 'continuance',
-    materiality_questions: 'materiality',
-    new_client_takeon_questions: 'newClientTakeOn',
-    subsequent_events_questions: 'subsequentEvents',
-  };
-  if (canonical[templateType]) return canonical[templateType];
-  const stem = templateType.replace(/_questions$/, '');
-  return stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
 }
 
 /**
