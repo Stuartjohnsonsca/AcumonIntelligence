@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Save, Loader2, Plus, X, Zap } from 'lucide-react';
+import { Save, Loader2, Plus, X, Zap, Copy, Trash2 } from 'lucide-react';
 import {
   DEFAULT_AGREED_DATES,
   DEFAULT_INFO_REQUEST_STANDARD,
@@ -11,6 +11,7 @@ import {
 } from '@/types/methodology';
 import type { TemplateQuestion } from '@/types/methodology';
 import { AppendixTemplateEditor } from './AppendixTemplateEditor';
+import { useAuditTypes } from '@/hooks/useAuditTypes';
 
 interface Template {
   id: string;
@@ -91,12 +92,17 @@ const HARDCODED_APPENDIX_TEMPLATE_TYPES = [
 ];
 
 const TEMPLATE_TYPES = LIST_TEMPLATE_TYPES;
-const AUDIT_TYPES = ['ALL', 'SME', 'GRANT', 'CASS', 'GROUP'];
-const AUDIT_TYPE_LABELS: Record<string, string> = {
+// Fallback when the dynamic audit-types catalogue hasn't loaded yet
+// (initial render before useAuditTypes() resolves). 'ALL' is always
+// the first tab — schedules tagged 'ALL' apply to every audit type
+// and aren't part of the configurable catalogue.
+const FALLBACK_AUDIT_TYPES = ['ALL', 'SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS', 'GROUP'];
+const FALLBACK_AUDIT_TYPE_LABELS: Record<string, string> = {
   ALL: 'All Types',
   SME: 'Statutory Audit',
-  GRANT: 'Grant Audit',
-  CASS: 'CASS Audit',
+  PIE: 'PIE Audit',
+  SME_CONTROLS: 'Statutory Controls Based Audit',
+  PIE_CONTROLS: 'PIE Controls Based Audit',
   GROUP: 'Group Audit',
 };
 
@@ -112,6 +118,28 @@ const DEFAULT_ACTION_TRIGGERS = [
 ];
 
 export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: Props) {
+  // Audit-type catalogue from the firm's configured list. Falls back
+  // to the historic hardcoded set during initial render. 'ALL' is
+  // ALWAYS prepended — it's the bucket for schedules that apply to
+  // every audit type and isn't a real audit type the admin can edit
+  // away.
+  const dynamicAuditTypes = useAuditTypes();
+  const AUDIT_TYPES = useMemo(() => {
+    const active = dynamicAuditTypes.filter(a => a.isActive);
+    if (active.length === 0) return FALLBACK_AUDIT_TYPES;
+    return ['ALL', ...active.map(a => a.code)];
+  }, [dynamicAuditTypes]);
+  const AUDIT_TYPE_LABELS = useMemo(() => {
+    const map: Record<string, string> = { ALL: 'All Types' };
+    for (const a of dynamicAuditTypes) map[a.code] = a.label;
+    // Layer fallback labels in case a code isn't in the catalogue
+    // (defensive — an engagement using a code we've forgotten still
+    // gets a sensible tab label).
+    for (const [code, label] of Object.entries(FALLBACK_AUDIT_TYPE_LABELS)) {
+      if (!(code in map)) map[code] = label;
+    }
+    return map;
+  }, [dynamicAuditTypes]);
   // Dynamically build the appendix tab list:
   //   1. Start with the hardcoded entries (preserves existing labels and section defaults)
   //   2. Append any master-schedule entry that ISN'T already covered AND isn't a built-in tool
@@ -395,14 +423,82 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
             ))}
           </div>
 
-          {/* Audit Type Filter */}
-          <div className="flex space-x-2">
-            {AUDIT_TYPES.map(at => (
-              <button key={at} onClick={() => setActiveAuditType(at)}
-                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${activeAuditType === at ? 'bg-slate-700 text-white' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'}`}>
-                {AUDIT_TYPE_LABELS[at] || at}
-              </button>
-            ))}
+          {/* Audit Type Filter — only ONE is active at a time. The
+              Copy / Delete actions in the toolbar below operate on the
+              CURRENT (activeAppendixType, activeAuditType) cell. */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex space-x-2 flex-wrap">
+              {AUDIT_TYPES.map(at => {
+                // Mark tabs that have a saved template with a small
+                // dot so the admin knows where work already exists
+                // before they start clicking around.
+                const exists = initialTemplates.some(t => t.templateType === activeAppendixType && t.auditType === at)
+                  || appendixTemplates[`${activeAppendixType}|${at}`] !== undefined;
+                return (
+                  <button key={at} onClick={() => setActiveAuditType(at)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded transition-colors inline-flex items-center gap-1 ${activeAuditType === at ? 'bg-slate-700 text-white' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'}`}>
+                    {AUDIT_TYPE_LABELS[at] || at}
+                    {exists && <span className={`inline-block w-1.5 h-1.5 rounded-full ${activeAuditType === at ? 'bg-emerald-300' : 'bg-emerald-500'}`} title="Schedule exists for this audit type" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Copy / Delete toolbar for the active schedule × type. */}
+            <ScheduleAuditTypeActions
+              auditTypes={AUDIT_TYPES}
+              auditTypeLabels={AUDIT_TYPE_LABELS}
+              activeAuditType={activeAuditType}
+              copyDisabled={(currentAppendixQuestions || []).length === 0}
+              onCopyTo={async (targetAuditType) => {
+                if (targetAuditType === activeAuditType) return;
+                if (!confirm(`Copy "${activeAppendixType}" from ${AUDIT_TYPE_LABELS[activeAuditType] || activeAuditType} to ${AUDIT_TYPE_LABELS[targetAuditType] || targetAuditType}? This will overwrite any existing schedule there.`)) return;
+                const existingTemplate = initialTemplates.find(t => t.templateType === activeAppendixType && t.auditType === activeAuditType);
+                const existingItems = existingTemplate?.items as any;
+                const existingMeta = existingItems && !Array.isArray(existingItems) ? existingItems.sectionMeta : undefined;
+                const items = existingMeta ? { questions: currentAppendixQuestions, sectionMeta: existingMeta } : currentAppendixQuestions;
+                const r = await fetch('/api/methodology-admin/templates', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ templateType: activeAppendixType, auditType: targetAuditType, items }),
+                });
+                if (r.ok) {
+                  // Update the local templates map so the source-of-truth
+                  // for the editor switching to the target audit type
+                  // matches what the server now has.
+                  setAppendixTemplates(prev => ({ ...prev, [`${activeAppendixType}|${targetAuditType}`]: currentAppendixQuestions }));
+                  alert(`Copied to ${AUDIT_TYPE_LABELS[targetAuditType] || targetAuditType}.`);
+                } else {
+                  alert('Copy failed. Check the server logs.');
+                }
+              }}
+              onDelete={async () => {
+                if (activeAuditType === 'ALL') {
+                  alert('Cannot delete the "All Types" schedule from here. Switch to a specific audit type first.');
+                  return;
+                }
+                if (!confirm(`Delete "${activeAppendixType}" from ${AUDIT_TYPE_LABELS[activeAuditType] || activeAuditType}?\n\nThis only removes the copy under this audit type — copies under other audit types are unaffected.`)) return;
+                const r = await fetch('/api/methodology-admin/templates', {
+                  method: 'DELETE',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ templateType: activeAppendixType, auditType: activeAuditType }),
+                });
+                if (r.ok) {
+                  // Drop from the local cache so the editor renders
+                  // empty rather than the stale items.
+                  setAppendixTemplates(prev => {
+                    const c = { ...prev };
+                    delete c[`${activeAppendixType}|${activeAuditType}`];
+                    return c;
+                  });
+                  // Bounce back to ALL so the admin sees the cross-type
+                  // version (if any) instead of an empty editor.
+                  setActiveAuditType('ALL');
+                } else {
+                  alert('Delete failed. Check the server logs.');
+                }
+              }}
+            />
           </div>
 
           {/* Appendix Template Editor */}
@@ -506,6 +602,81 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
       </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Per-schedule × audit-type Copy / Delete actions.
+ *
+ * Renders next to the audit-type tab strip so admins can:
+ *   - Copy the active schedule's items into another audit type
+ *     (overwrites the target if one exists, after a confirm)
+ *   - Delete the schedule's copy under the active audit type
+ *
+ * 'ALL' is excluded as a copy target — it represents schedules that
+ * span every audit type rather than a specific one. Delete is also
+ * disabled when the active audit type IS 'ALL' (would orphan
+ * everything else).
+ */
+function ScheduleAuditTypeActions({
+  auditTypes,
+  auditTypeLabels,
+  activeAuditType,
+  copyDisabled,
+  onCopyTo,
+  onDelete,
+}: {
+  auditTypes: string[];
+  auditTypeLabels: Record<string, string>;
+  activeAuditType: string;
+  copyDisabled: boolean;
+  onCopyTo: (target: string) => void;
+  onDelete: () => void;
+}) {
+  const [copyOpen, setCopyOpen] = useState(false);
+  const targets = auditTypes.filter(at => at !== activeAuditType && at !== 'ALL');
+
+  return (
+    <div className="ml-auto flex items-center gap-2">
+      {/* Copy to... — popover menu. Disabled when the editor has
+          no questions to copy (avoids creating an empty target row). */}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setCopyOpen(v => !v)}
+          disabled={copyDisabled || targets.length === 0}
+          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40"
+          title={copyDisabled ? 'Nothing to copy yet — save some questions first.' : 'Copy this schedule to another audit type'}
+        >
+          <Copy className="w-3 h-3" />Copy to…
+        </button>
+        {copyOpen && (
+          <div className="absolute right-0 mt-1 z-20 w-56 bg-white border border-slate-200 rounded-md shadow-lg py-1">
+            {targets.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-slate-500 italic">No other audit types available.</div>
+            ) : targets.map(t => (
+              <button
+                key={t}
+                onClick={() => { setCopyOpen(false); onCopyTo(t); }}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-blue-50 hover:text-blue-700"
+              >
+                {auditTypeLabels[t] || t}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={onDelete}
+        disabled={activeAuditType === 'ALL'}
+        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border border-red-300 text-red-700 bg-white hover:bg-red-50 disabled:opacity-40"
+        title={activeAuditType === 'ALL' ? 'Switch to a specific audit type first' : 'Delete this schedule from the current audit type only'}
+      >
+        <Trash2 className="w-3 h-3" />Delete from this type
+      </button>
     </div>
   );
 }

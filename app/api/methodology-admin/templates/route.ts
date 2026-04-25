@@ -130,6 +130,45 @@ export async function PUT(req: Request) {
 }
 
 /**
+ * DELETE /api/methodology-admin/templates
+ * Body: { templateType, auditType }
+ *
+ * Removes the methodology_template row for a specific (templateType,
+ * auditType) on the caller's firm. Used by the Schedule Designer
+ * "Delete from this audit type" action so admins can retire a
+ * schedule's copy under one type without affecting copies under
+ * other types.
+ */
+export async function DELETE(req: Request) {
+  const session = await auth();
+  if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const { templateType, auditType } = await req.json().catch(() => ({}));
+  if (!templateType || !auditType) {
+    return NextResponse.json({ error: 'templateType and auditType required' }, { status: 400 });
+  }
+  const firmId = session.user.firmId;
+
+  try {
+    await prisma.methodologyTemplate.delete({
+      where: { firmId_templateType_auditType: { firmId, templateType, auditType } },
+    });
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    // P2025 = "not found" — treat as a no-op success so the UI
+    // doesn't error out when the admin tries to delete a row that's
+    // already been removed.
+    if (err?.code === 'P2025') {
+      return NextResponse.json({ ok: true, note: 'Already removed' });
+    }
+    console.error('[templates/DELETE] failed:', err?.message || err);
+    return NextResponse.json({ error: err?.message || 'Delete failed' }, { status: 500 });
+  }
+}
+
+/**
  * Compare two templateType strings while tolerating the real-world
  * inconsistencies firms accumulate over time:
  *
