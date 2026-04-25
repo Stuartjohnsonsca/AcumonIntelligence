@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { extractReferencedPaths } from '@/lib/template-handlebars';
+import { extractReferencedPaths, extractTemplateOutputs, type TemplateOutputRef } from '@/lib/template-handlebars';
 
 /**
  * GET /api/methodology-admin/template-references
@@ -13,9 +13,23 @@ import { extractReferencedPaths } from '@/lib/template-handlebars';
  * whose placeholder path appears in the set gets a red outline on
  * the answer cell.
  *
+ * Returns BOTH:
+ *   1. Flat top-level paths (the historic shape) — fully-qualified
+ *      `questionnaires.<X>.<key>` references.
+ *   2. Synthetic loop-context paths — emitted when a template uses
+ *      the asList iteration pattern. Format:
+ *        `asList:<schedule>:<section>@col<N>`
+ *        `asList:<schedule>:@col<N>`           (no section filter)
+ *        `asList:<schedule>:<section>@answer`  (standard layout {{answer}})
+ *        `asList:<schedule>:@answer`
+ *      Slug body refs (e.g. {{threat_description}}) are resolved to
+ *      their col<N> equivalent via the schedule's sectionMeta before
+ *      being added to the path set, so the matcher only needs to
+ *      compare col<N> forms.
+ *
  * Response:
  *   {
- *     paths: string[],                 // unique dotted paths referenced
+ *     paths: string[],                 // unique paths referenced
  *     byPath: {
  *       [path]: Array<{ templateId, templateName, kind }>
  *     },
@@ -36,22 +50,67 @@ export async function GET() {
     select: { id: true, name: true, kind: true, subject: true, content: true },
   });
 
+  // Section meta keyed by ctxKey ('ethics' / 'continuance' / etc.) →
+  // sectionName → { columnHeaders, layout, ... }. Used to resolve
+  // header-slug body refs (e.g. {{threat_description}}) to their
+  // col<N> position when emitting synthetic asList paths. Loaded
+  // once for all templates on the request.
+  const sectionMetaByCtxKey = await loadSectionMetaForFirm(firmId);
+
   const paths = new Set<string>();
   const byPath: Record<string, Array<{ templateId: string; templateName: string; kind: string }>> = {};
 
+  function addPath(p: string, t: { id: string; name: string; kind: string }) {
+    paths.add(p);
+    if (!byPath[p]) byPath[p] = [];
+    // Avoid duplicating the same template against the same path
+    // (e.g. when subject + body both reference it).
+    if (!byPath[p].some(x => x.templateId === t.id)) {
+      byPath[p].push({ templateId: t.id, templateName: t.name, kind: t.kind });
+    }
+  }
+
   for (const t of templates) {
-    const refs = new Set<string>();
+    const flatRefs = new Set<string>();
+    let outputs: TemplateOutputRef[] = [];
     try {
-      for (const p of extractReferencedPaths(t.content || '')) refs.add(p);
-      for (const p of extractReferencedPaths(t.subject || '')) refs.add(p);
+      for (const p of extractReferencedPaths(t.content || '')) flatRefs.add(p);
+      for (const p of extractReferencedPaths(t.subject || '')) flatRefs.add(p);
+      outputs = [
+        ...extractTemplateOutputs(t.content || ''),
+        ...extractTemplateOutputs(t.subject || ''),
+      ];
     } catch {
       // Malformed template shouldn't break the list.
       continue;
     }
-    for (const p of refs) {
-      paths.add(p);
-      if (!byPath[p]) byPath[p] = [];
-      byPath[p].push({ templateId: t.id, templateName: t.name, kind: t.kind });
+    const tref = { id: t.id, name: t.name, kind: t.kind };
+    for (const p of flatRefs) addPath(p, tref);
+
+    // Synthetic asList paths from each loop reference.
+    for (const ref of outputs) {
+      const sec = ref.sectionName ?? '';
+      // Resolve slug → col<N> using sectionMeta when available.
+      let colN: number | null = ref.colN;
+      if (colN == null && ref.slug) {
+        colN = resolveSlugToColN(sectionMetaByCtxKey, ref.questionnaireKey, ref.sectionName, ref.slug);
+      }
+      if (colN != null) {
+        // Emit BOTH a section-specific and a section-agnostic path so
+        // the matcher can match either. Lets a Threats-only loop
+        // outline only Threats rows, while a section-agnostic loop
+        // outlines every section's row of the same column.
+        addPath(`asList:${ref.questionnaireKey}:${sec}@col${colN}`, tref);
+        addPath(`asList:${ref.questionnaireKey}:@col${colN}`, tref);
+      } else if (ref.isAnswer) {
+        addPath(`asList:${ref.questionnaireKey}:${sec}@answer`, tref);
+        addPath(`asList:${ref.questionnaireKey}:@answer`, tref);
+      } else if (ref.isQuestion) {
+        addPath(`asList:${ref.questionnaireKey}:${sec}@question`, tref);
+        addPath(`asList:${ref.questionnaireKey}:@question`, tref);
+      }
+      // else: unrecognised slug we couldn't resolve — drop silently
+      // (better than a phantom outline on the wrong column).
     }
   }
 
@@ -59,4 +118,95 @@ export async function GET() {
     paths: [...paths].sort(),
     byPath,
   });
+}
+
+/**
+ * Pull every `*_questions` schedule's sectionMeta and index it as
+ * { ctxKey → sectionName → meta }. Tolerant of both items shapes
+ * (flat array, no sectionMeta vs. { questions, sectionMeta } object).
+ */
+async function loadSectionMetaForFirm(firmId: string): Promise<Map<string, Map<string, any>>> {
+  const out = new Map<string, Map<string, any>>();
+  try {
+    const schemas = await prisma.methodologyTemplate.findMany({
+      where: { firmId, templateType: { endsWith: '_questions' } },
+      select: { templateType: true, items: true },
+    });
+    for (const s of schemas) {
+      const ctxKey = ctxKeyFor(s.templateType);
+      let sectionMeta: Record<string, any> = {};
+      if (s.items && typeof s.items === 'object' && !Array.isArray(s.items)) {
+        const root = s.items as any;
+        sectionMeta = (root.sectionMeta && typeof root.sectionMeta === 'object') ? root.sectionMeta : {};
+      }
+      const map = new Map<string, any>();
+      for (const [k, v] of Object.entries(sectionMeta)) map.set(k, v);
+      out.set(ctxKey, map);
+    }
+  } catch {
+    // Best-effort — empty map means slug refs won't resolve, the
+    // existing fully-qualified path matching still works.
+  }
+  return out;
+}
+
+function ctxKeyFor(templateType: string): string {
+  const canonical: Record<string, string> = {
+    permanent_file_questions: 'permanentFile',
+    ethics_questions: 'ethics',
+    continuance_questions: 'continuance',
+    materiality_questions: 'materiality',
+    new_client_takeon_questions: 'newClientTakeOn',
+    subsequent_events_questions: 'subsequentEvents',
+  };
+  if (canonical[templateType]) return canonical[templateType];
+  const stem = templateType.replace(/_questions$/, '');
+  return stem.replace(/_([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+}
+
+/**
+ * Resolve a header-slug body ref (e.g. 'threat_description') to its
+ * col<N> position by walking the firm's sectionMeta for the schedule.
+ * If the slug appears in MULTIPLE sections at different col<N>
+ * positions — rare, but possible — the section-specific path picks
+ * up the right one; the section-agnostic path tolerates the
+ * ambiguity by emitting an outline on every matching col<N>.
+ */
+function resolveSlugToColN(
+  meta: Map<string, Map<string, any>>,
+  ctxKey: string,
+  sectionName: string | null,
+  slug: string,
+): number | null {
+  const schedule = meta.get(ctxKey);
+  if (!schedule) return null;
+  const slugLower = slug.toLowerCase();
+  // Section-specific: try the literal sectionName first, then a
+  // slugified form (matches sectionMeta-key tolerance elsewhere).
+  if (sectionName) {
+    const s = schedule.get(sectionName) || schedule.get(slugifyHeader(sectionName));
+    const colN = colForSlug(s, slugLower);
+    if (colN != null) return colN;
+  }
+  // No section filter — search every section the schedule has and
+  // return the first col<N> whose header slugifies to the requested
+  // slug. Predictable: same algorithm both sides of the comparison.
+  for (const sectionEntry of schedule.values()) {
+    const colN = colForSlug(sectionEntry, slugLower);
+    if (colN != null) return colN;
+  }
+  return null;
+}
+
+function colForSlug(sectionEntry: any, slug: string): number | null {
+  const headers = Array.isArray(sectionEntry?.columnHeaders) ? sectionEntry.columnHeaders : null;
+  if (!headers) return null;
+  for (let i = 1; i < headers.length; i++) {
+    if (slugifyHeader(String(headers[i] || '')) === slug) return i;
+  }
+  return null;
+}
+
+function slugifyHeader(s: string): string {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }

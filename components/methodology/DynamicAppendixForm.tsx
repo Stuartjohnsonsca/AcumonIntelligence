@@ -197,21 +197,7 @@ export function DynamicAppendixForm({
    */
   function isQuestionReferenced(q: TemplateQuestion): boolean {
     if (referencedPaths.size === 0) return false;
-    const candidates: string[] = [];
-    const qKey = (q as any).key as string | undefined;
-    const keys: string[] = [];
-    if (qKey && qKey.trim()) keys.push(qKey.trim());
-    const slug = slugifyQuestionText(q.questionText);
-    if (slug && !keys.includes(slug)) keys.push(slug);
-    const sec = q.sectionKey ? String(q.sectionKey).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null;
-    for (const k of keys) {
-      candidates.push(`questionnaires.${questionnaireKey}.${k}`);
-      if (sec) candidates.push(`questionnaires.${questionnaireKey}.bySection.${sec}.${k}`);
-      // Check col1..col10 for multi-column references.
-      for (let i = 1; i <= 10; i++) {
-        candidates.push(`questionnaires.${questionnaireKey}.${k}_col${i}`);
-      }
-    }
+    const candidates = candidatePathsForQuestion(q);
     for (const p of candidates) {
       if (referencedPaths.has(p)) return true;
     }
@@ -223,34 +209,91 @@ export function DynamicAppendixForm({
    *  whole row. */
   function isColumnReferenced(q: TemplateQuestion, colN: number): boolean {
     if (referencedPaths.size === 0) return false;
-    const qKey = (q as any).key as string | undefined;
-    const keys: string[] = [];
-    if (qKey && qKey.trim()) keys.push(qKey.trim());
-    const slug = slugifyQuestionText(q.questionText);
-    if (slug && !keys.includes(slug)) keys.push(slug);
-    for (const k of keys) {
-      if (referencedPaths.has(`questionnaires.${questionnaireKey}.${k}_col${colN}`)) return true;
+    const candidates = candidatePathsForColumn(q, colN);
+    for (const p of candidates) {
+      if (referencedPaths.has(p)) return true;
     }
     return false;
   }
 
-  /** Build a tooltip listing which templates reference a given path. */
-  function referencedByTooltip(q: TemplateQuestion, colN?: number): string {
+  /**
+   * Every path that COULD identify this question's answer cell. Two
+   * families:
+   *   1. Fully-qualified `questionnaires.<X>.<key>` — when an admin
+   *      drops a single placeholder pill into a template body.
+   *   2. asList loop-context paths — when the template iterates the
+   *      schedule with `{{#each questionnaires.<X>.asList}}` and uses
+   *      `{{answer}}` (standard layouts) inside the body. Both
+   *      section-specific and section-agnostic forms are checked so
+   *      a Threats-only loop outlines only Threats rows, while a
+   *      whole-schedule loop outlines every section.
+   */
+  function candidatePathsForQuestion(q: TemplateQuestion): string[] {
+    const candidates: string[] = [];
     const qKey = (q as any).key as string | undefined;
     const keys: string[] = [];
     if (qKey && qKey.trim()) keys.push(qKey.trim());
     const slug = slugifyQuestionText(q.questionText);
     if (slug && !keys.includes(slug)) keys.push(slug);
-    const hits: string[] = [];
+    const sec = q.sectionKey ? String(q.sectionKey).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') : null;
     for (const k of keys) {
-      const paths = colN
-        ? [`questionnaires.${questionnaireKey}.${k}_col${colN}`]
-        : [`questionnaires.${questionnaireKey}.${k}`];
-      for (const p of paths) {
-        const refs = referencedByPath[p];
-        if (refs) {
-          for (const r of refs) hits.push(`${r.kind}: ${r.templateName}`);
-        }
+      candidates.push(`questionnaires.${questionnaireKey}.${k}`);
+      if (sec) candidates.push(`questionnaires.${questionnaireKey}.bySection.${sec}.${k}`);
+      // Multi-column variants — fully-qualified.
+      for (let i = 1; i <= 10; i++) {
+        candidates.push(`questionnaires.${questionnaireKey}.${k}_col${i}`);
+      }
+    }
+    // Loop-context: {{answer}} body refs (standard-layout schedules).
+    const sectionLiteral = q.sectionKey ? String(q.sectionKey) : '';
+    candidates.push(`asList:${questionnaireKey}:${sectionLiteral}@answer`);
+    candidates.push(`asList:${questionnaireKey}:@answer`);
+    return candidates;
+  }
+
+  /**
+   * Cell-level candidates. In addition to the fully-qualified col<N>
+   * path, we also match the asList loop-context path emitted by the
+   * template-references API:
+   *   asList:<schedule>:<sectionLiteral>@col<N>
+   *   asList:<schedule>:@col<N>
+   * The API resolves slug body refs (e.g. {{threat_description}})
+   * to col<N> via sectionMeta before adding them to the path set,
+   * so the matcher only needs to compare col<N> here.
+   */
+  function candidatePathsForColumn(q: TemplateQuestion, colN: number): string[] {
+    const candidates: string[] = [];
+    const qKey = (q as any).key as string | undefined;
+    const keys: string[] = [];
+    if (qKey && qKey.trim()) keys.push(qKey.trim());
+    const slug = slugifyQuestionText(q.questionText);
+    if (slug && !keys.includes(slug)) keys.push(slug);
+    for (const k of keys) {
+      candidates.push(`questionnaires.${questionnaireKey}.${k}_col${colN}`);
+    }
+    const sectionLiteral = q.sectionKey ? String(q.sectionKey) : '';
+    candidates.push(`asList:${questionnaireKey}:${sectionLiteral}@col${colN}`);
+    candidates.push(`asList:${questionnaireKey}:@col${colN}`);
+    return candidates;
+  }
+
+  /** Build a tooltip listing which templates reference a given path. */
+  function referencedByTooltip(q: TemplateQuestion, colN?: number): string {
+    const candidates = colN ? candidatePathsForColumn(q, colN) : candidatePathsForQuestion(q);
+    // Dedup template hits — the same template can show up under
+    // multiple candidate paths (e.g. both the fully-qualified path
+    // AND the asList loop-context path), and admins want to see
+    // each template only once.
+    const seen = new Set<string>();
+    const hits: string[] = [];
+    for (const p of candidates) {
+      const refs = referencedByPath[p];
+      if (!refs) continue;
+      for (const r of refs) {
+        const dedupKey = `${r.kind}|${r.templateId}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+        hits.push(`${r.kind}: ${r.templateName}`);
       }
     }
     if (hits.length === 0) return '';

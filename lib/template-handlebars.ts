@@ -667,4 +667,165 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
   return Array.from(paths);
 }
 
+/**
+ * Per-loop output reference. Describes a single placeholder INSIDE
+ * a `{{#each ... questionnaires.<X>.asList ...}} ... {{/each}}` body
+ * — i.e. a value the template writes into the rendered document.
+ *
+ * Used by the schedule form to draw red outlines on cells that
+ * actually flow into a template. Filter ARGUMENTS (col1 / threat
+ * inside `filterWhere ...`) are CHECK conditions, not outputs, and
+ * are deliberately excluded.
+ */
+export interface TemplateOutputRef {
+  /** ctxKey of the questionnaire being looped over (e.g. 'ethics'). */
+  questionnaireKey: string;
+  /** Section name from `filterBySection ... "<name>"`, or null when
+   *  the loop iterates the whole schedule (all sections). */
+  sectionName: string | null;
+  /** col<N> body placeholders — col1, col2, col3 ...  Null when the
+   *  body uses {{question}} / {{answer}} / a slug alias instead. */
+  colN: number | null;
+  /** Header-slug body placeholder (e.g. 'threat_description'). The
+   *  API endpoint resolves these to col<N> via the schedule's
+   *  sectionMeta before exposing them to the schedule form. */
+  slug: string | null;
+  /** {{answer}} body placeholder — present in plain Q+A loops over
+   *  standard-layout sections. */
+  isAnswer: boolean;
+  /** {{question}} body placeholder — references the row label /
+   *  question text, which is the col0 label column. Currently used
+   *  for tooltip context only; cells aren't outlined for this. */
+  isQuestion: boolean;
+}
+
+/**
+ * Walk every `{{#each <arr>}} ... {{/each}}` block whose array
+ * resolves (after peeling filterWhere/filterBySection wrappers) to
+ * `questionnaires.<X>.asList`, and collect the placeholders the
+ * loop body uses.
+ *
+ * Limitations (intentional — scope is "useful red outlines",
+ * not full Handlebars semantics):
+ *   • Nested `{{#each}}` over a different array inside the body
+ *     attributes its placeholders to the OUTER loop too — a small
+ *     overcount, no false negatives.
+ *   • `{{lookup this "Threat exists?"}}` style verbatim-header
+ *     references aren't parsed; admins can use the slug form
+ *     ({{threat_exists}}) and they'll be detected.
+ *   • Block markers like `{{#if}}…{{/if}}` inside the body are
+ *     stepped over when scanning for placeholders.
+ */
+export function extractTemplateOutputs(bodyTemplate: string): TemplateOutputRef[] {
+  const clean = sanitiseHandlebarsInHtml(bodyTemplate);
+  const out: TemplateOutputRef[] = [];
+
+  // Scan for `{{#each ...}}` opening tokens, then walk forward
+  // tracking each-depth so we capture the matching `{{/each}}`. We
+  // don't try to parse the FULL body — just the ones that touch
+  // `asList` so the cost stays low even on big templates.
+  const eachOpenRe = /\{\{\s*#each\b([^}]*)\}\}/gi;
+  let m: RegExpExecArray | null;
+  while ((m = eachOpenRe.exec(clean)) !== null) {
+    const expr = (m[1] || '').trim();
+    // Quick filter — must mention `asList` (so we ignore each-loops
+    // over errorSchedule / tb.rows / etc.).
+    if (!/\basList\b/.test(expr)) continue;
+
+    // Find the schedule's ctxKey from the path `questionnaires.<X>.asList`.
+    const ctxMatch = expr.match(/questionnaires\.([A-Za-z0-9_]+)\.asList\b/);
+    if (!ctxMatch) continue;
+    const questionnaireKey = ctxMatch[1];
+
+    // Section filter — `filterBySection <arr> "Section Name"`.
+    let sectionName: string | null = null;
+    const fbsMatch = expr.match(/filterBySection[^"']*["']([^"']+)["']/);
+    if (fbsMatch) sectionName = fbsMatch[1];
+
+    // Find the matching `{{/each}}`. Walk forward maintaining depth so
+    // a nested `{{#each}}` inside the body doesn't close ours early.
+    const bodyStart = m.index + m[0].length;
+    let depth = 1;
+    const inner = /\{\{\s*(#each|\/each)\b[^}]*\}\}/gi;
+    inner.lastIndex = bodyStart;
+    let bodyEnd = -1;
+    let im: RegExpExecArray | null;
+    while ((im = inner.exec(clean)) !== null) {
+      if (/^#each\b/i.test(im[1])) depth++;
+      else { depth--; if (depth === 0) { bodyEnd = im.index; break; } }
+    }
+    if (bodyEnd < 0) continue; // unbalanced — skip
+    const body = clean.slice(bodyStart, bodyEnd);
+
+    // Continue the outer scan AFTER this loop's closing tag so we
+    // don't reparse nested each-opens we already counted.
+    eachOpenRe.lastIndex = bodyEnd;
+
+    // Scan body for placeholder tokens — `{{xxx}}` where xxx is a
+    // single bare identifier (not a helper, not a sub-expression).
+    // Specifically: skip `{{#…}}` / `{{/…}}` block markers and any
+    // expression with whitespace / parens (those carry helpers, e.g.
+    // `{{formatDate col1 "..."}}` — the body still references col1,
+    // which we want, so we ALSO scan helper expressions for
+    // identifiers that match our output-shape rules).
+    const phRe = /\{\{\{?\s*([^}]*?)\s*\}?\}\}/g;
+    let pm: RegExpExecArray | null;
+    while ((pm = phRe.exec(body)) !== null) {
+      let s = (pm[1] || '').trim();
+      if (!s) continue;
+      if (/^[#/]/.test(s)) continue; // block markers
+      if (s === 'else') continue;
+      // Tokenise — skip strings/parens — and pick the bare
+      // identifiers that look like output references.
+      const toks = (() => {
+        const arr: string[] = [];
+        let i = 0;
+        while (i < s.length) {
+          const ch = s[i];
+          if (/\s/.test(ch) || ch === '(' || ch === ')') { i++; continue; }
+          if (ch === '"' || ch === "'") {
+            const q = ch; i++;
+            while (i < s.length && s[i] !== q) { if (s[i] === '\\' && i + 1 < s.length) i++; i++; }
+            i++;
+            continue;
+          }
+          let start = i;
+          while (i < s.length && !/[\s()]/.test(s[i]) && s[i] !== '"' && s[i] !== "'") i++;
+          if (i > start) arr.push(s.slice(start, i));
+        }
+        return arr;
+      })();
+
+      for (const t of toks) {
+        // Skip helper names — they're never output references.
+        if (/^(if|unless|each|with|formatDate|formatCurrency|formatNumber|formatPercent|dateAdd|addYears|subtractYears|addMonths|subtractMonths|addDays|subtractDays|add|subtract|sub|multiply|mul|divide|div|percent|upper|lower|titleCase|default|join|length|isEmpty|isNotEmpty|countItems|sumField|sumFieldWhere|filterWhere|filterBySection|errorScheduleTable|testConclusionsTable|paragraph|else|eq|ne|gt|lt|gte|lte|and|or|not|lookup|log)$/.test(t)) continue;
+        if (/^-?\d+(\.\d+)?$/.test(t)) continue;
+        if (t === 'true' || t === 'false' || t === 'null' || t === 'undefined') continue;
+        if (t.startsWith('../') || t.startsWith('@') || t === 'this' || t === '.' || t.startsWith('this.')) continue;
+        // Dotted top-level paths (e.g. `period.periodEnd`) — also not
+        // a loop-local reference; they're handled by extractReferencedPaths.
+        if (t.includes('.')) continue;
+
+        const colMatch = /^col(\d+)$/.exec(t);
+        if (colMatch) {
+          out.push({ questionnaireKey, sectionName, colN: Number(colMatch[1]), slug: null, isAnswer: false, isQuestion: false });
+        } else if (t === 'answer') {
+          out.push({ questionnaireKey, sectionName, colN: null, slug: null, isAnswer: true, isQuestion: false });
+        } else if (t === 'question') {
+          out.push({ questionnaireKey, sectionName, colN: null, slug: null, isAnswer: false, isQuestion: true });
+        } else if (/^[a-z][a-z0-9_]*$/i.test(t)) {
+          // Lowercase identifier — treat as a header slug. The API
+          // endpoint resolves these to col<N> using the schedule's
+          // sectionMeta before exposing them to the schedule form.
+          // Things like 'previousAnswer' / 'nextKey' are loop-meta,
+          // not outputs — skip them.
+          if (/^(question|answer|key|section|sortOrder|itemIndex|isEmpty|previousKey|previousQuestion|previousAnswer|nextKey|nextQuestion|nextAnswer)$/.test(t)) continue;
+          out.push({ questionnaireKey, sectionName, colN: null, slug: t, isAnswer: false, isQuestion: false });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 export default hb;
