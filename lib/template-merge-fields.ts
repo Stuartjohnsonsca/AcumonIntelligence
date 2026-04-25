@@ -335,73 +335,17 @@ export const MERGE_FIELDS: MergeField[] = [
     ]},
   { group: 'Questionnaires', key: 'questionnaires.ethics.asList', label: 'Ethics Q&A (array)', type: 'array',
     description: 'Use with {{#each}} to render every answered ethics question.',
+    // Static placeholder — only used when no firm has been resolved
+    // (no firmId in the preview request, OR the firm has no
+    // *_questions templates yet). For every other case the preview
+    // pipeline replaces this with a DYNAMIC sample built from the
+    // firm’s actual schemas in lib/template-render.ts ->
+    // buildDynamicSampleContext (one asList row per schema question,
+    // col<N> + slug aliases populated automatically). That way every
+    // section in every schedule gets full preview coverage without
+    // anyone hand-coding the rows here.
     sampleValue: [
-      // One Independence question (no multi-column data) —
-      // demonstrates the simple Q+A shape.
       { question: 'Is independence confirmed?', key: 'independence_confirmed', answer: 'Yes', section: 'Independence', sortOrder: 1 },
-      // A handful of Non Audit Services rows that mirror the real
-      // table_4col layout: col1 is the Threat Y/N, col2 the threat
-      // description, col3 the safeguard. Includes both Y and N rows
-      // so Preview demonstrates filterWhere on col1=="Y" producing
-      // a non-empty table, AND so admins can see how slug aliases
-      // (threat / threat_description / safeguard) line up against
-      // col<N> indices.
-      { question: 'Is there a perceived threat from the provision of accounts services?',
-        key: 'nas_preparation_of_accounts_comments',
-        answer: null,                    // table-layout rows usually leave the bare value empty
-        section: 'Non Audit Services', sortOrder: 10,
-        col1: 'Y',                       // Threat (Y/N)
-        col2: 'Self-review threat — preparing the accounts then auditing them',
-        col3: 'Independent partner review of the prep team’s output',
-        // Slug aliases (computed at render time from sectionMeta in
-        // a real engagement; included verbatim in the sample so the
-        // Preview path matches the live render path).
-        threat: 'Y', threat_description: 'Self-review threat — preparing the accounts then auditing them', safeguard: 'Independent partner review of the prep team’s output' },
-      { question: 'Is there a perceived threat from the provision of corporation tax services?',
-        key: 'nas_corporation_tax_safeguard',
-        answer: null,
-        section: 'Non Audit Services', sortOrder: 11,
-        col1: 'N', col2: '', col3: '',
-        threat: 'N', threat_description: '', safeguard: '' },
-      { question: 'Is there a perceived threat from the provision of internal audit services?',
-        key: 'nas_internal_audit_comments',
-        answer: null,
-        section: 'Non Audit Services', sortOrder: 13,
-        col1: 'Y',
-        col2: 'Conflict between IA and statutory audit roles',
-        col3: 'Separate engagement teams; IA work supervised by a different RI',
-        threat: 'Y', threat_description: 'Conflict between IA and statutory audit roles', safeguard: 'Separate engagement teams; IA work supervised by a different RI' },
-      // Threats section rows. Same table_4col layout but the FIRST data
-      // column header is "Threat exists?" — slugified to threat_exists.
-      // Verbatim "Threat exists?" is also exposed as an alias at render
-      // time so filterWhere accepts either form.
-      { question: 'Familiarity threat from long-standing audit team relationships',
-        key: 'threat_familiarity_comments',
-        answer: null,
-        section: 'Threats', sortOrder: 20,
-        col1: 'Y',
-        col2: 'Audit partner has been on the engagement for 7+ years',
-        col3: 'Partner rotation scheduled for next year',
-        threat_exists: 'Y', threat_description: 'Audit partner has been on the engagement for 7+ years', safeguard: 'Partner rotation scheduled for next year',
-        // Verbatim header alias — for snippets that pass the literal
-        // header text as the filterWhere field name.
-        'Threat exists?': 'Y' },
-      { question: 'Self-review threat from prior accounts preparation work',
-        key: 'threat_self_review_issue',
-        answer: null,
-        section: 'Threats', sortOrder: 21,
-        col1: 'Y',
-        col2: 'Same team prepared the financial statements before audit',
-        col3: 'Independent partner reviews all journals and conclusions',
-        threat_exists: 'Y', threat_description: 'Same team prepared the financial statements before audit', safeguard: 'Independent partner reviews all journals and conclusions',
-        'Threat exists?': 'Y' },
-      { question: 'Intimidation threat from client management',
-        key: 'threat_intimidation_comments',
-        answer: null,
-        section: 'Threats', sortOrder: 24,
-        col1: 'N', col2: '', col3: '',
-        threat_exists: 'N', threat_description: '', safeguard: '',
-        'Threat exists?': 'N' },
     ], itemFields: [
       { key: 'question', label: 'Question text', type: 'scalar', sampleValue: 'Is independence confirmed?' },
       { key: 'answer', label: 'Answer', type: 'scalar', sampleValue: 'Yes' },

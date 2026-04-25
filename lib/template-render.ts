@@ -269,7 +269,26 @@ async function buildDynamicSampleContext(firmId: string): Promise<Record<string,
     const questionnaires: Record<string, any> = { ...(base.questionnaires || {}) };
     for (const schema of schemas) {
       const ctxKey = templateTypeToCtxKey(schema.templateType);
-      const items = Array.isArray(schema.items) ? (schema.items as any[]) : [];
+
+      // ── Items shape detection ────────────────────────────────────
+      // Two production shapes:
+      //   1. Array<TemplateQuestion> — flat list, each question carries
+      //      its sectionKey. No top-level sectionMeta.
+      //   2. { questions: TemplateQuestion[], sectionMeta: Record<sectionKey,
+      //      { columnHeaders, layout, label, ... }> } — newer shape that
+      //      lets a section declare table-layout + column headers.
+      // Generic detection here so any new firm-defined schedule
+      // automatically gets a populated preview without code changes.
+      let items: any[] = [];
+      let sectionMeta: Record<string, any> = {};
+      if (Array.isArray(schema.items)) {
+        items = schema.items as any[];
+      } else if (schema.items && typeof schema.items === 'object') {
+        const root = schema.items as any;
+        items = Array.isArray(root.questions) ? root.questions
+          : Array.isArray(root) ? root : [];
+        sectionMeta = (root.sectionMeta && typeof root.sectionMeta === 'object') ? root.sectionMeta : {};
+      }
       if (items.length === 0) { questionnaires[ctxKey] = questionnaires[ctxKey] || { asList: [] }; continue; }
 
       // Stable sort by sortOrder so previousAnswer / nextAnswer
@@ -281,17 +300,118 @@ async function buildDynamicSampleContext(firmId: string): Promise<Record<string,
         previousKey: string | null; previousQuestion: string | null; previousAnswer: any;
         nextKey: string | null; nextQuestion: string | null; nextAnswer: any;
         itemIndex: number; isEmpty: boolean;
+        // Multi-column cells. Always present when the section's layout
+        // has columnHeaders, alongside slug + verbatim aliases. Indexed
+        // by colKey ('col1', 'col2', …) so every preview row exposes
+        // every storage cell — even the ones the admin hasn't iterated
+        // yet, since asList is the canonical loop source.
+        [k: string]: any;
       }
-      const asList: SampleItem[] = sorted.map((item, i) => ({
-        question: String(item?.questionText ?? item?.label ?? item?.key ?? `Question ${i + 1}`),
-        key: String(item?.key ?? `q_${i + 1}`),
-        answer: placeholderAnswerFor(item),
-        section: item?.sectionKey ? String(item.sectionKey) : null,
-        sortOrder: Number(item?.sortOrder) || i,
-        previousKey: null, previousQuestion: null, previousAnswer: null,
-        nextKey: null, nextQuestion: null, nextAnswer: null,
-        itemIndex: i, isEmpty: false,
-      }));
+
+      // Round-robin counter for col1 Y/N alternation when the section
+      // is table-layout with a yesno trigger column. Keeps preview
+      // visibly varied — some rows match a Y filter, some don't —
+      // matching how a real engagement looks.
+      let columnYesCounter = 0;
+
+      const asList: SampleItem[] = sorted.map((item, i) => {
+        const sectionName: string | null = item?.sectionKey ? String(item.sectionKey) : null;
+        const meta = sectionName
+          ? (sectionMeta[sectionName] || sectionMeta[slugifySection(sectionName)])
+          : null;
+        const headers: string[] = Array.isArray(meta?.columnHeaders) ? meta.columnHeaders : [];
+
+        const row: SampleItem = {
+          question: String(item?.questionText ?? item?.label ?? item?.key ?? `Question ${i + 1}`),
+          key: String(item?.key ?? `q_${i + 1}`),
+          answer: placeholderAnswerFor(item),
+          section: sectionName,
+          sortOrder: Number(item?.sortOrder) || i,
+          previousKey: null, previousQuestion: null, previousAnswer: null,
+          nextKey: null, nextQuestion: null, nextAnswer: null,
+          itemIndex: i, isEmpty: false,
+        };
+
+        // ── Multi-column cells (col1, col2, col3, …) ─────────────────
+        // When a question has a `columns` array (any layout that
+        // declares per-cell input types) we synthesise placeholder
+        // values per cell so filterWhere/render snippets can match
+        // and produce visible output. The mapping mirrors live
+        // storage:
+        //   columns[0]  → col1
+        //   columns[1]  → col2
+        //   columns[2]  → col3
+        // (the row-label column / question text is col0 →
+        // {{question}} and has no stored cell).
+        const columns: any[] = Array.isArray(item?.columns) ? item.columns : [];
+        const cellValues: Record<string, any> = {};
+        if (columns.length > 0) {
+          const firstIsYesNo = String(columns[0]?.inputType || '').toLowerCase() === 'yesno';
+          // Alternate the trigger column Y/N every other row when
+          // the layout has a leading yesno column. Lets a Preview
+          // of `filterWhere ... col1 == Y` produce *some* rows
+          // while still showing rows that fail the filter when
+          // unfiltered.
+          for (let ci = 0; ci < columns.length; ci++) {
+            const colN = ci + 1;
+            const colKey = `col${colN}`;
+            const cellInputType = String(columns[ci]?.inputType || '').toLowerCase();
+            let cellValue: any;
+            if (cellInputType === 'yesno') {
+              if (ci === 0 && firstIsYesNo) {
+                cellValue = (columnYesCounter++ % 2 === 0) ? 'Y' : 'N';
+              } else {
+                cellValue = 'Y';
+              }
+            } else if (cellInputType === 'currency' || cellInputType === 'number'
+                       || cellInputType === 'percentage' || cellInputType === 'decimal') {
+              cellValue = 0;
+            } else if (cellInputType === 'date') {
+              cellValue = new Date().toISOString().slice(0, 10);
+            } else if (Array.isArray(columns[ci]?.dropdownOptions) && columns[ci].dropdownOptions.length > 0) {
+              cellValue = columns[ci].dropdownOptions[0];
+            } else {
+              // Free-text cell. Use the matching column header as the
+              // sample text so preview columns are visibly distinct
+              // ("Threat Description", "Safeguard", …) and the admin
+              // can see exactly which column ended up where.
+              const header = headers[colN] || `Sample ${colKey}`;
+              cellValue = `[sample ${header}]`;
+            }
+            cellValues[colKey] = cellValue;
+            row[colKey] = cellValue;
+          }
+        }
+
+        // ── Header-slug + verbatim header aliases ────────────────────
+        // Same logic as enrichQuestionnaire on the live render path —
+        // mirroring it here means preview behaves identically to the
+        // generated document for filterWhere arguments and per-cell
+        // {{slug}} placeholders.
+        if (headers.length > 0) {
+          const seenSlug = new Map<string, number>();
+          const seenVerbatim = new Set<string>();
+          for (let h = 1; h < headers.length; h++) {
+            const verbatim = String(headers[h] || '');
+            const slug = slugifyHeaderText(verbatim);
+            if (!slug) continue;
+            const count = (seenSlug.get(slug) || 0) + 1;
+            seenSlug.set(slug, count);
+            const finalSlug = count === 1 ? slug : `${slug}_${count}`;
+            const colKey = `col${h}`;
+            const v = cellValues[colKey];
+            if (v !== undefined) {
+              row[finalSlug] = v;
+              if (verbatim && verbatim !== finalSlug && !seenVerbatim.has(verbatim)) {
+                seenVerbatim.add(verbatim);
+                row[verbatim] = v;
+              }
+            }
+          }
+        }
+
+        return row;
+      });
       // Neighbour pointers — same post-pass as the real
       // `enrichQuestionnaire`, so templates that use
       // previousAnswer / nextAnswer behave identically in preview
@@ -329,6 +449,13 @@ async function buildDynamicSampleContext(firmId: string): Promise<Record<string,
     console.warn('[previewTemplate] dynamic sample context failed, falling back to static:', err);
   }
   return base;
+}
+
+/** Header-text → Handlebars-safe slug. Matches the slugify rule used
+ *  in enrichQuestionnaire (lib/template-context.ts) so preview and
+ *  live render identical aliases for the same column headers. */
+function slugifyHeaderText(s: string): string {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
 /**
