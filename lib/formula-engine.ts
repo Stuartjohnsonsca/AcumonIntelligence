@@ -78,9 +78,21 @@ export function evaluateFormula(
 ): string | number | boolean | null {
   if (!expression) return null;
 
+  // Tolerate Excel-style leading `=`. The schema stores formulas as
+  // `=IF(fee_audit>0,fee_non_audit/fee_audit*100,0)` and historically
+  // the ad-hoc formula path stripped the `=` while the
+  // template-configured formula path passed it through verbatim —
+  // which made parseExpression treat the whole string as a literal
+  // and the cell rendered the formula as text instead of the
+  // computed value. Stripping it here covers both call sites and any
+  // future caller that forgets the same convention.
+  let working = expression.trim();
+  if (working.startsWith('=')) working = working.slice(1).trim();
+  if (!working) return null;
+
   try {
     // First pass: replace {fieldId} / {appendix.fieldId} references
-    let resolved = resolveReferences(expression, values, crossRefValues);
+    let resolved = resolveReferences(working, values, crossRefValues);
     // Second pass: also replace bare identifiers that match a value name.
     // A bare identifier is any snake_case / camelCase token NOT preceded by
     // a letter/digit/underscore and NOT inside a quoted string. This lets
