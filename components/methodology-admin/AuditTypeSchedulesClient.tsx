@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useAuditTypes } from '@/hooks/useAuditTypes';
 import { ChevronUp, ChevronDown, Plus, X, Save, Loader2, Copy, GripVertical, Eye, Zap, Trash2 } from 'lucide-react';
 import {
   DndContext,
@@ -52,7 +53,12 @@ interface Props {
   initialMasterSchedules?: MasterSchedule[];
 }
 
-const AUDIT_TYPES = [
+// Default fallback audit-type list. Used during the initial render
+// before useAuditTypes() loads the firm's configured catalogue, and
+// as a safety net if the API fails. The component reads the dynamic
+// list inside the function body via useAuditTypes() and falls back
+// to this constant only when no items have loaded yet.
+const FALLBACK_AUDIT_TYPES = [
   { key: 'SME', label: 'Statutory Audit' },
   { key: 'PIE', label: 'PIE Audit' },
   { key: 'SME_CONTROLS', label: 'Statutory Controls Based Audit' },
@@ -746,19 +752,59 @@ export function AuditTypeSchedulesClient({
   initialFrameworkOptions,
   initialMasterSchedules,
 }: Props) {
+  // Pull the firm's configurable audit-type catalogue. Falls back to
+  // the historic 5-value list during the initial render before the
+  // hook resolves, so the page never flashes empty. Only ACTIVE types
+  // are presented in the editor; built-ins that the firm has hidden
+  // are excluded so the admin's Tab strip reflects what they've
+  // configured. Renamed labels (e.g. "Statutory Audit" → "Stat
+  // Audit") flow through automatically.
+  const dynamicAuditTypes = useAuditTypes();
+  const AUDIT_TYPES = useMemo(() => {
+    const active = dynamicAuditTypes.filter(a => a.isActive);
+    if (active.length > 0) return active.map(a => ({ key: a.code, label: a.label }));
+    return FALLBACK_AUDIT_TYPES;
+  }, [dynamicAuditTypes]);
+
   const [masterSchedules, setMasterSchedules] = useState<MasterSchedule[]>(
     Array.isArray(initialMasterSchedules) && initialMasterSchedules.length > 0 ? initialMasterSchedules : []
   );
 
   const [stageMappings, setStageMappings] = useState<Record<string, StageKeyedMapping>>(() => {
     const m: Record<string, StageKeyedMapping> = {};
-    for (const at of AUDIT_TYPES) {
+    for (const at of FALLBACK_AUDIT_TYPES) {
       m[at.key] = normaliseToStageKeyed(at.key, initialStageKeyedMappings, initialMappings, masterSchedules);
     }
     return m;
   });
 
-  const [activeAuditType, setActiveAuditType] = useState(AUDIT_TYPES[0].key);
+  // Once the dynamic list resolves, ensure stageMappings has an
+  // entry for every active audit type — including any custom ones
+  // the admin added. Defaults to an empty stage-keyed mapping (no
+  // schedules assigned to that audit type yet).
+  useEffect(() => {
+    setStageMappings(prev => {
+      const next = { ...prev };
+      let changed = false;
+      for (const at of AUDIT_TYPES) {
+        if (!(at.key in next)) {
+          next[at.key] = normaliseToStageKeyed(at.key, initialStageKeyedMappings, initialMappings, masterSchedules);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [AUDIT_TYPES, initialStageKeyedMappings, initialMappings, masterSchedules]);
+
+  const [activeAuditType, setActiveAuditType] = useState(AUDIT_TYPES[0]?.key || FALLBACK_AUDIT_TYPES[0].key);
+
+  // If the active tab references a code that no longer exists (admin
+  // removed a custom type), fall back to the first available one.
+  useEffect(() => {
+    if (!AUDIT_TYPES.some(a => a.key === activeAuditType) && AUDIT_TYPES.length > 0) {
+      setActiveAuditType(AUDIT_TYPES[0].key);
+    }
+  }, [AUDIT_TYPES, activeAuditType]);
   const [copyFrom, setCopyFrom] = useState<string>('');
 
   // Frameworks
