@@ -49,6 +49,24 @@ export function buildFormulaValues(
     }
     used.add(slug);
     out[slug] = values[q.id] ?? null;
+
+    // Multi-column rows: expose `<slug>_col<N>` aliases pointing at
+    // the same cell keys the renderer writes (`<id>_col<N>`). This
+    // lets formulas reference a specific column of another row in
+    // the schedule using the slug — e.g.
+    //   preparation_of_accounts_services_col2
+    // rather than having to know the UUID. We probe up to col10
+    // which covers every layout currently supported (standard + 3/4/5-col
+    // tables, with headroom). Missing keys resolve to null like any
+    // other reference.
+    for (let colN = 1; colN <= 10; colN++) {
+      const sourceKey = `${q.id}_col${colN}`;
+      if (!(sourceKey in values)) continue;
+      const aliasKey = `${slug}_col${colN}`;
+      if (used.has(aliasKey)) continue;
+      used.add(aliasKey);
+      out[aliasKey] = values[sourceKey] ?? null;
+    }
   }
   return out;
 }
