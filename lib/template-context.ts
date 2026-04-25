@@ -616,19 +616,36 @@ export async function buildTemplateContext(engagementId: string, opts: { include
       const meta = sectionMeta[sectionKeyRaw] || sectionMeta[slugify(sectionKeyRaw)];
       const headers = Array.isArray(meta?.columnHeaders) ? meta.columnHeaders : null;
       if (!headers || headers.length < 2) return out;
-      const seen = new Map<string, number>();
+      const seenSlug = new Map<string, number>();
+      const seenVerbatim = new Set<string>();
       for (let i = 1; i < headers.length; i++) {
-        const slug = slugify(String(headers[i] || ''));
+        const verbatim = String(headers[i] || '');
+        const slug = slugify(verbatim);
         if (!slug || slug === 'section') continue;
         // Same header text used twice in the same section → suffix the
         // duplicate so only the first wins the bare slug, the second
         // becomes <slug>_2 etc. Avoids silent overwrites.
-        const count = (seen.get(slug) || 0) + 1;
-        seen.set(slug, count);
+        const count = (seenSlug.get(slug) || 0) + 1;
+        seenSlug.set(slug, count);
         const finalSlug = count === 1 ? slug : `${slug}_${count}`;
         const colKey = `col${i}`;
+        const aliases: string[] = [finalSlug];
+        // Also expose the VERBATIM header text as an alias key. Handlebars
+        // can't reference it as `{{Threat exists?}}` — but helper
+        // arguments take strings, and `filterWhere asList "Threat
+        // exists?" "eq" "Y"` does end up as `item["Threat exists?"]` in
+        // the helper. Tolerating that form means snippets where the
+        // admin (or AI) typed the column-header text verbatim Just
+        // Work without forcing the slug rewrite. Skip when the
+        // verbatim form already collides with the slug (e.g. all
+        // lowercase-ascii headers like "amount") so we don't double-
+        // emit the same alias.
+        if (verbatim && verbatim !== finalSlug && !seenVerbatim.has(verbatim)) {
+          seenVerbatim.add(verbatim);
+          aliases.push(verbatim);
+        }
         if (!out.has(colKey)) out.set(colKey, []);
-        out.get(colKey)!.push(finalSlug);
+        out.get(colKey)!.push(...aliases);
       }
       return out;
     }

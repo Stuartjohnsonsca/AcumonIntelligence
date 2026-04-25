@@ -371,6 +371,37 @@ export const MERGE_FIELDS: MergeField[] = [
         col2: 'Conflict between IA and statutory audit roles',
         col3: 'Separate engagement teams; IA work supervised by a different RI',
         threat: 'Y', threat_description: 'Conflict between IA and statutory audit roles', safeguard: 'Separate engagement teams; IA work supervised by a different RI' },
+      // Threats section rows. Same table_4col layout but the FIRST data
+      // column header is "Threat exists?" — slugified to threat_exists.
+      // Verbatim "Threat exists?" is also exposed as an alias at render
+      // time so filterWhere accepts either form.
+      { question: 'Familiarity threat from long-standing audit team relationships',
+        key: 'threat_familiarity_comments',
+        answer: null,
+        section: 'Threats', sortOrder: 20,
+        col1: 'Y',
+        col2: 'Audit partner has been on the engagement for 7+ years',
+        col3: 'Partner rotation scheduled for next year',
+        threat_exists: 'Y', threat_description: 'Audit partner has been on the engagement for 7+ years', safeguard: 'Partner rotation scheduled for next year',
+        // Verbatim header alias — for snippets that pass the literal
+        // header text as the filterWhere field name.
+        'Threat exists?': 'Y' },
+      { question: 'Self-review threat from prior accounts preparation work',
+        key: 'threat_self_review_issue',
+        answer: null,
+        section: 'Threats', sortOrder: 21,
+        col1: 'Y',
+        col2: 'Same team prepared the financial statements before audit',
+        col3: 'Independent partner reviews all journals and conclusions',
+        threat_exists: 'Y', threat_description: 'Same team prepared the financial statements before audit', safeguard: 'Independent partner reviews all journals and conclusions',
+        'Threat exists?': 'Y' },
+      { question: 'Intimidation threat from client management',
+        key: 'threat_intimidation_comments',
+        answer: null,
+        section: 'Threats', sortOrder: 24,
+        col1: 'N', col2: '', col3: '',
+        threat_exists: 'N', threat_description: '', safeguard: '',
+        'Threat exists?': 'N' },
     ], itemFields: [
       { key: 'question', label: 'Question text', type: 'scalar', sampleValue: 'Is independence confirmed?' },
       { key: 'answer', label: 'Answer', type: 'scalar', sampleValue: 'Yes' },
