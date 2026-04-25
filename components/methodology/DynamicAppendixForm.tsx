@@ -722,8 +722,30 @@ export function DynamicAppendixForm({
                               ? rowColCfg.dropdownOptions
                               : q.dropdownOptions;
                             const cellPlaceholder = rowColCfg?.placeholder;
+                            // Per-cell merge-field path. Always emitted in
+                            // the form admins paste verbatim into a
+                            // template — `questionnaires.<schedule>.<key>_col<N>`.
+                            // The hover badge shows it AND copies it to
+                            // the clipboard with one click.
+                            //
+                            // For multi-column sections the section's
+                            // column header (when set) maps to a slug
+                            // alias the renderer also exposes — e.g.
+                            // header "Threat Description" on col2 of
+                            // Ethics → Non Audit Services becomes
+                            // {{threat_description}} INSIDE an asList
+                            // loop. The badge tooltip lists that slug
+                            // form too, so admins know both options.
+                            const cellPath = `questionnaires.${questionnaireKey}.${questionSlugT}_col${colN}`;
+                            const colHeaderText = String(tableHeaders[colN] || '');
+                            const headerSlug = colHeaderText
+                              ? colHeaderText.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+                              : '';
+                            const cellBadgeTitle = headerSlug
+                              ? `Merge-field placeholder (admins only)\n{{${cellPath}}}\n\nInside an asList loop, the column header "${colHeaderText}" is also addressable as {{${headerSlug}}}.`
+                              : `Merge-field placeholder (admins only)\n{{${cellPath}}}`;
                             return (
-                              <td key={ci} className="px-2 py-1 align-top" title={colTitle}>
+                              <td key={ci} className="px-2 py-1 align-top relative" title={colTitle}>
                                 {q.isBold ? null : cellInputType === 'dropdown' && cellOptions ? (
                                   <select
                                     value={(values[cellKey] as string) || ''}
@@ -817,6 +839,20 @@ export function DynamicAppendixForm({
                                     placeholder={cellPlaceholder}
                                     className={`w-full border border-slate-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:border-blue-300 min-h-[28px] resize-y ${refClass}`}
                                   />
+                                )}
+                                {/* Per-cell merge-field hover badge —
+                                    visible only to admins, only on row
+                                    hover. Click copies the placeholder
+                                    `{{questionnaires.<schedule>.<key>_col<N>}}`
+                                    to the clipboard so it's a one-click
+                                    paste into a document or email
+                                    template. Sub-headers / bold rows
+                                    are skipped (no input cell to
+                                    annotate). */}
+                                {isAdminViewer && !q.isBold && q.inputType !== 'subheader' && (
+                                  <div className="absolute bottom-0.5 right-1 pointer-events-auto">
+                                    <PlaceholderBadge path={cellPath} title={cellBadgeTitle} />
+                                  </div>
                                 )}
                               </td>
                             );

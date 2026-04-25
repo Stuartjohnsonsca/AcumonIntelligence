@@ -583,6 +583,26 @@ export async function buildTemplateContext(engagementId: string, opts: { include
   }
 
   /**
+   * snake_case → camelCase. `basis_changed` → `basisChanged`. Returns
+   * the input unchanged when there are no underscores to convert.
+   */
+  function snakeToCamel(s: string): string {
+    if (!s || !s.includes('_')) return s;
+    return s.replace(/_([a-z0-9])/gi, (_, ch) => ch.toUpperCase());
+  }
+
+  /**
+   * camelCase → snake_case. `basisChanged` → `basis_changed`. Returns
+   * the input unchanged when it's already lowercase / underscored.
+   * Numbers are kept attached to the preceding word (`col1` stays
+   * `col1`, NOT `col_1`) to preserve our existing col<N> aliases.
+   */
+  function camelToSnake(s: string): string {
+    if (!s || !/[A-Z]/.test(s)) return s;
+    return s.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+  }
+
+  /**
    * Enrich a raw UUID-keyed answer map with human-readable keys from
    * the corresponding questionnaire schema. Preserves the original
    * UUID keys so older templates still work.
@@ -697,10 +717,46 @@ export async function buildTemplateContext(engagementId: string, opts: { include
       // If the resolved key differs from what was saved on item.key,
       // expose under BOTH so templates work against either form.
       if (keyResolved !== item.key) out[keyResolved] = value ?? null;
+
+      // ── Casing aliases ──────────────────────────────────────────
+      // Schemas store keys in snake_case (`basis_changed`,
+      // `engagement_letter_date`, `entity_address`) but admins
+      // routinely write the camelCase form on
+      // `questionnaires.<schedule>.<key>` paths — particularly when
+      // the merge-field catalog has primed them with camelCase
+      // top-level branches like `materiality.basisChanged`. Without
+      // an alias the camelCase reference returns undefined and any
+      // {{#if}} / formatter wrapping it silently misfires.
+      //
+      // For every key we emit, also emit the OPPOSITE casing form
+      // pointing at the same value. snake → camel and camel → snake
+      // are both safe (idempotent for already-converted forms) and
+      // can't shadow a real schema key because each key only ever
+      // has one valid casing. Same alias trick mirrored on the
+      // bySection.<section>.* lookups below.
+      const expand = new Set<string>();
+      if (item.key) expand.add(String(item.key));
+      if (keyResolved) expand.add(keyResolved);
+      for (const k of Array.from(expand)) {
+        const cc = snakeToCamel(k);
+        if (cc && cc !== k && out[cc] === undefined) out[cc] = value ?? null;
+        const sc = camelToSnake(k);
+        if (sc && sc !== k && out[sc] === undefined) out[sc] = value ?? null;
+      }
+
       if (item.sectionKey) {
         const sec = slugify(item.sectionKey);
         if (!bySection[sec]) bySection[sec] = {};
         bySection[sec][keyResolved] = value ?? null;
+        // Mirror the casing aliases inside bySection — admins reach
+        // for either casing in section-scoped paths just as freely
+        // as in the flat ones.
+        for (const k of expand) {
+          const cc = snakeToCamel(k);
+          const sc = camelToSnake(k);
+          if (cc && cc !== keyResolved && bySection[sec][cc] === undefined) bySection[sec][cc] = value ?? null;
+          if (sc && sc !== keyResolved && bySection[sec][sc] === undefined) bySection[sec][sc] = value ?? null;
+        }
       }
 
       // Multi-column layout: when a section's layout is table_3col /
