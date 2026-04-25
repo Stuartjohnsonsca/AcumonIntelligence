@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown, Copy, Check } from 'lucide-react';
+import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown, Copy, Check, Sparkles } from 'lucide-react';
 import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { slugifyQuestionText } from '@/lib/formula-engine';
 import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
@@ -621,13 +621,25 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                             {/* Formula expression — with "insert" helper chips for field IDs and common operators */}
                             {q.inputType === 'formula' && (
                               <div className="col-span-2 space-y-1.5">
-                                <label className="block text-xs text-slate-500 font-medium">Formula Expression</label>
+                                <div className="flex items-center justify-between">
+                                  <label className="block text-xs text-slate-500 font-medium">Formula Expression</label>
+                                  <AiFieldSuggester
+                                    templateType={templateType}
+                                    siblingQuestions={questions}
+                                    onInsert={(id) => {
+                                      const current = q.formulaExpression || '';
+                                      const ref = id.includes('.') ? `{${id}}` : id;
+                                      const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
+                                      updateQuestion(q.id, { formulaExpression: current + sep + ref });
+                                    }}
+                                  />
+                                </div>
                                 <input
                                   type="text"
                                   value={q.formulaExpression || ''}
                                   onChange={e => updateQuestion(q.id, { formulaExpression: e.target.value })}
                                   className="w-full border border-slate-200 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                  placeholder='e.g. audit_fee + non_audit_fee'
+                                  placeholder='e.g. audit_fee + non_audit_fee  or  {engagement.hard_close}'
                                 />
                                 <div className="space-y-1">
                                   <p className="text-[10px] text-slate-500">
@@ -846,17 +858,31 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                                 quick-reference help so users aren't surprised. */}
                                             {cfg?.inputType === 'formula' && (
                                               <div className="bg-purple-50/80 border border-purple-200 rounded p-2 space-y-1">
-                                                <label className="block text-[10px] text-purple-700 font-medium">Formula for this cell</label>
+                                                <div className="flex items-center justify-between">
+                                                  <label className="block text-[10px] text-purple-700 font-medium">Formula for this cell</label>
+                                                  <AiFieldSuggester
+                                                    templateType={templateType}
+                                                    siblingQuestions={questions}
+                                                    compact
+                                                    onInsert={(id) => {
+                                                      const current = cfg?.formulaExpression || '';
+                                                      const ref = id.includes('.') ? `{${id}}` : id;
+                                                      const sep = current && !/[\s+\-*/(]$/.test(current) ? ' ' : '';
+                                                      updateRowCol(ci, { formulaExpression: current + sep + ref });
+                                                    }}
+                                                  />
+                                                </div>
                                                 <input
                                                   type="text"
                                                   value={cfg?.formulaExpression || ''}
                                                   onChange={e => updateRowCol(ci, { formulaExpression: e.target.value })}
-                                                  placeholder="e.g. col1 * col2,  sum_of(revenue),  audit_fee * 1.2"
+                                                  placeholder="e.g. col1 * col2,  {engagement.hard_close},  audit_fee * 1.2"
                                                   className="w-full text-[11px] font-mono border border-purple-200 rounded px-2 py-1 focus:outline-none focus:border-purple-400"
                                                 />
                                                 <p className="text-[10px] text-purple-600 leading-snug">
                                                   Reference other cells on THIS row as <code>col1</code>, <code>col2</code>, <code>col3</code> etc,
-                                                  other questions by their slug, or any firm variable by name. Same syntax as row-level formulas.
+                                                  other questions by their slug, Opening-tab data as <code>{'{engagement.*}'}</code>,
+                                                  or any firm variable by name.
                                                 </p>
                                               </div>
                                             )}
@@ -1186,6 +1212,146 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
  *    • Same behaviour as before otherwise: clicking a chip appends its
  *      slug to the formula expression with a sensible separator
  */
+/**
+ * AI field-suggester popover for formula editors.
+ *
+ * The admin types a plain-English description of what they want
+ * ("hard close date from the Opening tab", "audit fee from firm
+ * variables") and the model returns a ranked list of valid
+ * identifiers — grounded against the live catalogue of sibling
+ * questions, appendix cross-refs, the synthetic `engagement` bucket,
+ * and firm variables. Clicking a suggestion inserts it into the
+ * formula expression via the parent's onInsert callback.
+ *
+ * Post-validation on the server ensures the returned ids exist or
+ * match a known pattern (engagement.<slug>, team_<role>_name, etc),
+ * so hallucinated fields never reach the user.
+ *
+ * Works without an AI key — the server silently falls back to a
+ * keyword-overlap search on the catalogue.
+ */
+function AiFieldSuggester({
+  templateType,
+  siblingQuestions,
+  onInsert,
+  compact = false,
+}: {
+  templateType: string;
+  siblingQuestions: TemplateQuestion[];
+  onInsert: (id: string) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [desc, setDesc] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<Array<{ id: string; label: string; reasoning?: string }>>([]);
+  const [error, setError] = useState<string | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (!wrapperRef.current) return;
+      if (!wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  async function ask() {
+    if (!desc.trim()) return;
+    setLoading(true); setError(null);
+    try {
+      const r = await fetch('/api/methodology-admin/ai-formula-field', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description: desc,
+          templateType,
+          siblingQuestions: siblingQuestions.map(q => ({ id: q.id, questionText: q.questionText, inputType: q.inputType })),
+        }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || `Failed (${r.status})`);
+      const data = await r.json();
+      setSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+    } catch (err: any) {
+      setError(err?.message || 'Suggestion failed');
+      setSuggestions([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const btnSize = compact ? 'text-[9px] px-1.5 py-0.5' : 'text-[10px] px-2 py-1';
+
+  return (
+    <div ref={wrapperRef} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className={`inline-flex items-center gap-1 ${btnSize} rounded-md bg-purple-100 text-purple-700 border border-purple-300 hover:bg-purple-200`}
+        title="Ask AI which field to use"
+      >
+        <Sparkles className="w-3 h-3" />Ask AI
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-[380px] max-w-[90vw] bg-white border border-slate-200 rounded-md shadow-lg p-3 space-y-2">
+          <p className="text-[11px] text-slate-500">
+            Describe the field you need. The AI only suggests real identifiers — the Opening tab via{' '}
+            <code className="bg-slate-100 px-1 rounded text-[10px]">engagement.*</code>, other schedules via{' '}
+            <code className="bg-slate-100 px-1 rounded text-[10px]">ethics.*</code> etc, sibling questions by slug, or firm variables by name.
+          </p>
+          <textarea
+            autoFocus
+            value={desc}
+            onChange={e => setDesc(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
+            rows={2}
+            placeholder="e.g. hard close date from the Opening tab"
+            className="w-full text-xs border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:border-purple-400"
+          />
+          <div className="flex items-center justify-end gap-1">
+            <button
+              type="button"
+              onClick={() => { setOpen(false); setDesc(''); setSuggestions([]); setError(null); }}
+              className="text-xs text-slate-600 hover:text-slate-900 px-2 py-1"
+            >Cancel</button>
+            <button
+              type="button"
+              onClick={ask}
+              disabled={loading || !desc.trim()}
+              className="text-xs bg-purple-600 text-white rounded px-3 py-1 hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1"
+            >
+              {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {loading ? 'Thinking…' : 'Ask'}
+            </button>
+          </div>
+          {error && (
+            <p className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</p>
+          )}
+          {suggestions.length > 0 && (
+            <div className="border-t border-slate-100 pt-2 space-y-1 max-h-64 overflow-y-auto">
+              <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Suggestions</p>
+              {suggestions.map(s => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => { onInsert(s.id); setOpen(false); setDesc(''); setSuggestions([]); }}
+                  className="w-full text-left border border-slate-200 rounded p-2 hover:bg-purple-50 hover:border-purple-300"
+                >
+                  <div className="text-xs font-mono text-purple-900 break-all">{s.id}</div>
+                  <div className="text-[11px] text-slate-600 mt-0.5">{s.label}</div>
+                  {s.reasoning && <div className="text-[10px] text-slate-400 mt-0.5 italic">{s.reasoning}</div>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FormulaFieldChips({
   currentQuestionId,
   questions,
