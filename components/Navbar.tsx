@@ -4,10 +4,26 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Menu, X, ChevronDown, LogIn, LogOut, User, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ASSURANCE_PRODUCTS, FINANCIAL_ACCOUNTS_ITEMS } from '@/lib/products';
+import { useAuditTypes } from '@/hooks/useAuditTypes';
+
+/**
+ * Known methodology page URLs for the built-in audit-type codes.
+ * Custom audit types added via Firm Wide Assumptions don't have a
+ * dedicated methodology page yet, so they render as "Coming Soon"
+ * in the dropdown until an admin adds the page (or until we surface
+ * a URL field on the audit-types catalogue — TBD).
+ */
+const BUILTIN_AUDIT_TYPE_URLS: Record<string, string> = {
+  SME: '/tools/methodology/StatAudit',
+  PIE: '/tools/methodology/pie-audit',
+  SME_CONTROLS: '/tools/methodology/sme-controls-audit',
+  PIE_CONTROLS: '/tools/methodology/pie-controls-audit',
+  GROUP: '/tools/methodology/group',
+};
 import { cn } from '@/lib/utils';
 import { BackgroundTaskDots } from '@/components/BackgroundTaskDots';
 
@@ -21,6 +37,20 @@ export function Navbar() {
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
+
+  // Firm-configurable audit types. The hook returns the built-in 5
+  // as a fallback when not auth'd / before the API resolves, so the
+  // public homepage navbar still renders sensibly. Only ACTIVE types
+  // appear in the dropdown; custom types without a known URL render
+  // as "Coming Soon".
+  const auditTypes = useAuditTypes();
+  const auditMenuItems = useMemo(() => {
+    const active = auditTypes.filter(a => a.isActive);
+    return active.map(a => {
+      const url = BUILTIN_AUDIT_TYPE_URLS[a.code];
+      return { code: a.code, label: a.label, url, comingSoon: !url };
+    });
+  }, [auditTypes]);
   const [assuranceOpen, setAssuranceOpen] = useState(false);
   const [financialOpen, setFinancialOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
@@ -102,10 +132,26 @@ export function Navbar() {
               {auditOpen && (
                 <div className="absolute top-full left-0 pt-1 w-64 z-50">
                   <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
-                    <Link href="/tools/methodology/StatAudit" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Statutory Audit</Link>
-                    <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">Grant Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
-                    <button onClick={() => setAuditOpen(false)} className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default">CASS Audit <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
-                    <Link href="/tools/methodology/group" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Group Audit</Link>
+                    {auditMenuItems.map(item => (
+                      item.url ? (
+                        <Link
+                          key={item.code}
+                          href={item.url}
+                          onClick={() => setAuditOpen(false)}
+                          className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                        >{item.label}</Link>
+                      ) : (
+                        <button
+                          key={item.code}
+                          onClick={() => setAuditOpen(false)}
+                          className="w-full text-left px-4 py-2.5 text-sm text-slate-400 cursor-default"
+                          title={`Custom audit type "${item.code}" — methodology page not yet wired. Map a URL in Firm Wide Assumptions or contact support.`}
+                        >{item.label} <span className="text-[10px] ml-1 text-slate-300">Coming Soon</span></button>
+                      )
+                    ))}
+                    {/* Quality Management is NOT an audit type — it's a
+                         separate methodology product. Kept as a fixed
+                         link below the dynamic audit-type list. */}
                     <Link href="/tools/methodology/quality-management" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Quality Management</Link>
                     <div className="border-t border-slate-100 mt-1 pt-1 relative group/tools">
                       <button className="w-full text-left px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center justify-between">
@@ -358,10 +404,13 @@ export function Navbar() {
 
           <div>
             <p className="px-3 py-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">Audit</p>
-            <Link href="/tools/methodology/StatAudit" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Statutory Audit</Link>
-            <span className="block px-3 py-2 text-sm text-slate-400">Grant Audit <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
-            <span className="block px-3 py-2 text-sm text-slate-400">CASS Audit <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
-            <Link href="/tools/methodology/group" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Group Audit</Link>
+            {auditMenuItems.map(item => (
+              item.url ? (
+                <Link key={item.code} href={item.url} className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>{item.label}</Link>
+              ) : (
+                <span key={item.code} className="block px-3 py-2 text-sm text-slate-400">{item.label} <span className="text-[10px] text-slate-300 ml-1">Coming Soon</span></span>
+              )
+            ))}
             <Link href="/tools/methodology/quality-management" className="block w-full text-left px-3 py-2 text-sm text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-md" onClick={() => setMobileOpen(false)}>Quality Management</Link>
             <p className="px-3 py-1 mt-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Tools</p>
             {[
