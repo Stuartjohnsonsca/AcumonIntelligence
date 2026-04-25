@@ -603,6 +603,46 @@ export async function buildTemplateContext(engagementId: string, opts: { include
   }
 
   /**
+   * Yes/No normaliser. Different schedule renderers save the same
+   * conceptual yes/no answer in different formats:
+   *   • DynamicAppendixForm (most schedules) saves "Y" / "N"
+   *   • Bespoke tabs (Materiality, etc.) save "true" / "false"
+   *   • Some legacy tabs save raw boolean true / false
+   *   • A handful save "Yes" / "No" verbatim
+   *
+   * Document templates can't reasonably guess which renderer wrote
+   * the answer, so admins write `(eq value "Y")` against the docs
+   * and find their {{#if}} blocks silently misfire when the source
+   * tab saved differently. Canonicalising to "Y" / "N" / null at
+   * the context-build layer removes the trap — every yesno-typed
+   * question shows up as "Y" / "N" / null on `questionnaires.<X>.<key>`
+   * regardless of source.
+   *
+   * Returns null for anything we can't classify (so the rendered
+   * field stays empty rather than silently coercing a real text
+   * answer to "Y" / "N").
+   */
+  function normaliseYesNo(v: unknown): 'Y' | 'N' | null {
+    if (v === true) return 'Y';
+    if (v === false) return 'N';
+    if (typeof v !== 'string') return null;
+    const s = v.trim().toLowerCase();
+    if (s === '' ) return null;
+    if (s === 'y' || s === 'yes' || s === 'true' || s === '1' || s === 't') return 'Y';
+    if (s === 'n' || s === 'no' || s === 'false' || s === '0' || s === 'f') return 'N';
+    return null;
+  }
+  /**
+   * True when the question's inputType is one of the yes/no
+   * variants. Used to gate normalisation so we don't accidentally
+   * coerce a free-text "yes…" sentence into a literal "Y".
+   */
+  function isYesNoInput(item: any): boolean {
+    const t = String(item?.inputType || '').toLowerCase();
+    return t === 'yesno' || t === 'yna' || t === 'yes_only' || t === 'boolean' || t === 'yn';
+  }
+
+  /**
    * Enrich a raw UUID-keyed answer map with human-readable keys from
    * the corresponding questionnaire schema. Preserves the original
    * UUID keys so older templates still work.
@@ -712,7 +752,20 @@ export async function buildTemplateContext(engagementId: string, opts: { include
       const keyResolved = typeof item.key === 'string' && item.key.trim()
         ? item.key
         : (slugifyQuestionText(item.questionText) || String(item.id));
-      const value = raw[item.id];
+      const rawValue = raw[item.id];
+      // Yes/No normalisation: when a question's inputType says it's a
+      // yes/no variant, canonicalise the saved value to "Y" / "N" /
+      // null so document templates can write `(eq value "Y")`
+      // uniformly without caring which schedule renderer saved the
+      // answer ("Y", "Yes", "true", boolean true, etc. all collapse
+      // to "Y"). Non-yesno fields pass through verbatim — we don't
+      // want a free-text answer that happens to start with "yes" to
+      // get rewritten to "Y".
+      const value = isYesNoInput(item)
+        ? (rawValue === null || rawValue === undefined || rawValue === ''
+            ? null
+            : (normaliseYesNo(rawValue) ?? rawValue))
+        : rawValue;
       out[item.key || keyResolved] = value ?? null;
       // If the resolved key differs from what was saved on item.key,
       // expose under BOTH so templates work against either form.

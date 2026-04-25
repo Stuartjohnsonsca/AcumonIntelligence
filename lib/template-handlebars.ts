@@ -321,6 +321,41 @@ hb.registerHelper('isNotEmpty', (v: any) => !(
   || (typeof v === 'object' && Object.keys(v).length === 0)
 ));
 
+/**
+ * {{#if (isYes value)}} ... {{/if}}
+ *
+ * Truthy when `value` looks like an affirmative yes/no answer in any
+ * of the formats schedule renderers save them in:
+ *   "Y" / "Yes" / "yes" / "true" / true / 1 / "1" / "T" / "t"
+ *
+ * Document templates can use this in place of `(eq value "Y")` when
+ * they're not sure whether the source tab will save "Y" / "true" /
+ * boolean true. Mirrors the context-level normaliser in
+ * template-context.ts so behaviour is consistent on both sides.
+ */
+hb.registerHelper('isYes', (v: any) => {
+  if (v === true) return true;
+  if (v === false) return false;
+  if (typeof v !== 'string') return false;
+  const s = v.trim().toLowerCase();
+  return s === 'y' || s === 'yes' || s === 'true' || s === '1' || s === 't';
+});
+
+/**
+ * {{#if (isNo value)}} ... {{/if}}
+ *
+ * The polar opposite of `isYes`. Returns true ONLY for explicit "no"
+ * answers — empty / null / unrecognised values return false (so a
+ * template can distinguish "answered No" from "not answered").
+ */
+hb.registerHelper('isNo', (v: any) => {
+  if (v === false) return true;
+  if (v === true) return false;
+  if (typeof v !== 'string') return false;
+  const s = v.trim().toLowerCase();
+  return s === 'n' || s === 'no' || s === 'false' || s === '0' || s === 'f';
+});
+
 /** {{countItems arr}} → length of the array (0 if not an array). */
 hb.registerHelper('countItems', (arr: any) => Array.isArray(arr) ? arr.length : 0);
 
@@ -589,7 +624,7 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
   const KNOWN_HELPERS = new Set([
     'if','unless','each','with','lookup','log',
     'eq','ne','gt','lt','gte','lte','and','or','not',
-    'isEmpty','isNotEmpty','length','join',
+    'isEmpty','isNotEmpty','isYes','isNo','length','join',
     'formatDate','formatCurrency','formatNumber','formatPercent',
     'dateAdd','addYears','subtractYears','addMonths','subtractMonths','addDays','subtractDays',
     'add','subtract','sub','multiply','mul','divide','div','percent',
