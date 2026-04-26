@@ -79,7 +79,21 @@ export interface TemplateContext {
     periodStart: string | null;
     periodEnd: string | null;
   };
-  team: Array<{ name: string; role: string; email: string | null }>;
+  team: Array<{
+    name: string;
+    /** Internal role code stored on AuditTeamMember — Junior / Manager /
+     *  RI / EQR. Use `roleLabel` in document templates instead so the
+     *  rendered output matches the labels admins see in the UI. */
+    role: string;
+    /** Friendly role label used throughout the UI:
+     *    Junior  → Preparer
+     *    Manager → Reviewer
+     *    RI      → Partner
+     *    EQR     → EQR
+     *  Falls back to `role` for unrecognised values. */
+    roleLabel: string;
+    email: string | null;
+  }>;
   ri: { name: string | null; email: string | null };
   reviewer: { name: string | null; email: string | null };
   preparer: { name: string | null; email: string | null };
@@ -245,10 +259,19 @@ export async function buildTemplateContext(engagementId: string, opts: { include
   });
   if (!engagement) throw new Error(`Engagement ${engagementId} not found`);
 
-  // Team + convenience shortcuts.
+  // Team + convenience shortcuts. `roleLabel` mirrors the UI's friendly
+  // labels (TEAM_ROLES in TeamPanel.tsx) so document templates render
+  // "Reviewer" for the auditor instead of the internal "Manager" code.
+  const ROLE_LABELS: Record<string, string> = {
+    Junior: 'Preparer',
+    Manager: 'Reviewer',
+    RI: 'Partner',
+    EQR: 'EQR',
+  };
   const team = engagement.teamMembers.map(m => ({
     name: m.user?.name || '',
     role: m.role,
+    roleLabel: ROLE_LABELS[m.role] ?? m.role,
     email: m.user?.email || null,
   }));
   const ri = team.find(t => t.role === 'RI') || team.find(t => t.role === 'Partner') || null;

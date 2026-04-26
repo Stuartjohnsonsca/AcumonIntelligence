@@ -767,7 +767,7 @@ export function extractReferencedPaths(bodyTemplate: string): string[] {
     // Generic
     'id','name','description','type','status','notes','sortOrder','amount',
     // Engagement team
-    'role','email',
+    'role','roleLabel','email',
     // Error schedule
     'fsLine','accountCode','errorType','resolution','explanation','isFraud',
     // Test conclusions / audit plan
