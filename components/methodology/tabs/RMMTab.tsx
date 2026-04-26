@@ -525,56 +525,102 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
     }
   }, [sortMode, sortPrefKey]);
 
-  const computedRows = useMemo(() => {
+  // Display order is a SNAPSHOT — a frozen list of row ids in the
+  // order they should render. Recomputed only when:
+  //   • the auditor switches sortMode (clicks a different view)
+  //   • the underlying row set changes shape (added / removed rows
+  //     — detected via row count + the joined id list, NOT the data
+  //     inside each row)
+  // We deliberately do NOT recompute on every keystroke. That would
+  // cause rows to jump around as the auditor types — switching
+  // categories under their cursor mid-edit is disorienting and risks
+  // them losing their place (or focus). Once snapshotted, the order
+  // stays put until the user explicitly picks a different lens.
+  const rowIdSignature = useMemo(() => rows.map(r => r.id || '').join('|'), [rows]);
+  const [displayOrderIds, setDisplayOrderIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (rows.length === 0) {
+      setDisplayOrderIds([]);
+      return;
+    }
+    // Compute the order using the live data values at the moment the
+    // lens changes (or the row set changes shape). After this call
+    // the order is frozen until one of those triggers fires again.
     const withRisks = rows.map(row => {
       const finalRisk = row.relevance === 'N' ? 'N/A' : lookupInherentRisk(row.likelihood, row.magnitude);
       const overallRisk = finalRisk && finalRisk !== 'N/A' ? lookupOverallRisk(finalRisk, row.controlRisk) : null;
       return { ...row, finalRiskAssessment: finalRisk, overallRisk };
     });
 
+    let ordered: typeof withRisks;
     if (sortMode === 'risk') {
-      // Risk lens: classification first, then materiality. "Material"
-      // means an amount is set and non-zero — without a per-engagement
-      // performance materiality threshold to compare against, the
-      // honest split is "has an amount" vs "blank". Within the
-      // material group, sort by absolute amount descending so the
-      // largest balances surface first.
       const rank = (r: typeof withRisks[number]): number => {
         if (r.rowCategory === 'significant_risk') return 0;
         if (r.rowCategory === 'area_of_focus') return 1;
         if (r.amount != null && Number(r.amount) !== 0) return 2;
         return 3;
       };
-      return withRisks.slice().sort((a, b) => {
+      ordered = withRisks.slice().sort((a, b) => {
         const ra = rank(a); const rb = rank(b);
         if (ra !== rb) return ra - rb;
-        // Within the material band, sort by absolute amount desc.
-        if (ra === 2) {
-          return Math.abs(Number(b.amount) || 0) - Math.abs(Number(a.amount) || 0);
-        }
-        // Otherwise preserve the auditor's chosen order.
+        if (ra === 2) return Math.abs(Number(b.amount) || 0) - Math.abs(Number(a.amount) || 0);
         return (a.sortOrder || 0) - (b.sortOrder || 0);
       });
-    }
-
-    if (sortMode === 'value') {
-      // Value lens: pure absolute-amount sort. Rows with no amount
-      // sink to the bottom (Number(undefined) is NaN; using `|| 0`
-      // collapses them to 0 and they fall behind anything positive).
-      return withRisks.slice().sort((a, b) =>
+    } else if (sortMode === 'value') {
+      ordered = withRisks.slice().sort((a, b) =>
         Math.abs(Number(b.amount) || 0) - Math.abs(Number(a.amount) || 0),
       );
+    } else {
+      // Source: partition PAR-sourced rows to the bottom; preserve
+      // sortOrder within each group.
+      const par: typeof withRisks = [];
+      const main: typeof withRisks = [];
+      for (const r of withRisks) (r.source === 'par' ? par : main).push(r);
+      ordered = [...main, ...par];
     }
 
-    // Default: Source View — partition PAR-sourced rows to the bottom
-    // so reviewers can see at a glance which items came from
-    // preliminary analytical review. Order within each group stays as
-    // the user arranged them (sortOrder).
-    const par: typeof withRisks = [];
-    const main: typeof withRisks = [];
-    for (const r of withRisks) (r.source === 'par' ? par : main).push(r);
-    return [...main, ...par];
-  }, [rows, sortMode]);
+    setDisplayOrderIds(ordered.map(r => r.id || ''));
+    // The dep array intentionally tracks the lens + the row-id
+    // signature, NOT the row data. Inner edits (typing in Nature,
+    // changing Likelihood, etc.) won't re-fire the snapshot.
+  }, [sortMode, rowIdSignature]);
+
+  // computedRows projects the live rows through the snapshotted
+  // order. When data inside a row changes, the inner cell updates in
+  // place; only when the snapshot above re-fires does the row's
+  // position change. Falls back to source order on the very first
+  // render before the snapshot effect has run.
+  const computedRows = useMemo(() => {
+    const withRisks = rows.map(row => {
+      const finalRisk = row.relevance === 'N' ? 'N/A' : lookupInherentRisk(row.likelihood, row.magnitude);
+      const overallRisk = finalRisk && finalRisk !== 'N/A' ? lookupOverallRisk(finalRisk, row.controlRisk) : null;
+      return { ...row, finalRiskAssessment: finalRisk, overallRisk };
+    });
+    if (displayOrderIds.length === 0) {
+      // First-render fallback — match the legacy Source-view
+      // partitioning so the grid is sensible until the snapshot
+      // effect has run and stored an explicit order.
+      const par: typeof withRisks = [];
+      const main: typeof withRisks = [];
+      for (const r of withRisks) (r.source === 'par' ? par : main).push(r);
+      return [...main, ...par];
+    }
+    const byId = new Map(withRisks.map(r => [r.id || '', r]));
+    const out: typeof withRisks = [];
+    for (const id of displayOrderIds) {
+      const r = byId.get(id);
+      if (r) {
+        out.push(r);
+        byId.delete(id);
+      }
+    }
+    // Any rows added since the snapshot (e.g. user clicked "Add Row"
+    // — rowIdSignature changes, the snapshot will re-fire on the next
+    // cycle, but until then we still want them visible) get appended.
+    for (const r of byId.values()) out.push(r);
+    return out;
+  }, [rows, displayOrderIds]);
 
   // Index of the first PAR-sourced row within computedRows, or -1 if
   // none. Used to inject a section-header row before the group and to
