@@ -305,6 +305,10 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
               role: m.role,
               userName: getMemberName(m as MemberWithUser),
               userEmail: m.userEmail || (m as MemberWithUser).user?.email,
+              // Pass the free-text override straight through. Template-context
+              // resolves it to {{roleLabel}}; falls back to the system map
+              // (Junior→Preparer, Manager→Reviewer, RI→Partner) when blank.
+              roleLabel: (m as MemberWithUser).roleLabel ?? null,
             }))}
             initialSpecialists={engagement.specialists}
           />

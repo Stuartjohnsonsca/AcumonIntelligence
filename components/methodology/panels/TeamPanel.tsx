@@ -51,6 +51,10 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
         // sort_order on each row, which template-context's
         // `{{#each team}}` reads via the sortOrder ORDER BY clause.
         sortOrder: i,
+        // Free-text override for client-facing role label. Server
+        // trims and normalises empty → null so the template-context
+        // fallback to the system map (Junior→Preparer etc.) kicks in.
+        roleLabel: m.roleLabel ?? null,
       })),
       specialists,
     },
@@ -84,6 +88,13 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
 
   function updateMemberRole(index: number, role: string) {
     setTeamMembers(prev => prev.map((m, i) => i === index ? { ...m, role: role as TeamMemberData['role'] } : m));
+  }
+
+  /** Update the free-text role-label override for a single team member.
+   *  Stored as-is (no trimming) so the user can type spaces while
+   *  composing — the server normalises empty → null on save. */
+  function updateMemberRoleLabel(index: number, roleLabel: string) {
+    setTeamMembers(prev => prev.map((m, i) => i === index ? { ...m, roleLabel } : m));
   }
 
   function removeMember(index: number) {
@@ -175,11 +186,26 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
               value={member.role}
               onChange={e => updateMemberRole(i, e.target.value)}
               className="border border-slate-200 rounded px-1 py-0.5 text-xs bg-white"
+              title="System role — drives Reviewer/Partner sign-offs and EQR/RI rules"
             >
               {TEAM_ROLES.map(role => (
                 <option key={role.value} value={role.value}>{role.label}</option>
               ))}
             </select>
+            {/* Free-text role label override. Empty = falls back to the
+                system label (Preparer / Reviewer / Partner / EQR) when
+                rendered in document templates. The select above still
+                drives all system behaviour. Placeholder shows the
+                fallback value so admins can see what the doc will say
+                if they leave it blank. */}
+            <input
+              type="text"
+              value={member.roleLabel ?? ''}
+              onChange={e => updateMemberRoleLabel(i, e.target.value)}
+              placeholder={TEAM_ROLES.find(r => r.value === member.role)?.label || ''}
+              title="Custom label shown on client-facing documents (leave blank to use the system default)"
+              className="border border-slate-200 rounded px-1 py-0.5 text-xs bg-white w-24"
+            />
             {/* Move-up arrow. Disabled on the top row (nowhere to go).
                 Document templates that iterate `{{#each team}}` use
                 this order, so admins use it to control which RI /

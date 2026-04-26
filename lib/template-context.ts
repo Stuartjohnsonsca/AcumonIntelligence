@@ -259,21 +259,29 @@ export async function buildTemplateContext(engagementId: string, opts: { include
   });
   if (!engagement) throw new Error(`Engagement ${engagementId} not found`);
 
-  // Team + convenience shortcuts. `roleLabel` mirrors the UI's friendly
-  // labels (TEAM_ROLES in TeamPanel.tsx) so document templates render
-  // "Reviewer" for the auditor instead of the internal "Manager" code.
+  // Team + convenience shortcuts. `roleLabel` resolution:
+  //   1. If AuditTeamMember.roleLabel is non-empty, use it verbatim —
+  //      lets admins override per-engagement (e.g. type "Manager" or
+  //      "Audit Senior" instead of the system "Reviewer" / "Preparer").
+  //   2. Otherwise fall back to the system map below — same labels the
+  //      UI shows in TEAM_ROLES (TeamPanel.tsx).
+  //   3. Final fallback to the raw role code if the role is somehow
+  //      unrecognised, so the cell never renders blank.
   const ROLE_LABELS: Record<string, string> = {
     Junior: 'Preparer',
     Manager: 'Reviewer',
     RI: 'Partner',
     EQR: 'EQR',
   };
-  const team = engagement.teamMembers.map(m => ({
-    name: m.user?.name || '',
-    role: m.role,
-    roleLabel: ROLE_LABELS[m.role] ?? m.role,
-    email: m.user?.email || null,
-  }));
+  const team = engagement.teamMembers.map(m => {
+    const override = typeof m.roleLabel === 'string' ? m.roleLabel.trim() : '';
+    return {
+      name: m.user?.name || '',
+      role: m.role,
+      roleLabel: override !== '' ? override : (ROLE_LABELS[m.role] ?? m.role),
+      email: m.user?.email || null,
+    };
+  });
   const ri = team.find(t => t.role === 'RI') || team.find(t => t.role === 'Partner') || null;
   const reviewer = team.find(t => t.role === 'Manager') || team.find(t => t.role === 'Reviewer') || null;
   const preparer = team.find(t => t.role === 'Junior') || team.find(t => t.role === 'Preparer') || null;

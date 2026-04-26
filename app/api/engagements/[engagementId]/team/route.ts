@@ -145,9 +145,19 @@ export async function PUT(
 
   const body = await req.json();
   const { teamMembers, specialists } = body as {
-    teamMembers?: { id?: string; userId: string; role: string; sortOrder?: number }[];
+    teamMembers?: { id?: string; userId: string; role: string; sortOrder?: number; roleLabel?: string | null }[];
     specialists?: { id?: string; name: string; email?: string; specialistType: string; firmName?: string }[];
   };
+
+  // Normalise roleLabel: trim whitespace, treat empty as null so the
+  // template-context fallback to the system map kicks in cleanly.
+  // Avoids a "stored as a single space" gotcha if the admin types and
+  // then deletes their override.
+  function normaliseRoleLabel(v: unknown): string | null {
+    if (typeof v !== 'string') return null;
+    const t = v.trim();
+    return t.length > 0 ? t : null;
+  }
 
   // Update team members if provided
   if (teamMembers) {
@@ -211,10 +221,11 @@ export async function PUT(
     for (let i = 0; i < teamMembers.length; i++) {
       const member = teamMembers[i];
       const sortOrder = typeof member.sortOrder === 'number' ? member.sortOrder : i;
+      const roleLabel = normaliseRoleLabel(member.roleLabel);
       if (member.id) {
         await prisma.auditTeamMember.update({
           where: { id: member.id },
-          data: { role: member.role, sortOrder },
+          data: { role: member.role, sortOrder, roleLabel },
         });
       } else {
         // Check for unique constraint (engagementId, userId)
@@ -224,11 +235,11 @@ export async function PUT(
         if (existing) {
           await prisma.auditTeamMember.update({
             where: { id: existing.id },
-            data: { role: member.role, sortOrder },
+            data: { role: member.role, sortOrder, roleLabel },
           });
         } else {
           await prisma.auditTeamMember.create({
-            data: { engagementId, userId: member.userId, role: member.role, sortOrder },
+            data: { engagementId, userId: member.userId, role: member.role, sortOrder, roleLabel },
           });
         }
       }

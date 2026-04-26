@@ -41,6 +41,13 @@ export interface TeamMemberData {
    *  current array length on add; the team-save endpoint re-numbers
    *  from array index on every PUT. */
   sortOrder?: number;
+  /** Optional free-text override for the role label shown on
+   *  client-facing documents. The `role` field above still drives
+   *  system behaviour (Reviewer sign-offs, EQR limits, RI familiarity
+   *  gate); this overrides only what `{{roleLabel}}` resolves to inside
+   *  document templates. Empty/null → fall back to the system map
+   *  (Junior→Preparer, Manager→Reviewer, RI→Partner, EQR→EQR). */
+  roleLabel?: string | null;
 }
 
 export interface SpecialistData {

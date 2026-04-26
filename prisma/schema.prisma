@@ -2043,7 +2043,7 @@ model AuditTeamMember {
   id           String   @id @default(uuid())
   engagementId String   @map("engagement_id")
   userId       String   @map("user_id")
-  role         String // Junior | Manager | RI
+  role         String // Junior | Manager | RI | EQR
   joinedAt     DateTime @default(now()) @map("joined_at")
   /// Position within the engagement's team list. Drives the order
   /// shown on the Opening tab and the order document templates see
@@ -2051,6 +2051,14 @@ model AuditTeamMember {
   /// in the list. New members default to 0; the team-save endpoint
   /// re-numbers from the array index on every PUT.
   sortOrder    Int      @default(0) @map("sort_order")
+  /// Free-text override for the role label shown on client-facing
+  /// documents. The role-select on the Opening tab still drives
+  /// system behaviour (Reviewer sign-offs, EQR limits, RI familiarity
+  /// gate); this is purely the string {{roleLabel}} resolves to inside
+  /// document templates. Empty/null → fall back to the system map
+  /// (Junior→Preparer, Manager→Reviewer, RI→Partner, EQR→EQR) so
+  /// untouched engagements keep rendering as before.
+  roleLabel    String?  @map("role_label")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
