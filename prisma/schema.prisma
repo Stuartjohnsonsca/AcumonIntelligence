@@ -2005,6 +2005,7 @@ model AuditEngagement {
   portalStaffMembers    ClientPortalStaffMember[]
   portalWorkAllocations ClientPortalWorkAllocation[]
   teamMembers           AuditTeamMember[]
+  pdfReports            AuditPdfReport[]
   memberIndependence    AuditMemberIndependence[]
   specialists           AuditSpecialist[]
   contacts              AuditClientContact[]
@@ -2037,6 +2038,28 @@ model AuditEngagement {
   @@index([createdById])
   @@index([priorPeriodEngagementId])
   @@map("audit_engagements")
+}
+
+/// Methodology-admin generated PDF snapshot of an engagement file.
+/// Produced on demand by the "Generate PDF Report" action; stored in
+/// Azure blob; surfaced via a viewer page that strips download
+/// controls for everyone except methodology admins. One row per
+/// generated report, so an admin can keep a history.
+model AuditPdfReport {
+  id              String   @id @default(uuid())
+  engagementId    String   @map("engagement_id")
+  generatedAt     DateTime @default(now()) @map("generated_at")
+  generatedById   String   @map("generated_by_id")
+  generatedByName String   @map("generated_by_name")
+  fileName        String   @map("file_name")
+  blobPath        String   @map("blob_path")
+  containerName   String   @default("audit-pdf-reports") @map("container_name")
+  fileSize        Int      @map("file_size")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@map("audit_pdf_reports")
 }
 
 model AuditTeamMember {

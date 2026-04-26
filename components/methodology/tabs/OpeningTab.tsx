@@ -9,6 +9,7 @@ import { ClientContactsPanel } from '../panels/ClientContactsPanel';
 import { ConnectorSetupModal } from '../panels/ConnectorSetupModal';
 import { AuditTimetablePanel } from '../panels/AuditTimetablePanel';
 import { PortalPrincipalPanel } from '../panels/PortalPrincipalPanel';
+import { PdfReportPanel } from '../panels/PdfReportPanel';
 
 // Extended type for info requests that may have a receivedAt field
 type InfoRequestWithReceived = { receivedAt?: string | null };
@@ -317,6 +318,13 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
         {/* Portal Principal — designate client-side gatekeeper + SLA overrides */}
         <div>
           <PortalPrincipalPanel engagementId={engagement.id} />
+        </div>
+
+        {/* PDF Snapshots — methodology admins can generate a full-file
+            PDF here; everyone with read access can view it inline.
+            Download is methodology-admin-only. */}
+        <div>
+          <PdfReportPanel engagementId={engagement.id} />
         </div>
       </div>
 

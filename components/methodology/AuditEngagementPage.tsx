@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 import { EngagementTabs } from '@/components/methodology/EngagementTabs';
 import { IndependenceGate } from '@/components/methodology/IndependenceGate';
+import { ReadOnlyBanner } from '@/components/methodology/panels/ReadOnlyBanner';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -470,6 +471,12 @@ export function AuditEngagementPage({ auditType }: Props) {
             pre-start engagements and for admin viewers. */}
         {isEngagementPhase && (
           <IndependenceGate engagementId={engagement.id}>
+            {/* Read-only banner — renders for EQR / Regulatory Reviewer
+                only. Sits above every tab so the regulator sees their
+                state up front rather than discovering it via 403s when
+                they click write controls. Server-side gates remain the
+                security guarantee. */}
+            <ReadOnlyBanner engagementId={engagement.id} />
             <EngagementTabs
               engagement={engagement}
               auditType={auditType}
