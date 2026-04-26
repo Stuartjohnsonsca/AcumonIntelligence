@@ -3,9 +3,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Loader2, X, ChevronDown, ChevronRight, Send, Shield,
-  AlertOctagon, FileWarning, MessageCircle, Sparkles, Check,
+  AlertOctagon, FileWarning, MessageCircle, Sparkles, Check, ExternalLink,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  encodeNavReference, decodeNavReference, getCurrentLocation, navigateTo,
+} from '@/lib/engagement-nav';
 
 /**
  * RI Matters panel — list of all RI matters raised on the engagement.
@@ -41,6 +44,7 @@ interface Matter {
   status: 'new' | 'open' | 'closed' | string;
   colour: string | null;
   description: string;
+  reference: string | null;
   createdById: string;
   createdByName: string;
   createdAt: string;
@@ -128,9 +132,16 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
     setCreating(true);
     setCreateError(null);
     try {
+      // Capture the user's current tab/sub-tab so the back-link on the
+      // matter can drop a reviewer right back where it was raised. Falls
+      // back to a plain URL if no nav location was registered (older
+      // tabs that haven't been wired into the registry yet).
+      const navLoc = getCurrentLocation();
+      const url = typeof window !== 'undefined' ? window.location.href : undefined;
+      const reference = navLoc ? encodeNavReference(navLoc, url) : (url ?? null);
       const res = await fetch(`/api/engagements/${engagementId}/audit-points`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pointType: 'ri_matter', description: newDesc.trim(), reference: typeof window !== 'undefined' ? window.location.href : null }),
+        body: JSON.stringify({ pointType: 'ri_matter', description: newDesc.trim(), reference }),
       });
       if (res.ok) {
         setNewDesc(''); setShowCreate(false);
@@ -341,6 +352,40 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
                           )}
                         </div>
                       </div>
+
+                      {/* Source back-link — captured at create time so a
+                          reviewer can jump back to the tab/sub-tab the
+                          matter was raised on. Falls back to the plain
+                          URL form for matters created before this. */}
+                      {(() => {
+                        const decoded = decodeNavReference(matter.reference);
+                        if (decoded) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => { navigateTo(decoded.loc); onClose(); }}
+                              className="inline-flex items-center gap-1 text-[11px] text-blue-700 hover:text-blue-900 hover:underline mb-3"
+                              title="Open the tab/sub-tab where this matter was raised"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Source: {decoded.loc.label || decoded.loc.tab}
+                            </button>
+                          );
+                        }
+                        if (matter.reference && (matter.reference.startsWith('http://') || matter.reference.startsWith('https://'))) {
+                          return (
+                            <a
+                              href={matter.reference}
+                              className="inline-flex items-center gap-1 text-[11px] text-blue-700 hover:text-blue-900 hover:underline mb-3"
+                              title="Open the URL where this matter was raised"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Source URL
+                            </a>
+                          );
+                        }
+                        return null;
+                      })()}
 
                       {/* Full description (not truncated) */}
                       <div className="bg-white/60 border border-slate-100 rounded p-3 text-xs text-slate-800 whitespace-pre-wrap mb-3">

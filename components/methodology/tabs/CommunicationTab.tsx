@@ -10,6 +10,7 @@ import { InternalMeetingsPanel } from '../panels/InternalMeetingsPanel';
 import { ExpertMeetingsPanel } from '../panels/ExpertMeetingsPanel';
 import { SignOffDots } from '../SignOffDots';
 import type { TeamMemberLite } from '@/lib/sign-off-helpers';
+import { setCurrentLocation, subscribeNav, consumePendingNav } from '@/lib/engagement-nav';
 
 interface Props {
   engagementId: string;
@@ -48,6 +49,31 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
   }, [engagementId]);
 
   useEffect(() => { loadSignOffs(); }, [loadSignOffs]);
+
+  // ── Engagement-nav wiring ───────────────────────────────────────
+  // Push current sub-tab into the registry and listen for back-links
+  // that target this tab. Mirrors the pattern in WalkthroughsTab.
+  useEffect(() => {
+    const subLabel = SUB_TABS.find(t => t.key === subTab)?.label || subTab;
+    setCurrentLocation({ tab: 'communication', subTab, label: `Communication › ${subLabel}` });
+  }, [subTab]);
+
+  useEffect(() => {
+    const claimed = consumePendingNav(loc => loc.tab === 'communication');
+    if (claimed?.subTab && SUB_TABS.some(t => t.key === claimed.subTab)) {
+      setSubTab(claimed.subTab as SubTab);
+    }
+  }, []);
+
+  useEffect(() => {
+    const unsub = subscribeNav((target) => {
+      if (target.tab !== 'communication' || !target.subTab) return;
+      if (SUB_TABS.some(t => t.key === target.subTab)) {
+        setSubTab(target.subTab as SubTab);
+      }
+    });
+    return unsub;
+  }, []);
 
   async function toggleSignOff(target: string, role: string) {
     const bucket = signOffBuckets[target] || {};

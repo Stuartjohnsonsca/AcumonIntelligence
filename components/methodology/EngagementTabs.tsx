@@ -35,6 +35,7 @@ import {
   type Trigger,
   type TriggerContext,
 } from '@/lib/schedule-triggers';
+import { setCurrentLocation, subscribeNav } from '@/lib/engagement-nav';
 
 interface Props {
   engagement: EngagementData;
@@ -576,6 +577,28 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       window.history.replaceState({}, '', url.pathname + url.search);
     } catch {}
   }
+
+  // Push the current top-level tab into the nav registry so anything
+  // that opens over the page (e.g. RI Matters modal) can capture
+  // "where was I" at the time. Sub-tab-aware tabs overwrite this with
+  // their own location whenever their sub-tab changes.
+  useEffect(() => {
+    const tabLabel = TABS.find(t => t.key === activeTab)?.label ?? activeTab;
+    setCurrentLocation({ tab: activeTab, label: tabLabel });
+  }, [activeTab]);
+
+  // Subscribe to navigateTo events from back-links elsewhere in the
+  // app. Switching the top-level tab is enough at this layer; the sub-
+  // tab (if any) is handled by the target tab's own subscription via
+  // consumePendingNav on its mount.
+  useEffect(() => {
+    const unsub = subscribeNav((target) => {
+      if (target.tab && target.tab !== activeTab) {
+        switchTab(target.tab as TabKey);
+      }
+    });
+    return unsub;
+  }, [activeTab]);
 
   const continuanceLabel = 'Continuance';
 

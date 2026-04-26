@@ -7,6 +7,7 @@ import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
 import { DocumentAnnotator } from '../panels/DocumentAnnotator';
 import { WalkthroughMatrixSection, type WalkthroughMatrixSectionHandle, type WalkthroughMatrix } from '../panels/WalkthroughMatrixSection';
 import { expandZipFile } from '@/lib/client-unzip';
+import { setCurrentLocation, subscribeNav, consumePendingNav } from '@/lib/engagement-nav';
 
 // ─── Types ───
 interface ProcessTab { key: string; label: string; children?: ProcessTab[]; }
@@ -72,6 +73,70 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
         if (procs?.length > 0) setProcesses(procs);
       }).catch(() => {});
   }, [engagementId]);
+
+  // ── Engagement-nav wiring ───────────────────────────────────────
+  // Push our current sub-tab into the registry so things like the RI
+  // Matters modal can capture "user was on Walkthroughs › Sales" when
+  // a matter is created. The label encodes both levels for display.
+  useEffect(() => {
+    const subKey = activeSubProcess || activeTab;
+    const subLabel = (() => {
+      const parent = processes.find(p => p.key === activeTab);
+      if (!parent) return subKey;
+      if (activeSubProcess) {
+        const child = parent.children?.find(c => c.key === activeSubProcess);
+        return `Walkthroughs › ${parent.label}${child ? ` › ${child.label}` : ''}`;
+      }
+      return `Walkthroughs › ${parent.label}`;
+    })();
+    setCurrentLocation({ tab: 'walkthroughs', subTab: subKey, label: subLabel });
+  }, [activeTab, activeSubProcess, processes]);
+
+  // On mount, claim any pending nav target for this tab. Lets a back-
+  // link from another part of the app drop the user straight into the
+  // right sub-process when EngagementTabs has just switched the top-
+  // level tab to walkthroughs.
+  useEffect(() => {
+    const claimed = consumePendingNav(loc => loc.tab === 'walkthroughs');
+    if (claimed?.subTab) {
+      // The subTab string may name either a parent process or a child.
+      // Try child match first, fall back to parent.
+      let parent: ProcessTab | undefined;
+      let child: ProcessTab | undefined;
+      for (const p of processes) {
+        if (p.key === claimed.subTab) { parent = p; break; }
+        const c = p.children?.find(cc => cc.key === claimed.subTab);
+        if (c) { parent = p; child = c; break; }
+      }
+      if (parent) {
+        setActiveTab(parent.key);
+        setActiveSubProcess(child ? child.key : null);
+      }
+    }
+  // Run once when processes are loaded — claiming a pending target is
+  // a one-shot, and processes are stable for the rest of the lifetime.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processes]);
+
+  // Live nav subscription for when the user is already on this tab and
+  // a back-link targets a different sub-process within walkthroughs.
+  useEffect(() => {
+    const unsub = subscribeNav((target) => {
+      if (target.tab !== 'walkthroughs' || !target.subTab) return;
+      let parent: ProcessTab | undefined;
+      let child: ProcessTab | undefined;
+      for (const p of processes) {
+        if (p.key === target.subTab) { parent = p; break; }
+        const c = p.children?.find(cc => cc.key === target.subTab);
+        if (c) { parent = p; child = c; break; }
+      }
+      if (parent) {
+        setActiveTab(parent.key);
+        setActiveSubProcess(child ? child.key : null);
+      }
+    });
+    return unsub;
+  }, [processes]);
 
   // Flatten process tree to get all keys (parents + children)
   function getAllProcessKeys(procs: ProcessTab[]): { key: string }[] {
