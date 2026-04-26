@@ -667,8 +667,23 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   const userIsPartner = currentUserId && teamMembers.some(m => m.role === 'RI' && m.userId === currentUserId);
 
   function makeEmptyRow(): RMMRow {
+    // Stable id from the moment a row is added to local state, even
+    // before it's been saved server-side. We need this so that:
+    //   • the snapshot-based display order can keep track of the row
+    //     across re-orderings (id keys the displayOrderIds array),
+    //   • updateRow / removeRow / signOffRow can locate the correct
+    //     row in `rows` by id rather than by display-loop index
+    //     (which goes wrong the moment the snapshot reorders things),
+    //   • the autosave's prisma.upsert handles the create branch
+    //     idempotently with a known id so a stale-id collision can't
+    //     happen on re-tries.
+    // Falls back to a Math.random-based id on the off-chance an
+    // older browser doesn't expose crypto.randomUUID.
+    const newId = (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
+      ? (crypto as any).randomUUID() as string
+      : `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     return {
-      id: '', lineItem: '', lineType: viewMode, category: null, rowCategory: null, riskIdentified: null, amount: null,
+      id: newId, lineItem: '', lineType: viewMode, category: null, rowCategory: null, riskIdentified: null, amount: null,
       assertions: [], relevance: null, complexityText: null, subjectivityText: null,
       changeText: null, uncertaintyText: null, susceptibilityText: null,
       inherentRiskLevel: null, aiSummary: null, isAiEdited: false,
@@ -1040,9 +1055,21 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
             </tr>
           </thead>
           <tbody>
-            {computedRows.map((row, i) => {
-              const isExpanded = expandedRow === (row.id || `new-${i}`);
-              const rowKey = row.id || `new-${i}`;
+            {computedRows.map((row, displayIndex) => {
+              // CRITICAL: `displayIndex` is the row's position in the
+              // RENDERED table (i.e. in computedRows after sort).
+              // updateRow / removeRow / signOffRow / etc. need to
+              // mutate the row by its position in the UNDERLYING
+              // `rows` state — those two arrays are NOT the same
+              // when the user picks Risk or Value sort. Find the
+              // matching row in `rows` by id and use that index for
+              // every mutation handler. New rows now carry a
+              // client-generated UUID from makeEmptyRow so this
+              // lookup always resolves.
+              const i = row.id ? rows.findIndex(r => r.id === row.id) : -1;
+              if (i < 0) return null; // safety net — shouldn't happen
+              const isExpanded = expandedRow === (row.id || `new-${displayIndex}`);
+              const rowKey = row.id || `new-${displayIndex}`;
               const outline = getRowOutline(row);
               const reviewerSO = row.rowSignOffs?.reviewer;
               const partnerSO = row.rowSignOffs?.partner;
@@ -1050,7 +1077,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               const partnerStale = partnerSO && row.lastEditedAt && new Date(row.lastEditedAt).getTime() > new Date(partnerSO.timestamp).getTime();
               const hasIRData = !!(row.complexityText || row.subjectivityText || row.changeText || row.uncertaintyText || row.susceptibilityText || row.inherentRiskLevel);
               const isPar = row.source === 'par';
-              const isFirstPar = isPar && i === parGroupStartIndex;
+              const isFirstPar = isPar && displayIndex === parGroupStartIndex;
 
               return (
                 <Fragment key={rowKey}>
