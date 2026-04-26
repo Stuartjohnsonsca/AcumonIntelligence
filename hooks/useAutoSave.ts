@@ -49,6 +49,20 @@ export function useAutoSave<T, TResp = unknown>(
   const performSave = useCallback(async () => {
     if (!endpointRef.current) return;
     const payload = JSON.stringify(dataRef.current);
+    // Diagnostic — confirm the body actually carries the field we
+    // just typed. Searches for `"riskIdentified":` non-null entries
+    // and reports the first few. Lets the user open DevTools and
+    // verify their typed Nature value made it into the request body.
+    if (typeof window !== 'undefined' && endpointRef.current.endsWith('/rmm')) {
+      try {
+        const obj = JSON.parse(payload);
+        const rows = Array.isArray(obj?.rows) ? obj.rows : [];
+        const populatedNature = rows
+          .filter((r: any) => typeof r.riskIdentified === 'string' && r.riskIdentified.trim() !== '')
+          .map((r: any) => ({ id: r.id, lineItem: r.lineItem, riskIdentified: r.riskIdentified }));
+        console.log(`[useAutoSave] PUT ${endpointRef.current} — ${rows.length} rows, ${populatedNature.length} with riskIdentified`, populatedNature.slice(0, 5));
+      } catch { /* ignore — diagnostic only */ }
+    }
     setSaving(true);
     setError(null);
     try {

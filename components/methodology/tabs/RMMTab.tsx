@@ -248,6 +248,17 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
           // browser DevTools console to see exactly which row + why.
           console.error('[RMM autosave] partial failure:', f);
         }
+        // Diagnostic — confirm what the server actually persisted for
+        // any row whose riskIdentified is non-empty. Pairs with the
+        // [RMM updateRow] log on typing: if a typed value shows up in
+        // updateRow but is ABSENT here, the server is losing it
+        // (or the client isn't sending it).
+        if (typeof window !== 'undefined' && Array.isArray(resp?.rows)) {
+          const natureSamples = (resp.rows as Array<Record<string, unknown>>)
+            .filter(r => typeof r.riskIdentified === 'string' && (r.riskIdentified as string).trim() !== '')
+            .map(r => ({ id: r.id, lineItem: r.lineItem, riskIdentified: r.riskIdentified }));
+          console.log(`[RMM autosave] server returned ${(resp.rows as unknown[]).length} rows; ${natureSamples.length} have riskIdentified populated`, natureSamples.slice(0, 5));
+        }
       },
     }
   );
@@ -567,6 +578,13 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   }
 
   function updateRow(index: number, field: keyof RMMRow, value: unknown) {
+    // Diagnostic — open DevTools console and watch this when you type
+    // in any cell. Confirms the change is reaching React state. Only
+    // logs the Nature column (riskIdentified) since that's the field
+    // we're tracking; comment in or out as needed for other fields.
+    if (field === 'riskIdentified' && typeof window !== 'undefined') {
+      console.log(`[RMM updateRow] row=${index} field=riskIdentified value=${JSON.stringify(value)}`);
+    }
     setRows(prev => prev.map((r, i) => {
       if (i !== index) return r;
       const updated = { ...r, [field]: value, lastEditedAt: new Date().toISOString() };
