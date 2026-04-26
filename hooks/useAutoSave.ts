@@ -70,11 +70,15 @@ export function useAutoSave<T, TResp = unknown>(
         method,
         headers: { 'Content-Type': 'application/json' },
         body: payload,
-        // keepalive lets the request survive component unmount / tab
-        // switch / page navigation — without it the browser aborts the
-        // in-flight fetch the moment this component tears down, which
-        // silently loses the save even though the UI said "Saved".
-        keepalive: true,
+        // NB: NOT using keepalive here. Chrome / Edge / Firefox cap
+        // keepalive bodies at 64 KB total — once the payload crosses
+        // that (which a 200+ row RMM tab does easily as Nature/notes
+        // accumulate text), the browser silently refuses to send the
+        // request and surfaces it as "Failed to fetch". The normal
+        // debounced save runs while the component is still mounted,
+        // so it doesn't need keepalive's survive-unmount behaviour;
+        // the dedicated `flushOnUnmount` path below uses keepalive
+        // (and stays small because it only runs once on tear-down).
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
