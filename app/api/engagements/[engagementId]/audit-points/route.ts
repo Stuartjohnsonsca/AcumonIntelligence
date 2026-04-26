@@ -55,23 +55,23 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
   if (pointType) where.pointType = pointType;
   if (status) where.status = status;
 
-  // Explicit select because production Supabase is currently missing
-  // the `linked_from_type` + `linked_from_id` columns on this table —
-  // same drift as audit_error_schedules. Without the select, Prisma
-  // tries to fetch those columns and the query 500s, taking down the
-  // RI Matters / Review Points / Management / Representation panels.
-  // Belt-and-braces fallback catches any other unexpected drift.
+  // Explicit select because production Supabase may be missing the
+  // colour / linked_from_* columns from the 2026-04-22 migration.
+  // writeWithFallback retries with the minimal projection if the full
+  // one trips a missing-column error. The outer try/catch is a final
+  // safety net for any other unexpected drift — better an empty panel
+  // than a 500 that hides the rest of the page.
+  // Newest activity first: most recently updated wins. updatedAt ticks
+  // on every response/close/colour change so an item that got a new
+  // reply this morning rises above a quieter one. Closed items still
+  // appear but sink to the bottom via the status sort.
   let points: any[] = [];
   try {
-    points = await prisma.auditPoint.findMany({
-      where,
-      // Newest activity first: most recently updated wins. updatedAt
-      // ticks on every response/close/colour change so an item that
-      // got a new reply this morning rises above a quieter one. Closed
-      // items still appear but sink to the bottom via the status sort.
-      orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }],
-      select: AUDIT_POINT_SAFE_SELECT,
-    });
+    points = await writeWithFallback(
+      () => prisma.auditPoint.findMany({ where, orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }], select: AUDIT_POINT_SAFE_SELECT }),
+      () => prisma.auditPoint.findMany({ where, orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }], select: AUDIT_POINT_MINIMAL_SELECT }),
+      'GET findMany',
+    );
   } catch (err: any) {
     console.error('[audit-points] findMany failed — returning empty list:', err?.message || err);
     points = [];
