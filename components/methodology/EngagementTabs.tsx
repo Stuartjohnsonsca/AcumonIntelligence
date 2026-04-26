@@ -232,14 +232,16 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [starting, setStarting] = useState(false);
   const [openPanel, setOpenPanel] = useState<'review_point' | 'representation' | 'management' | 'ri_matter' | null>(null);
 
-  // RI Matters / Review Points count badges. Outstanding = new+open;
-  // closed = closed/committed/cancelled. Refetched on mount and
-  // whenever the corresponding panel closes so a new item or a
-  // closure shows up immediately. One state object per pointType so
-  // each badge updates independently.
+  // RI Matters / Review Points / Management / Representation count
+  // badges. Outstanding = new+open; closed = closed/committed/
+  // cancelled. Refetched on mount and whenever the corresponding
+  // panel closes so a new item or a status change shows up immediately.
+  // One state object per pointType so each badge updates independently.
   const [riCounts, setRiCounts] = useState<{ outstanding: number; closed: number } | null>(null);
   const [reviewCounts, setReviewCounts] = useState<{ outstanding: number; closed: number } | null>(null);
-  const fetchPointCounts = useCallback(async (pointType: 'ri_matter' | 'review_point') => {
+  const [mgtCounts, setMgtCounts] = useState<{ outstanding: number; closed: number } | null>(null);
+  const [repCounts, setRepCounts] = useState<{ outstanding: number; closed: number } | null>(null);
+  const fetchPointCounts = useCallback(async (pointType: 'ri_matter' | 'review_point' | 'management' | 'representation') => {
     try {
       const res = await fetch(`/api/engagements/${engagement.id}/audit-points?type=${pointType}`);
       if (!res.ok) return null;
@@ -262,7 +264,18 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     const next = await fetchPointCounts('review_point');
     if (next) setReviewCounts(next);
   }, [fetchPointCounts]);
-  useEffect(() => { void refreshRiCounts(); void refreshReviewCounts(); }, [refreshRiCounts, refreshReviewCounts]);
+  const refreshMgtCounts = useCallback(async () => {
+    const next = await fetchPointCounts('management');
+    if (next) setMgtCounts(next);
+  }, [fetchPointCounts]);
+  const refreshRepCounts = useCallback(async () => {
+    const next = await fetchPointCounts('representation');
+    if (next) setRepCounts(next);
+  }, [fetchPointCounts]);
+  useEffect(() => {
+    void refreshRiCounts(); void refreshReviewCounts();
+    void refreshMgtCounts(); void refreshRepCounts();
+  }, [refreshRiCounts, refreshReviewCounts, refreshMgtCounts, refreshRepCounts]);
 
   const isPreStart = engStatus === 'pre_start';
   const [isNewClient, setIsNewClient] = useState<boolean | null>(engagement.isNewClient ?? null);
@@ -695,11 +708,31 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             </span>
           )}
         </button>
-        <button onClick={() => setOpenPanel('representation')} className="px-2.5 py-1 text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors">
+        <button onClick={() => setOpenPanel('representation')} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors">
           Representation
+          {repCounts && repCounts.outstanding > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-red-600 text-white text-[9px] font-bold leading-none">
+              {repCounts.outstanding}
+            </span>
+          )}
+          {repCounts && repCounts.closed > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-green-600 text-white text-[9px] font-bold leading-none">
+              {repCounts.closed}
+            </span>
+          )}
         </button>
-        <button onClick={() => setOpenPanel('management')} className="px-2.5 py-1 text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100 transition-colors">
+        <button onClick={() => setOpenPanel('management')} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100 transition-colors">
           Management
+          {mgtCounts && mgtCounts.outstanding > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-red-600 text-white text-[9px] font-bold leading-none">
+              {mgtCounts.outstanding}
+            </span>
+          )}
+          {mgtCounts && mgtCounts.closed > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-green-600 text-white text-[9px] font-bold leading-none">
+              {mgtCounts.closed}
+            </span>
+          )}
         </button>
         <button onClick={() => setOpenPanel('ri_matter')} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition-colors">
           RI Matters
@@ -775,10 +808,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         />
       )}
       {openPanel === 'management' && (
-        <ManagementPointPanel engagementId={engagement.id} pointType="management" title="Management Letter Points" onClose={() => setOpenPanel(null)} />
+        <ManagementPointPanel engagementId={engagement.id} pointType="management" title="Management Letter Points" onClose={() => { setOpenPanel(null); void refreshMgtCounts(); }} />
       )}
       {openPanel === 'representation' && (
-        <ManagementPointPanel engagementId={engagement.id} pointType="representation" title="Representation Letter Points" onClose={() => setOpenPanel(null)} />
+        <ManagementPointPanel engagementId={engagement.id} pointType="representation" title="Representation Letter Points" onClose={() => { setOpenPanel(null); void refreshRepCounts(); }} />
       )}
       {openPanel === 'ri_matter' && (
         <RIMattersPanel
