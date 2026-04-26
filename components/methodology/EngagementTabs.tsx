@@ -755,6 +755,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         <RIMattersPanel
           engagementId={engagement.id}
           userId={currentUserId}
+          userRole={teamMembers.find(m => m.userId === currentUserId)?.role}
           onClose={() => { setOpenPanel(null); void refreshRiCounts(); }}
         />
       )}
