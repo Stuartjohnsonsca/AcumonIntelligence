@@ -44,7 +44,17 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     include: {
       client: { select: { id: true, clientName: true } },
       period: { select: { endDate: true } },
-      firm: { select: { id: true, name: true } },
+      // Pull the firm's Ethics Partner user relation so the
+      // 'send to ethics' branch can email them directly without a
+      // second round-trip. The Ethics Partner is configured at the
+      // firm level (Firm.ethicsPartnerId), not in a methodology
+      // template.
+      firm: {
+        select: {
+          id: true, name: true,
+          ethicsPartner: { select: { name: true, email: true } },
+        },
+      },
     },
   });
   if (!eng || (eng.firmId !== session.user.firmId && !session.user.isSuperAdmin)) {
@@ -133,33 +143,66 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   }
 
   // ── Technical / Ethics ─────────────────────────────────────────
-  // Both land in the same email-based path. The target role is
-  // looked up on the firm's specialist_roles template; the role
-  // slug is the only difference between the two.
+  // Recipient lookup pulls from the canonical Firm Wide Assumptions
+  // sources first, falling back to the older specialist_roles
+  // template only if the new sources aren't populated:
+  //   - Technical: Methodology Admin → Firm Wide Assumptions →
+  //     Technical Team. Stored as a methodologyRiskTable row with
+  //     tableType='technical_team', data shape { email, members }.
+  //   - Ethics:    Firm.ethicsPartner relation (set on the Firm
+  //     record, not in a methodology template).
+  // Without this, sends fail with "No Technical/Ethics email
+  // configured" even when the firm has set them in the right place.
   if (target === 'technical' || target === 'ethics') {
-    const roleSlug = target === 'technical' ? 'technical' : 'ethics_partner';
-    const rolesRow = await prisma.methodologyTemplate.findUnique({
-      where: {
-        firmId_templateType_auditType: { firmId: eng.firmId, templateType: 'specialist_roles', auditType: 'ALL' },
-      },
-    }).catch(() => null);
-    const roles = Array.isArray(rolesRow?.items) ? rolesRow!.items as any[] : [];
-    // Accept either the exact slug or a loose label match — admins
-    // sometimes configure 'technical_advisor' instead of 'technical'.
-    const match = roles.find((r: any) =>
-      r.isActive !== false
-      && (r.key === roleSlug
-        || (target === 'technical' && /technical/i.test(String(r.key || r.label || '')))
-        || (target === 'ethics' && /ethics/i.test(String(r.key || r.label || '')))
-      )
-    );
-    const toEmail = (match?.email || '').toLowerCase();
-    const toName = match?.name || '';
+    let toEmail = '';
+    let toName = '';
+
+    if (target === 'technical') {
+      const techTable = await prisma.methodologyRiskTable.findUnique({
+        where: { firmId_tableType: { firmId: eng.firmId, tableType: 'technical_team' } },
+      }).catch(() => null);
+      const techData = (techTable?.data as any) || {};
+      toEmail = String(techData?.email || '').trim().toLowerCase();
+      // Technical Team has a shared inbox label rather than a single
+      // person, so just use a generic display name when unset.
+      toName = String(techData?.name || techData?.label || '').trim() || 'Technical Team';
+    } else {
+      const ep = eng.firm?.ethicsPartner;
+      toEmail = String(ep?.email || '').trim().toLowerCase();
+      toName = String(ep?.name || '').trim() || 'Ethics Partner';
+    }
+
+    // Backwards-compat fallback: older firms configured these under
+    // a methodology template called 'specialist_roles'. If the new
+    // canonical source is empty, try that before giving up.
     if (!toEmail) {
+      const rolesRow = await prisma.methodologyTemplate.findUnique({
+        where: {
+          firmId_templateType_auditType: { firmId: eng.firmId, templateType: 'specialist_roles', auditType: 'ALL' },
+        },
+      }).catch(() => null);
+      const roles = Array.isArray(rolesRow?.items) ? rolesRow!.items as any[] : [];
+      const match = roles.find((r: any) =>
+        r.isActive !== false
+        && ((target === 'technical' && /technical/i.test(String(r.key || r.label || '')))
+          || (target === 'ethics' && /ethics/i.test(String(r.key || r.label || ''))))
+      );
+      if (match?.email) {
+        toEmail = String(match.email).trim().toLowerCase();
+        toName = match.name || toName;
+      }
+    }
+
+    if (!toEmail) {
+      const where = target === 'technical'
+        ? 'Methodology Admin → Firm Wide Assumptions → Technical Team'
+        : 'Methodology Admin → Firm Wide Assumptions (Ethics Partner)';
       return NextResponse.json({
-        error: `No ${target === 'technical' ? 'Technical' : 'Ethics Partner'} email configured. Ask the Methodology Admin to set one under Methodology Admin → Specialist Roles.`,
+        error: `No ${target === 'technical' ? 'Technical' : 'Ethics Partner'} email configured. Set one under ${where}.`,
       }, { status: 422 });
     }
+
+    const roleSlug = target === 'technical' ? 'technical' : 'ethics_partner';
 
     const covering = (message || '').trim();
     const aiSummary = (summary || '').trim();
