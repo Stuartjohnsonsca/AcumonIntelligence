@@ -1360,6 +1360,48 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           >
             {importing ? '⏳ Importing...' : '📥 Import from Accounting System'}
           </button>
+          {/* "Import from prior period" — visible when this engagement
+              has zero priorYear values populated AND a prior period is
+              linked. Clicking calls the API which honours the firm's
+              Bring Forward matrix (tb_figures cell for this audit
+              type). On success the rows reload so the prior column
+              fills in. */}
+          {(() => {
+            const anyPriorYear = rows.some(r => r.priorYear != null);
+            if (anyPriorYear) return null;
+            return (
+              <button
+                onClick={async () => {
+                  if (!confirm('Import prior-period TB figures into the Prior Year column? Existing prior values will be preserved.')) return;
+                  setImporting(true);
+                  setImportResult(null);
+                  try {
+                    const res = await fetch(`/api/engagements/${engagementId}/trial-balance/import-prior`, { method: 'POST' });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      setImportResult(data?.detail || data?.error || `Import failed (${res.status})`);
+                      return;
+                    }
+                    const populated = data?.populated ?? 0;
+                    const skipped = data?.skipped ?? 0;
+                    const missingCount = data?.missingCount ?? 0;
+                    setImportResult(`Imported ${populated} row${populated === 1 ? '' : 's'}${skipped > 0 ? `, ${skipped} skipped (already had prior values)` : ''}${missingCount > 0 ? `, ${missingCount} account code${missingCount === 1 ? '' : 's'} not found in prior period` : ''}.`);
+                    // Reload so the new priorYear values appear.
+                    await loadData();
+                  } catch (err: any) {
+                    setImportResult(`Import failed: ${err?.message || 'unknown error'}`);
+                  } finally {
+                    setImporting(false);
+                  }
+                }}
+                disabled={importing}
+                title="Populate the Prior Year column from the linked prior-period engagement's TB. Requires Firm Wide Assumptions → Bring Forward → TB figures to be ticked for this audit type."
+                className="text-xs px-3 py-1 bg-sky-50 text-sky-700 border border-sky-200 rounded hover:bg-sky-100 disabled:opacity-50 font-medium"
+              >
+                {importing ? '⏳ Importing...' : '⏪ Import from prior period'}
+              </button>
+            );
+          })()}
           <button
             onClick={handleAiClassifyAll}
             disabled={aiAllLoading}

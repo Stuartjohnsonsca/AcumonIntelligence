@@ -51,7 +51,29 @@ interface Props {
   /** Re-confirmation cadence — number of days per audit type before we
    *  prompt the team member to re-confirm their independence. */
   initialIndependenceRefreshRules?: IndependenceRefreshDaysRule[];
+  /** Bring-forward matrix — for each audit type, which schedule items
+   *  copy into the prior-period columns of a fresh engagement against
+   *  the same client. Stored as `{ [auditType]: { [itemKey]: true } }`.
+   *  Null when the firm hasn't configured anything yet (treated as
+   *  "nothing brought forward" — opt-in). */
+  initialCarryForward?: Record<string, Record<string, boolean>> | null;
 }
+
+// The catalogue of items the carry-forward matrix offers. Each row in
+// the matrix corresponds to one of these. Adding a new item here
+// reveals it in the admin UI; the actual carry-forward behaviour is
+// wired per-schedule and consults the matrix for its key.
+const CARRY_FORWARD_ITEMS: Array<{ key: string; label: string; help?: string }> = [
+  { key: 'permanent_file', label: 'Permanent File responses', help: 'Entity address, principal activity, sector etc.' },
+  { key: 'rmm_rows',       label: 'RMM rows', help: 'Line items, Nature, classifications, Likelihood / Magnitude / Control assessments.' },
+  { key: 'audit_plan',     label: 'Audit Plan (Significant Risks + Areas of Focus)', help: 'Risk descriptions and the planned response.' },
+  { key: 'materiality',    label: 'Materiality benchmark + thresholds', help: 'Prior figures populate the prior-period column on the Materiality tab.' },
+  { key: 'agreed_dates',   label: 'Audit Timetable', help: 'Agreed milestone dates copied as the new period\'s starting timetable.' },
+  { key: 'ethics',         label: 'Ethics responses', help: 'Threats, safeguards, non-audit services answers.' },
+  { key: 'continuance',    label: 'Client Continuance responses', help: 'Continuance assessment answers.' },
+  { key: 'team_members',   label: 'Engagement team', help: 'Carry forward the same team / roles by default.' },
+  { key: 'tb_figures',     label: 'TB figures (CY → next year prior)', help: 'Drives the TB CY-vs-PY tab\'s "Import from prior period" button.' },
+];
 
 const LIKELIHOODS: Likelihood[] = ['Remote', 'Unlikely', 'Neutral', 'Likely', 'Very Likely'];
 const MAGNITUDES: Magnitude[] = ['Remote', 'Low', 'Medium', 'High', 'Very High'];
@@ -141,6 +163,7 @@ export function FirmAssumptionsClient({
   initialAuditTypes,
   initialIndependenceQuestions,
   initialIndependenceRefreshRules,
+  initialCarryForward,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -212,6 +235,28 @@ export function FirmAssumptionsClient({
   const [newLuPattern, setNewLuPattern] = useState('');
   const [newLuCategory, setNewLuCategory] = useState('');
   const [newLuWeight, setNewLuWeight] = useState(15);
+
+  // Bring-forward matrix — for each audit type, which schedule items
+  // copy into the prior-period columns of a new engagement. Stored as
+  // `{ [auditType]: { [itemKey]: true } }`. Defaults to empty (nothing
+  // brought forward) so an unconfigured firm doesn't surprise users
+  // by silently copying data they may not want carried over.
+  const [carryForward, setCarryForward] = useState<Record<string, Record<string, boolean>>>(
+    () => initialCarryForward || {},
+  );
+
+  /** Toggle whether `itemKey` is brought forward for `auditTypeCode`.
+   *  Idempotent — flips the boolean and persists the matrix on the
+   *  next "Save All" alongside the other firm-wide tables. */
+  const toggleCarryForward = useCallback((auditTypeCode: string, itemKey: string) => {
+    setCarryForward(prev => {
+      const forType = { ...(prev[auditTypeCode] || {}) };
+      if (forType[itemKey]) delete forType[itemKey];
+      else forType[itemKey] = true;
+      return { ...prev, [auditTypeCode]: forType };
+    });
+    setSaved(false);
+  }, []);
   const [riskClassification, setRiskClassification] = useState<Record<string, RiskClassification>>(() => {
     const init = initialRiskClassification;
     return (init && typeof init === 'object') ? init : {
@@ -350,6 +395,7 @@ export function FirmAssumptionsClient({
         ['arConfidenceFactor', { confidenceFactor: arConfidenceFactor }],
         ['fxProvider', { provider: fxProvider }],
         ['riskClassification', riskClassification ?? {}],
+        ['carryForward', { matrix: carryForward }],
         ['large_unusual_scoring', {
           descriptionPatterns: luPatterns,
           thresholds: luThresholds,
@@ -1097,6 +1143,73 @@ export function FirmAssumptionsClient({
               }}
               className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
             >+ Add Audit Type</button>
+          </div>
+        )}
+      </div>
+
+      {/* Bring-forward matrix — checkbox grid where rows are schedule
+          items and columns are the firm's active audit types. A ticked
+          cell means "for this audit type, when a new engagement is
+          created against a client that has a prior engagement, copy
+          this item from the prior period into the new one." Schedules
+          consult the matrix at engagement-creation time; the TB CY-vs-
+          PY tab uses `tb_figures` to drive its "Import from prior
+          period" button. Stored under tableType='carryForward'. */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('carryForward')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Bring Forward to Next Period</h2>
+          {expandedSections.carryForward ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.carryForward && (
+          <div className="p-4 space-y-3">
+            <p className="text-sm text-slate-500">
+              For each audit type, tick which items copy from the prior period engagement into a new engagement against the same client.
+              Schedule data flows into the prior columns of the new period&rsquo;s tab; <strong>TB Figures</strong> drives the
+              <em> &ldquo;Import from prior period&rdquo;</em> button on the TB CY-vs-PY tab when the new period has only current-year figures populated.
+              Default is empty (nothing carried) — opt in per item per type.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-300 bg-slate-50">
+                    <th className="text-left font-medium py-2 px-2 sticky left-0 bg-slate-50 z-10">Item</th>
+                    {auditTypes.filter(at => at.isActive).map(at => (
+                      <th key={at.code} className="text-center font-medium py-2 px-2 min-w-[110px]" title={at.code}>
+                        {at.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {CARRY_FORWARD_ITEMS.map(item => (
+                    <tr key={item.key} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
+                      <td className="py-2 px-2 sticky left-0 bg-white">
+                        <div className="font-medium text-slate-800">{item.label}</div>
+                        {item.help && <div className="text-[11px] text-slate-500 mt-0.5">{item.help}</div>}
+                      </td>
+                      {auditTypes.filter(at => at.isActive).map(at => (
+                        <td key={at.code} className="text-center px-2">
+                          <input
+                            type="checkbox"
+                            checked={!!carryForward[at.code]?.[item.key]}
+                            onChange={() => toggleCarryForward(at.code, item.key)}
+                            className="rounded border-slate-300 cursor-pointer"
+                            title={`Bring ${item.label} forward for ${at.label}`}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Add or remove rows by editing <code className="bg-slate-100 px-1 rounded">CARRY_FORWARD_ITEMS</code> in <code className="bg-slate-100 px-1 rounded">FirmAssumptionsClient.tsx</code>.
+              Wiring per schedule lives next to the schedule&rsquo;s prior-period loader.
+            </p>
           </div>
         )}
       </div>

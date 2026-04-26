@@ -87,6 +87,7 @@ export default async function FirmAssumptionsPage() {
         initialAuditTypes={auditTypes}
         initialIndependenceQuestions={initialIndependenceQuestions}
         initialIndependenceRefreshRules={initialIndependenceRefreshRules}
+        initialCarryForward={(tablesMap.carryForward?.matrix as Record<string, Record<string, boolean>>) || null}
       />
     </div>
   );
