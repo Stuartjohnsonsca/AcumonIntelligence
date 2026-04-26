@@ -833,7 +833,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                             )}
 
                             {/* Conditional display */}
-                            <div className="col-span-2 flex items-center gap-4 pt-1 border-t border-slate-100">
+                            <div className="col-span-2 flex items-center gap-4 pt-1 border-t border-slate-100 flex-wrap">
                               <label className="flex items-center gap-1.5 text-xs text-slate-600">
                                 <input type="checkbox" checked={q.isRequired || false} onChange={e => updateQuestion(q.id, { isRequired: e.target.checked })} className="w-3.5 h-3.5 rounded" />
                                 Required
@@ -845,6 +845,27 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 <input type="checkbox" checked={q.isBold || false} onChange={e => updateQuestion(q.id, { isBold: e.target.checked })} className="w-3.5 h-3.5 rounded" />
                                 Description row (span all columns)
                               </label>
+                              {/* AI Polish toggle — only meaningful for prose
+                                  fields. When the row's input type is text /
+                                  textarea (free-text), checking this box adds
+                                  a "Polish with AI" button next to the answer
+                                  cell on the engagement-side schedule. The
+                                  auditor types in shorthand, hits the button,
+                                  and the engine rewrites the value into
+                                  formal client-facing audit language. The
+                                  auditor can edit the polished result before
+                                  saving. Hidden for non-prose input types
+                                  (numeric / date / Y-N / dropdown / formula)
+                                  where polishing makes no sense. */}
+                              {(q.inputType === 'text' || q.inputType === 'textarea') && (
+                                <label
+                                  className="flex items-center gap-1.5 text-xs text-fuchsia-700"
+                                  title="When checked, an AI Polish button appears next to this question's answer cell on the engagement schedule. Click → the auditor's text is rewritten in formal UK audit language, ready to paste into a client document. The auditor can still edit afterwards."
+                                >
+                                  <input type="checkbox" checked={(q as any).aiPolishEnabled || false} onChange={e => updateQuestion(q.id, ({ aiPolishEnabled: e.target.checked || undefined } as any))} className="w-3.5 h-3.5 rounded accent-fuchsia-600" />
+                                  AI Polish button
+                                </label>
+                              )}
 
                               {/* Per-row column config — visible only when
                                   the parent section has a table layout AND
@@ -1010,6 +1031,28 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                                   ))}
                                                 </select>
                                               </div>
+                                            )}
+                                            {/* Per-cell AI Polish toggle — same
+                                                semantics as the row-level one but
+                                                scoped to this single cell. So a
+                                                4-column section can polish only
+                                                the "Threats" description column
+                                                while leaving the Y/N and
+                                                "Safeguard" cells alone. Visible
+                                                only for prose-style cells. */}
+                                            {(cfg?.inputType === 'text' || cfg?.inputType === 'textarea') && (
+                                              <label
+                                                className="flex items-center gap-1.5 text-[10px] text-fuchsia-700"
+                                                title="When checked, an AI Polish button appears next to this CELL on the engagement schedule. Click → the auditor's text is rewritten in formal UK audit language. The auditor can still edit afterwards."
+                                              >
+                                                <input
+                                                  type="checkbox"
+                                                  checked={(cfg as any)?.aiPolishEnabled || false}
+                                                  onChange={e => updateRowCol(ci, ({ aiPolishEnabled: e.target.checked || undefined } as any))}
+                                                  className="w-3 h-3 rounded accent-fuchsia-600"
+                                                />
+                                                AI Polish button on this cell
+                                              </label>
                                             )}
                                             {/* Per-cell conditional —
                                                 hide THIS cell when another

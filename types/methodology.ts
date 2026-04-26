@@ -337,6 +337,14 @@ export interface TemplateQuestion {
    *    'number' / 'number:N'     →  "1,234.50" (locale-formatted)
    *  Empty / unset = raw value (the historic behaviour). */
   displayFormat?: string;
+  /** When true the engagement-side schedule renders a small AI Polish
+   *  button next to the answer cell. Click → the auditor's free-text
+   *  answer is sent to the polishing endpoint, which rewrites it in
+   *  formal UK audit language and writes the result back. Auditor
+   *  retains the option to keep editing afterwards. Only meaningful
+   *  on prose-style cells (text / textarea); ignored on dates, Y/N,
+   *  numeric, dropdown, formula. */
+  aiPolishEnabled?: boolean;
   /** Show this question only when another question on the same
    *  schedule satisfies the operator+value check. `operator` defaults
    *  to 'eq' when absent for back-compat with the original
@@ -385,6 +393,11 @@ export interface TemplateQuestionColumn {
    *  TemplateQuestion.displayFormat. Lets one cell of a multi-column
    *  row render as "12.5%" while the next cell renders as "£1,234". */
   displayFormat?: string;
+  /** Same semantics as TemplateQuestion.aiPolishEnabled but scoped
+   *  to a single cell of a multi-column row. So a 4-column section
+   *  can have AI polish on the "Threats" description cell while
+   *  leaving the Y/N and "Safeguard" cells untouched. */
+  aiPolishEnabled?: boolean;
   validationMin?: number;
   validationMax?: number;
   placeholder?: string;

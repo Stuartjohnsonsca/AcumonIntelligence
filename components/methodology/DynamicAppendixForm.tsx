@@ -82,6 +82,54 @@ export function DynamicAppendixForm({
   const questionnaireKey = endpointToQuestionnaireKey(endpoint);
 
   const [values, setValues] = useState<FormValues>(initialData);
+  // AI Polish — track which cell key is currently in flight so we can
+  // show a spinner and disable the button while the request is open.
+  // Keyed by cell key (`<questionId>` for standard rows, `<questionId>_col<N>`
+  // for multi-column cells) since one row could have multiple polish-able
+  // cells in flight simultaneously in principle.
+  const [polishingKey, setPolishingKey] = useState<string | null>(null);
+  const [polishError, setPolishError] = useState<string | null>(null);
+
+  /**
+   * Send the current cell value to the AI polish endpoint and
+   * write the rewritten text back. The auditor can keep editing
+   * afterwards — this is a one-shot rewrite, not a binding.
+   */
+  async function runAiPolish(cellKey: string, questionContext: string): Promise<void> {
+    const current = values[cellKey];
+    const text = typeof current === 'string' ? current : '';
+    if (!text.trim()) {
+      setPolishError('Type something first — there\'s nothing to polish.');
+      return;
+    }
+    setPolishingKey(cellKey);
+    setPolishError(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/ai-polish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, questionContext }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPolishError(data?.error || 'AI polish failed');
+        return;
+      }
+      const polished = String(data?.polished || '').trim();
+      if (!polished) {
+        setPolishError('AI returned no text — try rewording the original.');
+        return;
+      }
+      // Write the polished text back. handleChange goes through the
+      // normal change pipeline so it picks up auto-save / dirty state /
+      // validation just like a manual edit.
+      handleChange(cellKey, polished);
+    } catch (err: any) {
+      setPolishError(err?.message || 'AI polish failed');
+    } finally {
+      setPolishingKey(null);
+    }
+  }
   const [triggerValues, setTriggerValues] = useState<Record<string, string>>(() => {
     // Load trigger selections from initialData (stored as trigger_<questionId>)
     const t: Record<string, string> = {};
@@ -537,6 +585,24 @@ export function DynamicAppendixForm({
 
   return (
     <div className="space-y-4">
+      {/* AI Polish error banner — surfaces transient failures from the
+          /ai-polish endpoint (network blip, model overload, empty
+          response). Auto-dismissable; the auditor's text is left
+          untouched on failure. */}
+      {polishError && (
+        <div className="flex items-start gap-2 p-2.5 rounded-lg border border-fuchsia-200 bg-fuchsia-50 text-[11px] text-fuchsia-800">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-fuchsia-600" />
+          <div className="flex-1">
+            <div className="font-semibold">AI Polish couldn&rsquo;t process this</div>
+            <div>{polishError}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPolishError(null)}
+            className="text-fuchsia-600 hover:text-fuchsia-800 text-xs"
+          >dismiss</button>
+        </div>
+      )}
       {/* Validation-rule banners — stack in order, red errors first,
           then amber warnings. Each banner shows the rule label as
           the heading and the admin-written message as the body. */}
@@ -854,6 +920,24 @@ export function DynamicAppendixForm({
                                     <PlaceholderBadge path={cellPath} title={cellBadgeTitle} />
                                   </div>
                                 )}
+                                {/* Per-cell AI Polish button — same
+                                    semantics as the row-level one but
+                                    scoped to this single cell. Schedule
+                                    Designer enables it via the per-cell
+                                    config. Visible only when the cell's
+                                    inputType is prose-style and the
+                                    designer enabled it. */}
+                                {(rowColCfg as any)?.aiPolishEnabled && (cellInputType === 'text' || cellInputType === 'textarea') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void runAiPolish(cellKey, `${q.questionText} — ${tableHeaders[colN] || `Column ${colN}`}`)}
+                                    disabled={polishingKey === cellKey}
+                                    title="Rewrite this cell's answer in formal UK audit language. You can still edit afterwards."
+                                    className="absolute top-0.5 right-0.5 inline-flex items-center gap-1 text-[9px] px-1 py-0.5 rounded bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200 hover:bg-fuchsia-100 disabled:opacity-60"
+                                  >
+                                    {polishingKey === cellKey ? '…' : '✨'}
+                                  </button>
+                                )}
                               </td>
                             );
                           })}
@@ -1003,6 +1087,23 @@ export function DynamicAppendixForm({
                             title={`Current-year placeholder (admins only) — click to copy\n{{${placeholderPath}}}`}
                           />
                         </div>
+                      )}
+                      {/* AI Polish button — visible whenever the
+                          schedule designer ticked the box for this
+                          question. The auditor types in shorthand;
+                          one click rewrites the text in formal UK
+                          audit language. Auditor can edit
+                          afterwards — this is one-shot, not binding. */}
+                      {(q as any).aiPolishEnabled && (q.inputType === 'text' || q.inputType === 'textarea') && (
+                        <button
+                          type="button"
+                          onClick={() => void runAiPolish(q.id, q.questionText || '')}
+                          disabled={polishingKey === q.id}
+                          title="Rewrite this answer in formal UK audit language. You can still edit afterwards."
+                          className="absolute top-1 right-1 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200 hover:bg-fuchsia-100 disabled:opacity-60"
+                        >
+                          {polishingKey === q.id ? '…' : '✨ Polish'}
+                        </button>
                       )}
                     </div>
                     {showActionTriggers && actionTriggerOptions.length > 0 && (
