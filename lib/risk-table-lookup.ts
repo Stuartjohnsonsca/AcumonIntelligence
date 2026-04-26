@@ -17,13 +17,22 @@ const DEFAULT_INHERENT_RISK: InherentRiskTable = {
 };
 
 // Default Control Risk Table (Appendix G) - InherentRisk × ControlRisk → RiskLevel
+//
+// Logical ordering of control states (best → worst):
+//   Effective → Partially Effective → Not Tested → Not Effective
+// "Not Effective" must never produce a LOWER overall risk than "Partially
+// Effective" — failed controls cannot reduce inherent risk more than partial
+// controls. The original matrix had those two columns swapped on the Low,
+// Medium and Very High rows, which is why a row with Inherent=Very High +
+// Control=Not Effective was downgrading to High and missing the Significant
+// Risk dot.  See git blame for the corrected row mapping.
 const DEFAULT_CONTROL_RISK: ControlRiskTable = {
   matrix: {
-    'Remote':    { 'Not Tested': 'Remote', 'Effective': 'Remote', 'Not Effective': 'Low',    'Partially Effective': 'Low' },
-    'Low':       { 'Not Tested': 'Low',    'Effective': 'Low',    'Not Effective': 'Low',    'Partially Effective': 'Medium' },
-    'Medium':    { 'Not Tested': 'Medium', 'Effective': 'Low',    'Not Effective': 'Medium', 'Partially Effective': 'High' },
-    'High':      { 'Not Tested': 'High',   'Effective': 'Medium', 'Not Effective': 'High',   'Partially Effective': 'High' },
-    'Very High': { 'Not Tested': 'High',   'Effective': 'High',   'Not Effective': 'High',   'Partially Effective': 'Very High' },
+    'Remote':    { 'Not Tested': 'Remote', 'Effective': 'Remote', 'Partially Effective': 'Low',    'Not Effective': 'Low' },
+    'Low':       { 'Not Tested': 'Low',    'Effective': 'Low',    'Partially Effective': 'Low',    'Not Effective': 'Medium' },
+    'Medium':    { 'Not Tested': 'Medium', 'Effective': 'Low',    'Partially Effective': 'Medium', 'Not Effective': 'High' },
+    'High':      { 'Not Tested': 'High',   'Effective': 'Medium', 'Partially Effective': 'High',   'Not Effective': 'High' },
+    'Very High': { 'Not Tested': 'High',   'Effective': 'High',   'Partially Effective': 'High',   'Not Effective': 'Very High' },
   },
 };
 
