@@ -344,32 +344,54 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
     });
   }
 
-  // Auto-derive Planning Letter category from Sig.Risk dot.  Whenever a row's
-  // overallRisk (or the firm-wide riskClassificationTable) changes, recompute
-  // rowCategory using the same fallback as the Sig.Risk? coloured dot in the
-  // table — Significant Risk → 'significant_risk', Area of Focus →
-  // 'area_of_focus', everything else clears it.  We only bump state when a row
-  // actually changes to avoid an infinite render loop with useAutoSave.
+  // Auto-derive Planning Letter category from Sig.Risk dot.  Whenever
+  // any of the user-editable inputs (Likelihood / Magnitude / Control
+  // Risk / Relevance) changes, OR the firm-wide riskClassificationTable
+  // loads, recompute the chain:
+  //
+  //   Likelihood × Magnitude  → finalRiskAssessment (inherent)
+  //   inherent × controlRisk  → overallRisk
+  //   overallRisk + classMap  → 'Significant Risk' | 'Area of Focus' | null
+  //   classification          → rowCategory
+  //
+  // Then persist all three derived values (`overallRisk`,
+  // `finalRiskAssessment`, `rowCategory`) so:
+  //   • the saved data matches what computedRows shows in the table,
+  //   • the Audit Planning Letter's `auditPlan.significantRisks` and
+  //     `auditPlan.areasOfFocus` filters in template-context.ts (which
+  //     read straight off the saved row) actually see populated rows.
+  //
+  // Previously this read `r.overallRisk` directly, but overallRisk was
+  // only ever computed in the `computedRows` useMemo for display and
+  // never written back — so rowCategory stayed null forever, even on
+  // rows the auditor had filled in. We only bump state when something
+  // actually changes to avoid a render loop with useAutoSave.
   useEffect(() => {
     setRows(prev => {
       let mutated = false;
       const next = prev.map(r => {
-        const overall = r.overallRisk;
+        const finalRisk = r.relevance === 'N' ? 'N/A' : lookupInherentRisk(r.likelihood, r.magnitude);
+        const finalRiskValue = finalRisk === 'N/A' ? null : finalRisk;
+        const overall = finalRisk && finalRisk !== 'N/A' ? lookupOverallRisk(finalRisk, r.controlRisk) : null;
         const classification = overall ? (riskClassificationTable?.[overall]
           || (overall === 'High' || overall === 'Very High' ? 'Significant Risk'
               : overall === 'Medium' ? 'Area of Focus' : null)) : null;
         const target = classification === 'Significant Risk' ? 'significant_risk'
           : classification === 'Area of Focus' ? 'area_of_focus'
           : null;
-        if ((r.rowCategory || null) !== target) {
+        const changed =
+          (r.rowCategory || null) !== target
+          || (r.overallRisk || null) !== (overall || null)
+          || (r.finalRiskAssessment || null) !== (finalRiskValue || null);
+        if (changed) {
           mutated = true;
-          return { ...r, rowCategory: target as any };
+          return { ...r, rowCategory: target as any, overallRisk: overall as any, finalRiskAssessment: finalRiskValue as any };
         }
         return r;
       });
       return mutated ? next : prev;
     });
-  }, [riskClassificationTable, rows.map(r => r.overallRisk).join('|')]);
+  }, [riskClassificationTable, rows.map(r => `${r.likelihood}|${r.magnitude}|${r.controlRisk}|${r.relevance}`).join('||')]);
 
   // Check if prior year engagement exists
   useEffect(() => {
