@@ -1,15 +1,45 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { AlertTriangle } from 'lucide-react';
 
 /**
- * Audit Test Summary Results — Completion view showing:
- * - Account codes with indented drop-down showing all allocated tests from audit plan
- * - Error-raised tests and account codes coloured red/orange
- * - 3 dots per account code: Preparer, Reviewer, RI (rolled up from underlying tests)
- * - RI can sign off at this level
+ * Audit Test Summary Results — Completion view.
+ *
+ * Per spec ("In Completion under Test Summary Results should list out
+ * all tests in the Audit Plan, although with any tests done in
+ * planning…"):
+ *
+ *   - Flat row-per-test list across the engagement.
+ *   - Two dot columns:
+ *       PROGRESS — completed (green) | partially / in-progress (orange) |
+ *                  failed-to-complete (red).
+ *       RESULT   — no error or < Clearly Trivial (green) |
+ *                  between CT and Performance Materiality (orange) |
+ *                  > Performance Materiality (red).
+ *   - Duration column showing time from request to completion as
+ *     Hh Mm (or H:MM when shorter than an hour).
+ *
+ * Tests not yet executed don't have an execution record, so they
+ * don't appear here yet — clicking "Run All" in the Audit Plan tab
+ * surfaces them, then they show up with a Progress dot the moment
+ * they start.
+ *
+ * Planning-stage tests (e.g. agreeing prior year TB to accounts):
+ * those don't currently flow through the test-execution / test-
+ * conclusion pipeline, so they're not in this list yet. Surfacing
+ * them needs a separate data source — flagged with the user.
  */
+
+interface TestExecution {
+  id: string;
+  testDescription: string;
+  fsLine: string;
+  status: string;            // running | paused | completed | failed | cancelled
+  startedAt: string | null;
+  completedAt: string | null;
+  errorMessage: string | null;
+}
 
 interface TestConclusion {
   id: string;
@@ -17,13 +47,14 @@ interface TestConclusion {
   testDescription: string;
   accountCode: string | null;
   conclusion: string | null; // green | orange | red | failed
-  status: string; // pending | concluded | reviewed | signed_off
+  status: string;            // pending | concluded | reviewed | signed_off
   totalErrors: number;
   extrapolatedError: number;
   reviewedByName: string | null;
   reviewedAt: string | null;
   riSignedByName: string | null;
   riSignedAt: string | null;
+  executionId?: string | null;
 }
 
 interface Props {
@@ -32,55 +63,202 @@ interface Props {
   userId?: string;
 }
 
-export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props) {
-  const [conclusions, setConclusions] = useState<TestConclusion[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedCodes, setExpandedCodes] = useState<Set<string>>(new Set());
+type Dot = 'green' | 'orange' | 'red' | 'pending';
 
-  const loadConclusions = useCallback(async () => {
+interface SummaryRow {
+  key: string;
+  testDescription: string;
+  fsLine: string;
+  accountCode: string | null;
+  progress: Dot;
+  result: Dot;
+  durationMs: number | null;
+  totalErrors: number;
+  status: string;
+  conclusionId: string | null;
+  executionId: string | null;
+  riSignedByName: string | null;
+}
+
+const DOT_BG: Record<Dot, string> = {
+  green: 'bg-green-500',
+  orange: 'bg-orange-500',
+  red: 'bg-red-500',
+  pending: 'bg-slate-300',
+};
+
+const PROGRESS_TITLE: Record<Dot, string> = {
+  green: 'Completed',
+  orange: 'In progress / partially complete',
+  red: 'Failed to complete',
+  pending: 'Not yet started',
+};
+
+const RESULT_TITLE: Record<Dot, string> = {
+  green: 'No error or below Clearly Trivial',
+  orange: 'Error between Clearly Trivial and Performance Materiality',
+  red: 'Error above Performance Materiality',
+  pending: 'Result pending',
+};
+
+function formatDuration(ms: number | null): string {
+  if (ms == null || ms < 0) return '—';
+  const totalMinutes = Math.round(ms / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  // < 1 minute → show seconds so a fast test doesn't render as "0:00"
+  if (totalMinutes === 0) {
+    const seconds = Math.max(1, Math.round(ms / 1000));
+    return `0:00:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${hours}:${String(minutes).padStart(2, '0')}`;
+}
+
+function progressFromStatus(status: string): Dot {
+  if (status === 'completed') return 'green';
+  if (status === 'failed' || status === 'cancelled') return 'red';
+  if (status === 'running' || status === 'paused') return 'orange';
+  return 'pending';
+}
+
+/**
+ * Result colour. Falls back through three layers:
+ *   1. The conclusion record's pre-computed conclusion field (already
+ *      green/orange/red/failed when set by the test handler).
+ *   2. extrapolatedError compared against materiality thresholds —
+ *      reproduces the same banding the conclusion would get if it
+ *      were re-derived now.
+ *   3. Default to green when an execution completed cleanly with no
+ *      conclusion record (matches the existing AuditPlanPanel default).
+ */
+function resultFromConclusion(
+  conclusion: TestConclusion | null,
+  execStatus: string,
+  performanceMateriality: number,
+  clearlyTrivial: number,
+): Dot {
+  if (conclusion?.conclusion === 'failed') return 'red';
+  if (conclusion?.conclusion === 'red') return 'red';
+  if (conclusion?.conclusion === 'orange') return 'orange';
+  if (conclusion?.conclusion === 'green') return 'green';
+  // Inferred from extrapolatedError when no precomputed conclusion.
+  const err = Math.abs(Number(conclusion?.extrapolatedError) || 0);
+  if (err > 0 && performanceMateriality > 0) {
+    if (err > performanceMateriality) return 'red';
+    if (err > clearlyTrivial) return 'orange';
+    return 'green';
+  }
+  // No conclusion record at all and the execution finished cleanly →
+  // default to green (matches the AuditPlanPanel default).
+  if (execStatus === 'completed') return 'green';
+  return 'pending';
+}
+
+export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props) {
+  const [executions, setExecutions] = useState<TestExecution[]>([]);
+  const [conclusions, setConclusions] = useState<TestConclusion[]>([]);
+  const [performanceMateriality, setPerformanceMateriality] = useState(0);
+  const [clearlyTrivial, setClearlyTrivial] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/test-conclusions`);
-      if (res.ok) {
-        const data = await res.json();
-        setConclusions(data.conclusions || []);
+      const [execRes, concRes, matRes] = await Promise.all([
+        fetch(`/api/engagements/${engagementId}/test-execution?lite=true`),
+        fetch(`/api/engagements/${engagementId}/test-conclusions`),
+        fetch(`/api/engagements/${engagementId}/materiality`),
+      ]);
+      if (execRes.ok) {
+        const data = await execRes.json();
+        setExecutions(Array.isArray(data?.executions) ? data.executions : []);
       }
-    } catch {} finally { setLoading(false); }
+      if (concRes.ok) {
+        const data = await concRes.json();
+        setConclusions(Array.isArray(data?.conclusions) ? data.conclusions : []);
+      }
+      if (matRes.ok) {
+        const data = await matRes.json();
+        // Materiality is stored as a free-form JSON blob; admins
+        // historically wrote both flat and nested shapes. Read both.
+        const m = data?.data || {};
+        setPerformanceMateriality(Number(m?.materiality?.performanceMateriality ?? m?.performanceMateriality ?? 0) || 0);
+        setClearlyTrivial(Number(m?.materiality?.clearlyTrivial ?? m?.clearlyTrivial ?? 0) || 0);
+      }
+    } finally { setLoading(false); }
   }, [engagementId]);
 
-  useEffect(() => { loadConclusions(); }, [loadConclusions]);
+  useEffect(() => { void load(); }, [load]);
 
-  // Group conclusions by account code (or fsLine if no account code)
-  const grouped = new Map<string, { key: string; fsLine: string; accountCode: string; tests: TestConclusion[] }>();
-  for (const c of conclusions) {
-    const key = c.accountCode || c.fsLine;
-    if (!grouped.has(key)) {
-      grouped.set(key, { key, fsLine: c.fsLine, accountCode: c.accountCode || c.fsLine, tests: [] });
+  // Build the per-test row list. Each TestExecution becomes one row,
+  // joined to its TestConclusion when present (executionId, falling
+  // back to testDescription + fsLine match for older conclusions
+  // written before executionId was tracked).
+  const rows = useMemo<SummaryRow[]>(() => {
+    const out: SummaryRow[] = [];
+    for (const e of executions) {
+      const conc = conclusions.find(c => c.executionId === e.id)
+        ?? conclusions.find(c => c.testDescription === e.testDescription && c.fsLine === e.fsLine)
+        ?? null;
+      const startedAt = e.startedAt ? new Date(e.startedAt).getTime() : null;
+      const completedAt = e.completedAt ? new Date(e.completedAt).getTime() : null;
+      const durationMs = startedAt != null && completedAt != null ? completedAt - startedAt : null;
+      out.push({
+        key: e.id,
+        testDescription: e.testDescription,
+        fsLine: e.fsLine,
+        accountCode: conc?.accountCode || null,
+        progress: progressFromStatus(e.status),
+        result: resultFromConclusion(conc, e.status, performanceMateriality, clearlyTrivial),
+        durationMs,
+        totalErrors: conc?.totalErrors || 0,
+        status: conc?.status || e.status,
+        conclusionId: conc?.id || null,
+        executionId: e.id,
+        riSignedByName: conc?.riSignedByName || null,
+      });
     }
-    grouped.get(key)!.tests.push(c);
-  }
-
-  // Sort groups by fsLine then accountCode
-  const groups = Array.from(grouped.values()).sort((a, b) => {
-    if (a.fsLine !== b.fsLine) return a.fsLine.localeCompare(b.fsLine);
-    return a.accountCode.localeCompare(b.accountCode);
-  });
-
-  // Rollup sign-off status for an account code.
-  // Cascade: an RI sign-off implies the Reviewer row is effectively signed
-  // too, so `allReviewed` is true when every test has either a direct
-  // reviewer sign-off or an RI sign-off that covers it.
-  function getRollupStatus(tests: TestConclusion[]) {
-    const allConcluded = tests.every(t => t.status !== 'pending');
-    const allReviewed = tests.every(t => t.reviewedByName || t.riSignedByName);
-    const allRISigned = tests.every(t => t.riSignedByName);
-    const hasErrors = tests.some(t => t.conclusion === 'orange' || t.conclusion === 'red' || t.conclusion === 'failed');
-    const worstConclusion = tests.reduce((worst, t) => {
-      if (t.conclusion === 'red' || t.conclusion === 'failed') return 'red';
-      if (t.conclusion === 'orange' && worst !== 'red') return 'orange';
-      return worst;
-    }, 'green' as string);
-    return { allConcluded, allReviewed, allRISigned, hasErrors, worstConclusion };
-  }
+    // Conclusions that don't have a matching execution (rare — happens
+    // when a conclusion was hand-written or imported without going
+    // through the execution flow). Surface them so they don't go
+    // missing from the summary.
+    for (const c of conclusions) {
+      const alreadyShown = out.some(r => r.conclusionId === c.id || (r.testDescription === c.testDescription && r.fsLine === c.fsLine));
+      if (alreadyShown) continue;
+      out.push({
+        key: c.id,
+        testDescription: c.testDescription,
+        fsLine: c.fsLine,
+        accountCode: c.accountCode,
+        progress: c.status === 'pending' ? 'pending' : 'green',
+        result: resultFromConclusion(c, 'completed', performanceMateriality, clearlyTrivial),
+        durationMs: null,
+        totalErrors: c.totalErrors || 0,
+        status: c.status,
+        conclusionId: c.id,
+        executionId: null,
+        riSignedByName: c.riSignedByName,
+      });
+    }
+    // Sort: failures first (red progress / red result), then
+    // in-progress, then completed, then pending. Within each band
+    // sort alphabetically by FS Line + test description so the table
+    // reads consistently across loads.
+    const bandRank = (r: SummaryRow) => {
+      if (r.progress === 'red' || r.result === 'red') return 0;
+      if (r.progress === 'orange' || r.result === 'orange') return 1;
+      if (r.progress === 'green') return 2;
+      return 3;
+    };
+    out.sort((a, b) => {
+      const r = bandRank(a) - bandRank(b);
+      if (r !== 0) return r;
+      const fl = (a.fsLine || '').localeCompare(b.fsLine || '');
+      if (fl !== 0) return fl;
+      return (a.testDescription || '').localeCompare(b.testDescription || '');
+    });
+    return out;
+  }, [executions, conclusions, performanceMateriality, clearlyTrivial]);
 
   async function handleRISignOff(conclusionId: string, isUnsign: boolean) {
     try {
@@ -89,113 +267,95 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: conclusionId, action: isUnsign ? 'ri_unsignoff' : 'ri_signoff' }),
       });
-      if (res.ok) await loadConclusions();
+      if (res.ok) await load();
     } catch {}
   }
 
-  function toggleExpand(key: string) {
-    setExpandedCodes(prev => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  }
+  if (loading) return <div className="p-6 text-center text-xs text-slate-400 animate-pulse">Loading test summary…</div>;
+  if (rows.length === 0) return <div className="p-6 text-center text-xs text-slate-400">No tests recorded yet.</div>;
 
-  if (loading) return <div className="p-6 text-center text-xs text-slate-400 animate-pulse">Loading test summary...</div>;
-
-  if (groups.length === 0) {
-    return <div className="p-6 text-center text-xs text-slate-400">No test conclusions recorded yet.</div>;
-  }
-
-  const CONC_COLORS: Record<string, string> = {
-    green: 'bg-green-500', orange: 'bg-orange-500', red: 'bg-red-500', failed: 'bg-red-800', pending: 'bg-slate-300',
-  };
+  // Materiality banner — useful context because the Result column
+  // bands are derived from these thresholds.
+  const haveThresholds = performanceMateriality > 0;
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between px-1 pb-2">
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1 pb-1">
         <h3 className="text-sm font-bold text-slate-700">Audit Test Summary Results</h3>
-        <div className="text-[10px] text-slate-400">{conclusions.length} test conclusion{conclusions.length !== 1 ? 's' : ''} across {groups.length} account{groups.length !== 1 ? 's' : ''}</div>
+        <div className="text-[10px] text-slate-400">
+          {rows.length} test{rows.length !== 1 ? 's' : ''}
+          {haveThresholds && (
+            <> · CT {clearlyTrivial.toLocaleString()} · PM {performanceMateriality.toLocaleString()}</>
+          )}
+        </div>
       </div>
 
-      <div className="border rounded-lg overflow-hidden divide-y divide-slate-100">
-        {groups.map(group => {
-          const isExpanded = expandedCodes.has(group.key);
-          const { allConcluded, allReviewed, allRISigned, hasErrors, worstConclusion } = getRollupStatus(group.tests);
-
-          return (
-            <div key={group.key}>
-              {/* Account code row */}
-              <button
-                onClick={() => toggleExpand(group.key)}
-                className={`w-full flex items-center gap-3 px-3 py-2 hover:bg-slate-50 text-left ${
-                  hasErrors ? 'bg-red-50/30' : ''
-                }`}
-              >
-                {isExpanded ? <ChevronDown className="h-3 w-3 text-slate-400" /> : <ChevronRight className="h-3 w-3 text-slate-400" />}
-                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${CONC_COLORS[worstConclusion] || CONC_COLORS.pending}`} />
-                <span className="font-mono text-[10px] text-slate-500 w-20 shrink-0">{group.accountCode}</span>
-                <span className="text-xs text-slate-700 flex-1">{group.fsLine}</span>
-                <span className="text-[9px] text-slate-400">{group.tests.length} test{group.tests.length !== 1 ? 's' : ''}</span>
-
-                {/* Rolled-up sign-off dots */}
-                <div className="flex items-center gap-2 shrink-0 ml-2">
-                  <SignOffDotSmall label="P" signed={allConcluded} />
-                  <SignOffDotSmall label="R" signed={allReviewed} />
-                  <SignOffDotSmall label="RI" signed={allRISigned} />
-                </div>
-              </button>
-
-              {/* Expanded: show individual tests */}
-              {isExpanded && (
-                <div className="bg-slate-50/50 divide-y divide-slate-100">
-                  {group.tests.map(test => {
-                    const testHasError = test.conclusion === 'orange' || test.conclusion === 'red' || test.conclusion === 'failed';
-                    return (
-                      <div key={test.id} className={`flex items-center gap-3 px-3 py-1.5 pl-10 ${testHasError ? 'bg-red-50/50' : ''}`}>
-                        <div className={`w-2 h-2 rounded-full shrink-0 ${CONC_COLORS[test.conclusion || 'pending']}`} />
-                        <span className="text-[10px] text-slate-600 flex-1">{test.testDescription}</span>
-                        {test.totalErrors > 0 && (
-                          <span className="text-[9px] text-red-600 flex items-center gap-0.5">
-                            <AlertTriangle className="h-2.5 w-2.5" /> {test.totalErrors} error{test.totalErrors !== 1 ? 's' : ''}
-                          </span>
-                        )}
-                        <span className={`text-[8px] px-1 py-0 rounded ${
-                          test.status === 'signed_off' ? 'bg-green-100 text-green-700' :
-                          test.status === 'reviewed' ? 'bg-blue-100 text-blue-700' :
-                          test.status === 'concluded' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'
-                        }`}>{test.status}</span>
-
-                        {/* RI sign-off button */}
-                        {userRole === 'RI' && test.status !== 'pending' && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleRISignOff(test.id, !!test.riSignedByName); }}
-                            className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${
-                              test.riSignedByName ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                            }`}
-                          >
-                            RI {test.riSignedByName ? 'Signed' : 'Sign'}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div className="border rounded-lg overflow-hidden bg-white">
+        <table className="w-full text-[11px]">
+          <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-3 py-1.5 text-left font-semibold">Test</th>
+              <th className="px-2 py-1.5 text-left font-semibold w-32">FS Line</th>
+              <th className="px-2 py-1.5 text-center font-semibold w-20" title="Tests completed (green) / partially complete (orange) / failed to complete (red)">Progress</th>
+              <th className="px-2 py-1.5 text-center font-semibold w-20" title="No / trivial error (green) / between CT and PM (orange) / above PM (red)">Result</th>
+              <th className="px-2 py-1.5 text-right font-semibold w-20" title="Hours:Minutes from start to completion">Duration</th>
+              <th className="px-2 py-1.5 text-center font-semibold w-16">RI</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map(row => (
+              <tr key={row.key} className={row.progress === 'red' || row.result === 'red' ? 'bg-red-50/40' : ''}>
+                <td className="px-3 py-1.5 text-slate-700">
+                  <div className="truncate max-w-[420px]">{row.testDescription}</div>
+                  {row.totalErrors > 0 && (
+                    <div className="text-[9px] text-red-600 mt-0.5 inline-flex items-center gap-0.5">
+                      <AlertTriangle className="h-2.5 w-2.5" />{row.totalErrors} error{row.totalErrors !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                </td>
+                <td className="px-2 py-1.5 text-slate-500 truncate">
+                  {row.fsLine}
+                  {row.accountCode && row.accountCode !== row.fsLine && (
+                    <span className="block text-[9px] text-slate-400 font-mono">{row.accountCode}</span>
+                  )}
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <div
+                    className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.progress]}`}
+                    title={PROGRESS_TITLE[row.progress]}
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <div
+                    className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.result]}`}
+                    title={RESULT_TITLE[row.result]}
+                  />
+                </td>
+                <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums">
+                  {formatDuration(row.durationMs)}
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  {row.conclusionId && userRole === 'RI' ? (
+                    <button
+                      onClick={() => handleRISignOff(row.conclusionId!, !!row.riSignedByName)}
+                      className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                        row.riSignedByName ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                      }`}
+                      title={row.riSignedByName ? `Signed by ${row.riSignedByName} — click to unsign` : 'Sign as RI'}
+                    >
+                      {row.riSignedByName ? '✓' : 'Sign'}
+                    </button>
+                  ) : row.riSignedByName ? (
+                    <span className="text-[9px] text-blue-600" title={`Signed by ${row.riSignedByName}`}>✓</span>
+                  ) : (
+                    <span className="text-[9px] text-slate-300">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-    </div>
-  );
-}
-
-function SignOffDotSmall({ label, signed }: { label: string; signed: boolean }) {
-  return (
-    <div className={`w-4 h-4 rounded-full border text-[7px] font-bold flex items-center justify-center ${
-      signed ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-300 text-slate-400'
-    }`}>
-      {signed ? '\u2713' : label}
     </div>
   );
 }
