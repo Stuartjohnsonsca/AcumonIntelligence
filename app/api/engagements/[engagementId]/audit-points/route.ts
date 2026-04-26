@@ -3,7 +3,36 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { logEngagementAction, resolveActor } from '@/lib/engagement-action-log';
-import { AUDIT_POINT_SAFE_SELECT } from '@/lib/audit-points-select';
+import {
+  AUDIT_POINT_SAFE_SELECT,
+  AUDIT_POINT_MINIMAL_SELECT,
+  isMissingMigrationColumn,
+} from '@/lib/audit-points-select';
+
+// Strip migration-only fields from a Prisma write payload when we
+// detect the 2026-04-22 migration hasn't been applied. Keeps the rest
+// of the create/update intact.
+function stripMigrationFields<T extends Record<string, any>>(data: T): T {
+  const { colour: _c, linkedFromType: _t, linkedFromId: _i, ...rest } = data;
+  return rest as T;
+}
+
+// Run a write with the FULL safe-select; on missing-column error, drop
+// migration-only fields from both data and projection and retry. Logs
+// once so the missing migration is visible in Vercel logs.
+async function writeWithFallback<T>(
+  full: () => Promise<T>,
+  minimal: () => Promise<T>,
+  ctx: string,
+): Promise<T> {
+  try {
+    return await full();
+  } catch (err: any) {
+    if (!isMissingMigrationColumn(err)) throw err;
+    console.warn(`[audit-points] ${ctx}: missing migration columns — retrying with minimal projection. Run prisma/migrations/manual/2026-04-22-audit-points-colour-links.sql in Supabase to silence this.`);
+    return minimal();
+  }
+}
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true } });
@@ -81,25 +110,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   const chatNumber = (maxChat._max.chatNumber || 0) + 1;
 
   // Explicit select on writes for the same reason as the GET handler:
-  // production Supabase is missing `linked_from_type` / `linked_from_id`,
-  // and Prisma's default INSERT ... RETURNING * blows up on those
-  // columns. Without the select, hitting "Create" on a new RI matter
-  // 500s after the row is already inserted, and the UI never sees it.
-  const point = await prisma.auditPoint.create({
-    data: {
-      engagementId,
-      pointType,
-      chatNumber,
-      description: description.trim(),
-      heading: heading || null,
-      body: bodyText || null,
-      reference: reference || null,
-      attachments: attachments || null,
-      createdById: session.user.id,
-      createdByName: session.user.name || session.user.email || '',
-    },
-    select: AUDIT_POINT_SAFE_SELECT,
-  });
+  // production Supabase may be missing `colour` / `linked_from_*`, and
+  // Prisma's default INSERT ... RETURNING * blows up on those columns.
+  // writeWithFallback retries with the minimal projection if any of
+  // those columns are missing, so the create still succeeds.
+  const createData = {
+    engagementId,
+    pointType,
+    chatNumber,
+    description: description.trim(),
+    heading: heading || null,
+    body: bodyText || null,
+    reference: reference || null,
+    attachments: attachments || null,
+    createdById: session.user.id,
+    createdByName: session.user.name || session.user.email || '',
+  };
+  const point = await writeWithFallback(
+    () => prisma.auditPoint.create({ data: createData, select: AUDIT_POINT_SAFE_SELECT }),
+    () => prisma.auditPoint.create({ data: createData, select: AUDIT_POINT_MINIMAL_SELECT }),
+    'POST create',
+  );
 
   return NextResponse.json({ point });
 }
@@ -118,7 +149,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
   const { id, action } = body;
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
-  const existing = await prisma.auditPoint.findUnique({ where: { id }, select: { ...AUDIT_POINT_SAFE_SELECT } });
+  // Same drift safety as the writes below — production may be missing
+  // `colour` / `linked_from_*`. Read with full projection and fall back
+  // to minimal if those columns aren't there.
+  const existing = await writeWithFallback(
+    () => prisma.auditPoint.findUnique({ where: { id }, select: AUDIT_POINT_SAFE_SELECT }),
+    () => prisma.auditPoint.findUnique({ where: { id }, select: AUDIT_POINT_MINIMAL_SELECT }),
+    'PATCH findUnique',
+  );
   if (!existing || existing.engagementId !== engagementId) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   if (__eqrGuard.role === 'EQR' && existing.pointType !== 'review_point') {
@@ -141,7 +179,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     // is no longer "new". Preserves closed/committed/cancelled.
     const data: any = { responses };
     if (existing.status === 'new') data.status = 'open';
-    const point = await prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_SAFE_SELECT });
+    const point = await writeWithFallback(
+      () => prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_SAFE_SELECT }),
+      () => prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_MINIMAL_SELECT }),
+      'PATCH respond',
+    );
     return NextResponse.json({ point });
   }
 
@@ -157,8 +199,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     if (!allowed.has(next)) {
       return NextResponse.json({ error: 'Invalid colour' }, { status: 400 });
     }
-    const point = await prisma.auditPoint.update({ where: { id }, data: { colour: next }, select: AUDIT_POINT_SAFE_SELECT });
-    return NextResponse.json({ point });
+    // The `colour` column itself is from the 2026-04-22 migration, so
+    // if it's missing we can't satisfy this action at all. Tell the
+    // caller plainly rather than 500ing.
+    try {
+      const point = await prisma.auditPoint.update({
+        where: { id },
+        data: { colour: next },
+        select: AUDIT_POINT_SAFE_SELECT,
+      });
+      return NextResponse.json({ point });
+    } catch (err: any) {
+      if (isMissingMigrationColumn(err)) {
+        return NextResponse.json({
+          error: 'Traffic-light colour requires a database migration. Run prisma/migrations/manual/2026-04-22-audit-points-colour-links.sql in Supabase.',
+        }, { status: 422 });
+      }
+      throw err;
+    }
   }
 
   // Close point — RI only for ri_matter (user requirement). Other
@@ -178,11 +236,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
         return NextResponse.json({ error: 'Only the RI can close an RI matter' }, { status: 403 });
       }
     }
-    const point = await prisma.auditPoint.update({
-      where: { id },
-      data: { status: 'closed', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() },
-      select: AUDIT_POINT_SAFE_SELECT,
-    });
+    const closeData = { status: 'closed', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() };
+    const point = await writeWithFallback(
+      () => prisma.auditPoint.update({ where: { id }, data: closeData, select: AUDIT_POINT_SAFE_SELECT }),
+      () => prisma.auditPoint.update({ where: { id }, data: closeData, select: AUDIT_POINT_MINIMAL_SELECT }),
+      'PATCH close',
+    );
     // Audit trail — closing is a decision worth logging separately
     // from generic PATCH updates. Actor + matter id land in the
     // Outstanding tab's audit panel.
@@ -205,21 +264,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
 
   // Commit (management/representation — Reviewer/RI only)
   if (action === 'commit') {
-    const point = await prisma.auditPoint.update({
-      where: { id },
-      data: { status: 'committed', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() },
-      select: AUDIT_POINT_SAFE_SELECT,
-    });
+    const commitData = { status: 'committed', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() };
+    const point = await writeWithFallback(
+      () => prisma.auditPoint.update({ where: { id }, data: commitData, select: AUDIT_POINT_SAFE_SELECT }),
+      () => prisma.auditPoint.update({ where: { id }, data: commitData, select: AUDIT_POINT_MINIMAL_SELECT }),
+      'PATCH commit',
+    );
     return NextResponse.json({ point });
   }
 
   // Cancel
   if (action === 'cancel') {
-    const point = await prisma.auditPoint.update({
-      where: { id },
-      data: { status: 'cancelled', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() },
-      select: AUDIT_POINT_SAFE_SELECT,
-    });
+    const cancelData = { status: 'cancelled', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() };
+    const point = await writeWithFallback(
+      () => prisma.auditPoint.update({ where: { id }, data: cancelData, select: AUDIT_POINT_SAFE_SELECT }),
+      () => prisma.auditPoint.update({ where: { id }, data: cancelData, select: AUDIT_POINT_MINIMAL_SELECT }),
+      'PATCH cancel',
+    );
     return NextResponse.json({ point });
   }
 
@@ -230,7 +291,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     if (body.heading !== undefined) data.heading = body.heading;
     if (body.body !== undefined) data.body = body.body;
     if (body.attachments !== undefined) data.attachments = body.attachments;
-    const point = await prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_SAFE_SELECT });
+    const point = await writeWithFallback(
+      () => prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_SAFE_SELECT }),
+      () => prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_MINIMAL_SELECT }),
+      'PATCH update',
+    );
     return NextResponse.json({ point });
   }
 
@@ -256,13 +321,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     const actor = await resolveActor(engagementId, session);
     const summaryText = (existing.description || '').slice(0, 120);
 
-    // Helper: if production hasn't run scripts/sql/raise-as-linked-from.sql
-    // yet, the linked_from_* columns don't exist and writing to them raises
-    // a Postgres "column does not exist" error. Fall back to creating
-    // without the back-link rather than 500ing the whole raise flow.
-    const isMissingLinkColumn = (err: any) =>
-      typeof err?.message === 'string' && /linked_from_(type|id)/i.test(err.message);
-
     let created: any = null;
     if (raiseAs === 'error') {
       const errorBase = {
@@ -275,12 +333,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
         explanation: raiseFields?.explanation ?? null,
         isFraud: !!raiseFields?.isFraud,
       };
+      // Note: AuditErrorSchedule has its own field-projection drift
+      // problem mirrored from this route. Try with the back-link; if
+      // those columns are missing in production, retry without.
       try {
         created = await prisma.auditErrorSchedule.create({
           data: { ...errorBase, linkedFromType: 'ri_matter', linkedFromId: existing.id },
         });
       } catch (err: any) {
-        if (!isMissingLinkColumn(err)) throw err;
+        if (!isMissingMigrationColumn(err)) throw err;
         console.warn('[audit-points] error_schedules.linked_from_* missing — creating without back-link');
         created = await prisma.auditErrorSchedule.create({ data: errorBase });
       }
@@ -301,20 +362,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
         body: raiseFields?.body ?? null,
         createdById: session.user.id,
         createdByName: session.user.name || session.user.email || '',
+        linkedFromType: 'ri_matter',
+        linkedFromId: existing.id,
       };
-      try {
-        created = await prisma.auditPoint.create({
-          data: { ...pointBase, linkedFromType: 'ri_matter', linkedFromId: existing.id },
-          select: AUDIT_POINT_SAFE_SELECT,
-        });
-      } catch (err: any) {
-        if (!isMissingLinkColumn(err)) throw err;
-        console.warn('[audit-points] audit_points.linked_from_* missing — creating without back-link');
-        created = await prisma.auditPoint.create({
-          data: pointBase,
-          select: AUDIT_POINT_SAFE_SELECT,
-        });
-      }
+      created = await writeWithFallback(
+        () => prisma.auditPoint.create({ data: pointBase, select: AUDIT_POINT_SAFE_SELECT }),
+        () => prisma.auditPoint.create({ data: stripMigrationFields(pointBase), select: AUDIT_POINT_MINIMAL_SELECT }),
+        'raise create',
+      );
     } else {
       return NextResponse.json({ error: 'Unknown raiseAs value' }, { status: 400 });
     }

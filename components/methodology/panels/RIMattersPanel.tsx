@@ -76,6 +76,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
   const [showCreate, setShowCreate] = useState(false);
   const [newDesc, setNewDesc] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null); // matter id currently being mutated
@@ -125,6 +126,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
   async function createMatter() {
     if (!newDesc.trim()) return;
     setCreating(true);
+    setCreateError(null);
     try {
       const res = await fetch(`/api/engagements/${engagementId}/audit-points`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -133,7 +135,15 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
       if (res.ok) {
         setNewDesc(''); setShowCreate(false);
         await load();
+      } else {
+        // Surface the server error instead of silently keeping the
+        // modal open — saves a debug round-trip when something has
+        // drifted server-side (e.g. unmigrated columns).
+        const data = await res.json().catch(() => ({}));
+        setCreateError(data?.error || `Create failed (HTTP ${res.status})`);
       }
+    } catch (err: any) {
+      setCreateError(err?.message || 'Create failed');
     } finally { setCreating(false); }
   }
 
@@ -224,8 +234,13 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
               rows={3}
               autoFocus
             />
+            {createError && (
+              <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                {createError}
+              </div>
+            )}
             <div className="flex justify-end gap-2 mt-2">
-              <Button onClick={() => setShowCreate(false)} size="sm" variant="outline">Cancel</Button>
+              <Button onClick={() => { setShowCreate(false); setCreateError(null); }} size="sm" variant="outline">Cancel</Button>
               <Button
                 onClick={() => void createMatter()}
                 size="sm"
