@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, cloneElement, isValidElement } from 'react';
 import {
   Plus, Loader2, X, ChevronDown, ChevronRight, Send, Shield,
   AlertOctagon, FileWarning, MessageCircle, Sparkles, Check, ExternalLink,
+  History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -121,6 +122,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
     } finally { setLoading(false); }
   }
 
+
   const counts = useMemo(() => ({
     total: matters.length,
     open: matters.filter(m => m.status === 'open' || m.status === 'new').length,
@@ -207,33 +209,96 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
     });
   }
 
+  // ── Floating window: position + drag ───────────────────────────
+  // The panel needs to coexist with the page underneath so the user
+  // can click a Source link, navigate to that tab, and still see the
+  // matter context. So no backdrop, no modal-dim — the outer div is
+  // pointer-events-none and only the panel itself catches clicks. The
+  // user drags by the header to reposition out of the way.
+  const PANEL_WIDTH = 920;
+  const PANEL_INITIAL_TOP = 60;
+  const [pos, setPos] = useState<{ x: number; y: number }>(() => {
+    if (typeof window === 'undefined') return { x: 100, y: PANEL_INITIAL_TOP };
+    const x = Math.max(20, Math.round((window.innerWidth - PANEL_WIDTH) / 2));
+    return { x, y: PANEL_INITIAL_TOP };
+  });
+  const [minimised, setMinimised] = useState(false);
+  // Drag state lives in a ref so the document-level listeners read
+  // the latest start values without re-binding on every render.
+  const dragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
+  function onHeaderMouseDown(e: React.MouseEvent) {
+    // Only left mouse button; ignore clicks that originated on the
+    // close/minimise buttons (those should fire their own onClick).
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button')) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startPosX: pos.x, startPosY: pos.y };
+    document.body.style.userSelect = 'none';
+    function onMove(ev: MouseEvent) {
+      if (!dragRef.current) return;
+      const dx = ev.clientX - dragRef.current.startX;
+      const dy = ev.clientY - dragRef.current.startY;
+      setPos({
+        x: Math.max(0, Math.min(window.innerWidth - 200, dragRef.current.startPosX + dx)),
+        y: Math.max(0, Math.min(window.innerHeight - 60,  dragRef.current.startPosY + dy)),
+      });
+    }
+    function onUp() {
+      dragRef.current = null;
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
   return (
-    <div className="fixed inset-0 z-[60] bg-black/30 flex items-center justify-center" onClick={onClose}>
+    <>
+    {/* pointer-events-none so the page underneath stays interactive.
+        The inner panel re-enables pointer events on itself only. */}
+    <div className="fixed inset-0 z-[60] pointer-events-none">
       <div
-        className="bg-white rounded-xl shadow-2xl w-[920px] max-w-[95vw] max-h-[88vh] flex flex-col"
-        onClick={e => e.stopPropagation()}
+        className={`absolute bg-white rounded-xl shadow-2xl border border-slate-300 flex flex-col pointer-events-auto ${minimised ? '' : 'max-h-[88vh]'}`}
+        style={{ left: pos.x, top: pos.y, width: `min(${PANEL_WIDTH}px, 95vw)` }}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b bg-red-50/40">
+        {/* Header — also the drag handle */}
+        <div
+          className="flex items-center justify-between px-4 py-3 border-b bg-red-50/60 rounded-t-xl cursor-move select-none"
+          onMouseDown={onHeaderMouseDown}
+        >
           <div className="flex items-center gap-2">
             <Shield className="h-4 w-4 text-red-600" />
             <div>
               <h2 className="text-sm font-bold text-red-800">RI Matters</h2>
               <p className="text-[10px] text-red-600/80">
-                {counts.total} total · {counts.open} open · {counts.closed} closed
+                {counts.total} total · {counts.open} open · {counts.closed} closed · drag header to move
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button onClick={() => setShowCreate(s => !s)} size="sm" variant="outline">
-              <Plus className="h-3.5 w-3.5 mr-1" /> New Matter
-            </Button>
-            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded">
+            {!minimised && (
+              <Button onClick={() => setShowCreate(s => !s)} size="sm" variant="outline">
+                <Plus className="h-3.5 w-3.5 mr-1" /> New Matter
+              </Button>
+            )}
+            <button
+              onClick={() => setMinimised(m => !m)}
+              className="p-1.5 hover:bg-slate-100 rounded"
+              title={minimised ? 'Expand' : 'Minimise'}
+            >
+              {minimised
+                ? <ChevronDown className="h-4 w-4 text-slate-500" />
+                : <ChevronRight className="h-4 w-4 text-slate-500 rotate-90" />}
+            </button>
+            <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded" title="Close">
               <X className="h-5 w-5 text-slate-400" />
             </button>
           </div>
         </div>
 
+        {/* Body — hidden when minimised so the user sees just the header bar */}
+        {!minimised && (<>
         {/* Create row */}
         {showCreate && (
           <div className="px-4 py-3 border-b bg-red-50/20">
@@ -363,9 +428,18 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
                           return (
                             <button
                               type="button"
-                              onClick={() => { navigateTo(decoded.loc); onClose(); }}
+                              onClick={() => {
+                                // Navigate without closing — the panel
+                                // is now a draggable floating window
+                                // so the reviewer can examine the
+                                // source content while keeping the
+                                // matter visible. Drag the header to
+                                // move it out of the way.
+                                navigateTo(decoded.loc);
+                                if (minimised) setMinimised(false);
+                              }}
                               className="inline-flex items-center gap-1 text-[11px] text-blue-700 hover:text-blue-900 hover:underline mb-3"
-                              title="Open the tab/sub-tab where this matter was raised"
+                              title="Open the tab/sub-tab where this matter was raised — drag the panel header to move it out of the way"
                             >
                               <ExternalLink className="h-3 w-3" />
                               Source: {decoded.loc.label || decoded.loc.tab}
@@ -447,9 +521,13 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
             })
           )}
         </div>
+        </>)}
+      </div>
       </div>
 
-      {/* Send modals (portal / technical / ethics) */}
+      {/* Send / Raise modals — rendered OUTSIDE the floating-window layer
+          so the parent's pointer-events:none doesn't block their backdrop
+          and inputs. Each modal has its own fixed-positioned backdrop. */}
       {sendModal && (
         <SendModal
           matter={sendModal.matter}
@@ -458,8 +536,6 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
           onDone={(success) => { setSendModal(null); if (success) void load(); }}
         />
       )}
-
-      {/* Raise-as modals */}
       {raiseModal && (
         <RaiseModal
           matter={raiseModal.matter}
@@ -472,12 +548,12 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
           }}
         />
       )}
-    </div>
+    </>
   );
 }
 
 // ── Small helper components ────────────────────────────────────────
-function ActionBtn({ onClick, icon, label, tone }: { onClick: () => void; icon: React.ReactNode; label: string; tone: 'blue' | 'indigo' | 'red' | 'orange' | 'purple' }) {
+function ActionBtn({ onClick, icon, label, tone }: { onClick: () => void; icon: React.ReactElement<any>; label: string; tone: 'blue' | 'indigo' | 'red' | 'orange' | 'purple' }) {
   const tones: Record<string, string> = {
     blue:   'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
     indigo: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100',
@@ -485,12 +561,23 @@ function ActionBtn({ onClick, icon, label, tone }: { onClick: () => void; icon: 
     orange: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',
     purple: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',
   };
+  // Clone the icon so we can force the size to match the button text —
+  // lucide icons default to 24px which spills out of the small button.
+  // Callers pass <Send /> etc. unsized, this is the single place we
+  // pin the dimensions. Cast through Record<string, any> for the props
+  // shape since lucide-react's exported icon type doesn't surface
+  // className on the React.ReactElement generic parameter cleanly.
+  const sizedIcon = isValidElement(icon)
+    ? cloneElement(icon as React.ReactElement<{ className?: string }>, {
+        className: `h-3 w-3 ${(icon.props as { className?: string })?.className || ''}`.trim(),
+      })
+    : icon;
   return (
     <button
       onClick={onClick}
       className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border font-medium ${tones[tone]}`}
     >
-      <span className="w-3 h-3">{icon}</span>
+      {sizedIcon}
       {label}
     </button>
   );
