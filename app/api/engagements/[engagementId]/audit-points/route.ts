@@ -40,6 +40,54 @@ async function verifyAccess(engagementId: string, firmId: string | undefined, is
   return e;
 }
 
+// Role hierarchy used by the authority gate on
+// commit/cancel/reject of management & representation points. A user
+// can only override another user's commit/reject decision if their
+// rank is >= the original decider's rank. Super admins bypass.
+const ROLE_RANK: Record<string, number> = {
+  Junior: 0,
+  Manager: 1,
+  RI: 2,
+  Reviewer: 2,
+  Partner: 3,
+  EQR: 4,
+};
+
+// Resolve a team member's role on the engagement, defaulting to 'Junior'
+// (lowest) when they aren't a member. Used by the management/rep
+// status flows to stamp closedByName with the role and to enforce the
+// authority gate on later overrides.
+async function resolveTeamRole(engagementId: string, userId: string): Promise<string> {
+  const member = await prisma.auditTeamMember.findFirst({
+    where: { engagementId, userId },
+    select: { role: true },
+  });
+  return member?.role || 'Junior';
+}
+
+// Parse the role suffix from a stamped closedByName string like
+// "Jane Smith (Partner)". Returns null when the pattern isn't found —
+// older entries without the suffix end up here, which the authority
+// gate treats as "unknown rank, allow override" so legacy data can
+// always be edited.
+function parseRoleFromStampedName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const match = name.match(/\(([^)]+)\)\s*$/);
+  return match ? match[1].trim() : null;
+}
+
+// True when caller has authority >= the rank of the user who set the
+// existing status. Super admin always wins. If we can't parse the
+// previous decider's role (legacy data), allow.
+function hasAuthorityToOverride(callerRole: string, isSuperAdmin: boolean, previousCloserName: string | null | undefined): boolean {
+  if (isSuperAdmin) return true;
+  const previousRole = parseRoleFromStampedName(previousCloserName);
+  if (!previousRole) return true; // unknown → permissive
+  const callerRank = ROLE_RANK[callerRole] ?? 0;
+  const previousRank = ROLE_RANK[previousRole] ?? 0;
+  return callerRank >= previousRank;
+}
+
 // GET: List audit points by type
 export async function GET(req: NextRequest, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
@@ -265,25 +313,47 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     return NextResponse.json({ point });
   }
 
-  // Commit (management/representation — Reviewer/RI only)
-  if (action === 'commit') {
-    const commitData = { status: 'committed', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() };
+  // Commit & reject (management / representation flows). 'cancel'
+  // accepted as legacy alias for 'reject'. Both run through the same
+  // path: stamp closedByName with role suffix so later overrides can
+  // honour the authority gate; enforce that gate against the existing
+  // closedByName; log an action-log entry so the history popover has
+  // an entry to show.
+  if (action === 'commit' || action === 'reject' || action === 'cancel') {
+    const isCommit = action === 'commit';
+    const callerRole = await resolveTeamRole(engagementId, session.user.id);
+    if (!hasAuthorityToOverride(callerRole, !!session.user.isSuperAdmin, existing.closedByName)) {
+      const previousRole = parseRoleFromStampedName(existing.closedByName);
+      return NextResponse.json({
+        error: `This point's current status was set by ${existing.closedByName || 'a senior reviewer'}${previousRole ? ` (${previousRole})` : ''}. You need at least ${previousRole || 'their'} authority to change it.`,
+      }, { status: 403 });
+    }
+    const stampedName = (session.user.name || session.user.email || 'Unknown') + ` (${callerRole})`;
+    const newStatus = isCommit ? 'committed' : 'cancelled';
+    const data = { status: newStatus, closedById: session.user.id, closedByName: stampedName, closedAt: new Date() };
     const point = await writeWithFallback(
-      () => prisma.auditPoint.update({ where: { id }, data: commitData, select: AUDIT_POINT_SAFE_SELECT }),
-      () => prisma.auditPoint.update({ where: { id }, data: commitData, select: AUDIT_POINT_MINIMAL_SELECT }),
-      'PATCH commit',
+      () => prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_SAFE_SELECT }),
+      () => prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_MINIMAL_SELECT }),
+      `PATCH ${action}`,
     );
-    return NextResponse.json({ point });
-  }
-
-  // Cancel
-  if (action === 'cancel') {
-    const cancelData = { status: 'cancelled', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() };
-    const point = await writeWithFallback(
-      () => prisma.auditPoint.update({ where: { id }, data: cancelData, select: AUDIT_POINT_SAFE_SELECT }),
-      () => prisma.auditPoint.update({ where: { id }, data: cancelData, select: AUDIT_POINT_MINIMAL_SELECT }),
-      'PATCH cancel',
-    );
+    // Log so the per-point history popover (in the UI) and the
+    // engagement audit trail have an entry to attribute. Mirrors the
+    // pattern used for close on RI matters above.
+    const actor = await resolveActor(engagementId, session);
+    if (actor) {
+      const verb = isCommit ? 'Committed' : 'Rejected';
+      await logEngagementAction({
+        engagementId,
+        firmId: actor.firmId,
+        actorUserId: actor.actorUserId,
+        actorName: stampedName,
+        action: isCommit ? 'audit-point.commit' : 'audit-point.reject',
+        summary: `${verb} ${existing.pointType.replace(/_/g, ' ')} #${existing.chatNumber}: ${(existing.description || '').slice(0, 120)}${(existing.description || '').length > 120 ? '…' : ''}`,
+        targetType: 'audit_point',
+        targetId: id,
+        metadata: { pointType: existing.pointType, chatNumber: existing.chatNumber, role: callerRole },
+      });
+    }
     return NextResponse.json({ point });
   }
 

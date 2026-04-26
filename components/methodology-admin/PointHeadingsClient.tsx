@@ -23,11 +23,18 @@ export function PointHeadingsClient({ managementHeadings: initMgt, representatio
     setSaving(true);
     setSaved(false);
     try {
-      // Save management headings
+      // The bug previously here: this used to PUT /api/methodology-
+      // admin/templates with { id, items }. That root PUT does an
+      // upsert keyed by (firmId, templateType, auditType) — passing
+      // `id` instead silently turned templateType/auditType into
+      // undefined and the upsert failed, so newly-added headings
+      // never persisted (the user perceived this as a "cap"). The
+      // id-based update lives at /api/methodology-admin/templates/[id]
+      // — using it for the update path now.
       if (managementTemplateId) {
-        await fetch('/api/methodology-admin/templates', {
+        await fetch(`/api/methodology-admin/templates/${managementTemplateId}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: managementTemplateId, items: mgtHeadings }),
+          body: JSON.stringify({ items: mgtHeadings }),
         });
       } else {
         await fetch('/api/methodology-admin/templates', {
@@ -35,11 +42,10 @@ export function PointHeadingsClient({ managementHeadings: initMgt, representatio
           body: JSON.stringify({ templateType: 'management_headings', auditType: 'ALL', items: mgtHeadings }),
         });
       }
-      // Save representation headings
       if (representationTemplateId) {
-        await fetch('/api/methodology-admin/templates', {
+        await fetch(`/api/methodology-admin/templates/${representationTemplateId}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: representationTemplateId, items: repHeadings }),
+          body: JSON.stringify({ items: repHeadings }),
         });
       } else {
         await fetch('/api/methodology-admin/templates', {
