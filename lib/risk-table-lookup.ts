@@ -32,7 +32,11 @@ const DEFAULT_CONTROL_RISK: ControlRiskTable = {
     'Low':       { 'Not Tested': 'Low',    'Effective': 'Low',    'Partially Effective': 'Low',    'Not Effective': 'Medium' },
     'Medium':    { 'Not Tested': 'Medium', 'Effective': 'Low',    'Partially Effective': 'Medium', 'Not Effective': 'High' },
     'High':      { 'Not Tested': 'High',   'Effective': 'Medium', 'Partially Effective': 'High',   'Not Effective': 'High' },
-    'Very High': { 'Not Tested': 'High',   'Effective': 'High',   'Partially Effective': 'High',   'Not Effective': 'Very High' },
+    // Very High: only KNOWN effective controls reduce the level. Not Tested
+    // (no evidence of reduction) and Partially Effective (insufficient
+    // evidence) leave it at Very High — matching how every other inherent
+    // row treats those two states.
+    'Very High': { 'Not Tested': 'Very High', 'Effective': 'High', 'Partially Effective': 'Very High', 'Not Effective': 'Very High' },
   },
 };
 
