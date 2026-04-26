@@ -240,24 +240,27 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
     { rows },
     {
       enabled: JSON.stringify(rows) !== JSON.stringify(initialRows),
-      onSaveSuccess: (resp) => {
+      onSaveSuccess: (resp: any) => {
         const f = Array.isArray(resp?.failures) ? resp.failures : [];
         setSaveFailures(f);
         if (f.length > 0) {
-          // Helpful for self-diagnosis without Vercel logs — open
-          // browser DevTools console to see exactly which row + why.
           console.error('[RMM autosave] partial failure:', f);
         }
-        // Diagnostic — confirm what the server actually persisted for
-        // any row whose riskIdentified is non-empty. Pairs with the
-        // [RMM updateRow] log on typing: if a typed value shows up in
-        // updateRow but is ABSENT here, the server is losing it
-        // (or the client isn't sending it).
+        // Diagnostic — print the natureSent vs natureCountAfter
+        // counters from the server. If sent > after, the upsert is
+        // not actually writing riskIdentified. If sent === after but
+        // refresh shows it gone, something downstream is reverting.
         if (typeof window !== 'undefined' && Array.isArray(resp?.rows)) {
           const natureSamples = (resp.rows as Array<Record<string, unknown>>)
             .filter(r => typeof r.riskIdentified === 'string' && (r.riskIdentified as string).trim() !== '')
             .map(r => ({ id: r.id, lineItem: r.lineItem, riskIdentified: r.riskIdentified }));
-          console.log(`[RMM autosave] server returned ${(resp.rows as unknown[]).length} rows; ${natureSamples.length} have riskIdentified populated`, natureSamples.slice(0, 5));
+          console.log(
+            `[RMM autosave] sent=${resp.natureCountSent ?? '?'} after=${resp.natureCountAfter ?? '?'} returnedRows=${(resp.rows as unknown[]).length} returnedWithNature=${natureSamples.length}`,
+            natureSamples.slice(0, 5),
+          );
+          if (resp.natureCountSent != null && resp.natureCountAfter != null && resp.natureCountSent > resp.natureCountAfter) {
+            console.error('[RMM autosave] PERSISTENCE BUG — sent value did not survive the upsert. natureCountSent=' + resp.natureCountSent + ' natureCountAfter=' + resp.natureCountAfter);
+          }
         }
       },
     }

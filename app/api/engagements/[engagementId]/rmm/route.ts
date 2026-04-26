@@ -200,14 +200,18 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   const updated = hasSource
     ? await prisma.auditRMMRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' } })
     : (await prisma.auditRMMRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' }, select: RMM_ROW_SELECT_PRE_SOURCE })).map(r => ({ ...r, source: null }));
+  // Diagnostic — count rows that actually have a non-empty
+  // riskIdentified in the FRESH POST-UPSERT state (so we can compare
+  // against the count we received in the PUT body). Lets us tell at a
+  // glance whether the upsert actually persisted the typed value.
+  const natureCountAfter = updated.filter((r: any) => r.riskIdentified && String(r.riskIdentified).trim() !== '').length;
+  const natureCountSent = natureSamples.length;
+  console.log(`[RMM PUT after] engagement=${engagementId} natureSent=${natureCountSent} natureAfter=${natureCountAfter} failures=${failures.length}`);
   // Return the fresh server view of every row plus the list of any
-  // per-row failures. Status stays 200 so the autosave hook treats it
-  // as a successful save (the user's edits that DID land should not
-  // be marked as failed in the UI). When `failures` is non-empty the
-  // server-side console.error gives auditors / operators a way to
-  // diagnose; the UI can render it explicitly later if we need a
-  // visible warning.
-  return NextResponse.json({ rows: updated, failures });
+  // per-row failures and the natureSent/natureAfter counters so the
+  // client's onSaveSuccess can surface a "save vanished" alert when
+  // the persisted state doesn't match what was sent.
+  return NextResponse.json({ rows: updated, failures, natureCountSent, natureCountAfter });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
