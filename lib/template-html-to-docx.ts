@@ -833,6 +833,16 @@ export function htmlToDocxBody(html: string): string {
     const inner = full.slice(opened[0].length, full.length - '</w:p>'.length);
     // Drop <w:pPr>…</w:pPr> — that's paragraph formatting, not content.
     const withoutPpr = inner.replace(/<w:pPr>[\s\S]*?<\/w:pPr>/g, '');
+    // Page-break paragraphs (`<w:br w:type="page"/>`) carry a real
+    // structural directive — never collapse them, even though they
+    // contain no text. They emerge from `<div class="page-break">` in
+    // the source HTML and the line-break-only check below would
+    // otherwise treat them as effectively empty and erase them. Match
+    // any `<w:br>` whose `w:type` attribute is `"page"` (Word also
+    // supports `column` and `textWrapping` — page is the only one this
+    // converter currently emits, but the regex is lenient about
+    // attribute order so future column-break support won't trip it).
+    if (/<w:br\b[^>]*\bw:type\s*=\s*"page"/.test(withoutPpr)) return full;
     // Any <w:t> with non-whitespace text? Keep the paragraph as-is.
     const textMatches = withoutPpr.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || [];
     for (const tm of textMatches) {
