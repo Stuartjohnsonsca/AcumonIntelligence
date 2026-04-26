@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CalendarDays, Plus, Trash2, Loader2, Check } from 'lucide-react';
+import { CalendarDays, Plus, Trash2, Loader2, Check, ArrowUp } from 'lucide-react';
 import type { AgreedDateData } from '@/hooks/useEngagement';
 
 /**
@@ -271,6 +271,28 @@ export function AuditTimetablePanel({ engagementId, initialDates }: Props) {
     setRows(prev => prev.filter((_, i) => i !== idx));
     scheduleSave();
   }
+  /** Swap a milestone with the one above it. Renumbers `sortOrder`
+   *  on both rows so the persisted order matches the new array
+   *  position — important because the agreed-dates endpoint orders
+   *  by `sortOrder` ASC, and `{{#each auditTimetable}}` document
+   *  iterations use that same ordering. */
+  function moveRowUp(idx: number) {
+    if (idx <= 0) return;
+    dirtyRef.current = true;
+    setRows(prev => {
+      const next = prev.slice();
+      const a = next[idx - 1];
+      const b = next[idx];
+      // Swap positions AND swap their sortOrder values so save sees
+      // monotonically-increasing numbers from top to bottom.
+      const aSort = typeof a.sortOrder === 'number' ? a.sortOrder : idx - 1;
+      const bSort = typeof b.sortOrder === 'number' ? b.sortOrder : idx;
+      next[idx - 1] = { ...b, sortOrder: aSort, _seeded: false };
+      next[idx] = { ...a, sortOrder: bSort, _seeded: false };
+      return next;
+    });
+    scheduleSave();
+  }
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-5">
@@ -350,7 +372,20 @@ export function AuditTimetablePanel({ engagementId, initialDates }: Props) {
                       ))}
                     </select>
                   </td>
-                  <td className="py-1 px-2 text-right">
+                  <td className="py-1 px-2 text-right whitespace-nowrap">
+                    {/* Move-up arrow — drives row order in the saved
+                        agreed-dates AND the order document templates
+                        iterate this list as `auditTimetable`. Disabled
+                        on the top row (nowhere to go). */}
+                    <button
+                      type="button"
+                      onClick={() => moveRowUp(idx)}
+                      disabled={idx === 0}
+                      className="text-slate-400 hover:text-slate-700 p-1 disabled:opacity-30 disabled:cursor-not-allowed"
+                      title={idx === 0 ? 'Already at the top' : 'Move up'}
+                    >
+                      <ArrowUp className="h-3 w-3" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => removeRow(idx)}

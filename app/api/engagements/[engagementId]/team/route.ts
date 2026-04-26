@@ -115,7 +115,11 @@ export async function GET(
     prisma.auditTeamMember.findMany({
       where: { engagementId },
       include: { user: { select: { id: true, name: true, email: true } } },
-      orderBy: { joinedAt: 'asc' },
+      // Order by sortOrder first (auditor-controlled, drives Opening
+      // tab + `{{#each team}}` document iterations), then joinedAt as
+      // a stable tie-breaker for legacy engagements that haven't been
+      // touched since the column was added.
+      orderBy: [{ sortOrder: 'asc' }, { joinedAt: 'asc' }],
     }),
     prisma.auditSpecialist.findMany({
       where: { engagementId },
@@ -141,7 +145,7 @@ export async function PUT(
 
   const body = await req.json();
   const { teamMembers, specialists } = body as {
-    teamMembers?: { id?: string; userId: string; role: string }[];
+    teamMembers?: { id?: string; userId: string; role: string; sortOrder?: number }[];
     specialists?: { id?: string; name: string; email?: string; specialistType: string; firmName?: string }[];
   };
 
@@ -200,11 +204,17 @@ export async function PUT(
       where: { engagementId, id: { notIn: memberIds } },
     });
 
-    for (const member of teamMembers) {
+    // Persist `sortOrder` from the client-supplied array index when
+    // not supplied explicitly. The auditor's reordering on the
+    // Opening tab maps directly to the order they want document
+    // templates iterating `team` in.
+    for (let i = 0; i < teamMembers.length; i++) {
+      const member = teamMembers[i];
+      const sortOrder = typeof member.sortOrder === 'number' ? member.sortOrder : i;
       if (member.id) {
         await prisma.auditTeamMember.update({
           where: { id: member.id },
-          data: { role: member.role },
+          data: { role: member.role, sortOrder },
         });
       } else {
         // Check for unique constraint (engagementId, userId)
@@ -214,11 +224,11 @@ export async function PUT(
         if (existing) {
           await prisma.auditTeamMember.update({
             where: { id: existing.id },
-            data: { role: member.role },
+            data: { role: member.role, sortOrder },
           });
         } else {
           await prisma.auditTeamMember.create({
-            data: { engagementId, userId: member.userId, role: member.role },
+            data: { engagementId, userId: member.userId, role: member.role, sortOrder },
           });
         }
       }
@@ -290,7 +300,7 @@ export async function PUT(
     prisma.auditTeamMember.findMany({
       where: { engagementId },
       include: { user: { select: { id: true, name: true, email: true } } },
-      orderBy: { joinedAt: 'asc' },
+      orderBy: [{ sortOrder: 'asc' }, { joinedAt: 'asc' }],
     }),
     prisma.auditSpecialist.findMany({
       where: { engagementId },

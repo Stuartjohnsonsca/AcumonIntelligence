@@ -35,6 +35,12 @@ export interface TeamMemberData {
   role: TeamRole;
   userName?: string;
   userEmail?: string;
+  /** Auditor-controlled position in the engagement's team list. Drives
+   *  the order shown on the Opening tab and the order document
+   *  templates iterate `team` in. New (unsaved) members get the
+   *  current array length on add; the team-save endpoint re-numbers
+   *  from array index on every PUT. */
+  sortOrder?: number;
 }
 
 export interface SpecialistData {

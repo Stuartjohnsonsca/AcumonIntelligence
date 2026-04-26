@@ -42,7 +42,18 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
 
   useAutoSave(
     `/api/engagements/${engagementId}/team`,
-    { teamMembers: teamMembers.map(m => ({ id: m.id || undefined, userId: m.userId, role: m.role })), specialists },
+    {
+      teamMembers: teamMembers.map((m, i) => ({
+        id: m.id || undefined,
+        userId: m.userId,
+        role: m.role,
+        // Persist auditor-controlled order. Server uses this to set
+        // sort_order on each row, which template-context's
+        // `{{#each team}}` reads via the sortOrder ORDER BY clause.
+        sortOrder: i,
+      })),
+      specialists,
+    },
     { enabled: teamMembers !== initialTeamMembers || specialists !== initialSpecialists }
   );
 
@@ -77,6 +88,19 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
 
   function removeMember(index: number) {
     setTeamMembers(prev => prev.filter((_, i) => i !== index));
+  }
+
+  /** Swap a member with the one above them. The autosave wrapper
+   *  picks up the new array order on the next debounce and persists
+   *  the new sortOrder values. Document templates that iterate
+   *  `{{#each team}}` immediately reflect the new order. */
+  function moveMemberUp(index: number) {
+    if (index <= 0) return;
+    setTeamMembers(prev => {
+      const next = prev.slice();
+      [next[index - 1], next[index]] = [next[index], next[index - 1]];
+      return next;
+    });
   }
 
   function addSpecialist(type: string) {
@@ -156,7 +180,23 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
                 <option key={role.value} value={role.value}>{role.label}</option>
               ))}
             </select>
-            <button onClick={() => removeMember(i)} className="text-red-400 hover:text-red-600 text-xs">×</button>
+            {/* Move-up arrow. Disabled on the top row (nowhere to go).
+                Document templates that iterate `{{#each team}}` use
+                this order, so admins use it to control which RI /
+                Manager / Preparer appears first in generated docs. */}
+            <button
+              type="button"
+              onClick={() => moveMemberUp(i)}
+              disabled={i === 0}
+              title={i === 0 ? 'Already at the top' : 'Move up'}
+              className="text-slate-400 hover:text-slate-700 text-xs disabled:opacity-30 disabled:cursor-not-allowed leading-none"
+            >▲</button>
+            <button
+              type="button"
+              onClick={() => removeMember(i)}
+              title="Remove from team"
+              className="text-red-400 hover:text-red-600 text-xs"
+            >×</button>
           </div>
         ))}
       </div>

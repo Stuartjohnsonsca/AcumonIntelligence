@@ -2045,6 +2045,12 @@ model AuditTeamMember {
   userId       String   @map("user_id")
   role         String // Junior | Manager | RI
   joinedAt     DateTime @default(now()) @map("joined_at")
+  /// Position within the engagement's team list. Drives the order
+  /// shown on the Opening tab and the order document templates see
+  /// when iterating `team` via `{{#each team}}`. Lower number = higher
+  /// in the list. New members default to 0; the team-save endpoint
+  /// re-numbers from the array index on every PUT.
+  sortOrder    Int      @default(0) @map("sort_order")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)

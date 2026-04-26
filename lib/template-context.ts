@@ -232,7 +232,15 @@ export async function buildTemplateContext(engagementId: string, opts: { include
       client: true,
       period: true,
       priorPeriodEngagement: { include: { period: true } },
-      teamMembers: { include: { user: { select: { name: true, email: true } } } },
+      // Order team members by the auditor-controlled sortOrder so the
+      // `team` array AND the `{{#each team}}` document iterations
+      // match what the Opening tab shows. joinedAt as a stable tie-
+      // breaker for engagements whose rows haven't been re-numbered
+      // since the column was added.
+      teamMembers: {
+        include: { user: { select: { name: true, email: true } } },
+        orderBy: [{ sortOrder: 'asc' }, { joinedAt: 'asc' }],
+      },
     },
   });
   if (!engagement) throw new Error(`Engagement ${engagementId} not found`);
