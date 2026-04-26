@@ -80,6 +80,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   });
   const chatNumber = (maxChat._max.chatNumber || 0) + 1;
 
+  // Explicit select on writes for the same reason as the GET handler:
+  // production Supabase is missing `linked_from_type` / `linked_from_id`,
+  // and Prisma's default INSERT ... RETURNING * blows up on those
+  // columns. Without the select, hitting "Create" on a new RI matter
+  // 500s after the row is already inserted, and the UI never sees it.
   const point = await prisma.auditPoint.create({
     data: {
       engagementId,
@@ -93,6 +98,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
       createdById: session.user.id,
       createdByName: session.user.name || session.user.email || '',
     },
+    select: AUDIT_POINT_SAFE_SELECT,
   });
 
   return NextResponse.json({ point });
@@ -135,7 +141,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     // is no longer "new". Preserves closed/committed/cancelled.
     const data: any = { responses };
     if (existing.status === 'new') data.status = 'open';
-    const point = await prisma.auditPoint.update({ where: { id }, data });
+    const point = await prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_SAFE_SELECT });
     return NextResponse.json({ point });
   }
 
@@ -151,7 +157,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     if (!allowed.has(next)) {
       return NextResponse.json({ error: 'Invalid colour' }, { status: 400 });
     }
-    const point = await prisma.auditPoint.update({ where: { id }, data: { colour: next } });
+    const point = await prisma.auditPoint.update({ where: { id }, data: { colour: next }, select: AUDIT_POINT_SAFE_SELECT });
     return NextResponse.json({ point });
   }
 
@@ -175,6 +181,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     const point = await prisma.auditPoint.update({
       where: { id },
       data: { status: 'closed', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() },
+      select: AUDIT_POINT_SAFE_SELECT,
     });
     // Audit trail — closing is a decision worth logging separately
     // from generic PATCH updates. Actor + matter id land in the
@@ -201,6 +208,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     const point = await prisma.auditPoint.update({
       where: { id },
       data: { status: 'committed', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() },
+      select: AUDIT_POINT_SAFE_SELECT,
     });
     return NextResponse.json({ point });
   }
@@ -210,6 +218,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     const point = await prisma.auditPoint.update({
       where: { id },
       data: { status: 'cancelled', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() },
+      select: AUDIT_POINT_SAFE_SELECT,
     });
     return NextResponse.json({ point });
   }
@@ -221,7 +230,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     if (body.heading !== undefined) data.heading = body.heading;
     if (body.body !== undefined) data.body = body.body;
     if (body.attachments !== undefined) data.attachments = body.attachments;
-    const point = await prisma.auditPoint.update({ where: { id }, data });
+    const point = await prisma.auditPoint.update({ where: { id }, data, select: AUDIT_POINT_SAFE_SELECT });
     return NextResponse.json({ point });
   }
 
@@ -247,22 +256,34 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
     const actor = await resolveActor(engagementId, session);
     const summaryText = (existing.description || '').slice(0, 120);
 
+    // Helper: if production hasn't run scripts/sql/raise-as-linked-from.sql
+    // yet, the linked_from_* columns don't exist and writing to them raises
+    // a Postgres "column does not exist" error. Fall back to creating
+    // without the back-link rather than 500ing the whole raise flow.
+    const isMissingLinkColumn = (err: any) =>
+      typeof err?.message === 'string' && /linked_from_(type|id)/i.test(err.message);
+
     let created: any = null;
     if (raiseAs === 'error') {
-      created = await prisma.auditErrorSchedule.create({
-        data: {
-          engagementId,
-          fsLine: String(raiseFields?.fsLine ?? 'Unclassified'),
-          accountCode: raiseFields?.accountCode ?? null,
-          description: String(raiseFields?.description ?? existing.description ?? ''),
-          errorAmount: Number(raiseFields?.errorAmount ?? 0) || 0,
-          errorType: String(raiseFields?.errorType ?? 'judgemental'),
-          explanation: raiseFields?.explanation ?? null,
-          isFraud: !!raiseFields?.isFraud,
-          linkedFromType: 'ri_matter',
-          linkedFromId: existing.id,
-        },
-      });
+      const errorBase = {
+        engagementId,
+        fsLine: String(raiseFields?.fsLine ?? 'Unclassified'),
+        accountCode: raiseFields?.accountCode ?? null,
+        description: String(raiseFields?.description ?? existing.description ?? ''),
+        errorAmount: Number(raiseFields?.errorAmount ?? 0) || 0,
+        errorType: String(raiseFields?.errorType ?? 'judgemental'),
+        explanation: raiseFields?.explanation ?? null,
+        isFraud: !!raiseFields?.isFraud,
+      };
+      try {
+        created = await prisma.auditErrorSchedule.create({
+          data: { ...errorBase, linkedFromType: 'ri_matter', linkedFromId: existing.id },
+        });
+      } catch (err: any) {
+        if (!isMissingLinkColumn(err)) throw err;
+        console.warn('[audit-points] error_schedules.linked_from_* missing — creating without back-link');
+        created = await prisma.auditErrorSchedule.create({ data: errorBase });
+      }
     } else if (raiseAs === 'management' || raiseAs === 'representation') {
       const pointType = raiseAs; // 'management' | 'representation'
       const maxChat = await prisma.auditPoint.aggregate({
@@ -270,21 +291,30 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
         _max: { chatNumber: true },
       });
       const chatNumber = (maxChat._max.chatNumber || 0) + 1;
-      created = await prisma.auditPoint.create({
-        data: {
-          engagementId,
-          pointType,
-          chatNumber,
-          status: 'new',
-          description: String(raiseFields?.description ?? existing.description ?? ''),
-          heading: raiseFields?.heading ?? null,
-          body: raiseFields?.body ?? null,
-          createdById: session.user.id,
-          createdByName: session.user.name || session.user.email || '',
-          linkedFromType: 'ri_matter',
-          linkedFromId: existing.id,
-        },
-      });
+      const pointBase = {
+        engagementId,
+        pointType,
+        chatNumber,
+        status: 'new',
+        description: String(raiseFields?.description ?? existing.description ?? ''),
+        heading: raiseFields?.heading ?? null,
+        body: raiseFields?.body ?? null,
+        createdById: session.user.id,
+        createdByName: session.user.name || session.user.email || '',
+      };
+      try {
+        created = await prisma.auditPoint.create({
+          data: { ...pointBase, linkedFromType: 'ri_matter', linkedFromId: existing.id },
+          select: AUDIT_POINT_SAFE_SELECT,
+        });
+      } catch (err: any) {
+        if (!isMissingLinkColumn(err)) throw err;
+        console.warn('[audit-points] audit_points.linked_from_* missing — creating without back-link');
+        created = await prisma.auditPoint.create({
+          data: pointBase,
+          select: AUDIT_POINT_SAFE_SELECT,
+        });
+      }
     } else {
       return NextResponse.json({ error: 'Unknown raiseAs value' }, { status: 400 });
     }
