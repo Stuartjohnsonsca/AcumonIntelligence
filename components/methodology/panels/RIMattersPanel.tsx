@@ -64,6 +64,30 @@ interface Props {
   onAction?: (action: string, pointId: string) => void;
 }
 
+// Action-log entry attributed to a specific matter. Built from
+// /action-log entries by normalising the various ways an entry can
+// reference its source RI matter (target id vs. metadata).
+interface MatterActionLogEntry {
+  id: string;
+  matterId: string;
+  action: string;       // 'audit-point.send-portal' | '...close' | etc.
+  summary: string;
+  actorName: string;
+  occurredAt: string;
+}
+
+// Friendly label for each action slug. Anything unrecognised falls
+// back to the slug itself, which is still better than nothing.
+const ACTION_LABELS: Record<string, string> = {
+  'audit-point.close': 'Closed',
+  'audit-point.send-portal': 'Sent to Client Portal',
+  'audit-point.send-technical': 'Sent to Technical',
+  'audit-point.send-ethics': 'Sent to Ethics Partner',
+  'audit-point.raise-error': 'Raised as Error',
+  'audit-point.raise-management': 'Raised as Management Point',
+  'audit-point.raise-representation': 'Raised as Representation Point',
+};
+
 const COLOUR_STYLES: Record<string, { bg: string; border: string; text: string; dot: string }> = {
   green: { bg: 'bg-green-50', border: 'border-green-300', text: 'text-green-800', dot: 'bg-green-500' },
   amber: { bg: 'bg-amber-50', border: 'border-amber-300', text: 'text-amber-800', dot: 'bg-amber-500' },
@@ -82,6 +106,13 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
   const [newDesc, setNewDesc] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // Action-log entries already attributed to specific matters. Loaded
+  // alongside the matters list and refreshed every time a write that
+  // logs (close/send-*/raise-*) completes, so the history popover
+  // shows newly-performed actions immediately.
+  const [actionLog, setActionLog] = useState<MatterActionLogEntry[]>([]);
+  // Which matter's history popover is currently open (id, or null).
+  const [openHistoryFor, setOpenHistoryFor] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null); // matter id currently being mutated
@@ -95,7 +126,17 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
   // of the RI actions map naturally too).
   const isRI = userRole === 'RI' || userRole === 'Partner';
 
-  useEffect(() => { void load(); }, [engagementId]);
+  useEffect(() => { void load(); void loadActionLog(); }, [engagementId]);
+
+  // Close the history popover on any click outside it. The popover
+  // and its trigger button stop propagation, so this only fires for
+  // truly-outside clicks.
+  useEffect(() => {
+    if (!openHistoryFor) return;
+    const onDocClick = () => setOpenHistoryFor(null);
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, [openHistoryFor]);
 
   async function load() {
     setLoading(true);
@@ -122,6 +163,59 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
     } finally { setLoading(false); }
   }
 
+  // Pulls the engagement-wide action log and keeps the entries that
+  // belong to RI-matter button presses. Three attribution patterns:
+  //   - close / send-technical / send-ethics: targetType='audit_point',
+  //     targetId is the matter id directly (or metadata.riMatterId).
+  //   - send-portal: targetType='portal_request', metadata.riMatterId
+  //     names the matter.
+  //   - raise-*: targetType='error_schedule' or 'audit_point', targetId
+  //     is the NEW record, metadata.raisedFromRiMatterId names the
+  //     matter the raise originated on.
+  // Normalises all three into matterId so the renderer doesn't need
+  // to know about the schema.
+  async function loadActionLog() {
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/action-log`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const entries: any[] = Array.isArray(data?.entries) ? data.entries : [];
+      const mapped: MatterActionLogEntry[] = [];
+      for (const e of entries) {
+        if (typeof e?.action !== 'string' || !e.action.startsWith('audit-point.')) continue;
+        const meta = e.metadata && typeof e.metadata === 'object' ? e.metadata : {};
+        const matterId =
+          meta?.raisedFromRiMatterId
+          || meta?.riMatterId
+          || (e.targetType === 'audit_point' ? e.targetId : null);
+        if (!matterId || typeof matterId !== 'string') continue;
+        mapped.push({
+          id: e.id,
+          matterId,
+          action: e.action,
+          summary: typeof e.summary === 'string' ? e.summary : '',
+          actorName: typeof e.actorName === 'string' ? e.actorName : '',
+          occurredAt: typeof e.occurredAt === 'string' ? e.occurredAt : (e.createdAt || ''),
+        });
+      }
+      setActionLog(mapped);
+    } catch { /* informational popover — silently leave previous state */ }
+  }
+
+  // Quick id → entries[] index, sorted oldest-first so the popover
+  // reads as a chronological story (raised → sent → closed).
+  const actionsByMatter = useMemo(() => {
+    const map = new Map<string, MatterActionLogEntry[]>();
+    for (const e of actionLog) {
+      const arr = map.get(e.matterId) || [];
+      arr.push(e);
+      map.set(e.matterId, arr);
+    }
+    for (const arr of map.values()) {
+      arr.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
+    }
+    return map;
+  }, [actionLog]);
 
   const counts = useMemo(() => ({
     total: matters.length,
@@ -186,7 +280,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
         const data = await res.json().catch(() => ({}));
         alert(data.error || 'Close failed');
       }
-      await load();
+      await Promise.all([load(), loadActionLog()]);
     } finally { setBusy(null); }
   }
 
@@ -369,6 +463,63 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
                             <MessageCircle className="h-3 w-3" />{responses.length}
                           </span>
                         )}
+                        {(() => {
+                          const acts = actionsByMatter.get(matter.id) || [];
+                          if (acts.length === 0) return null;
+                          const isOpen = openHistoryFor === matter.id;
+                          // Plain-text fallback for native title tooltip
+                          // — covers users who hover but don't click,
+                          // and screen-reader summarisation.
+                          const plainList = acts
+                            .map(a => `${ACTION_LABELS[a.action] || a.action}${a.actorName ? ` — ${a.actorName}` : ''}${a.occurredAt ? ` (${new Date(a.occurredAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })})` : ''}`)
+                            .join('\n');
+                          return (
+                            <span className="relative inline-flex">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  // Stop the row's collapse/expand
+                                  // toggle from firing — the badge is
+                                  // a separate control.
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setOpenHistoryFor(prev => prev === matter.id ? null : matter.id);
+                                }}
+                                title={`Actions performed on this matter:\n${plainList}`}
+                                className="inline-flex items-center gap-0.5 text-[10px] text-slate-500 hover:text-slate-800 px-1 py-0.5 rounded hover:bg-slate-100"
+                              >
+                                <History className="h-3 w-3" />{acts.length}
+                              </button>
+                              {isOpen && (
+                                <div
+                                  className="absolute left-0 top-full mt-1 z-20 w-72 max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-md shadow-lg p-2 text-left"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-100">
+                                    <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">History</span>
+                                    <button
+                                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpenHistoryFor(null); }}
+                                      className="text-slate-400 hover:text-slate-600"
+                                      title="Close"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                  <ul className="space-y-1.5">
+                                    {acts.map(a => (
+                                      <li key={a.id} className="text-[11px] leading-tight">
+                                        <div className="font-medium text-slate-700">{ACTION_LABELS[a.action] || a.action}</div>
+                                        <div className="text-[10px] text-slate-500">
+                                          {a.actorName || 'Unknown'}{a.occurredAt ? ` · ${new Date(a.occurredAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}` : ''}
+                                        </div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </span>
+                          );
+                        })()}
                         <span className="text-[10px] text-slate-400 ml-auto whitespace-nowrap">{lastActivity}</span>
                       </div>
                       <p className="text-xs text-slate-700 mt-0.5 line-clamp-2">{matter.description}</p>
@@ -533,7 +684,10 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
           matter={sendModal.matter}
           target={sendModal.target}
           engagementId={engagementId}
-          onDone={(success) => { setSendModal(null); if (success) void load(); }}
+          onDone={(success) => {
+            setSendModal(null);
+            if (success) { void load(); void loadActionLog(); }
+          }}
         />
       )}
       {raiseModal && (
@@ -543,7 +697,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
           engagementId={engagementId}
           onDone={(success, targetId) => {
             setRaiseModal(null);
-            if (success) void load();
+            if (success) { void load(); void loadActionLog(); }
             if (success && targetId && onAction) onAction(`raise-${raiseModal.target}`, targetId);
           }}
         />
