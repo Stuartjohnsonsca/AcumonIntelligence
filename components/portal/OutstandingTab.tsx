@@ -42,6 +42,11 @@ interface Props {
 
 const SECTIONS = [
   { key: 'questions', label: 'Questions & Answers' },
+  // RI matters land here when an auditor uses "Send to Client Portal"
+  // from the RI Matters panel. Without an explicit section the request
+  // is created in the DB but never displayed because filtering matches
+  // section-by-section.
+  { key: 'ri_matters', label: 'Senior Reviewer Queries' },
   { key: 'walkthroughs', label: 'Walkthrough Documentation' },
   { key: 'calculations', label: 'Financial Calculations' },
   { key: 'evidence', label: 'Evidence' },

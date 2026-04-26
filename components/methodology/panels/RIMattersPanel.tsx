@@ -619,6 +619,35 @@ function RaiseModal({
   const [errorType, setErrorType] = useState<'factual' | 'judgemental' | 'projected'>('judgemental');
   const [raising, setRaising] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // FS Line picker — populated from the engagement's actual FS hierarchy
+  // so the user picks an existing line rather than free-typing one (which
+  // never matches any FS Line on the error schedule). Rendered as an
+  // inline list inside the modal's DOM so it can't be confused with a
+  // browser autocomplete dropdown that would be outside the modal —
+  // those triggered click-outside handlers and dismissed the modal as
+  // soon as the user started typing.
+  const [fsOptions, setFsOptions] = useState<string[]>([]);
+  const [fsQuery, setFsQuery] = useState('');
+  const [fsPickerOpen, setFsPickerOpen] = useState(false);
+  useEffect(() => {
+    if (target !== 'error') return;
+    let cancelled = false;
+    fetch(`/api/engagements/${engagementId}/fs-hierarchy`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (cancelled || !d) return;
+        const names: string[] = Array.isArray(d.allItems)
+          ? d.allItems.map((x: any) => x?.name).filter((s: any): s is string => !!s)
+          : [];
+        // De-dup while preserving the API's order (already sorted by hierarchy).
+        setFsOptions(Array.from(new Set(names)));
+      })
+      .catch(() => { /* picker still works as free-text fallback */ });
+    return () => { cancelled = true; };
+  }, [engagementId, target]);
+  const filteredFsOptions = fsQuery.trim()
+    ? fsOptions.filter(n => n.toLowerCase().includes(fsQuery.toLowerCase()))
+    : fsOptions;
 
   const title = target === 'error' ? 'Raise as Error'
     : target === 'management' ? 'Raise as Management Point'
@@ -669,14 +698,54 @@ function RaiseModal({
           </div>
           {target === 'error' && (
             <>
-              <div>
+              <div className="relative">
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">FS Line</label>
+                {/* Combobox: text input drives a filter over the engagement's
+                    actual FS Lines. The list lives in this same DOM
+                    subtree (no portal, no native autocomplete) so a click
+                    on an option can't be misread as "click outside the
+                    modal" by the backdrop handler. */}
                 <input
                   type="text"
-                  value={fsLine}
-                  onChange={e => setFsLine(e.target.value)}
+                  value={fsPickerOpen ? fsQuery : fsLine}
+                  onChange={e => { setFsQuery(e.target.value); setFsPickerOpen(true); }}
+                  onFocus={() => { setFsQuery(''); setFsPickerOpen(true); }}
+                  onBlur={() => {
+                    // Delay the close so a click on an option below
+                    // gets to fire its onMouseDown before the picker
+                    // unmounts.
+                    setTimeout(() => setFsPickerOpen(false), 120);
+                  }}
+                  placeholder={fsOptions.length ? 'Type to search FS Lines…' : 'No FS Lines loaded — type a name'}
+                  autoComplete="off"
                   className="w-full text-xs border border-slate-200 rounded px-2 py-1.5"
                 />
+                {fsPickerOpen && filteredFsOptions.length > 0 && (
+                  <ul className="absolute z-10 left-0 right-0 mt-1 max-h-44 overflow-y-auto bg-white border border-slate-200 rounded shadow-lg text-xs">
+                    {filteredFsOptions.slice(0, 50).map(name => (
+                      <li
+                        key={name}
+                        onMouseDown={(e) => {
+                          // onMouseDown (not onClick) so we run before
+                          // the input's onBlur fires and tears the
+                          // picker down. stopPropagation is belt-and-
+                          // braces against any ancestor click handlers.
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setFsLine(name);
+                          setFsQuery('');
+                          setFsPickerOpen(false);
+                        }}
+                        className={`px-2 py-1 cursor-pointer hover:bg-blue-50 ${name === fsLine ? 'bg-blue-100 font-medium' : ''}`}
+                      >
+                        {name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {fsLine && !fsPickerOpen && (
+                  <p className="text-[10px] text-slate-500 mt-0.5">Selected: <span className="font-medium">{fsLine}</span></p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
