@@ -193,10 +193,17 @@ export function validateAndLogDocxBodyXml(
   }
 
   if (strict) {
-    const summary = issues.map(i => `${i.code}(${i.occurrence})`).slice(0, 5).join(', ');
+    // Include the FULL issue text + context in the thrown error so
+    // the auditor sees the actual diagnostic without needing access
+    // to server logs. The first 5 issues fit in a typical error
+    // toast comfortably; truncate the rest.
+    const detail = issues.slice(0, 5).map(i =>
+      `  • [${i.code}] ${i.message}${i.context ? `\n    in: ${i.context}` : ''}`,
+    ).join('\n');
+    const more = issues.length > 5 ? `\n  …and ${issues.length - 5} more.` : '';
     throw new Error(
-      `OOXML validation failed for ${source}: ${issues.length} issue(s) — ${summary}${issues.length > 5 ? ', …' : ''}. ` +
-      `This would trigger Word's 'We found a problem' dialog. See server logs for details.`,
+      `OOXML validation failed for ${source}: ${issues.length} issue(s) — ` +
+      `the rendered document would trigger Word's "We found a problem" dialog. Details:\n${detail}${more}`,
     );
   }
 

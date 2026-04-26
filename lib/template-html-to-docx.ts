@@ -908,15 +908,21 @@ export function htmlToDocxBody(html: string): string {
   });
 
   // 4. Final integrity check. Every defect that reaches this point is
-  //    a NEW pattern the auto-repair passes don't know about — we want
-  //    to know immediately rather than learn about it when a user
-  //    sees Word's repair dialog in production. Logs in production,
-  //    throws in dev / staging / CI (strict mode when NODE_ENV !==
-  //    'production'). Set AUDIT_DOCX_STRICT=1 to force strict mode in
-  //    production too (the render endpoint can then turn the issue
-  //    list into a 500 rather than shipping broken output).
-  const forceStrict = process.env.AUDIT_DOCX_STRICT === '1';
-  validateAndLogDocxBodyXml(xml, 'htmlToDocxBody', forceStrict ? { strict: true } : {});
+  //    a NEW pattern the auto-repair passes don't know about. We now
+  //    THROW in production rather than just logging — shipping a
+  //    broken .docx that Word can't open is worse than failing the
+  //    generation with a clear error. The auditor sees a specific
+  //    diagnostic ("table with no <w:tblGrid>", "empty <w:tc>", etc.)
+  //    pointing at the bug in their template, instead of Word's
+  //    generic "experienced an error trying to open the file" dialog
+  //    that gives them no recourse.
+  //
+  //    AUDIT_DOCX_STRICT=0 reverts to the old log-only behaviour
+  //    (broken file shipped, warnings in Vercel logs) for the rare
+  //    case where downstream needs to see the corrupt output for
+  //    debugging.
+  const forceLenient = process.env.AUDIT_DOCX_STRICT === '0';
+  validateAndLogDocxBodyXml(xml, 'htmlToDocxBody', forceLenient ? {} : { strict: true });
 
   return xml;
 }
