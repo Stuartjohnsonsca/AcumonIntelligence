@@ -3,6 +3,7 @@ import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { startExecution, startPipelineExecution } from '@/lib/flow-engine';
+import { scheduleSelfContinuation } from '@/lib/test-execution-continuation';
 
 export const maxDuration = 300; // Allow up to 2 minutes for AI extraction steps
 
@@ -29,6 +30,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
           engagementId, fsLine, testDescription, pipelineTestId,
           session.user.id, tbRow, fsLineId || undefined,
         );
+        // Server-driven continuation — keep firing chained calls until
+        // the execution reaches a terminal state, so the test runs to
+        // completion even if the user closes the browser.
+        after(() => scheduleSelfContinuation(engagementId, executionId, req));
         return NextResponse.json({ executionId, status: 'running', mode: 'action_pipeline' });
       }
     }
@@ -63,6 +68,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
         fsLineId || undefined,
       );
 
+      after(() => scheduleSelfContinuation(engagementId, executionId, req));
       return NextResponse.json({ executionId, status: 'running' });
     }
 
@@ -112,15 +118,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     // Start execution in background so response returns immediately
     const executionId = await startExecution(engagementId, fsLine, testDescription, testTypeCode || null, flow, session.user.id, tbRow, undefined, fsLineId || undefined);
 
-    // Continue processing in background (after response sent)
-    after(async () => {
-      try {
-        // The startExecution already processes the first batch of steps.
-        // Auto-continuation is handled by the polling mechanism in TestExecutionPanel.
-      } catch (err) {
-        console.error('Background execution continuation failed:', err);
-      }
-    });
+    // Server-driven continuation — startExecution processes the first
+    // ~55s batch synchronously; this kicks off a chained continue
+    // call after the response so the rest of the flow runs to
+    // completion server-side without needing the client to be open.
+    after(() => scheduleSelfContinuation(engagementId, executionId, req));
 
     return NextResponse.json({ executionId, status: 'running' });
   } catch (err: any) {

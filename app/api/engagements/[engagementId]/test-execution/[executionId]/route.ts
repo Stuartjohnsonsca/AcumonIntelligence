@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { resumeExecution, processNextNode, resumePipelineExecution, processPipelineStep } from '@/lib/flow-engine';
+import { scheduleSelfContinuation, isInternalContinuationCall } from '@/lib/test-execution-continuation';
 
 export const maxDuration = 300;
 
@@ -111,15 +112,29 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
   });
 }
 
-// POST: Control execution (resume, cancel, retry)
+// POST: Control execution (resume, cancel, retry, continue)
+//
+// Auth: normal session auth for user-driven actions. The 'continue'
+// action additionally accepts an internal Bearer token (CRON_SECRET)
+// so the server can chain its own continuations without a session —
+// see lib/test-execution-continuation.ts for the why.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ engagementId: string; executionId: string }> }) {
   const { engagementId, executionId } = await params;
-  const session = await auth();
-  if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
-  const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
-  if (__eqrGuard instanceof NextResponse) return __eqrGuard;
+  const isInternal = isInternalContinuationCall(req);
+  if (!isInternal) {
+    const session = await auth();
+    if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 });
+    const __eqrGuard = await assertEngagementWriteAccess(engagementId, session);
+    if (__eqrGuard instanceof NextResponse) return __eqrGuard;
+  }
 
   const { action, responseData } = await req.json();
+
+  // Internal token only authorises 'continue'. Anything else still
+  // requires a real user session.
+  if (isInternal && action !== 'continue') {
+    return NextResponse.json({ error: 'Internal token only valid for action=continue' }, { status: 403 });
+  }
 
   const execution = await prisma.testExecution.findUnique({ where: { id: executionId } });
   if (!execution) return NextResponse.json({ error: 'Execution not found' }, { status: 404 });
@@ -132,6 +147,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
       } else {
         await resumeExecution(executionId, responseData);
       }
+      // Resuming from a pause is the start of a new run-to-completion
+      // window — chain server-side continuation so a long flow doesn't
+      // stall when this function's budget runs out.
+      after(() => scheduleSelfContinuation(engagementId, executionId, req));
       return NextResponse.json({ status: 'resumed' });
 
     case 'cancel':
@@ -146,6 +165,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
       } else {
         await processNextNode(executionId);
       }
+      after(() => scheduleSelfContinuation(engagementId, executionId, req));
       return NextResponse.json({ status: 'retrying' });
 
     case 'continue':
@@ -155,6 +175,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
       } else {
         await processNextNode(executionId);
       }
+      // Chain another continuation if the previous batch hit the
+      // function's time budget without finishing the flow. The helper
+      // re-checks status from the DB so already-terminal executions
+      // don't trigger a chain.
+      after(() => scheduleSelfContinuation(engagementId, executionId, req));
       return NextResponse.json({ status: 'continuing' });
 
     default:
