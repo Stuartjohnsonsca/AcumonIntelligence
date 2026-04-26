@@ -406,9 +406,26 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
         const classification = overall ? (riskClassificationTable?.[overall]
           || (overall === 'High' || overall === 'Very High' ? 'Significant Risk'
               : overall === 'Medium' ? 'Area of Focus' : null)) : null;
-        const target = classification === 'Significant Risk' ? 'significant_risk'
+        let target: 'significant_risk' | 'area_of_focus' | null =
+          classification === 'Significant Risk' ? 'significant_risk'
           : classification === 'Area of Focus' ? 'area_of_focus'
           : null;
+        // PAR-sourced rows default to Significant Risk until the
+        // auditor finishes assessing them. "Fully assessed" is
+        // Likelihood + Magnitude both populated — that's what the
+        // matrix needs to compute a real classification. Once those
+        // are set the matrix wins, even if its result is null (i.e.
+        // AR), so the auditor can deliberately downgrade a PAR row
+        // by working through the assessment.
+        //
+        // Note: this only fires when the matrix produced no
+        // classification of its own. If the matrix already says
+        // significant_risk or area_of_focus, we use that result
+        // verbatim — no double-guessing.
+        const fullyAssessed = !!(r.likelihood && r.magnitude);
+        if (target === null && r.source === 'par' && !fullyAssessed) {
+          target = 'significant_risk';
+        }
         const changed =
           (r.rowCategory || null) !== target
           || (r.overallRisk || null) !== (overall || null)
@@ -421,7 +438,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
       });
       return mutated ? next : prev;
     });
-  }, [riskClassificationTable, rows.map(r => `${r.likelihood}|${r.magnitude}|${r.controlRisk}|${r.relevance}`).join('||')]);
+  }, [riskClassificationTable, rows.map(r => `${r.source}|${r.likelihood}|${r.magnitude}|${r.controlRisk}|${r.relevance}`).join('||')]);
 
   // Check if prior year engagement exists
   useEffect(() => {
@@ -1059,8 +1076,23 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                       </td>
                     )}
                     <td className="px-2 py-1 align-top">
-                      <AutoTextarea value={row.lineItem} onChange={v => updateRow(i, 'lineItem', v)} readOnly={row.isMandatory}
-                        className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 ${row.isMandatory ? 'font-medium' : ''}`} />
+                      <div className="flex items-start gap-1">
+                        {/* PAR-source flag — small asterisk pinned to
+                            the far left of the lineItem cell. Hover
+                            tooltip identifies the source. Replaces
+                            the older "stuff a boilerplate string into
+                            the Nature column" approach so the auditor
+                            can use Nature for their own risk text. */}
+                        {isPar && (
+                          <span
+                            title="from PAR"
+                            aria-label="from PAR"
+                            className="text-indigo-500 font-bold leading-none mt-0.5 cursor-help select-none"
+                          >*</span>
+                        )}
+                        <AutoTextarea value={row.lineItem} onChange={v => updateRow(i, 'lineItem', v)} readOnly={row.isMandatory}
+                          className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 ${row.isMandatory ? 'font-medium' : ''}`} />
+                      </div>
                     </td>
                     <td className="px-2 py-1 align-top">
                       {(() => {

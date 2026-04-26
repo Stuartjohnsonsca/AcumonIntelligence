@@ -98,7 +98,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const fsLevel = matchingTb?.fsLevel || item.fsLevel || null;
     const fsNote = matchingTb?.fsNoteLevel || item.fsNote || null;
 
-    // Nature = client explanation text only (not audit team notes).
+    // Pull any client-supplied explanation text out of the PAR item's
+    // `reasons` field — only used to seed the Nature column when the
+    // client actually said something. Audit-team variance markers
+    // (`PAR variance:`, `[…]` etc.) are stripped. If nothing meaningful
+    // remains we leave Nature EMPTY so the auditor types their own
+    // assessment from scratch — the row's PAR origin is now signalled
+    // by an asterisk on the lineItem cell, not by stuffing boilerplate
+    // text into the Nature column.
     let clientText = '';
     if (item.reasons) {
       const lines = String(item.reasons).split('\n').filter((l: string) => l.trim() && !l.startsWith('[Attachments:'));
@@ -106,26 +113,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       clientText = clientLines.join('\n').trim();
       if (!clientText) clientText = lines[0] || '';
     }
-    const riskIdentified = clientText || `Flagged from PAR — significant movement identified`;
+    // Empty string → null so existing-row "keep the longer text"
+    // logic below doesn't pin a literal "" over a useful narrative.
+    const riskIdentified: string | null = clientText.trim().length > 0 ? clientText : null;
     const roundedAmount = amount != null ? Math.round(amount * 100) / 100 : null;
 
     const existing = existingByLineItem.get(lineItem);
     if (existing) {
       // Refresh the amount + keep the narrative up to date without
       // trampling any manual RMM enrichments the user may have added.
-      // Setting source='par' on update is important too: if the row
-      // existed BEFORE the `source` column was added, the backfill at
-      // the top already covered it; if it existed but was manually
-      // created and a PAR push now lands on it, the user expectation
-      // is that it's now PAR-sourced (they explicitly chose to push
-      // this PAR row to RMM).
+      // Rule: prefer whichever of (existing, fresh-PAR-text) is the
+      // longer non-empty value; if both are blank, leave the column
+      // null. Setting source='par' on update is important too — see
+      // the backfill logic at the top of this route.
+      const keepExisting = existing.riskIdentified
+        && (!riskIdentified || existing.riskIdentified.length >= riskIdentified.length);
       await prisma.auditRMMRow.update({
         where: { id: existing.id },
         data: {
           amount: roundedAmount ?? existing.amount,
-          riskIdentified: existing.riskIdentified && existing.riskIdentified.length > riskIdentified.length
-            ? existing.riskIdentified
-            : riskIdentified,
+          riskIdentified: keepExisting ? existing.riskIdentified : riskIdentified,
           fsStatement: fsStatement ?? undefined,
           fsLevel: fsLevel ?? undefined,
           fsNote: fsNote ?? undefined,
@@ -151,7 +158,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       });
       created++;
       createdLineItems.push(lineItem);
-      existingByLineItem.set(lineItem, { id: 'new', lineItem, sortOrder: maxSort, riskIdentified, amount: roundedAmount });
+      existingByLineItem.set(lineItem, { id: 'new', lineItem, sortOrder: maxSort, riskIdentified: riskIdentified || '', amount: roundedAmount });
     }
   }
 
