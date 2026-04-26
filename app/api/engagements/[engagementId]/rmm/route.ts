@@ -82,6 +82,23 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   const body = await req.json();
   const { rows } = body as { rows: Array<Record<string, unknown>> };
 
+  // Diagnostic — log every non-empty `riskIdentified` value we're about
+  // to persist along with its row id + lineItem. Visible in Vercel logs
+  // so we can trace whether the Nature column save is reaching the
+  // server with the typed text intact. Only logs rows where
+  // riskIdentified has actual content (so we don't swamp logs with the
+  // 200+ untouched rows on every save).
+  const natureSamples = rows
+    .filter(r => typeof r.riskIdentified === 'string' && (r.riskIdentified as string).trim() !== '')
+    .map(r => ({ id: r.id || '(new)', lineItem: r.lineItem, riskIdentified: r.riskIdentified }));
+  if (natureSamples.length > 0) {
+    console.log(
+      `[RMM PUT] engagement=${engagementId} rows=${rows.length} natureRows=${natureSamples.length} sample=${JSON.stringify(natureSamples.slice(0, 5))}`,
+    );
+  } else {
+    console.log(`[RMM PUT] engagement=${engagementId} rows=${rows.length} natureRows=0 (no riskIdentified values in body)`);
+  }
+
   const existingIds = rows.filter(r => r.id).map(r => r.id as string);
   // Only delete non-mandatory rows that were removed
   await prisma.auditRMMRow.deleteMany({ where: { engagementId, id: { notIn: existingIds }, isMandatory: false } });
