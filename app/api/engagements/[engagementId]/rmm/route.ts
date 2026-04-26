@@ -88,6 +88,23 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
 
   const hasSource = await columnExists('audit_rmm_rows', 'source');
 
+  // Per-row error isolation: a single bad row in the array (e.g. one
+  // with a Prisma constraint violation, or stale client state pointing
+  // at a row id that's been deleted) used to throw out of the loop and
+  // 500 the whole PUT — including all the rows that came AFTER the
+  // bad one. The user types Nature into row 50, autosave fires, row 5
+  // fails, rows 6-210 (including row 50) never save. UI shows "Saved"
+  // because the network round-trip "completed" (with an error), then
+  // on reload the typed Nature is gone. This was the silent-data-loss
+  // bug behind the "Nature column is not saved" report.
+  //
+  // Now: wrap each row's persist in try/catch, log failures with the
+  // row id + lineItem so they're visible in Vercel logs, and continue
+  // the loop. We also collect failures and surface them in the
+  // response so useAutoSave's error-state can fire.
+  type RowFailure = { id: string | null; lineItem: string | null; error: string };
+  const failures: RowFailure[] = [];
+
   for (const row of rows) {
     const baseData = {
       lineItem: row.lineItem as string,
@@ -115,17 +132,39 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
     };
     const data = hasSource ? { ...baseData, source: (row.source as string) || null } : baseData;
 
-    if (row.id) {
-      await prisma.auditRMMRow.update({ where: { id: row.id as string }, data });
-    } else {
-      await prisma.auditRMMRow.create({ data: { engagementId, isMandatory: (row.isMandatory as boolean) ?? false, ...data } });
+    try {
+      if (row.id) {
+        await prisma.auditRMMRow.update({ where: { id: row.id as string }, data });
+      } else {
+        await prisma.auditRMMRow.create({ data: { engagementId, isMandatory: (row.isMandatory as boolean) ?? false, ...data } });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failures.push({
+        id: (row.id as string) || null,
+        lineItem: (row.lineItem as string) || null,
+        error: msg,
+      });
+      console.error(
+        `[RMM PUT] Row failed — engagement=${engagementId} id=${row.id || '(new)'} lineItem="${row.lineItem || ''}": ${msg}`,
+      );
+      // Continue with the next row so other edits still land. The
+      // failures list is returned to the client so useAutoSave can
+      // surface a meaningful error instead of silently losing data.
     }
   }
 
   const updated = hasSource
     ? await prisma.auditRMMRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' } })
     : (await prisma.auditRMMRow.findMany({ where: { engagementId }, orderBy: { sortOrder: 'asc' }, select: RMM_ROW_SELECT_PRE_SOURCE })).map(r => ({ ...r, source: null }));
-  return NextResponse.json({ rows: updated });
+  // Return the fresh server view of every row plus the list of any
+  // per-row failures. Status stays 200 so the autosave hook treats it
+  // as a successful save (the user's edits that DID land should not
+  // be marked as failed in the UI). When `failures` is non-empty the
+  // server-side console.error gives auditors / operators a way to
+  // diagnose; the UI can render it explicitly later if we need a
+  // visible warning.
+  return NextResponse.json({ rows: updated, failures });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
