@@ -341,7 +341,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [framework, setFramework] = useState('');
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
-  const [activeExecution, setActiveExecution] = useState<string | null>(null);
+  // Multiple test execution panels can be open at once. Switching from
+  // a single id to a Set so clicking Execute on one test no longer
+  // unmounts the panel for another — each TestExecutionPanel polls
+  // its own execution independently, and the server-side runs are
+  // unaffected by the panel mount/unmount anyway, but the UX read as
+  // "it stopped" because the panel disappeared.
+  const [activeExecutions, setActiveExecutions] = useState<Set<string>>(new Set());
   const [autoStartKeys, setAutoStartKeys] = useState<Set<string>>(new Set());
   const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'>>({});
   const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
@@ -1497,7 +1503,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       if (!test?.description) return null;
                       const testKey = `${rowKey}::${test.description}`;
                       const isApplicable = !excludedTests.has(testKey);
-                      const isExecutionOpen = activeExecution === testKey;
+                      const isExecutionOpen = activeExecutions.has(testKey);
                       const testConc = testConclusions[testKey] || testConclusions[test.description];
                       // Match conclusion by test description AND fsLine (or account code) for correct scoping
                       const effectiveFsLineForConc = activeLevel || activeStatement;
@@ -1536,14 +1542,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (isExecutionOpen) {
-                                      setActiveExecution(null);
-                                    } else {
-                                      if (!hasRun) {
-                                        setAutoStartKeys(prev => { const n = new Set(prev); n.add(testKey); return n; });
+                                    setActiveExecutions(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(testKey)) {
+                                        next.delete(testKey);
+                                      } else {
+                                        next.add(testKey);
+                                        if (!hasRun) {
+                                          setAutoStartKeys(p => { const n = new Set(p); n.add(testKey); return n; });
+                                        }
                                       }
-                                      setActiveExecution(testKey);
-                                    }
+                                      return next;
+                                    });
                                   }}
                                   className={`inline-flex items-center gap-0.5 text-[8px] font-medium px-1.5 py-0.5 rounded transition-colors flex-shrink-0 ${
                                     isExecutionOpen
@@ -1562,7 +1572,14 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                               {/* Conclusion dot — clickable to toggle results */}
                               {conc !== 'pending' && (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); setActiveExecution(isExecutionOpen ? null : testKey); }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveExecutions(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(testKey)) next.delete(testKey); else next.add(testKey);
+                                      return next;
+                                    });
+                                  }}
                                   className={`w-2.5 h-2.5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-offset-1 ${
                                     conc === 'green' ? 'bg-green-500 hover:ring-green-300' :
                                     conc === 'orange' ? 'bg-orange-500 hover:ring-orange-300' :
@@ -1656,7 +1673,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 conclusionRecord={dbConc || null}
                                 autoStart={autoStartKeys.has(testKey)}
                                 onAutoStartConsumed={() => setAutoStartKeys(prev => { const n = new Set(prev); n.delete(testKey); return n; })}
-                                onClose={() => setActiveExecution(null)}
+                                onClose={() => setActiveExecutions(prev => {
+                                  const next = new Set(prev);
+                                  next.delete(testKey);
+                                  return next;
+                                })}
                                 onConclusionChange={(c) => setTestConclusions(prev => ({ ...prev, [testKey]: c }))}
                               />
                             </td>
