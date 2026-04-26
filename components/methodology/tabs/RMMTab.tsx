@@ -227,10 +227,29 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
     document.body.style.userSelect = 'none';
   }
 
-  const { saving, lastSaved, error } = useAutoSave(
+  // Per-row save failure surfaced from the server. The PUT runs each
+  // row's persist in its own try/catch and returns a `failures` array
+  // on the response — when non-empty we show it inline next to the
+  // "Saved" indicator so the auditor knows their typed value didn't
+  // land. Without this the user only saw "Saved" even when, say, the
+  // Nature column update silently failed for one row.
+  const [saveFailures, setSaveFailures] = useState<Array<{ id: string | null; lineItem: string | null; error: string }>>([]);
+
+  const { saving, lastSaved, error, triggerSave } = useAutoSave<{ rows: RMMRow[] }, { rows: unknown[]; failures?: Array<{ id: string | null; lineItem: string | null; error: string }> }>(
     `/api/engagements/${engagementId}/rmm`,
     { rows },
-    { enabled: JSON.stringify(rows) !== JSON.stringify(initialRows) }
+    {
+      enabled: JSON.stringify(rows) !== JSON.stringify(initialRows),
+      onSaveSuccess: (resp) => {
+        const f = Array.isArray(resp?.failures) ? resp.failures : [];
+        setSaveFailures(f);
+        if (f.length > 0) {
+          // Helpful for self-diagnosis without Vercel logs — open
+          // browser DevTools console to see exactly which row + why.
+          console.error('[RMM autosave] partial failure:', f);
+        }
+      },
+    }
   );
 
   const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
@@ -742,8 +761,30 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
         </div>
         <div className="flex items-center gap-2">
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
-          {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
+          {lastSaved && !saving && saveFailures.length === 0 && <span className="text-xs text-green-500">Saved</span>}
+          {saveFailures.length > 0 && !saving && (
+            <span
+              className="text-xs text-red-600 cursor-help underline decoration-dotted"
+              title={saveFailures.map(f => `Row "${f.lineItem || '(unknown)'}" (id=${f.id || 'new'}): ${f.error}`).join('\n')}
+            >
+              {saveFailures.length} row{saveFailures.length === 1 ? '' : 's'} failed to save — hover for detail
+            </span>
+          )}
           {error && <span className="text-xs text-red-500">{error}</span>}
+          {/* Manual Save now — forces an immediate flush instead of
+              waiting for the 2s autosave debounce. Useful when the
+              auditor wants to confirm a critical edit (e.g. typing
+              into Nature) actually persisted before moving on. Calls
+              the same performSave the debounce uses, so failure
+              surfacing (saveFailures + browser console.error) works
+              identically. */}
+          <button
+            type="button"
+            onClick={() => triggerSave()}
+            disabled={saving}
+            title="Force-save right now without waiting for the 2-second autosave debounce"
+            className="text-xs px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+          >Save now</button>
           {/* Populate buttons — show when no non-mandatory rows exist */}
           {(rows || []).filter(r => !r.isMandatory).length === 0 && (
             <button onClick={populateData} disabled={populating}

@@ -122,7 +122,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
   type RowFailure = { id: string | null; lineItem: string | null; error: string };
   const failures: RowFailure[] = [];
 
-  for (const row of rows) {
+  // Build the full data payload for one row. Pulled out so both the
+  // update and create branches stay in sync — easy to forget a field
+  // when adding new columns otherwise.
+  function buildRowData(row: Record<string, unknown>) {
     const baseData = {
       lineItem: row.lineItem as string,
       lineType: (row.lineType as string) || 'fs_line',
@@ -147,28 +150,51 @@ export async function PUT(req: Request, { params }: { params: Promise<{ engageme
       isHidden: (row.isHidden as boolean) ?? false,
       sortOrder: (row.sortOrder as number) ?? 0,
     };
-    const data = hasSource ? { ...baseData, source: (row.source as string) || null } : baseData;
+    return hasSource ? { ...baseData, source: (row.source as string) || null } : baseData;
+  }
 
-    try {
-      if (row.id) {
-        await prisma.auditRMMRow.update({ where: { id: row.id as string }, data });
-      } else {
-        await prisma.auditRMMRow.create({ data: { engagementId, isMandatory: (row.isMandatory as boolean) ?? false, ...data } });
+  // Parallelise the per-row writes in chunks of 20. The previous
+  // serial loop awaited each prisma.update sequentially — at ~50ms per
+  // network round-trip on a 210-row engagement that's 10+ seconds,
+  // which is right on Vercel's 10s function timeout. The browser
+  // would see a 504 and abandon the typed Nature value. Chunking
+  // keeps total runtime under ~1s while staying within pgbouncer's
+  // connection-limit guidance.
+  //
+  // Switched from update / create to UPSERT so a stale client-side
+  // row id (deleted by another tab, or never persisted to begin with)
+  // doesn't lose the user's edit — upsert creates the row if it
+  // doesn't exist, otherwise updates.
+  const CHUNK = 20;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const slice = rows.slice(i, i + CHUNK);
+    await Promise.all(slice.map(async row => {
+      try {
+        const data = buildRowData(row);
+        if (row.id) {
+          // Upsert by id — idempotent. If the row vanished between
+          // the client's last load and this save (e.g. another tab
+          // deleted it), upsert creates it again with the same id.
+          await prisma.auditRMMRow.upsert({
+            where: { id: row.id as string },
+            create: { id: row.id as string, engagementId, isMandatory: (row.isMandatory as boolean) ?? false, ...data },
+            update: data,
+          });
+        } else {
+          await prisma.auditRMMRow.create({ data: { engagementId, isMandatory: (row.isMandatory as boolean) ?? false, ...data } });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        failures.push({
+          id: (row.id as string) || null,
+          lineItem: (row.lineItem as string) || null,
+          error: msg,
+        });
+        console.error(
+          `[RMM PUT] Row failed — engagement=${engagementId} id=${row.id || '(new)'} lineItem="${row.lineItem || ''}" riskIdentified=${JSON.stringify(row.riskIdentified)}: ${msg}`,
+        );
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      failures.push({
-        id: (row.id as string) || null,
-        lineItem: (row.lineItem as string) || null,
-        error: msg,
-      });
-      console.error(
-        `[RMM PUT] Row failed — engagement=${engagementId} id=${row.id || '(new)'} lineItem="${row.lineItem || ''}": ${msg}`,
-      );
-      // Continue with the next row so other edits still land. The
-      // failures list is returned to the client so useAutoSave can
-      // surface a meaningful error instead of silently losing data.
-    }
+    }));
   }
 
   const updated = hasSource
