@@ -223,17 +223,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
   // point types keep their existing permissions; EQR already checked
   // at the top of the handler for review_point scope.
   if (action === 'close') {
-    if (existing.pointType === 'ri_matter') {
+    if (existing.pointType === 'ri_matter' || existing.pointType === 'review_point') {
       // Look up the caller's team membership to confirm they're the RI
       // (or a Partner). Anyone else gets 403 even if they're on the
-      // engagement. The user's spec says "Only RI can close an item".
+      // engagement. Spec says "Only RI can close an item" — Review
+      // Points mirror RI Matters (per user instruction to replicate
+      // the same functionality), so the same gate applies to both.
       const member = await prisma.auditTeamMember.findFirst({
         where: { engagementId, userId: session.user.id },
         select: { role: true },
       });
       const isRI = member?.role === 'RI' || member?.role === 'Partner' || session.user.isSuperAdmin;
       if (!isRI) {
-        return NextResponse.json({ error: 'Only the RI can close an RI matter' }, { status: 403 });
+        const noun = existing.pointType === 'review_point' ? 'review point' : 'RI matter';
+        return NextResponse.json({ error: `Only the RI can close a ${noun}` }, { status: 403 });
       }
     }
     const closeData = { status: 'closed', closedById: session.user.id, closedByName: session.user.name || '', closedAt: new Date() };
@@ -338,7 +341,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
       // those columns are missing in production, retry without.
       try {
         created = await prisma.auditErrorSchedule.create({
-          data: { ...errorBase, linkedFromType: 'ri_matter', linkedFromId: existing.id },
+          data: { ...errorBase, linkedFromType: existing.pointType, linkedFromId: existing.id },
         });
       } catch (err: any) {
         if (!isMissingMigrationColumn(err)) throw err;
@@ -362,7 +365,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
         body: raiseFields?.body ?? null,
         createdById: session.user.id,
         createdByName: session.user.name || session.user.email || '',
-        linkedFromType: 'ri_matter',
+        linkedFromType: existing.pointType,
         linkedFromId: existing.id,
       };
       created = await writeWithFallback(
@@ -384,10 +387,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
         actorUserId: actor.actorUserId,
         actorName: actor.actorName,
         action: `audit-point.raise-${raiseAs}`,
-        summary: `Raised RI matter #${existing.chatNumber} as ${raiseAs}${summaryText ? ` — ${summaryText}${(existing.description || '').length > 120 ? '…' : ''}` : ''}`,
+        summary: `Raised ${existing.pointType.replace(/_/g, ' ')} #${existing.chatNumber} as ${raiseAs}${summaryText ? ` — ${summaryText}${(existing.description || '').length > 120 ? '…' : ''}` : ''}`,
         targetType: raiseAs === 'error' ? 'error_schedule' : 'audit_point',
         targetId: created.id,
-        metadata: { raisedFromRiMatterId: existing.id, raisedFromChatNumber: existing.chatNumber },
+        // Generic source-pointer keys so review_point and ri_matter
+        // raises both attribute back to their source. Old entries used
+        // `raisedFromRiMatterId` — readers should accept either.
+        metadata: {
+          raisedFromPointId: existing.id,
+          raisedFromPointType: existing.pointType,
+          raisedFromChatNumber: existing.chatNumber,
+        },
       });
     }
 

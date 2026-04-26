@@ -232,14 +232,17 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [starting, setStarting] = useState(false);
   const [openPanel, setOpenPanel] = useState<'review_point' | 'representation' | 'management' | 'ri_matter' | null>(null);
 
-  // RI Matters count badges. Outstanding = new+open, closed = closed.
-  // Refetched on mount and whenever the RI Matters panel closes (so a
-  // new matter or a closure shows up immediately).
+  // RI Matters / Review Points count badges. Outstanding = new+open;
+  // closed = closed/committed/cancelled. Refetched on mount and
+  // whenever the corresponding panel closes so a new item or a
+  // closure shows up immediately. One state object per pointType so
+  // each badge updates independently.
   const [riCounts, setRiCounts] = useState<{ outstanding: number; closed: number } | null>(null);
-  const refreshRiCounts = useCallback(async () => {
+  const [reviewCounts, setReviewCounts] = useState<{ outstanding: number; closed: number } | null>(null);
+  const fetchPointCounts = useCallback(async (pointType: 'ri_matter' | 'review_point') => {
     try {
-      const res = await fetch(`/api/engagements/${engagement.id}/audit-points?type=ri_matter`);
-      if (!res.ok) return;
+      const res = await fetch(`/api/engagements/${engagement.id}/audit-points?type=${pointType}`);
+      if (!res.ok) return null;
       const data = await res.json();
       const list: any[] = Array.isArray(data?.points) ? data.points : [];
       let outstanding = 0;
@@ -248,10 +251,18 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         if (p.status === 'closed' || p.status === 'committed' || p.status === 'cancelled') closed++;
         else outstanding++;
       }
-      setRiCounts({ outstanding, closed });
-    } catch { /* badges are nice-to-have; leave the previous value */ }
+      return { outstanding, closed };
+    } catch { return null; }
   }, [engagement.id]);
-  useEffect(() => { void refreshRiCounts(); }, [refreshRiCounts]);
+  const refreshRiCounts = useCallback(async () => {
+    const next = await fetchPointCounts('ri_matter');
+    if (next) setRiCounts(next);
+  }, [fetchPointCounts]);
+  const refreshReviewCounts = useCallback(async () => {
+    const next = await fetchPointCounts('review_point');
+    if (next) setReviewCounts(next);
+  }, [fetchPointCounts]);
+  useEffect(() => { void refreshRiCounts(); void refreshReviewCounts(); }, [refreshRiCounts, refreshReviewCounts]);
 
   const isPreStart = engStatus === 'pre_start';
   const [isNewClient, setIsNewClient] = useState<boolean | null>(engagement.isNewClient ?? null);
@@ -668,8 +679,21 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     <div>
       {/* Persistent action buttons */}
       <div className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-t-lg">
-        <button onClick={() => setOpenPanel('review_point')} className="px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition-colors">
+        <button onClick={() => setOpenPanel('review_point')} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition-colors">
           Review Point
+          {/* Mirror of the RI Matters dots: red = outstanding (new+open),
+              green = closed. Both shown when > 0; hidden when zero so
+              the button stays clean for empty engagements. */}
+          {reviewCounts && reviewCounts.outstanding > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-red-600 text-white text-[9px] font-bold leading-none">
+              {reviewCounts.outstanding}
+            </span>
+          )}
+          {reviewCounts && reviewCounts.closed > 0 && (
+            <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-green-600 text-white text-[9px] font-bold leading-none">
+              {reviewCounts.closed}
+            </span>
+          )}
         </button>
         <button onClick={() => setOpenPanel('representation')} className="px-2.5 py-1 text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors">
           Representation
@@ -743,7 +767,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
       {/* Panel modals */}
       {openPanel === 'review_point' && (
-        <ReviewPointsPanel engagementId={engagement.id} userId={currentUserId} onClose={() => setOpenPanel(null)} />
+        <ReviewPointsPanel
+          engagementId={engagement.id}
+          userId={currentUserId}
+          userRole={teamMembers.find(m => m.userId === currentUserId)?.role}
+          onClose={() => { setOpenPanel(null); void refreshReviewCounts(); }}
+        />
       )}
       {openPanel === 'management' && (
         <ManagementPointPanel engagementId={engagement.id} pointType="management" title="Management Letter Points" onClose={() => setOpenPanel(null)} />

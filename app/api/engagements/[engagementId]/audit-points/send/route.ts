@@ -84,19 +84,26 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       },
     ];
 
-    // Portal Principal routing — RI matters don't carry FS-Line
-    // context by design (they're cross-cutting), so the routing
-    // helper will land this with the Portal Principal who can then
-    // manually reassign if it's actually FS-specific. That matches
-    // the spec's "messages outside FS Lines go to the Principal".
+    // Portal Principal routing — RI matters / review points don't
+    // carry FS-Line context by design (they're cross-cutting), so the
+    // routing helper lands this with the Portal Principal who can
+    // then manually reassign. Matches the spec's "messages outside FS
+    // Lines go to the Principal".
     const routing = await buildRoutingForNewRequest({ engagementId });
+
+    // Section + label derived from the point's type so review points
+    // land in their own bucket on the portal rather than mixing with
+    // RI matters (and the labelling reads correctly to the client).
+    const isReview = point.pointType === 'review_point';
+    const portalSection = isReview ? 'review_points' : 'ri_matters';
+    const portalLabel = isReview ? 'Review point' : 'RI matter';
 
     const created = await prisma.portalRequest.create({
       data: {
         clientId: eng.clientId,
         engagementId,
-        section: 'ri_matters',
-        question: `[RI matter #${point.chatNumber}] ${question}`,
+        section: portalSection,
+        question: `[${portalLabel} #${point.chatNumber}] ${question}`,
         status: 'outstanding',
         requestedById: session.user.id,
         requestedByName: session.user.name || session.user.email || '',
@@ -112,10 +119,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         actorUserId: actor.actorUserId,
         actorName: actor.actorName,
         action: 'audit-point.send-portal',
-        summary: `Sent RI matter #${point.chatNumber} to client portal`,
+        summary: `Sent ${portalLabel} #${point.chatNumber} to client portal`,
         targetType: 'portal_request',
         targetId: created.id,
-        metadata: { riMatterId: point.id, riMatterChatNumber: point.chatNumber },
+        // Generic key so both RI matters and review points attribute
+        // back via the same field. Old entries used `riMatterId` —
+        // readers should accept either.
+        metadata: { pointId: point.id, pointType: point.pointType, pointChatNumber: point.chatNumber },
       });
     }
 
@@ -160,7 +170,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     // specialist review uses the same pattern in /api/engagements/…/
     // schedule-reviews so the look is consistent.
     const periodEnd = eng.period?.endDate ? new Date(eng.period.endDate).toLocaleDateString('en-GB') : '';
-    const subject = `${target === 'technical' ? 'Technical' : 'Ethics'} review — ${eng.client.clientName} RI matter #${point.chatNumber}`;
+    const sourceLabel = point.pointType === 'review_point' ? 'Review point' : 'RI matter';
+    const subject = `${target === 'technical' ? 'Technical' : 'Ethics'} review — ${eng.client.clientName} ${sourceLabel} #${point.chatNumber}`;
     const chatHtml = responses.length === 0
       ? '<p style="color:#94a3b8;font-style:italic">No thread yet.</p>'
       : responses.map((r: any) => `
@@ -180,7 +191,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         </p>
         ${covering ? `<h4 style="margin:14px 0 4px">Covering message</h4><p style="white-space:pre-wrap">${escapeHtml(covering)}</p>` : ''}
         ${aiSummary ? `<h4 style="margin:14px 0 4px">Summary</h4><p style="white-space:pre-wrap;background:#f1f5f9;border-radius:6px;padding:8px 10px">${escapeHtml(aiSummary)}</p>` : ''}
-        <h4 style="margin:16px 0 4px">Original matter</h4>
+        <h4 style="margin:16px 0 4px">Original ${sourceLabel.toLowerCase()}</h4>
         <p style="white-space:pre-wrap;font-size:13px">${escapeHtml(point.description || '')}</p>
         <h4 style="margin:16px 0 4px">Thread</h4>
         ${chatHtml}
@@ -202,10 +213,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         actorUserId: actor.actorUserId,
         actorName: actor.actorName,
         action: target === 'technical' ? 'audit-point.send-technical' : 'audit-point.send-ethics',
-        summary: `Sent RI matter #${point.chatNumber} to ${target === 'technical' ? 'Technical' : 'Ethics Partner'} (${toName || toEmail})`,
+        summary: `Sent ${sourceLabel} #${point.chatNumber} to ${target === 'technical' ? 'Technical' : 'Ethics Partner'} (${toName || toEmail})`,
         targetType: 'audit_point',
         targetId: point.id,
-        metadata: { riMatterId: point.id, role: roleSlug, toEmail, messageId },
+        metadata: { pointId: point.id, pointType: point.pointType, role: roleSlug, toEmail, messageId },
       });
     }
 

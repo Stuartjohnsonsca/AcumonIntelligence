@@ -4,31 +4,107 @@ import { useState, useEffect, useMemo, useRef, cloneElement, isValidElement } fr
 import {
   Plus, Loader2, X, ChevronDown, ChevronRight, Send, Shield,
   AlertOctagon, FileWarning, MessageCircle, Sparkles, Check, ExternalLink,
-  History,
+  History, ClipboardCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { LucideIcon } from 'lucide-react';
 import {
   encodeNavReference, decodeNavReference, getCurrentLocation, navigateTo,
 } from '@/lib/engagement-nav';
 
 /**
- * RI Matters panel — list of all RI matters raised on the engagement.
+ * Generic audit-points panel — used for both RI Matters and Review
+ * Points. Behaviour and layout are identical (per spec — Review Points
+ * should mirror RI Matters); the differences are theming, labels, and
+ * the pointType used in the API calls.
  *
- * UX rules (per user spec):
- *   - Collapsible list; each matter is a compact row by default,
- *     click to expand and see the chat / actions.
+ * UX rules:
+ *   - Collapsible list; each item is a compact row by default, click
+ *     to expand and see the chat / actions.
  *   - Newest / most recently updated items at the top.
- *   - User can traffic-light each matter (green / amber / red /
- *     clear) — any user.
- *   - Status badges: new | open | closed. 'new' = no replies yet,
- *     'open' = has replies, 'closed' = RI has closed.
- *   - Everyone can CREATE new matters and respond to existing ones.
- *   - Only the RI (or a Partner) can CLOSE an item — enforced
- *     server-side too.
- *   - RI-only actions per matter: Send to Portal, Send to Technical,
- *     Send to Ethics Partner, Raise as Error, Raise as Management,
- *     Raise as Representation.
+ *   - User can traffic-light each item (green / amber / red / clear).
+ *   - Status badges: new | open | closed.
+ *   - Everyone can CREATE / RESPOND.
+ *   - Only the RI (or Partner) can CLOSE — enforced server-side.
+ *   - RI-only actions: Send to Portal / Technical / Ethics; Raise as
+ *     Error / Management / Representation.
+ *
+ * To avoid breaking imports in EngagementTabs, RIMattersPanel is kept
+ * as the wrapper-with-default-config, and ReviewPointsPanel imports
+ * the same generic component with pointType='review_point'.
  */
+
+export type AuditPointType = 'ri_matter' | 'review_point';
+
+interface PanelConfig {
+  pointType: AuditPointType;
+  title: string;             // header — "RI Matters" / "Review Points"
+  itemSingularCap: string;    // "Matter" / "Point" — for "New Matter"/"New Point"
+  describeNoun: string;       // "RI matter" / "review point" — for placeholder/confirm text
+  emptyText: string;
+  actionsLabel: string;       // "RI actions:" / "Reviewer actions:"
+  modalPrefix: string;        // "RI matter" / "Review point" — used in modal titles
+  icon: LucideIcon;
+  // Tailwind class strings for the header/create theme. Can't be
+  // synthesised at runtime because Tailwind's JIT only sees literal
+  // strings; that's why we have one full record per theme.
+  theme: {
+    headerBg: string;             // 'bg-red-50/60'
+    headerIconColor: string;      // 'text-red-600'
+    headerTitleColor: string;     // 'text-red-800'
+    headerSubtitleColor: string;  // 'text-red-600/80'
+    createBg: string;             // 'bg-red-50/20'
+    createInputBorder: string;    // 'border-red-200'
+    spinnerColor: string;         // 'text-red-500'
+    createButtonBg: string;       // 'bg-red-600 hover:bg-red-700'
+    errorBox: string;             // 'text-red-700 bg-red-50 border-red-200'
+  };
+}
+
+const PANEL_CONFIGS: Record<AuditPointType, PanelConfig> = {
+  ri_matter: {
+    pointType: 'ri_matter',
+    title: 'RI Matters',
+    itemSingularCap: 'Matter',
+    describeNoun: 'RI matter',
+    emptyText: 'No RI matters raised yet.',
+    actionsLabel: 'RI actions:',
+    modalPrefix: 'RI matter',
+    icon: Shield,
+    theme: {
+      headerBg: 'bg-red-50/60',
+      headerIconColor: 'text-red-600',
+      headerTitleColor: 'text-red-800',
+      headerSubtitleColor: 'text-red-600/80',
+      createBg: 'bg-red-50/20',
+      createInputBorder: 'border-red-200',
+      spinnerColor: 'text-red-500',
+      createButtonBg: 'bg-red-600 hover:bg-red-700',
+      errorBox: 'text-red-700 bg-red-50 border-red-200',
+    },
+  },
+  review_point: {
+    pointType: 'review_point',
+    title: 'Review Points',
+    itemSingularCap: 'Point',
+    describeNoun: 'review point',
+    emptyText: 'No review points yet.',
+    actionsLabel: 'Reviewer actions:',
+    modalPrefix: 'Review point',
+    icon: ClipboardCheck,
+    theme: {
+      headerBg: 'bg-amber-50/60',
+      headerIconColor: 'text-amber-600',
+      headerTitleColor: 'text-amber-800',
+      headerSubtitleColor: 'text-amber-600/80',
+      createBg: 'bg-amber-50/20',
+      createInputBorder: 'border-amber-200',
+      spinnerColor: 'text-amber-500',
+      createButtonBg: 'bg-amber-600 hover:bg-amber-700',
+      errorBox: 'text-amber-700 bg-amber-50 border-amber-200',
+    },
+  },
+};
 
 interface Response {
   id: string;
@@ -62,6 +138,10 @@ interface Props {
   userRole?: string; // Junior | Manager | RI | Partner
   onClose: () => void;
   onAction?: (action: string, pointId: string) => void;
+  // Defaults to 'ri_matter' so existing call sites (RIMattersPanel
+  // alias) keep working unchanged. ReviewPointsPanel passes
+  // 'review_point' through.
+  pointType?: AuditPointType;
 }
 
 // Action-log entry attributed to a specific matter. Built from
@@ -99,7 +179,9 @@ const STATUS_STYLES: Record<string, string> = {
   closed: 'bg-slate-200 text-slate-600 border-slate-300',
 };
 
-export function RIMattersPanel({ engagementId, userId, userRole, onClose, onAction }: Props) {
+export function RIMattersPanel({ engagementId, userId, userRole, onClose, onAction, pointType = 'ri_matter' }: Props) {
+  const config = PANEL_CONFIGS[pointType];
+  const Icon = config.icon;
   const [matters, setMatters] = useState<Matter[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -141,7 +223,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/audit-points?type=ri_matter`);
+      const res = await fetch(`/api/engagements/${engagementId}/audit-points?type=${pointType}`);
       if (res.ok) {
         const data = await res.json();
         const list: Matter[] = (data.points || []).map((p: any) => ({
@@ -184,8 +266,15 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
       for (const e of entries) {
         if (typeof e?.action !== 'string' || !e.action.startsWith('audit-point.')) continue;
         const meta = e.metadata && typeof e.metadata === 'object' ? e.metadata : {};
+        // Accept both the new generic keys (raisedFromPointId / pointId)
+        // and the older RI-matter-specific keys for backwards compat
+        // with action-log entries written before the review-point
+        // generalisation. Falls through to targetId for direct
+        // audit_point targets (close / send-technical / send-ethics).
         const matterId =
-          meta?.raisedFromRiMatterId
+          meta?.raisedFromPointId
+          || meta?.pointId
+          || meta?.raisedFromRiMatterId
           || meta?.riMatterId
           || (e.targetType === 'audit_point' ? e.targetId : null);
         if (!matterId || typeof matterId !== 'string') continue;
@@ -237,7 +326,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
       const reference = navLoc ? encodeNavReference(navLoc, url) : (url ?? null);
       const res = await fetch(`/api/engagements/${engagementId}/audit-points`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pointType: 'ri_matter', description: newDesc.trim(), reference }),
+        body: JSON.stringify({ pointType, description: newDesc.trim(), reference }),
       });
       if (res.ok) {
         setNewDesc(''); setShowCreate(false);
@@ -269,7 +358,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
   }
 
   async function close(matter: Matter) {
-    if (!confirm(`Close RI matter #${matter.chatNumber}? Only you can reopen via a new matter referencing this one.`)) return;
+    if (!confirm(`Close ${config.describeNoun} #${matter.chatNumber}? Only you can reopen via a new ${config.describeNoun} referencing this one.`)) return;
     setBusy(matter.id);
     try {
       const res = await fetch(`/api/engagements/${engagementId}/audit-points`, {
@@ -358,14 +447,14 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
       >
         {/* Header — also the drag handle */}
         <div
-          className="flex items-center justify-between px-4 py-3 border-b bg-red-50/60 rounded-t-xl cursor-move select-none"
+          className={`flex items-center justify-between px-4 py-3 border-b ${config.theme.headerBg} rounded-t-xl cursor-move select-none`}
           onMouseDown={onHeaderMouseDown}
         >
           <div className="flex items-center gap-2">
-            <Shield className="h-4 w-4 text-red-600" />
+            <Icon className={`h-4 w-4 ${config.theme.headerIconColor}`} />
             <div>
-              <h2 className="text-sm font-bold text-red-800">RI Matters</h2>
-              <p className="text-[10px] text-red-600/80">
+              <h2 className={`text-sm font-bold ${config.theme.headerTitleColor}`}>{config.title}</h2>
+              <p className={`text-[10px] ${config.theme.headerSubtitleColor}`}>
                 {counts.total} total · {counts.open} open · {counts.closed} closed · drag header to move
               </p>
             </div>
@@ -373,7 +462,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
           <div className="flex items-center gap-2">
             {!minimised && (
               <Button onClick={() => setShowCreate(s => !s)} size="sm" variant="outline">
-                <Plus className="h-3.5 w-3.5 mr-1" /> New Matter
+                <Plus className="h-3.5 w-3.5 mr-1" /> New {config.itemSingularCap}
               </Button>
             )}
             <button
@@ -395,17 +484,17 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
         {!minimised && (<>
         {/* Create row */}
         {showCreate && (
-          <div className="px-4 py-3 border-b bg-red-50/20">
+          <div className={`px-4 py-3 border-b ${config.theme.createBg}`}>
             <textarea
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
-              placeholder="Describe the RI matter…"
-              className="w-full border border-red-200 rounded px-3 py-2 text-sm min-h-[70px]"
+              placeholder={`Describe the ${config.describeNoun}…`}
+              className={`w-full border ${config.theme.createInputBorder} rounded px-3 py-2 text-sm min-h-[70px]`}
               rows={3}
               autoFocus
             />
             {createError && (
-              <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+              <div className={`mt-2 text-xs ${config.theme.errorBox} border rounded p-2`}>
                 {createError}
               </div>
             )}
@@ -415,7 +504,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
                 onClick={() => void createMatter()}
                 size="sm"
                 disabled={!newDesc.trim() || creating}
-                className="bg-red-600 hover:bg-red-700"
+                className={config.theme.createButtonBg}
               >
                 {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null} Create
               </Button>
@@ -426,9 +515,9 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
         {/* List */}
         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
           {loading ? (
-            <div className="text-center py-12"><Loader2 className="h-5 w-5 animate-spin text-red-500 mx-auto" /></div>
+            <div className="text-center py-12"><Loader2 className={`h-5 w-5 animate-spin ${config.theme.spinnerColor} mx-auto`} /></div>
           ) : matters.length === 0 ? (
-            <div className="text-center py-12 text-slate-400 text-sm">No RI matters raised yet.</div>
+            <div className="text-center py-12 text-slate-400 text-sm">{config.emptyText}</div>
           ) : (
             matters.map(matter => {
               const isExpanded = expanded.has(matter.id);
@@ -655,7 +744,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
                       {/* RI-only action row */}
                       {isRI && matter.status !== 'closed' && (
                         <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-slate-100">
-                          <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mr-1">RI actions:</span>
+                          <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mr-1">{config.actionsLabel}</span>
                           <ActionBtn onClick={() => setSendModal({ matter, target: 'portal' })} icon={<Send />} label="Send to Client Portal" tone="blue" />
                           <ActionBtn onClick={() => setSendModal({ matter, target: 'technical' })} icon={<Sparkles />} label="Send to Technical" tone="indigo" />
                           <ActionBtn onClick={() => setSendModal({ matter, target: 'ethics' })} icon={<Shield />} label="Send to Ethics Partner" tone="indigo" />
@@ -684,6 +773,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
           matter={sendModal.matter}
           target={sendModal.target}
           engagementId={engagementId}
+          sourceLabel={config.modalPrefix}
           onDone={(success) => {
             setSendModal(null);
             if (success) { void load(); void loadActionLog(); }
@@ -695,6 +785,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
           matter={raiseModal.matter}
           target={raiseModal.target}
           engagementId={engagementId}
+          sourceLabel={config.modalPrefix}
           onDone={(success, targetId) => {
             setRaiseModal(null);
             if (success) { void load(); void loadActionLog(); }
@@ -738,11 +829,12 @@ function ActionBtn({ onClick, icon, label, tone }: { onClick: () => void; icon: 
 }
 
 function SendModal({
-  matter, target, engagementId, onDone,
+  matter, target, engagementId, onDone, sourceLabel,
 }: {
   matter: Matter; target: 'portal' | 'technical' | 'ethics';
   engagementId: string;
   onDone: (success: boolean) => void;
+  sourceLabel: string; // "RI matter" or "Review point" — for the header
 }) {
   const [message, setMessage] = useState('');
   const [summary, setSummary] = useState('');
@@ -786,7 +878,7 @@ function SendModal({
     <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={() => onDone(false)}>
       <div className="bg-white rounded-lg shadow-xl w-full max-w-xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-800">{title} — RI matter #{matter.chatNumber}</h3>
+          <h3 className="text-sm font-bold text-slate-800">{title} — {sourceLabel} #{matter.chatNumber}</h3>
           <button onClick={() => onDone(false)} disabled={sending} className="text-slate-400 hover:text-slate-600">
             <X className="h-4 w-4" />
           </button>
@@ -847,11 +939,12 @@ function SendModal({
 }
 
 function RaiseModal({
-  matter, target, engagementId, onDone,
+  matter, target, engagementId, onDone, sourceLabel,
 }: {
   matter: Matter; target: 'error' | 'management' | 'representation';
   engagementId: string;
   onDone: (success: boolean, targetId?: string) => void;
+  sourceLabel: string; // "RI matter" or "Review point" — for the header
 }) {
   const [description, setDescription] = useState(matter.description);
   // Error-specific fields
@@ -918,14 +1011,14 @@ function RaiseModal({
     <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={() => onDone(false)}>
       <div className="bg-white rounded-lg shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-800">{title} — from RI matter #{matter.chatNumber}</h3>
+          <h3 className="text-sm font-bold text-slate-800">{title} — from {sourceLabel} #{matter.chatNumber}</h3>
           <button onClick={() => onDone(false)} disabled={raising} className="text-slate-400 hover:text-slate-600">
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="px-4 pt-4 pb-2 space-y-3 overflow-y-auto">
           <p className="text-[11px] text-slate-500 italic">
-            The new record will be linked back to this RI matter so reviewers can trace where it originated.
+            The new record will be linked back to this {sourceLabel} so reviewers can trace where it originated.
             You can tweak everything in the target panel afterwards.
           </p>
           <div>
