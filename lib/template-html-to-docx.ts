@@ -853,7 +853,23 @@ export function htmlToDocxBody(html: string): string {
   // Also drop runs that contain ONLY an rPr (styling with no text
   // or break) — they render nothing visible but can confuse strict
   // validators by appearing to be "styled empty content".
-  xml = xml.replace(/<w:r>\s*<w:rPr>[\s\S]*?<\/w:rPr>\s*<\/w:r>/g, '');
+  // CRITICAL: tempered non-greedy. The naive `[\s\S]*?` form that
+  // used to be here would catastrophically overmatch — when the
+  // engine started at a NON-empty run like
+  //   <w:r><w:rPr>…</w:rPr><w:t>Some Text</w:t></w:r>
+  // the first `</w:rPr>` was followed by `<w:t>` not `</w:r>`, so
+  // the engine extended `[\s\S]*?` searching for a LATER
+  // `</w:rPr></w:r>` pair, eventually finding one in a different,
+  // truly-empty run thousands of bytes later — and replacing
+  // EVERYTHING in between with `''`. Whole tables silently
+  // disappeared from the rendered .docx.
+  //
+  // The tempered form `(?:(?!<\/?w:r\b)[\s\S])*?` matches any
+  // character except positions where another `<w:r>` open or
+  // `</w:r>` close would start, keeping the match strictly within a
+  // single run. Empty-rPr-only runs still get stripped; non-empty
+  // runs are now untouchable by this pass.
+  xml = xml.replace(/<w:r>\s*<w:rPr>(?:(?!<\/?w:r\b)[\s\S])*?<\/w:rPr>\s*<\/w:r>/g, '');
 
   // Canonicalise self-closing + attribute-bearing self-closing first.
   xml = xml.replace(/<w:p(?:\s[^>]*)?\s*\/>/g, '<w:p/>');
