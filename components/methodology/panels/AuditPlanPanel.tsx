@@ -1514,12 +1514,25 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                           !c.accountCode
                         )
                       ) || dbConclusions.find(c => c.testDescription === test.description);
-                      // Also check for completed executions (tests that ran but have no conclusion record yet)
+                      // Completed executions drive the green/pending dot
+                      // colour. Kept separate from the "any execution"
+                      // lookup below because completed-without-conclusion
+                      // defaults to green, but an in-progress run
+                      // shouldn't.
                       const dbExec = dbExecutions.find(e =>
                         e.testDescription === test.description && e.status === 'completed' && e.fsLine === effectiveFsLineForConc
                       ) || dbExecutions.find(e => e.testDescription === test.description && e.status === 'completed');
+                      // Any execution at all — running, paused, completed,
+                      // failed. The Execute/Open button label depends on
+                      // this so a test that's been started (even if not
+                      // yet finished) shows "Open" instead of "Execute".
+                      // Without this the button regressed to "Execute"
+                      // mid-run and re-clicking it kicked off a new run.
+                      const dbAnyExec = dbExecutions.find(e =>
+                        e.testDescription === test.description && e.fsLine === effectiveFsLineForConc
+                      ) || dbExecutions.find(e => e.testDescription === test.description);
                       const conc = testConc || dbConc?.conclusion || (dbExec ? 'green' : 'pending');
-                      const effectiveExecId = dbConc?.executionId || dbExec?.id || null;
+                      const effectiveExecId = dbConc?.executionId || dbExec?.id || dbAnyExec?.id || null;
                       const hasResults = (conc !== 'pending' || effectiveExecId) && !test.isIngest && test.outputFormat !== 'payroll_workpaper';
                       return (
                       <Fragment key={`${rowKey}-t${ti}`}>
@@ -1536,7 +1549,14 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                               <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
                               <span className={`text-[9px] min-w-0 truncate ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`} style={{maxWidth: '60%'}}>{test.description}</span>
                               {isApplicable && (() => {
-                                const hasRun = !!dbExec || conc !== 'pending';
+                                // hasRun = "this test has been kicked off
+                                // at least once" — true for in-progress
+                                // runs as well as completed ones, so the
+                                // button label stays "Open" while a test
+                                // is still running. Without dbAnyExec the
+                                // label flipped back to "Execute" mid-run
+                                // and re-clicking started a new run.
+                                const hasRun = !!dbExec || !!dbAnyExec || conc !== 'pending';
                                 const label = isExecutionOpen ? 'Close' : hasRun ? 'Open' : 'Execute';
                                 return (
                                 <button
