@@ -580,6 +580,16 @@ export function renderBody(bodyTemplate: string, context: any): RenderResult {
     if (balance) {
       return { html: '', error: balance };
     }
+    // Block-tag balance — catches the case where braces themselves are
+    // matched but `{{#each}}`/`{{#if}}` opens don't pair up with their
+    // `{{/each}}`/`{{/if}}` closes. Without this the admin sees
+    // Handlebars' opaque "Expecting 'EOF', got 'OPEN_ENDBLOCK'" with a
+    // line number relative to the compiled template — useless for
+    // finding the typo. We point at the exact tag.
+    const blockBalance = checkBlockBalance(clean);
+    if (blockBalance) {
+      return { html: '', error: blockBalance };
+    }
     const tpl = hb.compile(clean, { strict: false, noEscape: false });
     return { html: tpl(context), error: null };
   } catch (err: any) {
@@ -632,6 +642,75 @@ function checkBraceBalance(html: string): string | null {
   if (openStack.length > 0) {
     const first = openStack[0];
     return formatBraceError(html, first.index, 'Unclosed `{{` — every `{{` must have a matching `}}` later in the template.');
+  }
+  return null;
+}
+
+/**
+ * Verify that every `{{#each}}`, `{{#if}}`, `{{#unless}}` and
+ * `{{#with}}` opener has a matching `{{/each}}` / `{{/if}}` /
+ * `{{/unless}}` / `{{/with}}` close, in the right order. Pushes
+ * opens onto a stack and pops on closes; the moment a close
+ * doesn't match the stack top, we report the exact offending tag
+ * with line + column.
+ *
+ * Catches three failure modes that braces-only balance won't:
+ *   • Extra closer with no matching opener:
+ *       {{#each x}}{{#if y}}{{/if}}{{/if}}{{/each}}
+ *                              ^^^^^^ no #if open
+ *   • Missing closer at end of template (some opener never closed).
+ *   • Crossed nesting (close in wrong order):
+ *       {{#each x}}{{#if y}}{{/each}}{{/if}}
+ *                          ^^^^^^^ closes the outer #each first
+ *
+ * Skips `{{else}}` (it's neither an open nor a close — Handlebars
+ * pairs it with the surrounding #if/#each/#unless internally).
+ */
+function checkBlockBalance(html: string): string | null {
+  type OpenAt = { tag: string; index: number };
+  const stack: OpenAt[] = [];
+  // Match `{{#tag ...}}` and `{{/tag}}`. Tag names are lowercase
+  // ASCII; this matches the Handlebars grammar (helpers always use
+  // [a-zA-Z][a-zA-Z0-9_]* style names).
+  const re = /\{\{\s*([#/])\s*([a-zA-Z][a-zA-Z0-9_-]*)\b[^}]*\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const kind = m[1]; // '#' or '/'
+    const tag = m[2];
+    // `else` is rendered with `{{else}}` (no slash) — it never appears
+    // here. `{{#else}}` / `{{/else}}` are not valid; if they slip
+    // through, the regex will catch them and they'll fail the match
+    // check below, which is fine.
+    if (kind === '#') {
+      stack.push({ tag, index: m.index });
+    } else {
+      if (stack.length === 0) {
+        return formatBraceError(
+          html,
+          m.index,
+          `Unexpected \`{{/${tag}}}\` — there's no matching \`{{#${tag}}}\` open before it. ` +
+          `Either remove this closer or add the opening tag earlier in the template.`,
+        );
+      }
+      const top = stack[stack.length - 1];
+      if (top.tag !== tag) {
+        return formatBraceError(
+          html,
+          m.index,
+          `Wrong closing tag — expected \`{{/${top.tag}}}\` (to close the \`{{#${top.tag}}}\` opened earlier) ` +
+          `but found \`{{/${tag}}}\`. Check that nested blocks close in reverse order of how they opened.`,
+        );
+      }
+      stack.pop();
+    }
+  }
+  if (stack.length > 0) {
+    const first = stack[0];
+    return formatBraceError(
+      html,
+      first.index,
+      `Unclosed \`{{#${first.tag}}}\` — every \`{{#${first.tag}}}\` needs a matching \`{{/${first.tag}}}\` later in the template.`,
+    );
   }
   return null;
 }
