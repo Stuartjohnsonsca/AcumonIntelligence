@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSession } from 'next-auth/react';
 import type { TeamMemberData, SpecialistData } from '@/hooks/useEngagement';
 import { useAutoSave } from '@/hooks/useAutoSave';
 
@@ -23,6 +24,12 @@ const TEAM_ROLES = [
   { value: 'RI', label: 'Partner' },
   { value: 'EQR', label: 'EQR' },
 ] as const;
+
+// Regulatory Reviewer is methodology-admin-only — added separately to
+// keep the standard role list focused on day-to-day engagement work.
+// The role grants unlimited READ access to one engagement and is
+// blocked from every write route via assertEngagementWriteAccess.
+const REGULATORY_REVIEWER_ROLE = { value: 'RegulatoryReviewer', label: 'Regulatory Reviewer (read-only)' } as const;
 const SPECIALIST_TYPES = [
   { type: 'Specialist', label: 'Specialist' },
   { type: 'Expert', label: 'Expert' },
@@ -31,6 +38,17 @@ const SPECIALIST_TYPES = [
 ] as const;
 
 export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists, ethicsPartnerName }: Props) {
+  const { data: session } = useSession();
+  // Methodology admins / super admins can attach a Regulatory Reviewer
+  // to this engagement. The role appears in the role select for those
+  // users only — everyone else sees the standard four roles.
+  const canManageRegulatoryReviewer = Boolean(
+    (session?.user as any)?.isSuperAdmin || (session?.user as any)?.isMethodologyAdmin,
+  );
+  const availableRoles = canManageRegulatoryReviewer
+    ? [...TEAM_ROLES, REGULATORY_REVIEWER_ROLE]
+    : TEAM_ROLES;
+
   const [teamMembers, setTeamMembers] = useState<TeamMemberData[]>(initialTeamMembers);
   const [specialists, setSpecialists] = useState<SpecialistData[]>(initialSpecialists);
   const [firmUsers, setFirmUsers] = useState<FirmUser[]>([]);
@@ -188,7 +206,7 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
               className="border border-slate-200 rounded px-1 py-0.5 text-xs bg-white"
               title="System role — drives Reviewer/Partner sign-offs and EQR/RI rules"
             >
-              {TEAM_ROLES.map(role => (
+              {availableRoles.map(role => (
                 <option key={role.value} value={role.value}>{role.label}</option>
               ))}
             </select>
@@ -202,7 +220,7 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
               type="text"
               value={member.roleLabel ?? ''}
               onChange={e => updateMemberRoleLabel(i, e.target.value)}
-              placeholder={TEAM_ROLES.find(r => r.value === member.role)?.label || ''}
+              placeholder={availableRoles.find(r => r.value === member.role)?.label || ''}
               title="Custom label shown on client-facing documents (leave blank to use the system default)"
               className="border border-slate-200 rounded px-1 py-0.5 text-xs bg-white w-24"
             />

@@ -235,7 +235,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   // Nature column update silently failed for one row.
   const [saveFailures, setSaveFailures] = useState<Array<{ id: string | null; lineItem: string | null; error: string }>>([]);
 
-  const { saving, lastSaved, error, triggerSave } = useAutoSave<{ rows: RMMRow[] }, { rows: unknown[]; failures?: Array<{ id: string | null; lineItem: string | null; error: string }> }>(
+  const { saving, lastSaved, error } = useAutoSave<{ rows: RMMRow[] }, { rows: unknown[]; failures?: Array<{ id: string | null; lineItem: string | null; error: string }> }>(
     `/api/engagements/${engagementId}/rmm`,
     { rows },
     {
@@ -771,20 +771,6 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
             </span>
           )}
           {error && <span className="text-xs text-red-500">{error}</span>}
-          {/* Manual Save now — forces an immediate flush instead of
-              waiting for the 2s autosave debounce. Useful when the
-              auditor wants to confirm a critical edit (e.g. typing
-              into Nature) actually persisted before moving on. Calls
-              the same performSave the debounce uses, so failure
-              surfacing (saveFailures + browser console.error) works
-              identically. */}
-          <button
-            type="button"
-            onClick={() => triggerSave()}
-            disabled={saving}
-            title="Force-save right now without waiting for the 2-second autosave debounce"
-            className="text-xs px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
-          >Save now</button>
           {/* Populate buttons — show when no non-mandatory rows exist */}
           {(rows || []).filter(r => !r.isMandatory).length === 0 && (
             <button onClick={populateData} disabled={populating}

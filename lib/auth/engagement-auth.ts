@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
-export type EngagementRole = 'Junior' | 'Manager' | 'RI' | 'Partner' | 'EQR' | null;
+export type EngagementRole = 'Junior' | 'Manager' | 'RI' | 'Partner' | 'EQR' | 'RegulatoryReviewer' | null;
 
 /**
  * Look up the current user's team role on a given engagement.
@@ -17,8 +17,14 @@ export async function getEngagementUserRole(engagementId: string, userId: string
 
 /**
  * Gate for every WRITE handler under /api/engagements/[engagementId]/*.
- * Rejects EQR users with 403 — they are read-only everywhere except the Review Points route,
- * which opts out by passing { allowEQR: true }.
+ *
+ * Rejects:
+ *   • EQR users with 403 — read-only everywhere except Review Points
+ *     (Review Points routes pass { allowEQR: true } to opt out).
+ *   • RegulatoryReviewer users with 403 — fully read-only, no opt-out.
+ *     The role is added by a Methodology Administrator and grants
+ *     unlimited READ access to one engagement (audit + period + client)
+ *     without ever permitting writes.
  *
  * Returns the resolved role on success, or a NextResponse on failure — caller should do:
  *
@@ -44,5 +50,23 @@ export async function assertEngagementWriteAccess(
       { status: 403 },
     );
   }
+  // Regulatory Reviewers are unconditionally read-only — no opt-out
+  // flag. The role exists so an external regulator can review the
+  // file without leaving their fingerprints on the data.
+  if (role === 'RegulatoryReviewer') {
+    return NextResponse.json(
+      { error: 'Regulatory Reviewers have read-only access and cannot make changes' },
+      { status: 403 },
+    );
+  }
   return { role };
+}
+
+/**
+ * True iff the role is purely read-only — useful for UI guards that
+ * want to hide / disable write controls. Mirrors the server-side
+ * gate above.
+ */
+export function isReadOnlyRole(role: EngagementRole): boolean {
+  return role === 'EQR' || role === 'RegulatoryReviewer';
 }
