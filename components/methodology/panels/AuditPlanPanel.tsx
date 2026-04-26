@@ -348,6 +348,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [performanceMateriality, setPerformanceMateriality] = useState(0);
   const [dbConclusions, setDbConclusions] = useState<any[]>([]);
   const [dbExecutions, setDbExecutions] = useState<any[]>([]);
+  // "Run all" progress. null = idle. While set, the header button is
+  // disabled and shows progress; a polling interval refreshes
+  // dbExecutions every few seconds so the conclusion dots update
+  // without the user having to refresh.
+  const [runAllProgress, setRunAllProgress] = useState<{ started: number; total: number; failed: number } | null>(null);
   const [errorFooterOpen, setErrorFooterOpen] = useState(true);
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
@@ -401,6 +406,93 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       next.has(testKey) ? next.delete(testKey) : next.add(testKey);
       return next;
     });
+  }
+
+  // Refetch the executions + conclusions lists so the conclusion dots
+  // pick up runs started in the background. Returns the latest
+  // executions array (rather than relying on the state setter
+  // immediately) so the run-all poller can check stop conditions
+  // without racing the React render cycle.
+  async function refreshExecutionsAndConclusions(): Promise<any[]> {
+    let latestExecutions: any[] = [];
+    try {
+      const [execRes, concRes] = await Promise.all([
+        fetch(`/api/engagements/${engagementId}/test-execution?lite=true`),
+        fetch(`/api/engagements/${engagementId}/test-conclusions`),
+      ]);
+      if (execRes.ok) {
+        const data = await execRes.json();
+        latestExecutions = data.executions || [];
+        setDbExecutions(latestExecutions);
+      }
+      if (concRes.ok) {
+        const data = await concRes.json();
+        setDbConclusions(data.conclusions || []);
+      }
+    } catch { /* polling — silently leave previous state */ }
+    return latestExecutions;
+  }
+
+  // Launch every pending test in the current tab in parallel. Each
+  // POST returns immediately with an executionId; the actual work
+  // runs server-side, so kicking off N tests doesn't tie up the
+  // browser. Once all start requests resolve, poll the executions
+  // list every 5s until everything's reached a terminal state (or 5
+  // minutes elapse, to avoid forever-polling on a stuck run).
+  async function runAllPending() {
+    const targets = pendingExecutions;
+    if (targets.length === 0) return;
+    setRunAllProgress({ started: 0, total: targets.length, failed: 0 });
+
+    let started = 0;
+    let failed = 0;
+    await Promise.allSettled(targets.map(async ({ row, test, fsLine, fsLineId }) => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/test-execution`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fsLine,
+            fsLineId,
+            testDescription: test.description,
+            testTypeCode: test.testTypeCode,
+            flowData: (test as any).flow || null,
+            tbRow: {
+              accountCode: row.accountCode,
+              description: row.description,
+              currentYear: row.currentYear,
+              priorYear: row.priorYear,
+              fsNote: row.fsNoteLevel,
+            },
+          }),
+        });
+        if (res.ok) started++; else failed++;
+      } catch { failed++; }
+      setRunAllProgress(prev => prev ? { ...prev, started, failed } : null);
+    }));
+
+    // First refresh after all start requests resolved.
+    await refreshExecutionsAndConclusions();
+
+    // Background poller — keeps the conclusion dots fresh while runs
+    // complete. Stops when no executions remain in 'running' or
+    // 'paused' state, or after 5 minutes (whichever first). Reads
+    // the fresh executions from the refresh's return value to avoid
+    // a stale-closure bug on dbExecutions.
+    const pollStart = Date.now();
+    const MAX_POLL_MS = 5 * 60 * 1000;
+    const interval = setInterval(async () => {
+      if (Date.now() - pollStart > MAX_POLL_MS) {
+        clearInterval(interval);
+        setRunAllProgress(null);
+        return;
+      }
+      const latest = await refreshExecutionsAndConclusions();
+      const stillRunning = latest.some(e => e.status === 'running' || e.status === 'paused');
+      if (!stillRunning) {
+        clearInterval(interval);
+        setRunAllProgress(null);
+      }
+    }, 5000);
   }
 
   useEffect(() => {
@@ -775,6 +867,110 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     });
   }, [tbRows, activeStatement, activeLevel, activeNote]);
 
+  // Tests visible in the current tab, ready to be POSTed to the
+  // /test-execution endpoint. Mirrors the per-row matching logic from
+  // the render loop below — copying it here is duplication, but the
+  // alternative (a structural refactor of the 70-line per-row block)
+  // would touch a lot more code. Skips ingest tests + payroll
+  // workpaper format (those are launched through different panels)
+  // and skips anything the user has marked not-applicable.
+  const visibleTestExecutions = useMemo(() => {
+    const out: Array<{
+      row: any; test: any; testKey: string;
+      fsLine: string; fsLineId: string | null;
+    }> = [];
+    for (const row of filteredRows) {
+      if (!row) continue;
+      const rowDesc = (row.description || '').toLowerCase().trim();
+      const rowCode = (row.accountCode || '').toLowerCase().trim();
+      const rowFsLevel = (row.fsLevel || '').toLowerCase().trim();
+      const canonRowLevel = (canonicalLevel(row) || '').toLowerCase().trim();
+      const activeLevelLower = (activeLevel || '').toLowerCase().trim();
+
+      const rmmMatches = rmmItems.filter(r => {
+        const li = r.lineItem.toLowerCase().trim();
+        if (li === rowDesc || li === rowCode) return true;
+        if (li === rowFsLevel || li === canonRowLevel || li === activeLevelLower) return true;
+        const rfl = (r.fsLevel || '').toLowerCase().trim();
+        if (rfl && (rfl === rowFsLevel || rfl === canonRowLevel || rfl === activeLevelLower)) return true;
+        return false;
+      });
+      const RISK_PRIORITY: Record<string, number> = { 'Very High': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
+      const rmmMatch = rmmMatches.length > 0
+        ? rmmMatches.reduce((best, r) => (RISK_PRIORITY[r.overallRisk || ''] ?? 99) < (RISK_PRIORITY[best.overallRisk || ''] ?? 99) ? r : best)
+        : null;
+      const effectiveFsLevel = activeLevel || rmmMatch?.fsLevel || row.fsLevel;
+      const effectiveFsNote = activeNote || rmmMatch?.fsNote || row.fsNoteLevel;
+      const effectiveStatement = activeStatement || rmmMatch?.fsStatement;
+
+      const rowValue = Math.abs(Number(row.currentYear) || 0);
+      function classifyRisk(overallRisk: string | undefined): string {
+        if (!overallRisk) return 'Normal';
+        const mapped = riskClassificationTable?.[overallRisk];
+        if (mapped) return mapped;
+        if (overallRisk === 'High' || overallRisk === 'Very High') return 'Significant Risk';
+        if (overallRisk === 'Medium') return 'Area of Focus';
+        return 'Normal';
+      }
+      let rowClassification: string | null = null;
+      if (rmmMatch) {
+        rowClassification = classifyRisk(rmmMatch.overallRisk ?? undefined);
+      } else if (performanceMateriality > 0 && rowValue > performanceMateriality) {
+        rowClassification = 'Normal';
+      } else if (performanceMateriality > 0) {
+        rowClassification = 'AR';
+      }
+
+      let tests: ReturnType<typeof getTestsForRow>;
+      if (rmmMatches.length > 0) {
+        const seen = new Set<string>();
+        tests = [];
+        for (const rm of rmmMatches) {
+          const rmClass = classifyRisk(rm.overallRisk ?? undefined);
+          const rmTests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, rm.assertions || null, effectiveStatement || undefined, rmClass);
+          for (const t of rmTests) {
+            if (!seen.has(t.description)) { seen.add(t.description); tests.push(t); }
+          }
+        }
+      } else {
+        tests = getTestsForRow(effectiveFsLevel, effectiveFsNote, row.description, null, effectiveStatement || undefined, rowClassification);
+      }
+
+      const rowKey = row.id || row.accountCode;
+      const fsLine = activeLevel || activeStatement;
+      const fsLineId = (row as any).fsLineId || null;
+
+      for (const test of tests) {
+        const testKey = `${rowKey}::${test.description}`;
+        if (excludedTests.has(testKey)) continue;
+        if (test.isIngest) continue;
+        if (test.outputFormat === 'payroll_workpaper') continue;
+        out.push({ row, test, testKey, fsLine, fsLineId });
+      }
+    }
+    return out;
+  // getTestsForRow isn't wrapped in useCallback so this memo will
+  // recompute on most renders, but the work is cheap (a few hundred
+  // function calls in worst case) so leaving it as-is.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredRows, rmmItems, activeLevel, activeStatement, activeNote, riskClassificationTable, performanceMateriality, excludedTests]);
+
+  // Tests in the current tab that haven't been started yet — the
+  // Run All button only fires for these so existing runs aren't
+  // duplicated. Re-running a single test via the per-row "Open"
+  // workflow is still available.
+  const pendingExecutions = useMemo(() => {
+    return visibleTestExecutions.filter(({ test, fsLine }) => {
+      const dbExec = dbExecutions.find(e =>
+        e.testDescription === test.description && (e.fsLine === fsLine || !e.fsLine)
+      );
+      const dbConc = dbConclusions.find(c =>
+        c.testDescription === test.description && (c.fsLine === fsLine || !c.fsLine)
+      );
+      return !dbExec && !dbConc;
+    });
+  }, [visibleTestExecutions, dbExecutions, dbConclusions]);
+
   useEffect(() => {
     if (statements.length > 0 && !activeStatement) setActiveStatement(statements[0]);
   }, [statements, activeStatement]);
@@ -819,13 +1015,44 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           <h2 className="text-sm font-semibold text-slate-800">Audit Plan</h2>
           {framework && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">{framework}</span>}
         </div>
-        <button onClick={() => setShowErrorSchedule(!showErrorSchedule)}
-          className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
-            showErrorSchedule ? 'bg-red-100 border-red-300 text-red-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-          }`}>
-          <AlertTriangle className="h-3 w-3" />
-          Error Schedule
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Run All Pending Tests — fires every visible, applicable,
+              not-yet-run test in the current tab in parallel. Each
+              POST returns immediately with an executionId; the work
+              runs server-side so launching N tests doesn't block the
+              browser. Disabled while a run-all is in flight or when
+              there's nothing pending. */}
+          <button
+            onClick={() => void runAllPending()}
+            disabled={!!runAllProgress || pendingExecutions.length === 0}
+            className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
+              runAllProgress
+                ? 'border-blue-300 bg-blue-50 text-blue-700 cursor-progress'
+                : pendingExecutions.length === 0
+                  ? 'border-slate-200 text-slate-400 cursor-not-allowed'
+                  : 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+            }`}
+            title={
+              pendingExecutions.length === 0
+                ? 'All visible tests have already been run — use the per-test Open button to re-run'
+                : 'Launch every pending test in this tab — each runs independently in the background'
+            }
+          >
+            {runAllProgress
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <Play className="h-3 w-3" />}
+            {runAllProgress
+              ? `Running ${runAllProgress.started}/${runAllProgress.total}${runAllProgress.failed ? ` · ${runAllProgress.failed} failed to start` : ''}`
+              : `Run All (${pendingExecutions.length})`}
+          </button>
+          <button onClick={() => setShowErrorSchedule(!showErrorSchedule)}
+            className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
+              showErrorSchedule ? 'bg-red-100 border-red-300 text-red-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}>
+            <AlertTriangle className="h-3 w-3" />
+            Error Schedule
+          </button>
+        </div>
       </div>
 
       {/* Level 1: FS Statement tabs + Other.
