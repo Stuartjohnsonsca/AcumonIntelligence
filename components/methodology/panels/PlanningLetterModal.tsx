@@ -130,6 +130,21 @@ export function PlanningLetterModal({ mode, engagementId, onClose }: Props) {
   const eligibleRecipients = recipients.filter(r => r.hasPortalAccess);
   const gateFailsPreflight = mode === 'send' && !recipientsLoading && eligibleRecipients.length === 0;
 
+  /** When the send-permission gate trips, the server returns 403 with
+   *  `reason: 'permission_not_ready'`. The user's spec is a simple
+   *  popup with just an OK button — using window.alert() here matches
+   *  that shape exactly without bringing in another nested modal.
+   *  Returns true if the response was a permission failure (so the
+   *  caller can short-circuit before treating it as a generic error). */
+  function trySurfacePermissionPopup(res: Response, data: any): boolean {
+    if (res.status !== 403 || data?.reason !== 'permission_not_ready') return false;
+    if (typeof window !== 'undefined') {
+      const detail = data?.detail ? `\n\n${data.detail}` : '';
+      window.alert(`Permission to Send not Ready${detail}`);
+    }
+    return true;
+  }
+
   async function handleSend() {
     if (!selectedDocId || !selectedEmailId) return;
     setSubmitting(true);
@@ -143,6 +158,7 @@ export function PlanningLetterModal({ mode, engagementId, onClose }: Props) {
       });
       const data: SendResponse = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (trySurfacePermissionPopup(res, data)) return;
         setErrorDetail(data.detail || data.error || `Send failed (${res.status})`);
         setResult(data);
       } else {
@@ -167,6 +183,7 @@ export function PlanningLetterModal({ mode, engagementId, onClose }: Props) {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (trySurfacePermissionPopup(res, err)) return;
         setErrorDetail(err.error || `Download failed (${res.status})`);
         return;
       }

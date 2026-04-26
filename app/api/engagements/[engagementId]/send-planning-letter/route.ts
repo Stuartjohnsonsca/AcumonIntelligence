@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { renderTemplateToDocx, renderEmailTemplate } from '@/lib/template-render';
 import { sendEmail } from '@/lib/email';
 import { uploadToContainer } from '@/lib/azure-blob';
+import { checkSendPermission } from '@/lib/document-send-permission';
 
 /**
  * POST /api/engagements/:engagementId/send-planning-letter
@@ -52,7 +53,22 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // ── Step 0: recipient gate ──────────────────────────────────────────
+  // ── Step 0a: send-permission gate ─────────────────────────────────
+  // Look up the document template's `sendPermission` and confirm the
+  // engagement carries the required sign-off (Preparer / Reviewer or
+  // RI / RI). Runs BEFORE the recipient and rendering work so the
+  // popup arrives quickly and we don't waste effort on a send the
+  // auditor isn't authorised to make.
+  const docTpl = await prisma.documentTemplate.findUnique({
+    where: { id: documentTemplateId },
+    select: { sendPermission: true },
+  });
+  if (docTpl) {
+    const permFail = await checkSendPermission(engagementId, docTpl);
+    if (permFail) return NextResponse.json(permFail, { status: 403 });
+  }
+
+  // ── Step 0b: recipient gate ─────────────────────────────────────────
   // Find every Informed Management contact with a matching active
   // ClientPortalUser on the same client. If the list is empty we stop
   // BEFORE rendering anything — the rule is that the Planning Letter

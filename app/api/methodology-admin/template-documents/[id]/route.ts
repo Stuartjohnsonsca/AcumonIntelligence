@@ -29,12 +29,20 @@ export async function PUT(
 
   const { id } = await params;
   const body = await req.json();
-  const { name, description, category, auditType, subject, content, mergeFields, recipients, isActive, kind, skeletonId, sampleContext } = body;
+  const { name, description, category, auditType, subject, content, mergeFields, recipients, isActive, kind, skeletonId, sampleContext, sendPermission } = body;
 
   const existing = await prisma.documentTemplate.findFirst({
     where: { id, firmId: session.user.firmId },
   });
   if (!existing) return Response.json({ error: 'Not found' }, { status: 404 });
+
+  // Whitelist of allowed sendPermission values — anything else falls
+  // back to 'None' (no gating) so a typo can't accidentally lock every
+  // engagement out of the document.
+  const VALID_PERMS = ['None', 'Preparer', 'Reviewer', 'RI'] as const;
+  const cleanedPerm = typeof sendPermission === 'string' && (VALID_PERMS as readonly string[]).includes(sendPermission)
+    ? sendPermission
+    : undefined;
 
   const template = await prisma.documentTemplate.update({
     where: { id },
@@ -51,6 +59,7 @@ export async function PUT(
       ...(kind !== undefined && { kind: kind === 'document' ? 'document' : 'email' }),
       ...(skeletonId !== undefined && { skeletonId: skeletonId || null }),
       ...(sampleContext !== undefined && { sampleContext }),
+      ...(cleanedPerm !== undefined && { sendPermission: cleanedPerm }),
     },
   });
 

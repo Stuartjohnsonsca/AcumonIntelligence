@@ -58,7 +58,19 @@ export interface DocumentTemplate {
   version: number;
   isActive: boolean;
   updatedAt: string;
+  /** Permission gate for Send / Download Document Generator actions.
+   *  'None' (default — no gate), 'Preparer', 'Reviewer' or 'RI'.
+   *  Enforced server-side in send-/download-planning-letter; the
+   *  modal shows a "Permission to Send not Ready" popup on 403. */
+  sendPermission?: string;
 }
+
+const SEND_PERMISSIONS = [
+  { value: 'None',     label: 'None — no sign-off required' },
+  { value: 'Preparer', label: 'Preparer — Preparer (or higher) sign-off required' },
+  { value: 'Reviewer', label: 'Reviewer — Reviewer or RI sign-off required' },
+  { value: 'RI',       label: 'RI — RI sign-off required' },
+];
 
 /**
  * One engagement option as supplied by the manager. Enriched shape
@@ -136,6 +148,11 @@ export function DocumentTemplateEditor({
   const [category, setCategory] = useState(template.category || 'general');
   const [auditType, setAuditType] = useState(template.auditType || 'ALL');
   const [skeletonId, setSkeletonId] = useState<string | null>(template.skeletonId);
+  // Permission gate for Document Generator actions. Defaults to 'None'
+  // for legacy templates that didn't carry the field before the
+  // 2026-04-26 migration — those keep the existing un-gated behaviour
+  // until an admin opts in.
+  const [sendPermission, setSendPermission] = useState<string>(template.sendPermission || 'None');
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   interface GenerateDiagnostics {
@@ -1043,6 +1060,7 @@ export function DocumentTemplateEditor({
           category, auditType, skeletonId,
           kind: 'document',
           content,
+          sendPermission,
         }),
       });
       if (res.ok) {
@@ -1127,6 +1145,19 @@ export function DocumentTemplateEditor({
         <select value={skeletonId || ''} onChange={e => setSkeletonId(e.target.value || null)} className="text-[11px] border border-slate-200 rounded px-2 py-1" title="Firm skeleton to render into">
           <option value="">— Use firm default skeleton —</option>
           {skeletons.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        {/* Send-permission gate. Drives the Document Generator (Send /
+            Download) flows: when set to anything other than None, the
+            server checks the engagement's sign-off state before
+            allowing the action. Failed gates surface as a "Permission
+            to Send not Ready" popup in the modal. */}
+        <select
+          value={sendPermission}
+          onChange={e => setSendPermission(e.target.value)}
+          className="text-[11px] border border-slate-200 rounded px-2 py-1"
+          title="Send-permission gate — which sign-off must be in place before Send / Download is allowed"
+        >
+          {SEND_PERMISSIONS.map(p => <option key={p.value} value={p.value}>Send: {p.label}</option>)}
         </select>
         <div className="flex-1" />
         <span className="text-[10px] text-slate-400">v{template.version}</span>

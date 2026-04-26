@@ -2785,6 +2785,13 @@ model DocumentTemplate {
   // skeleton to stitch the body into.
   kind          String  @default("email") // email | document
   skeletonId    String? @map("skeleton_id")
+  /// Document Generator permission gate. Values: 'None' (default — no
+  /// gating), 'Preparer' (engagement must be signed off as Preparer
+  /// at minimum), 'Reviewer' (Reviewer or RI sign-off required), 'RI'
+  /// (RI sign-off required). Enforced in the send / download routes;
+  /// when the gate fails the modal shows a "Permission to Send not
+  /// Ready" popup instead of running the generator.
+  sendPermission String  @default("None") @map("send_permission")
   // Optional hand-picked sample context for admin preview — lets an
   // admin freeze a preview against a known dataset rather than always
   // running against live engagement data.

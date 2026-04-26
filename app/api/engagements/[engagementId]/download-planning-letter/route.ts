@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { renderTemplateToDocx } from '@/lib/template-render';
+import { checkSendPermission } from '@/lib/document-send-permission';
 
 /**
  * POST /api/engagements/:engagementId/download-planning-letter
@@ -36,6 +37,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (!engagement) return NextResponse.json({ error: 'Engagement not found' }, { status: 404 });
   if (!session.user.isSuperAdmin && engagement.firmId !== session.user.firmId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  // Send-permission gate: load the template's `sendPermission` and
+  // confirm the engagement has the required green-dot sign-off.
+  // Failing fast here means we never burn cycles rendering a .docx
+  // the auditor isn't allowed to download.
+  const tpl = await prisma.documentTemplate.findUnique({
+    where: { id: templateId },
+    select: { sendPermission: true },
+  });
+  if (tpl) {
+    const perm = await checkSendPermission(engagementId, tpl);
+    if (perm) return NextResponse.json(perm, { status: 403 });
   }
 
   try {
