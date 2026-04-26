@@ -64,10 +64,11 @@ export function validateDocxBodyXml(xml: string): DocxValidationIssue[] {
   // closes. Self-closes like <w:p/> or <w:tblGrid attr/> don't need a
   // close tag and are excluded from both sides of the comparison.
   //
-  // Implementation note: match every `<name...>` occurrence, then
-  // classify by whether its last non-space char before `>` is `/`
-  // (self-close) or not (paired). This avoids the regex pitfalls of
-  // trying to distinguish `<w:p>` from `<w:p/>` with lookbehind.
+  // When an imbalance is detected we ALSO walk the XML to pinpoint the
+  // FIRST orphan tag (an open with no matching close, or a close with
+  // no matching open) and report its char offset + surrounding XML
+  // context. Without that the auditor gets "5 closes vs 4 opens" with
+  // no indication WHERE in their template the bug lives — useless.
   const containers = ['w:p', 'w:r', 'w:tbl', 'w:tr', 'w:tc', 'w:rPr', 'w:pPr', 'w:tcPr', 'w:tblPr', 'w:trPr', 'w:tblGrid'];
   for (const name of containers) {
     const tagRe = new RegExp(`<${name}\\b[^>]*>`, 'g');
@@ -84,9 +85,42 @@ export function validateDocxBodyXml(xml: string): DocxValidationIssue[] {
     const closes = (xml.match(closeRe) || []).length;
     const unmatched = paired - closes;
     if (unmatched !== 0) {
+      // Walk the XML element-by-element for THIS tag name, tracking
+      // depth. The first place depth goes negative (a close with no
+      // matching open) OR the first unclosed open at the end gives us
+      // the precise location of the bug.
+      const walkRe = new RegExp(`<(/?)${name}\\b([^>]*)>`, 'g');
+      const stack: number[] = [];
+      let firstOrphanClose: number | null = null;
+      let lastOpenAtEnd: number | null = null;
+      let walkMatch: RegExpExecArray | null;
+      while ((walkMatch = walkRe.exec(xml)) !== null) {
+        const isClose = walkMatch[1] === '/';
+        const tagBody = walkMatch[2];
+        const isSelfClose = tagBody.trimEnd().endsWith('/');
+        if (isSelfClose) continue;
+        if (isClose) {
+          if (stack.length === 0) {
+            firstOrphanClose = walkMatch.index;
+            break;
+          }
+          stack.pop();
+        } else {
+          stack.push(walkMatch.index);
+        }
+      }
+      if (firstOrphanClose === null && stack.length > 0) lastOpenAtEnd = stack[0];
+      const orphanIdx = firstOrphanClose ?? lastOpenAtEnd;
+      const ctx = orphanIdx != null ? snippet(xml, Math.max(0, orphanIdx - 80), 240) : undefined;
+      const where = firstOrphanClose !== null
+        ? ` Orphan </${name}> (no matching open) at offset ${firstOrphanClose}.`
+        : lastOpenAtEnd !== null
+          ? ` Unclosed <${name}> opens at offset ${lastOpenAtEnd}.`
+          : '';
       add(
         'tag-imbalance',
-        `<${name}> paired open/close mismatch: ${paired} paired opens vs ${closes} closes (diff ${unmatched > 0 ? '+' : ''}${unmatched})`,
+        `<${name}> paired open/close mismatch: ${paired} paired opens vs ${closes} closes (diff ${unmatched > 0 ? '+' : ''}${unmatched}).${where}`,
+        ctx,
       );
     }
   }
