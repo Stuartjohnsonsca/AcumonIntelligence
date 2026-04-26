@@ -828,8 +828,12 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         </button>
       </div>
 
-      {/* Level 1: FS Statement tabs + Other */}
-      <div className="flex gap-0.5 border-b border-slate-200 overflow-x-auto">
+      {/* Level 1: FS Statement tabs + Other.
+          flex-wrap so when there are too many tabs to fit a single
+          row they wrap to a second row instead of forcing the user
+          to scroll horizontally. gap-y-0.5 keeps wrapped rows tight
+          but visually separated. */}
+      <div className="flex flex-wrap gap-0.5 gap-y-0.5 border-b border-slate-200">
         {statements.map(stmt => (
           <button key={stmt}
             onClick={() => { setActiveStatement(stmt); setActiveLevel(''); setActiveNote(''); setActiveOtherTab(''); }}
@@ -874,7 +878,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
       {/* Level 2: FS Level sub-tabs */}
       {!activeOtherTab && levels.length > 0 && (
-        <div className="flex gap-0.5 bg-slate-100 rounded p-0.5 overflow-x-auto">
+        <div className="flex flex-wrap gap-0.5 gap-y-0.5 bg-slate-100 rounded p-0.5">
           {levels.map(level => (
             <button key={level}
               onClick={() => { setActiveLevel(level); setActiveNote(''); }}
@@ -953,7 +957,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 
       {/* Level 3: FS Note sub-sub-tabs — only for Balance Sheet */}
       {!activeOtherTab && isThreeLevel && notes.length > 1 && (
-        <div className="flex gap-0.5 overflow-x-auto">
+        <div className="flex flex-wrap gap-0.5 gap-y-0.5">
           <button onClick={() => setActiveNote('')}
             className={`px-2 py-0.5 text-[9px] font-medium rounded border transition-colors ${!activeNote ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-white text-slate-500 border-slate-200'}`}>
             All
