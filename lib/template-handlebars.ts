@@ -570,11 +570,98 @@ export interface RenderResult {
 export function renderBody(bodyTemplate: string, context: any): RenderResult {
   try {
     const clean = sanitiseHandlebarsInHtml(bodyTemplate);
+    // Pre-flight: detect unbalanced `{{` / `}}` braces and return a
+    // CLEAR error before Handlebars chokes with its own opaque
+    // "Expecting CLOSE_RAW_BLOCK..." parse error. The Handlebars
+    // diagnostic is barely interpretable for non-technical admins;
+    // ours points at the offending line + character with a snippet
+    // of surrounding text, which is what they need to fix the bug.
+    const balance = checkBraceBalance(clean);
+    if (balance) {
+      return { html: '', error: balance };
+    }
     const tpl = hb.compile(clean, { strict: false, noEscape: false });
     return { html: tpl(context), error: null };
   } catch (err: any) {
     return { html: '', error: err?.message || 'Template compile / render failed' };
   }
+}
+
+/**
+ * Walk the (already-sanitised) template and return a friendly error
+ * message when `{{` / `}}` braces aren't balanced. Returns null when
+ * the template is balanced and ready to compile.
+ *
+ * Handles both directions:
+ *   • Unclosed `{{` (an opener with no matching closer) — the
+ *     common case; the parser ends up consuming prose / HTML inside
+ *     a half-open expression and dies with an "Expecting CLOSE..."
+ *     error somewhere far downstream from the actual bug.
+ *   • Stray `}}` (a closer with no matching opener) — much rarer
+ *     but still worth catching since Handlebars' own error for
+ *     this is just as opaque.
+ *
+ * The error message points at the LINE NUMBER (1-based) and
+ * COLUMN of the offending brace, plus 50 chars of surrounding
+ * text so the admin can find it instantly in source mode.
+ */
+function checkBraceBalance(html: string): string | null {
+  // Track the position of every still-open `{{`. When we see a
+  // matching `}}`, pop. At end of input, anything remaining on the
+  // stack is an unclosed opener.
+  type OpenAt = { index: number };
+  const openStack: OpenAt[] = [];
+  let i = 0;
+  const n = html.length;
+  while (i < n) {
+    if (html[i] === '{' && html[i + 1] === '{') {
+      openStack.push({ index: i });
+      i += 2;
+      continue;
+    }
+    if (html[i] === '}' && html[i + 1] === '}') {
+      if (openStack.length === 0) {
+        return formatBraceError(html, i, 'Unexpected `}}` with no matching `{{` before it.');
+      }
+      openStack.pop();
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  if (openStack.length > 0) {
+    const first = openStack[0];
+    return formatBraceError(html, first.index, 'Unclosed `{{` — every `{{` must have a matching `}}` later in the template.');
+  }
+  return null;
+}
+
+/**
+ * Build a human-readable error pointing at a specific character
+ * position. Includes line number, column, and a short snippet of
+ * the surrounding text so the admin can locate the brace in
+ * source mode without counting characters by hand.
+ */
+function formatBraceError(html: string, index: number, headline: string): string {
+  // Line number (1-based) + column. Walk every newline up to the
+  // offending index. Cheap; templates are at most a few thousand
+  // characters long.
+  let line = 1;
+  let col = 1;
+  for (let i = 0; i < index; i++) {
+    if (html[i] === '\n') { line++; col = 1; }
+    else col++;
+  }
+  // Snippet — 30 chars before, 50 chars after, with the offending
+  // position marked with a `→` so the admin can scan to it. Strip
+  // newlines from the snippet so it stays one line in the error UI.
+  const start = Math.max(0, index - 30);
+  const end = Math.min(html.length, index + 50);
+  const before = html.slice(start, index).replace(/\s+/g, ' ');
+  const at = html.slice(index, Math.min(html.length, index + 2));
+  const after = html.slice(index + 2, end).replace(/\s+/g, ' ');
+  const snippet = `${before}→${at}${after}`;
+  return `Template render failed: ${headline}\n  Line ${line}, column ${col}: …${snippet}…\n  Tip: open the template in source mode and search (Ctrl-F) for "${at}" to jump to it.`;
 }
 
 /**
