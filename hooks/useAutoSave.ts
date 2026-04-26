@@ -131,20 +131,37 @@ export function useAutoSave<T, TResp = unknown>(
   }, [method]);
 
   useEffect(() => {
-    if (!enabled) return;
+    // Diagnostic — only logged for the RMM endpoint to keep the rest of
+    // the app quiet. Confirms whether the debounce effect is actually
+    // re-running on data changes, whether `enabled` is true, and whether
+    // the timer is being scheduled.
+    const debug = typeof window !== 'undefined' && endpoint.endsWith('/rmm');
+    if (debug) {
+      console.log(`[useAutoSave debug] effect fired enabled=${enabled} initial=${initialRef.current} hasTimer=${timeoutRef.current != null}`);
+    }
+    if (!enabled) {
+      if (debug) console.log('[useAutoSave debug] enabled=false → returning, no timer scheduled');
+      return;
+    }
     // Skip the initial render
     if (initialRef.current) {
       initialRef.current = false;
+      if (debug) console.log('[useAutoSave debug] initialRef → returning, no timer scheduled');
       return;
     }
 
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(performSave, delay);
+    timeoutRef.current = setTimeout(() => {
+      if (debug) console.log(`[useAutoSave debug] TIMER FIRED — calling performSave for ${endpoint}`);
+      performSave();
+    }, delay);
+    if (debug) console.log(`[useAutoSave debug] timer scheduled for ${delay}ms`);
 
     return () => {
+      if (debug && timeoutRef.current) console.log('[useAutoSave debug] cleanup cleared pending timer');
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
-  }, [data, delay, enabled, performSave]);
+  }, [data, delay, enabled, performSave, endpoint]);
 
   // Save on unmount. We ALWAYS flush — not just when a debounce timer
   // is pending — because the user may have typed within the last couple
