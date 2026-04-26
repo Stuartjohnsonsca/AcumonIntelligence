@@ -2792,6 +2792,14 @@ model DocumentTemplate {
   /// when the gate fails the modal shows a "Permission to Send not
   /// Ready" popup instead of running the generator.
   sendPermission String  @default("None") @map("send_permission")
+  /// Optional sectionKey suffix the send-permission gate looks up.
+  /// Null = engagement-level sign-offs (sectionKey '__signoffs'). A
+  /// value like 'rmm', 'materiality', 'par' appends to give
+  /// '__signoffs_<value>' — matches the per-schedule key convention
+  /// used by getPermanentFileSignOffs / handlePermanentFileSignOff.
+  /// Lets a Planning Letter say "RI sign-off on RMM" instead of "RI
+  /// sign-off on the whole engagement".
+  sendSignOffSection String? @map("send_signoff_section")
   // Optional hand-picked sample context for admin preview — lets an
   // admin freeze a preview against a known dataset rather than always
   // running against live engagement data.

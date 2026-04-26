@@ -35,14 +35,23 @@ export interface SendPermissionFailure {
 }
 
 /**
- * Read the engagement's overall sign-off record. The shape mirrors what
- * `signoff-handler.ts` writes — keys are role names ('operator',
- * 'reviewer', 'partner') and the values are the sign-off metadata. We
- * only care about presence here, not the metadata.
+ * Read the engagement's sign-off record at the given sectionKey suffix.
+ * Mirrors what `signoff-handler.ts` writes — keys are role names
+ * ('operator', 'reviewer', 'partner') and the values are the
+ * sign-off metadata. We only care about presence here, not the
+ * metadata.
+ *
+ * `signoffSection`:
+ *   • null/empty → engagement-level rollup (sectionKey '__signoffs')
+ *   • non-empty  → per-schedule (sectionKey '__signoffs_<suffix>')
+ *                  matching the convention in
+ *                  getPermanentFileSignOffs(engagementId, suffix).
  */
-async function loadEngagementSignOffs(engagementId: string): Promise<Record<string, unknown>> {
+async function loadSignOffs(engagementId: string, signoffSection: string | null | undefined): Promise<Record<string, unknown>> {
+  const suffix = (signoffSection || '').trim();
+  const sectionKey = suffix.length > 0 ? `__signoffs_${suffix}` : '__signoffs';
   const row = await prisma.auditPermanentFile.findUnique({
-    where: { engagementId_sectionKey: { engagementId, sectionKey: '__signoffs' } },
+    where: { engagementId_sectionKey: { engagementId, sectionKey } },
   }).catch(() => null);
   if (!row?.data || typeof row.data !== 'object') return {};
   return row.data as Record<string, unknown>;
@@ -58,7 +67,7 @@ async function loadEngagementSignOffs(engagementId: string): Promise<Record<stri
  */
 export async function checkSendPermission(
   engagementId: string,
-  template: { sendPermission?: string | null },
+  template: { sendPermission?: string | null; sendSignOffSection?: string | null },
 ): Promise<SendPermissionFailure | null> {
   // Normalise to one of the four known values; treat unrecognised as
   // 'None' so a typo or migration mid-flight doesn't accidentally lock
@@ -70,7 +79,7 @@ export async function checkSendPermission(
 
   if (required === 'None') return null;
 
-  const signOffs = await loadEngagementSignOffs(engagementId);
+  const signOffs = await loadSignOffs(engagementId, template.sendSignOffSection || null);
   const hasOperator = signOffs.operator != null;
   const hasReviewer = signOffs.reviewer != null;
   const hasPartner = signOffs.partner != null;
@@ -85,17 +94,21 @@ export async function checkSendPermission(
   // Build the popup detail string. We name the role we needed so the
   // auditor can see at a glance what's blocking. Keeps the wording
   // consistent with the user's spec — the popup itself is rendered by
-  // the modal which reads the `reason` field.
+  // the modal which reads the `reason` field. We also surface which
+  // schedule the gate looks at when one is configured, so the auditor
+  // knows where to go to record the missing sign-off.
   const roleLabel: Record<SendPermission, string> = {
     None: 'None',
     Preparer: 'Preparer',
     Reviewer: 'Reviewer (or RI)',
     RI: 'RI',
   };
+  const sectionSuffix = (template.sendSignOffSection || '').trim();
+  const where = sectionSuffix.length > 0 ? `the ${sectionSuffix} schedule` : 'this engagement';
   return {
     error: 'Permission to Send not Ready',
     reason: 'permission_not_ready',
     required,
-    detail: `This document is gated on ${roleLabel[required]} sign-off, which has not been recorded on this engagement yet.`,
+    detail: `This document is gated on ${roleLabel[required]} sign-off, which has not been recorded on ${where} yet.`,
   };
 }

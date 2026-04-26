@@ -45,7 +45,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   // the auditor isn't allowed to download.
   const tpl = await prisma.documentTemplate.findUnique({
     where: { id: templateId },
-    select: { sendPermission: true },
+    select: { sendPermission: true, sendSignOffSection: true },
   });
   if (tpl) {
     const perm = await checkSendPermission(engagementId, tpl);

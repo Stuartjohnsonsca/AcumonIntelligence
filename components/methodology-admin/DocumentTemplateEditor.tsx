@@ -63,6 +63,11 @@ export interface DocumentTemplate {
    *  Enforced server-side in send-/download-planning-letter; the
    *  modal shows a "Permission to Send not Ready" popup on 403. */
   sendPermission?: string;
+  /** Optional sectionKey suffix the gate looks at. Null/blank →
+   *  engagement-wide sign-offs ('__signoffs'). A value like 'rmm'
+   *  routes the check to the per-schedule sign-off record
+   *  ('__signoffs_rmm'). */
+  sendSignOffSection?: string | null;
 }
 
 const SEND_PERMISSIONS = [
@@ -70,6 +75,21 @@ const SEND_PERMISSIONS = [
   { value: 'Preparer', label: 'Preparer — Preparer (or higher) sign-off required' },
   { value: 'Reviewer', label: 'Reviewer — Reviewer or RI sign-off required' },
   { value: 'RI',       label: 'RI — RI sign-off required' },
+];
+
+// Schedule sectionKey suffixes the gate can target. Mirrors the
+// suffixes hard-coded in each schedule's API route (see
+// getPermanentFileSignOffs(engagementId, '<suffix>') usage).
+// Empty value = engagement-level.
+const SIGNOFF_SECTIONS = [
+  { value: '',                label: 'Engagement-wide' },
+  { value: 'rmm',             label: 'RMM' },
+  { value: 'par',             label: 'PAR' },
+  { value: 'materiality',     label: 'Materiality' },
+  { value: 'ethics',          label: 'Ethics' },
+  { value: 'continuance',     label: 'Continuance' },
+  { value: 'prior-period',    label: 'Prior Period' },
+  { value: 'trial-balance',   label: 'Trial Balance' },
 ];
 
 /**
@@ -153,6 +173,11 @@ export function DocumentTemplateEditor({
   // 2026-04-26 migration — those keep the existing un-gated behaviour
   // until an admin opts in.
   const [sendPermission, setSendPermission] = useState<string>(template.sendPermission || 'None');
+  // Which schedule's sign-off the gate consults. Null/empty =
+  // engagement-level. A value like 'rmm' targets the per-schedule
+  // sign-off record so a Planning Letter can require "RI signed off
+  // RMM" without needing the entire engagement signed off.
+  const [sendSignOffSection, setSendSignOffSection] = useState<string>(template.sendSignOffSection || '');
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   interface GenerateDiagnostics {
@@ -1061,6 +1086,7 @@ export function DocumentTemplateEditor({
           kind: 'document',
           content,
           sendPermission,
+          sendSignOffSection: sendSignOffSection || null,
         }),
       });
       if (res.ok) {
@@ -1159,6 +1185,19 @@ export function DocumentTemplateEditor({
         >
           {SEND_PERMISSIONS.map(p => <option key={p.value} value={p.value}>Send: {p.label}</option>)}
         </select>
+        {/* Sign-off section the gate consults. Hidden when the gate is
+            'None' since the value is irrelevant in that case — keeps the
+            metadata bar uncluttered for templates that don't gate. */}
+        {sendPermission !== 'None' && (
+          <select
+            value={sendSignOffSection}
+            onChange={e => setSendSignOffSection(e.target.value)}
+            className="text-[11px] border border-slate-200 rounded px-2 py-1"
+            title="Which schedule's sign-off the gate checks. Engagement-wide checks the overall sign-off record; per-schedule routes to that schedule's sign-off (e.g. RMM = '__signoffs_rmm')."
+          >
+            {SIGNOFF_SECTIONS.map(s => <option key={s.value} value={s.value}>Sign-off: {s.label}</option>)}
+          </select>
+        )}
         <div className="flex-1" />
         <span className="text-[10px] text-slate-400">v{template.version}</span>
         <button onClick={() => save()} disabled={saving} className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-slate-100 border border-slate-200 rounded hover:bg-slate-200">

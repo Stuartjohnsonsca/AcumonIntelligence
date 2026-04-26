@@ -61,7 +61,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   // auditor isn't authorised to make.
   const docTpl = await prisma.documentTemplate.findUnique({
     where: { id: documentTemplateId },
-    select: { sendPermission: true },
+    select: { sendPermission: true, sendSignOffSection: true },
   });
   if (docTpl) {
     const permFail = await checkSendPermission(engagementId, docTpl);

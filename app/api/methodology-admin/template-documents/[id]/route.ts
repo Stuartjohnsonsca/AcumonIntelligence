@@ -29,7 +29,7 @@ export async function PUT(
 
   const { id } = await params;
   const body = await req.json();
-  const { name, description, category, auditType, subject, content, mergeFields, recipients, isActive, kind, skeletonId, sampleContext, sendPermission } = body;
+  const { name, description, category, auditType, subject, content, mergeFields, recipients, isActive, kind, skeletonId, sampleContext, sendPermission, sendSignOffSection } = body;
 
   const existing = await prisma.documentTemplate.findFirst({
     where: { id, firmId: session.user.firmId },
@@ -43,6 +43,21 @@ export async function PUT(
   const cleanedPerm = typeof sendPermission === 'string' && (VALID_PERMS as readonly string[]).includes(sendPermission)
     ? sendPermission
     : undefined;
+
+  // sendSignOffSection: a sectionKey suffix (e.g. 'rmm', 'materiality').
+  // Empty string normalises to null = engagement-level. Restrict to a
+  // simple alphanumeric/dash/underscore pattern so a typo can't try to
+  // escape the sectionKey shape.
+  let cleanedSection: string | null | undefined = undefined;
+  if (sendSignOffSection !== undefined) {
+    if (typeof sendSignOffSection !== 'string' || sendSignOffSection.trim() === '') {
+      cleanedSection = null;
+    } else if (/^[a-z][a-z0-9_-]*$/i.test(sendSignOffSection.trim())) {
+      cleanedSection = sendSignOffSection.trim();
+    } else {
+      cleanedSection = undefined; // ignore garbage rather than 400
+    }
+  }
 
   const template = await prisma.documentTemplate.update({
     where: { id },
@@ -60,6 +75,7 @@ export async function PUT(
       ...(skeletonId !== undefined && { skeletonId: skeletonId || null }),
       ...(sampleContext !== undefined && { sampleContext }),
       ...(cleanedPerm !== undefined && { sendPermission: cleanedPerm }),
+      ...(cleanedSection !== undefined && { sendSignOffSection: cleanedSection }),
     },
   });
 
