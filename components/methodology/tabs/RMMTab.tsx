@@ -499,20 +499,82 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
     loadNatureConfig();
   }, []);
 
+  // Display sort mode for the RMM grid. Three options to match how
+  // reviewers want to scan the file:
+  //
+  //   risk    Risk View — Significant Risk → Area of Focus → rows
+  //           with material amounts (sorted by absolute value high
+  //           to low) → everything else.
+  //   source  Source View — non-PAR items first, PAR items at the
+  //           bottom (the original default behaviour).
+  //   value   Value View — every row sorted by absolute amount,
+  //           highest first.
+  //
+  // Persisted in localStorage so a reviewer's preferred lens
+  // survives a page reload. Falls back to 'source' for first-time
+  // users (matches what they saw before this option existed).
+  const sortPrefKey = `rmm:sortMode:${engagementId}`;
+  const [sortMode, setSortMode] = useState<'risk' | 'source' | 'value'>(() => {
+    if (typeof window === 'undefined') return 'source';
+    const saved = window.localStorage?.getItem(sortPrefKey);
+    return saved === 'risk' || saved === 'source' || saved === 'value' ? saved : 'source';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try { window.localStorage?.setItem(sortPrefKey, sortMode); } catch { /* private mode */ }
+    }
+  }, [sortMode, sortPrefKey]);
+
   const computedRows = useMemo(() => {
     const withRisks = rows.map(row => {
       const finalRisk = row.relevance === 'N' ? 'N/A' : lookupInherentRisk(row.likelihood, row.magnitude);
       const overallRisk = finalRisk && finalRisk !== 'N/A' ? lookupOverallRisk(finalRisk, row.controlRisk) : null;
       return { ...row, finalRiskAssessment: finalRisk, overallRisk };
     });
-    // Partition PAR-sourced rows to the bottom so reviewers can see at a
-    // glance which items came from preliminary analytical review. Order
-    // within each group stays as the user arranged them (sortOrder).
+
+    if (sortMode === 'risk') {
+      // Risk lens: classification first, then materiality. "Material"
+      // means an amount is set and non-zero — without a per-engagement
+      // performance materiality threshold to compare against, the
+      // honest split is "has an amount" vs "blank". Within the
+      // material group, sort by absolute amount descending so the
+      // largest balances surface first.
+      const rank = (r: typeof withRisks[number]): number => {
+        if (r.rowCategory === 'significant_risk') return 0;
+        if (r.rowCategory === 'area_of_focus') return 1;
+        if (r.amount != null && Number(r.amount) !== 0) return 2;
+        return 3;
+      };
+      return withRisks.slice().sort((a, b) => {
+        const ra = rank(a); const rb = rank(b);
+        if (ra !== rb) return ra - rb;
+        // Within the material band, sort by absolute amount desc.
+        if (ra === 2) {
+          return Math.abs(Number(b.amount) || 0) - Math.abs(Number(a.amount) || 0);
+        }
+        // Otherwise preserve the auditor's chosen order.
+        return (a.sortOrder || 0) - (b.sortOrder || 0);
+      });
+    }
+
+    if (sortMode === 'value') {
+      // Value lens: pure absolute-amount sort. Rows with no amount
+      // sink to the bottom (Number(undefined) is NaN; using `|| 0`
+      // collapses them to 0 and they fall behind anything positive).
+      return withRisks.slice().sort((a, b) =>
+        Math.abs(Number(b.amount) || 0) - Math.abs(Number(a.amount) || 0),
+      );
+    }
+
+    // Default: Source View — partition PAR-sourced rows to the bottom
+    // so reviewers can see at a glance which items came from
+    // preliminary analytical review. Order within each group stays as
+    // the user arranged them (sortOrder).
     const par: typeof withRisks = [];
     const main: typeof withRisks = [];
     for (const r of withRisks) (r.source === 'par' ? par : main).push(r);
     return [...main, ...par];
-  }, [rows]);
+  }, [rows, sortMode]);
 
   // Index of the first PAR-sourced row within computedRows, or -1 if
   // none. Used to inject a section-header row before the group and to
@@ -761,6 +823,47 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
             className="text-xs px-3 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100">
             ✂ Split by Assertion
           </button>
+          {/* Sort-mode radios. Persisted per-engagement in
+              localStorage so each reviewer's preferred lens survives
+              reload. The default is Source — preserves the previous
+              behaviour for users who haven't picked anything yet. */}
+          <fieldset className="flex items-center gap-2 text-xs ml-2 border-l border-slate-200 pl-3">
+            <legend className="sr-only">Sort mode</legend>
+            <span className="text-slate-500 font-medium">View:</span>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="radio"
+                name="rmm-sort-mode"
+                value="risk"
+                checked={sortMode === 'risk'}
+                onChange={() => setSortMode('risk')}
+                className="cursor-pointer"
+              />
+              <span title="Significant Risk first, then Areas of Focus, then rows with material amounts (largest first), then everything else">Risk</span>
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="radio"
+                name="rmm-sort-mode"
+                value="source"
+                checked={sortMode === 'source'}
+                onChange={() => setSortMode('source')}
+                className="cursor-pointer"
+              />
+              <span title="Original order with PAR-sourced rows pushed to the bottom">Source</span>
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="radio"
+                name="rmm-sort-mode"
+                value="value"
+                checked={sortMode === 'value'}
+                onChange={() => setSortMode('value')}
+                className="cursor-pointer"
+              />
+              <span title="Sort every row by absolute amount, highest first">Value</span>
+            </label>
+          </fieldset>
           {/* Planning Letter actions — picks template, renders .docx,
               optionally emails Informed-Management portal contacts
               and uploads to the Client Portal Documents list. */}
