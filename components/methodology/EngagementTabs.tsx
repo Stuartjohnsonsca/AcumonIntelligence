@@ -79,6 +79,12 @@ const SIGNOFF_TABS: Record<string, string> = {
   'materiality': 'Materiality',
   'par': 'Preliminary Analytical Review',
   'rmm': 'Identifying & Assessing RMM',
+  // Walkthroughs stores its overall sign-off in the
+  // walkthrough_overall_signoffs PF section (see TAB_SIGNOFF_PF_SECTIONS
+  // below). The tab-label dots only render when the tab key is in
+  // this map — without this entry the dots Walkthroughs writes go
+  // unread on the tab bar.
+  'walkthroughs': 'Walkthroughs',
 };
 
 // Map tab key to API endpoint for sign-offs
