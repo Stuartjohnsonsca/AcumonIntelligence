@@ -419,7 +419,20 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
             {rows.map(row => (
               <tr key={row.key} className={row.progress === 'red' || row.result === 'red' ? 'bg-red-50/40' : ''}>
                 <td className="px-3 py-1.5 text-slate-700">
-                  <div className="truncate max-w-[420px]">{row.testDescription}</div>
+                  <div className="flex items-start gap-1.5">
+                    {/* Category pill — visually distinguishes the
+                        new row sources (pre-execution audit-plan
+                        tests vs Prior Period planning items) from
+                        regular executions. Hidden for executions
+                        since those are the default. */}
+                    {row.category === 'pending_audit_plan' && (
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 font-semibold uppercase tracking-wide flex-shrink-0 mt-0.5">Pending</span>
+                    )}
+                    {row.category === 'planning' && (
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold uppercase tracking-wide flex-shrink-0 mt-0.5">Planning</span>
+                    )}
+                    <div className="truncate max-w-[420px]">{row.testDescription}</div>
+                  </div>
                   {row.totalErrors > 0 && (
                     <div className="text-[9px] text-red-600 mt-0.5 inline-flex items-center gap-0.5">
                       <AlertTriangle className="h-2.5 w-2.5" />{row.totalErrors} error{row.totalErrors !== 1 ? 's' : ''}

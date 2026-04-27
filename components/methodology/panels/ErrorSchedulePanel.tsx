@@ -232,13 +232,22 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
   async function setReason(errorId: string, reason: string) {
     setBusy(errorId);
     try {
-      await fetch(`/api/engagements/${engagementId}/error-schedule`, {
+      // Propagate the new reason to every line in the same journal.
+      // The reason text-box only renders once per journal (on the
+      // last visible row), but it acts as the journal-level
+      // narrative — every line stores the same explanation so the
+      // reason is visible from any vantage point.
+      const journalGroupId = meta[errorId]?.journalGroupId;
+      const targetIds = journalGroupId
+        ? Object.entries(meta).filter(([, m]) => m.journalGroupId === journalGroupId).map(([id]) => id)
+        : [errorId];
+      await Promise.all(targetIds.map(id => fetch(`/api/engagements/${engagementId}/error-schedule`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'set_reason', errorId, reason }),
-      });
+        body: JSON.stringify({ action: 'set_reason', errorId: id, reason }),
+      })));
       // Optimistic update — keeps the textarea responsive without
       // waiting for the round-trip to repopulate state.
-      setErrors(prev => prev.map(e => e.id === errorId ? { ...e, explanation: reason } : e));
+      setErrors(prev => prev.map(e => targetIds.includes(e.id) ? { ...e, explanation: reason } : e));
     } finally { setBusy(null); }
   }
 
@@ -854,39 +863,64 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
               </tr>
             </thead>
             <tbody>
-              {visibleErrors.map((e, idx) => {
-                const { isPL, amount, isDr } = rowSplit(e);
-                const isAdjusted = e.resolution === 'in_tb';
-                const so = meta[e.id]?.signOffs || {};
-                const sourceDecoded = decodeNavReference(meta[e.id]?.sourceLocation || null);
-                const codeOrLine = view === 'adjusted'
-                  ? (e.accountCode || e.fsLine)
-                  : view === 'unadjusted'
-                    ? e.fsLine
-                    : (e.accountCode ? `${e.accountCode} · ${e.fsLine}` : e.fsLine);
-                return (
-                  <RowFragment
-                    key={e.id}
-                    err={e}
-                    idx={idx}
-                    codeOrLine={codeOrLine}
-                    isFraud={e.isFraud}
-                    isAdjusted={isAdjusted}
-                    showSplit={showSplit}
-                    isPL={isPL}
-                    isDr={isDr}
-                    amount={amount}
-                    so={so}
-                    sourceDecoded={sourceDecoded}
-                    journalGroupId={meta[e.id]?.journalGroupId || null}
-                    busy={busy === e.id}
-                    onSignOff={(role) => void toggleSignOff(e.id, role)}
-                    onSetReason={(r) => void setReason(e.id, r)}
-                    onSetResolution={(next) => void setResolution(e.id, next)}
-                    onDelete={() => void deleteError(e.id)}
-                  />
-                );
-              })}
+              {(() => {
+                // For each journal in the visible list, mark the LAST
+                // visible row as the one that hosts the shared reason
+                // text-box (per spec: "text box underneath… after
+                // several rows of errors"). Non-journal rows always
+                // host their own reason. Iterate in reverse so the
+                // first row hit per journal is the last in display
+                // order.
+                const journalLastRowIds = new Set<string>();
+                const seenJournals = new Set<string>();
+                for (let i = visibleErrors.length - 1; i >= 0; i--) {
+                  const e = visibleErrors[i];
+                  const j = meta[e.id]?.journalGroupId;
+                  if (!j) continue;
+                  if (seenJournals.has(j)) continue;
+                  seenJournals.add(j);
+                  journalLastRowIds.add(e.id);
+                }
+                return visibleErrors.map((e, idx) => {
+                  const { isPL, amount, isDr } = rowSplit(e);
+                  const isAdjusted = e.resolution === 'in_tb';
+                  const so = meta[e.id]?.signOffs || {};
+                  const sourceDecoded = decodeNavReference(meta[e.id]?.sourceLocation || null);
+                  const codeOrLine = view === 'adjusted'
+                    ? (e.accountCode || e.fsLine)
+                    : view === 'unadjusted'
+                      ? e.fsLine
+                      : (e.accountCode ? `${e.accountCode} · ${e.fsLine}` : e.fsLine);
+                  const journalGroupId = meta[e.id]?.journalGroupId || null;
+                  // Single-row error: always host reason. Journal row:
+                  // only the last row of the journal hosts it, so the
+                  // reason renders once below the cluster.
+                  const showReasonBox = !journalGroupId || journalLastRowIds.has(e.id);
+                  return (
+                    <RowFragment
+                      key={e.id}
+                      err={e}
+                      idx={idx}
+                      codeOrLine={codeOrLine}
+                      isFraud={e.isFraud}
+                      isAdjusted={isAdjusted}
+                      showSplit={showSplit}
+                      isPL={isPL}
+                      isDr={isDr}
+                      amount={amount}
+                      so={so}
+                      sourceDecoded={sourceDecoded}
+                      journalGroupId={journalGroupId}
+                      showReasonBox={showReasonBox}
+                      busy={busy === e.id}
+                      onSignOff={(role) => void toggleSignOff(e.id, role)}
+                      onSetReason={(r) => void setReason(e.id, r)}
+                      onSetResolution={(next) => void setResolution(e.id, next)}
+                      onDelete={() => void deleteError(e.id)}
+                    />
+                  );
+                });
+              })()}
             </tbody>
           </table>
         </div>
@@ -947,6 +981,10 @@ interface RowFragmentProps {
   so: { preparer?: SignOff; reviewer?: SignOff; ri?: SignOff };
   sourceDecoded: { loc: { tab: string; subTab?: string; label?: string }; url: string | null } | null;
   journalGroupId: string | null;
+  /** True for non-journal rows and for the LAST row of each journal —
+   *  these host the reason text-box. Other journal lines stay quiet
+   *  so the reason renders once below the cluster, per spec. */
+  showReasonBox: boolean;
   busy: boolean;
   onSignOff: (role: 'preparer' | 'reviewer' | 'ri') => void;
   onSetReason: (reason: string) => void;
@@ -954,7 +992,7 @@ interface RowFragmentProps {
   onDelete: () => void;
 }
 
-function RowFragment({ err, idx, codeOrLine, isFraud, isAdjusted, showSplit, isPL, isDr, amount, so, sourceDecoded, journalGroupId, busy, onSignOff, onSetReason, onSetResolution, onDelete }: RowFragmentProps) {
+function RowFragment({ err, idx, codeOrLine, isFraud, isAdjusted, showSplit, isPL, isDr, amount, so, sourceDecoded, journalGroupId, showReasonBox, busy, onSignOff, onSetReason, onSetResolution, onDelete }: RowFragmentProps) {
   const [reasonDraft, setReasonDraft] = useState(err.explanation || '');
   // Sync local draft whenever the underlying explanation changes
   // server-side (e.g. another user edited).
@@ -1037,25 +1075,28 @@ function RowFragment({ err, idx, codeOrLine, isFraud, isAdjusted, showSplit, isP
           </button>
         </td>
       </tr>
-      {/* Reason text box — sits inline below each error per spec
-          ("text box underneath to add a reason for the error
-          journal"). When journal grouping lands this should float to
-          the bottom of each multi-line journal instead of every row. */}
-      <tr className="border-b border-slate-100/70">
-        <td></td>
-        <td colSpan={showSplit ? 12 : 8} className="px-2 pb-2 pt-0">
-          <textarea
-            value={reasonDraft}
-            onChange={e => setReasonDraft(e.target.value)}
-            onBlur={e => {
-              if (e.target.value !== (err.explanation || '')) onSetReason(e.target.value);
-            }}
-            placeholder="Reason for the error journal…"
-            className="w-full text-[10px] border border-slate-200 rounded px-2 py-1 min-h-[28px] bg-slate-50/40 focus:bg-white"
-            rows={1}
-          />
-        </td>
-      </tr>
+      {/* Reason text box — sits below each single-line error or
+          below the last line of a multi-line journal (per spec:
+          "text box underneath… after several rows of errors").
+          Hidden on intermediate journal lines so the reason renders
+          once per journal, not once per line. */}
+      {showReasonBox && (
+        <tr className="border-b border-slate-100/70">
+          <td></td>
+          <td colSpan={showSplit ? 12 : 8} className="px-2 pb-2 pt-0">
+            <textarea
+              value={reasonDraft}
+              onChange={e => setReasonDraft(e.target.value)}
+              onBlur={e => {
+                if (e.target.value !== (err.explanation || '')) onSetReason(e.target.value);
+              }}
+              placeholder={journalGroupId ? 'Reason for the journal — applied to every line in this journal' : 'Reason for the error…'}
+              className="w-full text-[10px] border border-slate-200 rounded px-2 py-1 min-h-[28px] bg-slate-50/40 focus:bg-white"
+              rows={1}
+            />
+          </td>
+        </tr>
+      )}
     </>
   );
 }

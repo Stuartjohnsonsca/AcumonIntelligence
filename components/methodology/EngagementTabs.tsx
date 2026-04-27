@@ -85,6 +85,8 @@ const SIGNOFF_TABS: Record<string, string> = {
   // this map — without this entry the dots Walkthroughs writes go
   // unread on the tab bar.
   'walkthroughs': 'Walkthroughs',
+  'tax-technical': 'Tax Technical',
+  'communication': 'Communication',
 };
 
 // Map tab key to API endpoint for sign-offs
@@ -105,14 +107,44 @@ const TAB_ENDPOINTS: Record<string, string> = {
 // Tabs whose tab-bar dots should reflect a per-engagement
 // permanent-file section instead of the standard ${ep}?meta=signoffs
 // endpoint. Use this for tabs that store overall sign-off in their
-// own PF section (walkthroughs / communication / etc.). The data
-// shape is { reviewer?: { at | timestamp }, partner?: {...}, ri?: {...} }
-// — 'ri' aliases 'partner' for legacy data.
+// own PF section. The data shape is
+//   { reviewer?: { at | timestamp }, partner?: {...}, ri?: {...} }
+// where 'ri' aliases 'partner' for legacy data.
 const TAB_SIGNOFF_PF_SECTIONS: Record<string, string> = {
   // Sub-process and per-step sign-offs already live in PF sections of
   // their own; the OVERALL sign-off lives in this section and is
   // what the tab-bar dot should reflect.
   walkthroughs: 'walkthrough_overall_signoffs',
+  // Tax Technical's overall is added via a dedicated PF section
+  // (see TaxTechnicalTab.toggleOverallSignOff).
+  'tax-technical': 'tax_technical_overall_signoffs',
+};
+
+// Tabs whose tab-bar dots come from a tab-specific endpoint that
+// doesn't fit either of the standard shapes. Each entry returns a
+// fully-formed TabSignOffStatus or null if it can't be determined.
+// Used by Communication today; future tabs with bespoke overall
+// sign-off plumbing land here too.
+const TAB_SIGNOFF_CUSTOM_LOADERS: Record<string, (engagementId: string) => Promise<TabSignOffStatus | null>> = {
+  communication: async (engagementId) => {
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/communication`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      // signOffs.overall holds the tab-level sign-off; sub-section
+      // sign-offs live under the section keys (board-minutes etc.)
+      // and are aggregated for show in the tab body itself.
+      const overall = data?.signOffs?.overall || {};
+      const reviewerSigned = !!(overall?.reviewer?.timestamp || overall?.reviewer?.at);
+      const riSigned = !!(overall?.ri?.timestamp || overall?.ri?.at);
+      // Cascade rule: an RI sign-off implies the Reviewer slot is
+      // effectively signed too.
+      return {
+        reviewer: reviewerSigned || riSigned ? 'signed' : 'none',
+        partner: riSigned ? 'signed' : 'none',
+      };
+    } catch { return null; }
+  },
 };
 
 // Map tab key → schedule config key (used in audit type → schedule mapping).
@@ -401,6 +433,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             reviewer: reviewerTs ? 'signed' : 'none',
             partner: partnerTs ? 'signed' : 'none',
           };
+        } catch { /* ignore */ }
+      }),
+      // Custom-loader pattern — tabs whose overall sign-off comes
+      // from a bespoke endpoint that doesn't fit either standard
+      // shape. Communication uses this today.
+      ...Object.entries(TAB_SIGNOFF_CUSTOM_LOADERS).map(async ([tabKey, loader]) => {
+        try {
+          const result = await loader(engagement.id);
+          if (result) statuses[tabKey] = result;
         } catch { /* ignore */ }
       }),
     ]);

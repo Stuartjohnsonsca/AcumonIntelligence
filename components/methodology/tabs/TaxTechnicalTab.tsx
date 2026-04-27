@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Send, Check, AlertTriangle, Loader2, ChevronDown, Users, ArrowRight } from 'lucide-react';
+import { Plus, Send, Check, AlertTriangle, Loader2, ChevronDown, Users, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { setCurrentLocation, subscribeNav, consumePendingNav } from '@/lib/engagement-nav';
 
 interface TaxChat {
@@ -65,6 +65,40 @@ export function TaxTechnicalTab({ engagementId, clientName }: Props) {
   useEffect(() => {
     if (!activeCategory && categories.length > 0) setActiveCategory(categories[0]);
   }, [categories, activeCategory]);
+
+  // Tab-level overall sign-off — same data shape as Walkthroughs so
+  // the EngagementTabs PF-section loader can read it without bespoke
+  // plumbing. Stored under PF section 'tax_technical_overall_signoffs'.
+  const [overallSignOffs, setOverallSignOffs] = useState<{ reviewer?: { name: string; at: string }; ri?: { name: string; at: string } }>({});
+  useEffect(() => {
+    fetch(`/api/engagements/${engagementId}/permanent-file?section=tax_technical_overall_signoffs`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { const data = d?.data || d?.answers; if (data) setOverallSignOffs(data); })
+      .catch(() => {});
+  }, [engagementId]);
+  function toggleOverallSignOff(role: 'reviewer' | 'ri') {
+    const current = overallSignOffs[role];
+    // Build the next state with no `undefined` values — these get
+    // dropped by JSON.stringify and combined with the server's
+    // default merge semantics would mean un-signing a role never
+    // actually clears it. See WalkthroughsTab.toggleOverallSignOff
+    // for the same fix and a longer note on the bug.
+    const next: typeof overallSignOffs = {};
+    if (role === 'reviewer') {
+      if (!current) next.reviewer = { name: 'Current User', at: new Date().toISOString() };
+      if (overallSignOffs.ri) next.ri = overallSignOffs.ri;
+    } else {
+      if (overallSignOffs.reviewer) next.reviewer = overallSignOffs.reviewer;
+      if (!current) next.ri = { name: 'Current User', at: new Date().toISOString() };
+    }
+    setOverallSignOffs(next);
+    fetch(`/api/engagements/${engagementId}/permanent-file`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sectionKey: 'tax_technical_overall_signoffs', data: next, replace: true }),
+    }).then(() => {
+      try { window.dispatchEvent(new CustomEvent('engagement:signoffs-changed')); } catch {}
+    }).catch(() => {});
+  }
 
   // Engagement-nav wiring — push the active tax category as our
   // sub-tab so a back-link from elsewhere (e.g. an RI matter raised
@@ -176,19 +210,47 @@ export function TaxTechnicalTab({ engagementId, clientName }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Category sub-tabs */}
-      <div className="flex gap-0.5 bg-slate-100 rounded p-0.5 overflow-x-auto mb-3 shrink-0">
-        {categories.map(cat => (
+      {/* Category sub-tabs + overall sign-off */}
+      <div className="flex items-center gap-3 mb-3 shrink-0">
+        <div className="flex gap-0.5 bg-slate-100 rounded p-0.5 overflow-x-auto flex-1">
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => { setActiveCategory(cat); setActiveChatId(null); }}
+              className={`px-2.5 py-1 text-[10px] font-medium rounded whitespace-nowrap transition-colors ${
+                activeCategory === cat ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+        {/* Overall sign-off — same layout as Walkthroughs so the user
+            sees consistent dot UI across tabs. Reviewer + RI; an RI
+            sign-off cascades to fill the Reviewer dot too. */}
+        <div className="shrink-0 inline-flex items-center gap-2 border-l border-slate-200 pl-3">
+          <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Tab sign-off</span>
           <button
-            key={cat}
-            onClick={() => { setActiveCategory(cat); setActiveChatId(null); }}
-            className={`px-2.5 py-1 text-[10px] font-medium rounded whitespace-nowrap transition-colors ${
-              activeCategory === cat ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            }`}
+            onClick={() => toggleOverallSignOff('reviewer')}
+            className="flex items-center gap-1"
+            title={overallSignOffs.reviewer ? `Reviewed by ${overallSignOffs.reviewer.name} — click to unsign` : 'Click to sign off as Reviewer'}
           >
-            {cat}
+            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${overallSignOffs.reviewer ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
+              {overallSignOffs.reviewer && <CheckCircle2 className="h-3 w-3 text-white" />}
+            </div>
+            <span className="text-[9px] text-slate-500">R</span>
           </button>
-        ))}
+          <button
+            onClick={() => toggleOverallSignOff('ri')}
+            className="flex items-center gap-1"
+            title={overallSignOffs.ri ? `RI signed by ${overallSignOffs.ri.name} — click to unsign` : 'Click to sign off as RI'}
+          >
+            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${overallSignOffs.ri ? 'bg-green-500 border-green-500' : 'border-green-400 hover:bg-green-50'}`}>
+              {overallSignOffs.ri && <CheckCircle2 className="h-3 w-3 text-white" />}
+            </div>
+            <span className="text-[9px] text-slate-500">RI</span>
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-1 gap-3 min-h-0">

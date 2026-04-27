@@ -88,6 +88,13 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
       if (res.ok) {
         const data = await res.json();
         setSignOffBuckets(data.signOffs || {});
+        // Tab-bar dot resync — only the 'overall' bucket drives the
+        // tab label, so dispatch only when that's what changed. Sub-
+        // section sign-offs render inside the tab body and don't
+        // need to rebuild the tab-bar state.
+        if (target === 'overall') {
+          try { window.dispatchEvent(new CustomEvent('engagement:signoffs-changed')); } catch {}
+        }
       }
     } catch {}
   }
