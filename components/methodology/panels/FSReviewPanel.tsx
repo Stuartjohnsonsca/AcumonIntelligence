@@ -49,7 +49,7 @@ function f(n: number): string {
 // ─── Types ───
 interface TBRow { id: string; accountCode: string; description: string; fsStatement: string | null; fsLevel: string | null; fsLineId: string | null; fsNoteLevel: string | null; currentYear: number | null; priorYear: number | null; }
 interface Conc { id: string; fsLine: string; fsLineId: string | null; testDescription: string; conclusion: string | null; totalErrors: number; extrapolatedError: number; reviewedByName: string | null; riSignedByName: string | null; accountCode: string | null; }
-interface Err { id: string; fsLine: string; fsLineId: string | null; errorAmount: number; errorType: string; }
+interface Err { id: string; fsLine: string; fsLineId: string | null; accountCode: string | null; errorAmount: number; errorType: string; resolution: string | null; }
 
 // Assertion-column setup for the TB view. Order matches the audit
 // standard ordering (existence → presentation), and the LABEL is the
@@ -232,12 +232,32 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
     return m;
   }, [conclusions]);
 
+  // Split errors into "adjusted" (booked into TB → resolution='in_tb',
+  // matching the Error Schedule rebuild's definition) and "unadjusted"
+  // (anything else). Aggregating by fsLineId.
   const errsByFsLineId = useMemo(() => {
     const m = new Map<string, { adj: number; unadj: number }>();
     for (const e of errors) {
       const k = e.fsLineId || (e.fsLine || '').toLowerCase();
       const cur = m.get(k) || { adj: 0, unadj: 0 };
-      if (e.errorType === 'factual') cur.adj += e.errorAmount; else cur.unadj += e.errorAmount;
+      if (e.resolution === 'in_tb') cur.adj += e.errorAmount;
+      else cur.unadj += e.errorAmount;
+      m.set(k, cur);
+    }
+    return m;
+  }, [errors]);
+
+  // Same split, but aggregated by account code so the TB Format view
+  // can show per-row Err Adj / Err Unadj without a fuzzy-match
+  // round-trip.
+  const errsByAccount = useMemo(() => {
+    const m = new Map<string, { adj: number; unadj: number }>();
+    for (const e of errors) {
+      if (!e.accountCode) continue;
+      const k = e.accountCode.toLowerCase();
+      const cur = m.get(k) || { adj: 0, unadj: 0 };
+      if (e.resolution === 'in_tb') cur.adj += e.errorAmount;
+      else cur.unadj += e.errorAmount;
       m.set(k, cur);
     }
     return m;
@@ -337,6 +357,8 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
           tbRows={tbRows}
           conclusions={conclusions}
           testAssertions={testAssertions}
+          errsByAccount={errsByAccount}
+          errsByFsLineId={errsByFsLineId}
           expanded={expanded}
           toggle={toggle}
           periodEndLabel={periodEndLabel}
@@ -357,6 +379,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
               <span className="w-20 text-right" title="Prior period end">{priorPeriodEndLabel}</span>
               <span className="w-16 text-right" title="Errors booked (adjusted)">Err. Adj</span>
               <span className="w-16 text-right" title="Errors unadjusted">Err. Unadj</span>
+              <span className="w-20 text-right" title="Final = Period End + Error Adjusted">Final</span>
               <span className="flex gap-1.5">
                 <span className="w-3.5 text-center" title="Reviewer sign-off count">Rev</span>
                 <span className="w-3.5 text-center" title="RI sign-off count">RI</span>
@@ -387,9 +410,9 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                   <div className="flex items-center gap-4 text-[10px]">
                     <span className="font-mono tabular-nums font-semibold text-slate-700 w-20 text-right">{f(cy)}</span>
                     <span className="font-mono tabular-nums text-slate-400 w-20 text-right">{f(py)}</span>
-                    {allErrs.adj !== 0 && <span className="text-red-600 font-mono tabular-nums w-16 text-right">{f(allErrs.adj)}</span>}
-                    {allErrs.unadj !== 0 && <span className="text-amber-600 font-mono tabular-nums w-16 text-right">{f(allErrs.unadj)}</span>}
-                    {(allErrs.adj === 0 && allErrs.unadj === 0) && <span className="text-slate-300 w-16 text-right">—</span>}
+                    <span className={`font-mono tabular-nums w-16 text-right ${allErrs.adj !== 0 ? 'text-red-600' : 'text-slate-300'}`}>{allErrs.adj !== 0 ? f(allErrs.adj) : '—'}</span>
+                    <span className={`font-mono tabular-nums w-16 text-right ${allErrs.unadj !== 0 ? 'text-amber-600' : 'text-slate-300'}`}>{allErrs.unadj !== 0 ? f(allErrs.unadj) : '—'}</span>
+                    <span className="font-mono tabular-nums w-20 text-right font-semibold text-slate-800" title="Final = Period End + Error Adjusted">{f(cy + allErrs.adj)}</span>
                     <div className="flex gap-1.5"><SignDot count={so.rev} total={so.total} /><SignDot count={so.ri} total={so.total} /></div>
                   </div>
                 </button>
@@ -423,12 +446,50 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
                               <span className={`font-mono tabular-nums w-18 text-right ${lV > 0 ? 'text-green-600' : lV < 0 ? 'text-red-600' : 'text-slate-400'}`}>{f(lV)}</span>
                               <span className={`font-mono tabular-nums w-14 text-right ${lErr.adj !== 0 ? 'text-red-600' : 'text-slate-300'}`}>{lErr.adj !== 0 ? f(lErr.adj) : '—'}</span>
                               <span className={`font-mono tabular-nums w-14 text-right ${lErr.unadj !== 0 ? 'text-amber-600' : 'text-slate-300'}`}>{lErr.unadj !== 0 ? f(lErr.unadj) : '—'}</span>
+                              <span className="font-mono tabular-nums w-18 text-right font-semibold text-slate-800" title="Final = Period End + Error Adjusted">{f(lCY + lErr.adj)}</span>
                               <div className="flex gap-1"><SignDot count={lSo.rev} total={lSo.total} /><SignDot count={lSo.ri} total={lSo.total} /></div>
                             </div>
                           </button>
 
                           {isLevelOpen && (
                             <div className="border-t">
+                              {/* Assertion coverage strip — aggregates the
+                                  level's test conclusions into G/O/R dots
+                                  per assertion. Matches the TB Format
+                                  layout so the user sees the same
+                                  assertion-coverage view from either
+                                  vantage point. Hidden when no tests
+                                  carry assertions for this level. */}
+                              {(() => {
+                                const dots: Record<string, DotCounts> = {};
+                                let anyDots = false;
+                                for (const c of lConcs) {
+                                  const bucket = colourBucket(c.conclusion);
+                                  if (!bucket) continue;
+                                  const assertions = testAssertions.get((c.testDescription || '').toLowerCase().trim()) || [];
+                                  for (const a of assertions) {
+                                    if (!dots[a]) dots[a] = emptyDots();
+                                    dots[a][bucket]++;
+                                    anyDots = true;
+                                  }
+                                }
+                                if (!anyDots) return null;
+                                const presentAssertions = ASSERTION_ORDER.filter(a => dots[a]);
+                                for (const a of Object.keys(dots)) {
+                                  if (!presentAssertions.includes(a as any)) presentAssertions.push(a as any);
+                                }
+                                return (
+                                  <div className="px-3 py-1 bg-slate-50 border-b flex items-center gap-3 flex-wrap">
+                                    <span className="text-[8px] uppercase text-slate-500 font-semibold tracking-wide">Assertions</span>
+                                    {presentAssertions.map(a => (
+                                      <span key={a} className="inline-flex items-center gap-1" title={ASSERTION_TITLE[a] || a}>
+                                        <span className="text-[8px] uppercase text-slate-500 font-semibold">{ASSERTION_LABEL[a] || a}</span>
+                                        <AssertionDots dots={dots[a]} />
+                                      </span>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                               {/* FS Level test summary — shows all tests for this level */}
                               {lConcs.length > 0 ? (
                                 <div className="px-3 py-1.5 bg-blue-50/30 border-b space-y-0.5">
@@ -624,10 +685,12 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
 // Conclusions are matched to TB rows by accountCode (a conclusion
 // recorded against a specific account) or by FS Line ID (account-
 // level conclusion that applies to every TB row sharing that line).
-function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodEndLabel, priorPeriodEndLabel }: {
+function TBView({ tbRows, conclusions, testAssertions, errsByAccount, errsByFsLineId, expanded, toggle, periodEndLabel, priorPeriodEndLabel }: {
   tbRows: TBRow[];
   conclusions: Conc[];
   testAssertions: Map<string, string[]>;
+  errsByAccount: Map<string, { adj: number; unadj: number }>;
+  errsByFsLineId: Map<string, { adj: number; unadj: number }>;
   expanded: Set<string>;
   toggle: (key: string) => void;
   periodEndLabel: string;
@@ -660,6 +723,30 @@ function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodE
     if (row.fsLineId) return concsByFsLineId.get(row.fsLineId) || [];
     return [];
   }
+  // Per-row error totals — account-level first (most specific) then
+  // fall through to the row's FS Line. Net effect: if an error is
+  // recorded against a specific account it lights that row up; if it
+  // sits at the FS Line level it lights up every account on that
+  // line. The aggregated statement totals roll up correctly either
+  // way because each error contributes to exactly one map.
+  function rowErrors(row: TBRow): { adj: number; unadj: number } {
+    const acc = errsByAccount.get(row.accountCode.toLowerCase());
+    if (acc) return acc;
+    if (row.fsLineId) {
+      const byId = errsByFsLineId.get(row.fsLineId);
+      if (byId) return byId;
+    }
+    const byName = errsByFsLineId.get((row.fsLevel || '').toLowerCase().trim());
+    return byName || { adj: 0, unadj: 0 };
+  }
+  function rowSignCounts(row: TBRow): { rev: number; ri: number; total: number } {
+    const concs = rowConclusions(row);
+    return {
+      rev: concs.filter(c => c.reviewedByName || c.riSignedByName).length,
+      ri: concs.filter(c => c.riSignedByName).length,
+      total: concs.length,
+    };
+  }
 
   function rowAssertionDots(row: TBRow): Record<string, DotCounts> {
     const out: Record<string, DotCounts> = {};
@@ -683,14 +770,30 @@ function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodE
   }, [tbRows]);
 
   // Pre-compute statement-level aggregates so the collapsed header
-  // can show rolled-up assertion dots without re-walking conclusions
-  // on every render.
+  // can show rolled-up dots / totals without re-walking on every
+  // render. errAdj / errUnadj sum the per-row error totals; the
+  // collapsed header shows them so coverage gaps + final totals are
+  // visible without expanding.
   const stmtData = useMemo(() => {
-    const out = new Map<string, { rows: TBRow[]; aggDots: Record<string, DotCounts>; presentAssertions: Set<string>; cy: number; py: number }>();
+    const out = new Map<string, {
+      rows: TBRow[];
+      aggDots: Record<string, DotCounts>;
+      presentAssertions: Set<string>;
+      cy: number;
+      py: number;
+      errAdj: number;
+      errUnadj: number;
+      sign: { rev: number; ri: number; total: number };
+    }>();
     for (const [stmt, rows] of byStmt.entries()) {
       const agg: Record<string, DotCounts> = {};
       const present = new Set<string>();
-      let cy = 0, py = 0;
+      let cy = 0, py = 0, errAdj = 0, errUnadj = 0;
+      let rev = 0, ri = 0, total = 0;
+      // Track which row → error map slot we've already counted so
+      // FS-line-level errors don't get double-counted across every
+      // row sharing the line.
+      const seenErrKeys = new Set<string>();
       for (const row of rows) {
         cy += Number(row.currentYear) || 0;
         py += Number(row.priorYear) || 0;
@@ -700,12 +803,25 @@ function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodE
           agg[a] = addDots(agg[a], d);
           present.add(a);
         }
+        // Choose whichever key the row actually matches against, then
+        // dedupe so a single FS-line error doesn't add for every row.
+        const accKey = `acc:${row.accountCode.toLowerCase()}`;
+        const lineKey = row.fsLineId ? `id:${row.fsLineId}` : `name:${(row.fsLevel || '').toLowerCase().trim()}`;
+        const key = errsByAccount.has(row.accountCode.toLowerCase()) ? accKey : lineKey;
+        if (!seenErrKeys.has(key)) {
+          seenErrKeys.add(key);
+          const e = rowErrors(row);
+          errAdj += e.adj;
+          errUnadj += e.unadj;
+        }
+        const sc = rowSignCounts(row);
+        rev += sc.rev; ri += sc.ri; total += sc.total;
       }
-      out.set(stmt, { rows, aggDots: agg, presentAssertions: present, cy, py });
+      out.set(stmt, { rows, aggDots: agg, presentAssertions: present, cy, py, errAdj, errUnadj, sign: { rev, ri, total } });
     }
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [byStmt, conclusions, testAssertions]);
+  }, [byStmt, conclusions, testAssertions, errsByAccount, errsByFsLineId]);
 
   // Determine which assertion columns to show globally — union across
   // all statements, ordered per ASSERTION_ORDER. Assertions that
@@ -735,8 +851,10 @@ function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodE
         return (
           <div key={stmt} className="border rounded-lg overflow-hidden">
             {/* Statement header — clickable to collapse/expand. When
-                collapsed, the assertion dots aggregate across every
-                row in the statement. */}
+                collapsed, the assertion dots + numeric totals
+                aggregate across every row in the statement, so
+                coverage gaps and Final totals are visible at a
+                glance. */}
             <button
               type="button"
               onClick={() => toggle(stmtKey)}
@@ -748,17 +866,39 @@ function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodE
               <span className="text-xs font-bold text-slate-800 flex-shrink-0">{stmt}</span>
               <span className="text-[10px] text-slate-400">({data.rows.length} a/c)</span>
               <div className="flex-1" />
-              {/* Aggregated assertion dots — only shown when collapsed.
-                  Helps the user see at-a-glance the coverage state of
-                  every assertion across the whole statement. */}
               {!isOpen && assertionCols.map(a => (
                 <span key={a} className="inline-flex items-center gap-1 px-1" title={ASSERTION_TITLE[a] || a}>
                   <span className="text-[8px] uppercase text-slate-400 font-semibold">{ASSERTION_LABEL[a] || a}</span>
                   <AssertionDots dots={data.aggDots[a] || emptyDots()} />
                 </span>
               ))}
+              {/* Sign-off rollup (Reviewer / RI) — shown collapsed so
+                  whoever looks at the schedule sees coverage at the
+                  statement level immediately. */}
+              {!isOpen && (
+                <span className="inline-flex items-center gap-1 px-1" title="Reviewer / RI sign-off across the statement">
+                  <SignDot count={data.sign.rev} total={data.sign.total} />
+                  <SignDot count={data.sign.ri}  total={data.sign.total} />
+                </span>
+              )}
               <span className="font-mono tabular-nums text-[11px] font-semibold text-slate-700 w-24 text-right flex-shrink-0 ml-3">{f(data.cy)}</span>
               <span className="font-mono tabular-nums text-[11px] text-slate-400 w-24 text-right flex-shrink-0">{f(data.py)}</span>
+              {/* Err Adj / Err Unadj / Final ((CY+adj)) — shown when
+                  collapsed so the user can read the headline figures
+                  for each statement without expanding. */}
+              {!isOpen && (
+                <>
+                  <span className={`font-mono tabular-nums text-[11px] w-20 text-right flex-shrink-0 ${data.errAdj !== 0 ? 'text-red-600' : 'text-slate-300'}`} title="Errors adjusted (booked into TB)">
+                    {data.errAdj !== 0 ? f(data.errAdj) : '—'}
+                  </span>
+                  <span className={`font-mono tabular-nums text-[11px] w-20 text-right flex-shrink-0 ${data.errUnadj !== 0 ? 'text-amber-600' : 'text-slate-300'}`} title="Errors unadjusted (still on the schedule)">
+                    {data.errUnadj !== 0 ? f(data.errUnadj) : '—'}
+                  </span>
+                  <span className="font-mono tabular-nums text-[11px] w-24 text-right flex-shrink-0 font-semibold text-slate-800" title="Final = Period End + Error Adjusted">
+                    {f(data.cy + data.errAdj)}
+                  </span>
+                </>
+              )}
             </button>
 
             {isOpen && (
@@ -771,15 +911,20 @@ function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodE
                         below, which leave airspace either side. */}
                     <th className="text-left px-1 py-1 text-slate-600 w-20">Code</th>
                     <th className="text-left px-3 py-1 text-slate-600">Description</th>
-                    <th className="text-left px-2 py-1 text-slate-400 w-32">FS Level</th>
+                    <th className="text-left px-2 py-1 text-slate-400 w-28">FS Level</th>
                     {assertionCols.map(a => (
-                      <th key={a} className="text-center px-2 py-1 text-slate-500 w-16" title={ASSERTION_TITLE[a] || a}>
+                      <th key={a} className="text-center px-2 py-1 text-slate-500 w-14" title={ASSERTION_TITLE[a] || a}>
                         {ASSERTION_LABEL[a] || a}
                       </th>
                     ))}
                     <th className="text-right px-3 py-1 text-slate-600 w-24">{periodEndLabel}</th>
                     <th className="text-right px-3 py-1 text-slate-600 w-24">{priorPeriodEndLabel}</th>
                     <th className="text-right px-3 py-1 text-slate-600 w-20">Variance</th>
+                    <th className="text-right px-3 py-1 text-slate-600 w-20" title="Errors adjusted (booked into TB)">Err. Adj</th>
+                    <th className="text-right px-3 py-1 text-slate-600 w-20" title="Errors unadjusted (still on schedule)">Err. Unadj</th>
+                    <th className="text-right px-3 py-1 text-slate-700 w-24" title="Final = Period End + Error Adjusted">Final</th>
+                    <th className="text-center px-2 py-1 text-slate-500 w-10" title="Reviewer sign-off">Rev</th>
+                    <th className="text-center px-2 py-1 text-slate-500 w-10" title="RI sign-off">RI</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -788,6 +933,9 @@ function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodE
                     const py = Number(r.priorYear) || 0;
                     const v = cy - py;
                     const dots = rowAssertionDots(r);
+                    const errs = rowErrors(r);
+                    const final = cy + errs.adj;
+                    const so = rowSignCounts(r);
                     return (
                       <tr key={r.id} className="border-b border-slate-50">
                         <td className="px-1 py-0.5 font-mono tabular-nums text-slate-500">{r.accountCode}</td>
@@ -801,6 +949,19 @@ function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodE
                         <td className="px-3 py-0.5 text-right font-mono tabular-nums">{f(cy)}</td>
                         <td className="px-3 py-0.5 text-right font-mono tabular-nums text-slate-500">{f(py)}</td>
                         <td className={`px-3 py-0.5 text-right font-mono tabular-nums ${v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-slate-400'}`}>{f(v)}</td>
+                        <td className={`px-3 py-0.5 text-right font-mono tabular-nums ${errs.adj !== 0 ? 'text-red-600' : 'text-slate-300'}`}>
+                          {errs.adj !== 0 ? f(errs.adj) : '—'}
+                        </td>
+                        <td className={`px-3 py-0.5 text-right font-mono tabular-nums ${errs.unadj !== 0 ? 'text-amber-600' : 'text-slate-300'}`}>
+                          {errs.unadj !== 0 ? f(errs.unadj) : '—'}
+                        </td>
+                        <td className="px-3 py-0.5 text-right font-mono tabular-nums font-semibold text-slate-800">{f(final)}</td>
+                        <td className="px-2 py-0.5 text-center">
+                          <SignDot count={so.rev} total={so.total} />
+                        </td>
+                        <td className="px-2 py-0.5 text-center">
+                          <SignDot count={so.ri} total={so.total} />
+                        </td>
                       </tr>
                     );
                   })}
