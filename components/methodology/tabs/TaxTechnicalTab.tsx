@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Send, Check, AlertTriangle, Loader2, ChevronDown, Users, ArrowRight } from 'lucide-react';
+import { setCurrentLocation, subscribeNav, consumePendingNav } from '@/lib/engagement-nav';
 
 interface TaxChat {
   id: string;
@@ -64,6 +65,30 @@ export function TaxTechnicalTab({ engagementId, clientName }: Props) {
   useEffect(() => {
     if (!activeCategory && categories.length > 0) setActiveCategory(categories[0]);
   }, [categories, activeCategory]);
+
+  // Engagement-nav wiring — push the active tax category as our
+  // sub-tab so a back-link from elsewhere (e.g. an RI matter raised
+  // on a specific tax category) lands in that category.
+  useEffect(() => {
+    if (activeCategory) {
+      setCurrentLocation({ tab: 'tax-technical', subTab: activeCategory, label: `Tax Technical › ${activeCategory}` });
+    }
+  }, [activeCategory]);
+  useEffect(() => {
+    const claimed = consumePendingNav(loc => loc.tab === 'tax-technical');
+    if (claimed?.subTab && categories.includes(claimed.subTab)) {
+      setActiveCategory(claimed.subTab);
+    }
+  // Run when categories list lands (it loads async).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categories]);
+  useEffect(() => {
+    const unsub = subscribeNav((target) => {
+      if (target.tab !== 'tax-technical' || !target.subTab) return;
+      if (categories.includes(target.subTab)) setActiveCategory(target.subTab);
+    });
+    return unsub;
+  }, [categories]);
 
   // Load chats for active category
   const loadChats = useCallback(async () => {

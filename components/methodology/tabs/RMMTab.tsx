@@ -7,6 +7,7 @@ import { ASSERTION_TYPES, INHERENT_RISK_COMPONENTS } from '@/types/methodology';
 import { lookupInherentRisk, lookupOverallRisk, riskColor, inherentRiskDropdownColor } from '@/lib/risk-table-lookup';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { PlanningLetterModal } from '../panels/PlanningLetterModal';
+import { setCurrentLocation, subscribeNav, consumePendingNav } from '@/lib/engagement-nav';
 
 interface Props {
   engagementId: string;
@@ -136,6 +137,28 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   useScrollToAnchor([loading, rows.length], { enabled: !loading });
   const [initialRows, setInitialRows] = useState<RMMRow[]>([]);
   const [viewMode, setViewMode] = useState<'fs_line' | 'tb_account'>('fs_line');
+
+  // Engagement-nav wiring — push the current view-mode as our sub-tab
+  // so a back-link from elsewhere (e.g. an RI matter or error raised
+  // from RMM) drops the reviewer back into the same view they were on.
+  // Mirrors the pattern in WalkthroughsTab and CommunicationTab.
+  useEffect(() => {
+    const subLabel = viewMode === 'tb_account' ? 'TB Account view' : 'FS Line view';
+    setCurrentLocation({ tab: 'rmm', subTab: viewMode, label: `RMM › ${subLabel}` });
+  }, [viewMode]);
+  useEffect(() => {
+    const claimed = consumePendingNav(loc => loc.tab === 'rmm');
+    if (claimed?.subTab === 'fs_line' || claimed?.subTab === 'tb_account') {
+      setViewMode(claimed.subTab);
+    }
+  }, []);
+  useEffect(() => {
+    const unsub = subscribeNav((target) => {
+      if (target.tab !== 'rmm') return;
+      if (target.subTab === 'fs_line' || target.subTab === 'tb_account') setViewMode(target.subTab);
+    });
+    return unsub;
+  }, []);
   const [showCategory, setShowCategory] = useState(false);
   // Planning Letter modal — two modes, same component. Opened from
   // the toolbar buttons added below.
