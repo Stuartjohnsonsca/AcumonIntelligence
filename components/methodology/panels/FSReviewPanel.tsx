@@ -51,9 +51,73 @@ interface TBRow { id: string; accountCode: string; description: string; fsStatem
 interface Conc { id: string; fsLine: string; fsLineId: string | null; testDescription: string; conclusion: string | null; totalErrors: number; extrapolatedError: number; reviewedByName: string | null; riSignedByName: string | null; accountCode: string | null; }
 interface Err { id: string; fsLine: string; fsLineId: string | null; errorAmount: number; errorType: string; }
 
+// Assertion-column setup for the TB view. Order matches the audit
+// standard ordering (existence → presentation), and the LABEL is the
+// short code that fits in a narrow column header. Only assertions
+// actually present in the engagement's tests get rendered as columns.
+const ASSERTION_ORDER = ['existence', 'occurrence', 'completeness', 'accuracy', 'valuation', 'rights_obligations', 'cut_off', 'classification', 'presentation'] as const;
+const ASSERTION_LABEL: Record<string, string> = {
+  existence: 'E',
+  occurrence: 'O',
+  completeness: 'C',
+  accuracy: 'A',
+  valuation: 'V',
+  rights_obligations: 'RO',
+  cut_off: 'CO',
+  classification: 'CL',
+  presentation: 'P',
+};
+const ASSERTION_TITLE: Record<string, string> = {
+  existence: 'Existence',
+  occurrence: 'Occurrence',
+  completeness: 'Completeness',
+  accuracy: 'Accuracy',
+  valuation: 'Valuation / Allocation',
+  rights_obligations: 'Rights & Obligations',
+  cut_off: 'Cut-off',
+  classification: 'Classification',
+  presentation: 'Presentation & Disclosure',
+};
+
+interface DotCounts { g: number; o: number; r: number; }
+function emptyDots(): DotCounts { return { g: 0, o: 0, r: 0 }; }
+function addDots(a: DotCounts, b: DotCounts): DotCounts { return { g: a.g + b.g, o: a.o + b.o, r: a.r + b.r }; }
+function isEmpty(d: DotCounts): boolean { return d.g === 0 && d.o === 0 && d.r === 0; }
+function colourBucket(conclusion: string | null): 'g' | 'o' | 'r' | null {
+  if (conclusion === 'green') return 'g';
+  if (conclusion === 'orange') return 'o';
+  if (conclusion === 'red' || conclusion === 'failed') return 'r';
+  return null;
+}
+
 function Dot({ c }: { c: string | null }) {
   const col = c === 'green' ? 'bg-green-500' : c === 'orange' ? 'bg-orange-500' : c === 'red' ? 'bg-red-500' : 'bg-slate-300';
   return <div className={`w-2 h-2 rounded-full ${col} inline-block`} />;
+}
+
+// Renders up to 3 dots (one per colour bucket) in an assertion cell,
+// with a tiny count badge for buckets containing more than one test.
+// The user spec: "no more than 3 dots (1 for each colour) in an
+// assertion column per row… rather than duplicate a colour just have
+// count".
+function AssertionDots({ dots }: { dots: DotCounts }) {
+  if (isEmpty(dots)) return <span className="text-slate-200 text-[9px]">—</span>;
+  return (
+    <div className="inline-flex items-center justify-center gap-1">
+      {dots.g > 0 && <DotWithCount c="green" count={dots.g} />}
+      {dots.o > 0 && <DotWithCount c="orange" count={dots.o} />}
+      {dots.r > 0 && <DotWithCount c="red" count={dots.r} />}
+    </div>
+  );
+}
+function DotWithCount({ c, count }: { c: 'green' | 'orange' | 'red'; count: number }) {
+  const bg = c === 'green' ? 'bg-green-500' : c === 'orange' ? 'bg-orange-500' : 'bg-red-500';
+  return (
+    <span className="inline-flex items-center gap-0.5 leading-none">
+      <span className={`w-2 h-2 rounded-full ${bg}`} />
+      {count > 1 && <span className="text-[8px] text-slate-500">{count}</span>}
+    </span>
+  );
 }
 
 function SignDot({ count, total }: { count: number; total: number }) {
@@ -69,6 +133,11 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [conclusions, setConclusions] = useState<Conc[]>([]);
   const [errors, setErrors] = useState<Err[]>([]);
+  // testDescription (lowercased) → set of assertion codes the test
+  // covers. Built from /test-allocations on mount; used by the TB view
+  // to colour the per-row assertion dots without needing the
+  // conclusion endpoint to be modified.
+  const [testAssertions, setTestAssertions] = useState<Map<string, string[]>>(new Map());
   const [framework, setFramework] = useState('FRS102');
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -80,16 +149,41 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
   useEffect(() => {
     (async () => {
       try {
-        const [tbRes, concRes, errRes, pfRes, engRes] = await Promise.all([
+        const [tbRes, concRes, errRes, pfRes, engRes, allocRes] = await Promise.all([
           fetch(`/api/engagements/${engagementId}/trial-balance`),
           fetch(`/api/engagements/${engagementId}/test-conclusions`),
           fetch(`/api/engagements/${engagementId}/error-schedule`),
           fetch(`/api/engagements/${engagementId}/permanent-file`),
           fetch(`/api/engagements/${engagementId}`).catch(() => null),
+          // Test allocations carry the test bank with assertions; we
+          // only need test.name → test.assertions to colour the
+          // assertion-column dots in the TB view.
+          fetch(`/api/engagements/${engagementId}/test-allocations`).catch(() => null),
         ]);
         if (tbRes.ok) setTbRows((await tbRes.json()).rows || []);
         if (concRes.ok) setConclusions((await concRes.json()).conclusions || []);
         if (errRes.ok) setErrors((await errRes.json()).errors || []);
+        if (allocRes && allocRes.ok) {
+          const data = await allocRes.json();
+          // Index by lowercased test name. Tests appear both in the
+          // allocations array (.test.name + .test.assertions) and in
+          // the .tests array (top-level test bank). Read from both so
+          // a conclusion whose test isn't currently allocated still
+          // resolves its assertions.
+          const map = new Map<string, string[]>();
+          const ingest = (name: string, assertions: any) => {
+            if (!name || !Array.isArray(assertions)) return;
+            const key = name.toLowerCase().trim();
+            if (!key) return;
+            // Normalise to lowercase strings; keep the first record we
+            // see so allocations win over generic test-bank entries.
+            if (map.has(key)) return;
+            map.set(key, assertions.map(String));
+          };
+          for (const t of (data?.tests || [])) ingest(t?.name, t?.assertions);
+          for (const a of (data?.allocations || [])) ingest(a?.test?.name, a?.test?.assertions);
+          setTestAssertions(map);
+        }
         if (pfRes.ok) {
           const d = await pfRes.json(); const ans = d.answers || d.data || {};
           for (const [k, v] of Object.entries(ans)) { if (typeof v === 'string' && k.toLowerCase().includes('applicable financial reporting')) { setFramework(v); break; } }
@@ -239,7 +333,15 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
       </div>
 
       {viewMode === 'tb' ? (
-        <TBView tbRows={tbRows} periodEndLabel={periodEndLabel} priorPeriodEndLabel={priorPeriodEndLabel} />
+        <TBView
+          tbRows={tbRows}
+          conclusions={conclusions}
+          testAssertions={testAssertions}
+          expanded={expanded}
+          toggle={toggle}
+          periodEndLabel={periodEndLabel}
+          priorPeriodEndLabel={priorPeriodEndLabel}
+        />
       ) : (
         <div className="space-y-3">
           {/*
@@ -502,36 +604,212 @@ function AccountRows({ rows, getAccConcs, lineConcs, fsLineName, expanded, toggl
   );
 }
 
-// ─── TB Format ───
-function TBView({ tbRows, periodEndLabel, priorPeriodEndLabel }: {
+// ─── TB Format ──────────────────────────────────────────────────────
+//
+// Per user spec:
+//   - Layout shifts everything left and adds breathing room between
+//     columns (reduced left padding, larger horizontal gaps).
+//   - Assertion columns sit between Description and the numeric
+//     columns. Only assertions actually present in the data appear
+//     as columns (no empty E/O/C/A/V/RO/CO/CL/P forest when most are
+//     unused).
+//   - Each cell shows up to three coloured dots (green / orange /
+//     red), one per Result bucket from the Test Summary. Multiple
+//     tests of the same colour collapse into a single dot with a
+//     count badge — never duplicate a colour.
+//   - Statements collapse/expand. When collapsed the statement
+//     header carries the aggregated assertion dots across all rows
+//     in that statement.
+//
+// Conclusions are matched to TB rows by accountCode (a conclusion
+// recorded against a specific account) or by FS Line ID (account-
+// level conclusion that applies to every TB row sharing that line).
+function TBView({ tbRows, conclusions, testAssertions, expanded, toggle, periodEndLabel, priorPeriodEndLabel }: {
   tbRows: TBRow[];
+  conclusions: Conc[];
+  testAssertions: Map<string, string[]>;
+  expanded: Set<string>;
+  toggle: (key: string) => void;
   periodEndLabel: string;
   priorPeriodEndLabel: string;
 }) {
-  const byStmt = new Map<string, TBRow[]>();
-  for (const r of tbRows) { const s = r.fsStatement || 'Unclassified'; if (!byStmt.has(s)) byStmt.set(s, []); byStmt.get(s)!.push(r); }
+  // Index conclusions for fast per-row lookup.
+  const concsByAccount = useMemo(() => {
+    const m = new Map<string, Conc[]>();
+    for (const c of conclusions) {
+      if (!c.accountCode) continue;
+      const k = c.accountCode.toLowerCase();
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(c);
+    }
+    return m;
+  }, [conclusions]);
+  const concsByFsLineId = useMemo(() => {
+    const m = new Map<string, Conc[]>();
+    for (const c of conclusions) {
+      if (!c.fsLineId) continue;
+      if (!m.has(c.fsLineId)) m.set(c.fsLineId, []);
+      m.get(c.fsLineId)!.push(c);
+    }
+    return m;
+  }, [conclusions]);
+
+  function rowConclusions(row: TBRow): Conc[] {
+    const acc = concsByAccount.get(row.accountCode.toLowerCase()) || [];
+    if (acc.length > 0) return acc;
+    if (row.fsLineId) return concsByFsLineId.get(row.fsLineId) || [];
+    return [];
+  }
+
+  function rowAssertionDots(row: TBRow): Record<string, DotCounts> {
+    const out: Record<string, DotCounts> = {};
+    for (const c of rowConclusions(row)) {
+      const bucket = colourBucket(c.conclusion);
+      if (!bucket) continue;
+      const assertions = testAssertions.get((c.testDescription || '').toLowerCase().trim()) || [];
+      for (const a of assertions) {
+        if (!out[a]) out[a] = emptyDots();
+        out[a][bucket]++;
+      }
+    }
+    return out;
+  }
+
+  // Group TB rows by statement.
+  const byStmt = useMemo(() => {
+    const m = new Map<string, TBRow[]>();
+    for (const r of tbRows) { const s = r.fsStatement || 'Unclassified'; if (!m.has(s)) m.set(s, []); m.get(s)!.push(r); }
+    return m;
+  }, [tbRows]);
+
+  // Pre-compute statement-level aggregates so the collapsed header
+  // can show rolled-up assertion dots without re-walking conclusions
+  // on every render.
+  const stmtData = useMemo(() => {
+    const out = new Map<string, { rows: TBRow[]; aggDots: Record<string, DotCounts>; presentAssertions: Set<string>; cy: number; py: number }>();
+    for (const [stmt, rows] of byStmt.entries()) {
+      const agg: Record<string, DotCounts> = {};
+      const present = new Set<string>();
+      let cy = 0, py = 0;
+      for (const row of rows) {
+        cy += Number(row.currentYear) || 0;
+        py += Number(row.priorYear) || 0;
+        const dots = rowAssertionDots(row);
+        for (const [a, d] of Object.entries(dots)) {
+          if (!agg[a]) agg[a] = emptyDots();
+          agg[a] = addDots(agg[a], d);
+          present.add(a);
+        }
+      }
+      out.set(stmt, { rows, aggDots: agg, presentAssertions: present, cy, py });
+    }
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byStmt, conclusions, testAssertions]);
+
+  // Determine which assertion columns to show globally — union across
+  // all statements, ordered per ASSERTION_ORDER. Assertions that
+  // appear nowhere in the data get no column at all.
+  const assertionCols = useMemo(() => {
+    const present = new Set<string>();
+    for (const data of stmtData.values()) {
+      for (const a of data.presentAssertions) present.add(a);
+    }
+    const ordered = ASSERTION_ORDER.filter(a => present.has(a));
+    // Append any unknown assertion codes (e.g. firm-specific) at the
+    // end so they're still visible.
+    for (const a of present) {
+      if (!ordered.includes(a as any)) ordered.push(a as any);
+    }
+    return ordered;
+  }, [stmtData]);
+
   return (
-    <div className="space-y-3">
-      {Array.from(byStmt.entries()).map(([stmt, rows]) => (
-        <div key={stmt} className="border rounded-lg overflow-hidden">
-          <div className="bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">{stmt}</div>
-          <table className="w-full text-[10px]">
-            <thead>
-              <tr className="bg-slate-50 border-b">
-                <th className="text-left px-2 py-1 text-slate-600">Code</th>
-                <th className="text-left px-2 py-1 text-slate-600">Description</th>
-                <th className="text-left px-2 py-1 text-slate-600">FS Level</th>
-                <th className="text-right px-2 py-1 text-slate-600">{periodEndLabel}</th>
-                <th className="text-right px-2 py-1 text-slate-600">{priorPeriodEndLabel}</th>
-                <th className="text-right px-2 py-1 text-slate-600">Variance</th>
-              </tr>
-            </thead>
-            <tbody>{rows.map(r => { const cy = Number(r.currentYear)||0; const py = Number(r.priorYear)||0; const v = cy-py; return (
-              <tr key={r.id} className="border-b border-slate-50"><td className="px-2 py-0.5 font-mono tabular-nums text-slate-500">{r.accountCode}</td><td className="px-2 py-0.5 text-slate-700">{r.description}</td><td className="px-2 py-0.5 text-slate-400">{r.fsLevel||''}</td><td className="px-2 py-0.5 text-right font-mono tabular-nums">{f(cy)}</td><td className="px-2 py-0.5 text-right font-mono tabular-nums text-slate-500">{f(py)}</td><td className={`px-2 py-0.5 text-right font-mono tabular-nums ${v>0?'text-green-600':v<0?'text-red-600':'text-slate-400'}`}>{f(v)}</td></tr>
-            ); })}</tbody>
-          </table>
-        </div>
-      ))}
+    // Root pulled left (no horizontal padding) and using full width
+    // so the table starts as close to the viewport edge as possible.
+    <div className="-mx-1 space-y-2">
+      {Array.from(byStmt.keys()).map(stmt => {
+        const data = stmtData.get(stmt)!;
+        const stmtKey = `tb:s:${stmt}`;
+        const isOpen = expanded.has(stmtKey);
+        return (
+          <div key={stmt} className="border rounded-lg overflow-hidden">
+            {/* Statement header — clickable to collapse/expand. When
+                collapsed, the assertion dots aggregate across every
+                row in the statement. */}
+            <button
+              type="button"
+              onClick={() => toggle(stmtKey)}
+              className="w-full flex items-center gap-3 bg-slate-100 hover:bg-slate-200 px-2 py-1.5 text-left"
+            >
+              {isOpen
+                ? <ChevronDown className="h-3.5 w-3.5 text-slate-500 flex-shrink-0" />
+                : <ChevronRight className="h-3.5 w-3.5 text-slate-500 flex-shrink-0" />}
+              <span className="text-xs font-bold text-slate-800 flex-shrink-0">{stmt}</span>
+              <span className="text-[10px] text-slate-400">({data.rows.length} a/c)</span>
+              <div className="flex-1" />
+              {/* Aggregated assertion dots — only shown when collapsed.
+                  Helps the user see at-a-glance the coverage state of
+                  every assertion across the whole statement. */}
+              {!isOpen && assertionCols.map(a => (
+                <span key={a} className="inline-flex items-center gap-1 px-1" title={ASSERTION_TITLE[a] || a}>
+                  <span className="text-[8px] uppercase text-slate-400 font-semibold">{ASSERTION_LABEL[a] || a}</span>
+                  <AssertionDots dots={data.aggDots[a] || emptyDots()} />
+                </span>
+              ))}
+              <span className="font-mono tabular-nums text-[11px] font-semibold text-slate-700 w-24 text-right flex-shrink-0 ml-3">{f(data.cy)}</span>
+              <span className="font-mono tabular-nums text-[11px] text-slate-400 w-24 text-right flex-shrink-0">{f(data.py)}</span>
+            </button>
+
+            {isOpen && (
+              <table className="w-full text-[10px]">
+                <thead>
+                  <tr className="bg-slate-50 border-b">
+                    {/* Reduced horizontal padding (px-1) shifts the
+                        whole table left; widened gaps between columns
+                        come from the explicit right-column widths
+                        below, which leave airspace either side. */}
+                    <th className="text-left px-1 py-1 text-slate-600 w-20">Code</th>
+                    <th className="text-left px-3 py-1 text-slate-600">Description</th>
+                    <th className="text-left px-2 py-1 text-slate-400 w-32">FS Level</th>
+                    {assertionCols.map(a => (
+                      <th key={a} className="text-center px-2 py-1 text-slate-500 w-16" title={ASSERTION_TITLE[a] || a}>
+                        {ASSERTION_LABEL[a] || a}
+                      </th>
+                    ))}
+                    <th className="text-right px-3 py-1 text-slate-600 w-24">{periodEndLabel}</th>
+                    <th className="text-right px-3 py-1 text-slate-600 w-24">{priorPeriodEndLabel}</th>
+                    <th className="text-right px-3 py-1 text-slate-600 w-20">Variance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map(r => {
+                    const cy = Number(r.currentYear) || 0;
+                    const py = Number(r.priorYear) || 0;
+                    const v = cy - py;
+                    const dots = rowAssertionDots(r);
+                    return (
+                      <tr key={r.id} className="border-b border-slate-50">
+                        <td className="px-1 py-0.5 font-mono tabular-nums text-slate-500">{r.accountCode}</td>
+                        <td className="px-3 py-0.5 text-slate-700">{r.description}</td>
+                        <td className="px-2 py-0.5 text-slate-400 truncate">{r.fsLevel || ''}</td>
+                        {assertionCols.map(a => (
+                          <td key={a} className="px-2 py-0.5 text-center">
+                            <AssertionDots dots={dots[a] || emptyDots()} />
+                          </td>
+                        ))}
+                        <td className="px-3 py-0.5 text-right font-mono tabular-nums">{f(cy)}</td>
+                        <td className="px-3 py-0.5 text-right font-mono tabular-nums text-slate-500">{f(py)}</td>
+                        <td className={`px-3 py-0.5 text-right font-mono tabular-nums ${v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-slate-400'}`}>{f(v)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
