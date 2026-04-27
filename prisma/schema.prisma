@@ -91,6 +91,15 @@ model Firm {
   firmDocumentSkeletons     FirmDocumentSkeleton[]
   actionDefinitions         ActionDefinition[]
   portalSearchLogs          PortalSearchLog[]
+  // G3Q Performance Dashboard relations
+  perfMonitoringActivities  PerfMonitoringActivity[]
+  perfFindings              PerfFinding[]
+  perfRemediations          PerfRemediation[]
+  perfCsfs                  PerfCsf[]
+  perfPeopleSnapshots       PerfPeopleSnapshot[]
+  perfActivitySchedule      PerfActivitySchedule[]
+  perfIsqmEvidence          PerfIsqmEvidence[]
+  perfPillarScores          PerfPillarScore[]
 
   @@map("firms")
 }
@@ -1103,11 +1112,11 @@ model ClientPortalUser {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  client                      Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  twoFactorCodes              ClientPortalTwoFactor[]
-  evidenceUploads             EvidenceUpload[]
-  portalPrincipalEngagements  AuditEngagement[]       @relation("PortalPrincipalForEngagement")
-  portalStaffMemberships      ClientPortalStaffMember[] @relation("StaffMemberPortalUser")
+  client                     Client                    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  twoFactorCodes             ClientPortalTwoFactor[]
+  evidenceUploads            EvidenceUpload[]
+  portalPrincipalEngagements AuditEngagement[]         @relation("PortalPrincipalForEngagement")
+  portalStaffMemberships     ClientPortalStaffMember[] @relation("StaffMemberPortalUser")
 
   @@unique([clientId, email])
   @@index([sessionToken])
@@ -1153,19 +1162,19 @@ model PortalRequest {
   // assignee. Null routingFsLineId AND null routingTbAccountCode →
   // request is not associated with an FS area, so it routes to the
   // Portal Principal who can manually assign it.
-  routingFsLineId        String?   @map("routing_fs_line_id")
-  routingTbAccountCode   String?   @map("routing_tb_account_code")
+  routingFsLineId      String? @map("routing_fs_line_id")
+  routingTbAccountCode String? @map("routing_tb_account_code")
 
   // Live assignment. Updated as escalations progress. When null, the
   // request is effectively sitting with the Portal Principal.
-  assignedPortalUserId   String?   @map("assigned_portal_user_id")
-  assignedAt             DateTime? @map("assigned_at")
+  assignedPortalUserId String?   @map("assigned_portal_user_id")
+  assignedAt           DateTime? @map("assigned_at")
 
   // Escalation state. 0 = assigned to column-1 staff; 1 = also notified
   // column-2; 2 = also notified column-3; 3 = escalated to Portal
   // Principal after all three columns elapsed without response.
-  escalationLevel        Int       @default(0) @map("escalation_level")
-  escalationLog          Json?     @map("escalation_log") // [{ at, fromUserId, toUserId, reason }]
+  escalationLevel Int   @default(0) @map("escalation_level")
+  escalationLog   Json? @map("escalation_log") // [{ at, fromUserId, toUserId, reason }]
 
   client  Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
   uploads PortalUpload[]
@@ -1187,19 +1196,19 @@ model PortalRequest {
 // forward from prior period / sibling group company when the Portal
 // Principal kicks off setup.
 model ClientPortalStaffMember {
-  id                    String   @id @default(uuid())
-  clientId              String   @map("client_id")
-  engagementId          String   @map("engagement_id")
-  portalUserId          String?  @map("portal_user_id")          // linked once the Portal Principal has a matching ClientPortalUser
-  name                  String
-  email                 String
-  role                  String?  // free text — e.g. "Payroll Manager", "CFO"
-  accessConfirmed       Boolean  @default(false) @map("access_confirmed")
-  isActive              Boolean  @default(true)  @map("is_active")
-  inheritedFromEngagementId String? @map("inherited_from_engagement_id")  // prior period / sibling group carry-forward
-  addedByPortalUserId   String?  @map("added_by_portal_user_id")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  id                        String   @id @default(uuid())
+  clientId                  String   @map("client_id")
+  engagementId              String   @map("engagement_id")
+  portalUserId              String?  @map("portal_user_id") // linked once the Portal Principal has a matching ClientPortalUser
+  name                      String
+  email                     String
+  role                      String? // free text — e.g. "Payroll Manager", "CFO"
+  accessConfirmed           Boolean  @default(false) @map("access_confirmed")
+  isActive                  Boolean  @default(true) @map("is_active")
+  inheritedFromEngagementId String?  @map("inherited_from_engagement_id") // prior period / sibling group carry-forward
+  addedByPortalUserId       String?  @map("added_by_portal_user_id")
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
 
   engagement AuditEngagement   @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   portalUser ClientPortalUser? @relation("StaffMemberPortalUser", fields: [portalUserId], references: [id], onDelete: SetNull)
@@ -1219,16 +1228,16 @@ model ClientPortalStaffMember {
 // context, though in practice the Portal Principal picker handles
 // those by default.
 model ClientPortalWorkAllocation {
-  id             String   @id @default(uuid())
-  clientId       String   @map("client_id")
-  engagementId   String   @map("engagement_id")
-  fsLineId       String?  @map("fs_line_id")
-  tbAccountCode  String?  @map("tb_account_code")
-  staff1UserId   String?  @map("staff1_user_id")
-  staff2UserId   String?  @map("staff2_user_id")
-  staff3UserId   String?  @map("staff3_user_id")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id            String   @id @default(uuid())
+  clientId      String   @map("client_id")
+  engagementId  String   @map("engagement_id")
+  fsLineId      String?  @map("fs_line_id")
+  tbAccountCode String?  @map("tb_account_code")
+  staff1UserId  String?  @map("staff1_user_id")
+  staff2UserId  String?  @map("staff2_user_id")
+  staff3UserId  String?  @map("staff3_user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
@@ -1247,37 +1256,37 @@ model ClientPortalWorkAllocation {
 //   2. Trains future work on query patterns — what portal users look for
 //      is a signal the methodology layer might want to expose natively.
 model PortalSearchLog {
-  id             String   @id @default(uuid())
-  firmId         String   @map("firm_id")
-  engagementId   String?  @map("engagement_id")              // may be null for multi-engagement queries
-  clientId       String?  @map("client_id")
-  portalUserId   String?  @map("portal_user_id")
-  firmUserId     String?  @map("firm_user_id")                // if a firm user ever runs portal search
-  query          String   @db.Text
-  queryNormalised String? @map("query_normalised") @db.Text  // lower-cased, trimmed, for dedup/aggregation
-  resultCount    Int      @default(0) @map("result_count")
+  id                  String    @id @default(uuid())
+  firmId              String    @map("firm_id")
+  engagementId        String?   @map("engagement_id") // may be null for multi-engagement queries
+  clientId            String?   @map("client_id")
+  portalUserId        String?   @map("portal_user_id")
+  firmUserId          String?   @map("firm_user_id") // if a firm user ever runs portal search
+  query               String    @db.Text
+  queryNormalised     String?   @map("query_normalised") @db.Text // lower-cased, trimmed, for dedup/aggregation
+  resultCount         Int       @default(0) @map("result_count")
   // AI interpretation — the structured filter object the LLM produced
   // from the natural-language query. Cached here so re-running a
   // saved search doesn't need to call the model again. Shape matches
   // the dashboard's filter state: { status, fsLineIds, tbAccountCodes,
   // assigneeIds, textMatch, reasoning }.
-  interpretedFilters Json?  @map("interpreted_filters")
+  interpretedFilters  Json?     @map("interpreted_filters")
   // Per-user saved search — when a user clicks "Save" on a search
   // they ran, this log row gets the three fields below set. The
   // Principal dashboard lists all rows where savedByPortalUserId =
   // caller as quick-filter chips. Deleting a saved search just
   // clears these three fields so we keep the log trail intact.
-  savedByPortalUserId String? @map("saved_by_portal_user_id")
-  savedLabel          String? @map("saved_label")
+  savedByPortalUserId String?   @map("saved_by_portal_user_id")
+  savedLabel          String?   @map("saved_label")
   savedAt             DateTime? @map("saved_at")
   // Featured = Methodology Admin promoted this query so it appears
   // as a quick-filter chip on EVERY Principal dashboard for the firm.
   // Featured rows also carry a display label + who promoted it + when.
-  featured       Boolean  @default(false)
-  featuredLabel  String?  @map("featured_label")
-  featuredById   String?  @map("featured_by_id")
-  featuredAt     DateTime? @map("featured_at")
-  createdAt      DateTime @default(now()) @map("created_at")
+  featured            Boolean   @default(false)
+  featuredLabel       String?   @map("featured_label")
+  featuredById        String?   @map("featured_by_id")
+  featuredAt          DateTime? @map("featured_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
 
   firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
 
@@ -1978,30 +1987,30 @@ model AuditEngagement {
   // on the Opening tab. This person is the single contact who sets up
   // staff access + work allocations for the client side. When unset,
   // portal requests fall back to "all client admins" behaviour.
-  portalPrincipalId       String?   @map("portal_principal_id")
+  portalPrincipalId String? @map("portal_principal_id")
 
   // Per-engagement override of the firm-wide escalation-day defaults.
   // Null = fall back to Firm.defaultPortalEscalationDaysN.
-  portalEscalationDays1   Int?      @map("portal_escalation_days_1")
-  portalEscalationDays2   Int?      @map("portal_escalation_days_2")
-  portalEscalationDays3   Int?      @map("portal_escalation_days_3")
+  portalEscalationDays1 Int? @map("portal_escalation_days_1")
+  portalEscalationDays2 Int? @map("portal_escalation_days_2")
+  portalEscalationDays3 Int? @map("portal_escalation_days_3")
 
   // When the Portal Principal completed their first-sign-in setup
   // (staff list + work allocation + per-staff access confirmation).
   // Null = setup incomplete → no staff member can log in yet.
-  portalSetupCompletedAt  DateTime? @map("portal_setup_completed_at")
+  portalSetupCompletedAt DateTime? @map("portal_setup_completed_at")
 
-  createdAt               DateTime  @default(now()) @map("created_at")
-  updatedAt               DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  client                Client                    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  period                ClientPeriod              @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  firm                  Firm                      @relation(fields: [firmId], references: [id])
-  createdBy             User                      @relation("EngagementCreator", fields: [createdById], references: [id])
-  methodologyVersion    MethodologyConfig?        @relation(fields: [methodologyVersionId], references: [id])
-  priorPeriodEngagement AuditEngagement?          @relation("EngagementPriorPeriod", fields: [priorPeriodEngagementId], references: [id], onDelete: SetNull)
-  nextPeriodEngagements AuditEngagement[]         @relation("EngagementPriorPeriod")
-  portalPrincipal       ClientPortalUser?         @relation("PortalPrincipalForEngagement", fields: [portalPrincipalId], references: [id], onDelete: SetNull)
+  client                Client                       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  period                ClientPeriod                 @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  firm                  Firm                         @relation(fields: [firmId], references: [id])
+  createdBy             User                         @relation("EngagementCreator", fields: [createdById], references: [id])
+  methodologyVersion    MethodologyConfig?           @relation(fields: [methodologyVersionId], references: [id])
+  priorPeriodEngagement AuditEngagement?             @relation("EngagementPriorPeriod", fields: [priorPeriodEngagementId], references: [id], onDelete: SetNull)
+  nextPeriodEngagements AuditEngagement[]            @relation("EngagementPriorPeriod")
+  portalPrincipal       ClientPortalUser?            @relation("PortalPrincipalForEngagement", fields: [portalPrincipalId], references: [id], onDelete: SetNull)
   portalStaffMembers    ClientPortalStaffMember[]
   portalWorkAllocations ClientPortalWorkAllocation[]
   teamMembers           AuditTeamMember[]
@@ -2249,7 +2258,7 @@ model AuditMemberIndependence {
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   engagement AuditEngagement                  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
-  user       User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
   history    AuditMemberIndependenceHistory[]
 
   @@unique([engagementId, userId])
@@ -2586,11 +2595,11 @@ model MethodologyTestAllocation {
 }
 
 model MethodologyFsLine {
-  id             String  @id @default(uuid())
-  firmId         String  @map("firm_id")
-  name           String // e.g. "Revenue", "Trade Debtors", "Going Concern" — treated as the FS Note Level name
-  lineType       String  @map("line_type") // fs_line_item | note_item (legacy classifier, kept for back-compat)
-  fsCategory     String  @map("fs_category") // pnl | balance_sheet | cashflow | notes (legacy, kept for back-compat)
+  id              String  @id @default(uuid())
+  firmId          String  @map("firm_id")
+  name            String // e.g. "Revenue", "Trade Debtors", "Going Concern" — treated as the FS Note Level name
+  lineType        String  @map("line_type") // fs_line_item | note_item (legacy classifier, kept for back-compat)
+  fsCategory      String  @map("fs_category") // pnl | balance_sheet | cashflow | notes (legacy, kept for back-compat)
   // New firm-configurable FS hierarchy. Every FS Note Level (row in
   // this table) may be tagged with a parent FS Level and FS Statement,
   // both of which are free-form strings chosen from the firm's own
@@ -2599,10 +2608,10 @@ model MethodologyFsLine {
   // strings rather than FKs so renaming an option doesn't orphan rows.
   fsLevelName     String? @map("fs_level_name")
   fsStatementName String? @map("fs_statement_name")
-  sortOrder      Int     @default(0) @map("sort_order")
-  isActive       Boolean @default(true) @map("is_active")
-  isMandatory    Boolean @default(false) @map("is_mandatory")
-  parentFsLineId String? @map("parent_fs_line_id") // note_item links to parent fs_line_item
+  sortOrder       Int     @default(0) @map("sort_order")
+  isActive        Boolean @default(true) @map("is_active")
+  isMandatory     Boolean @default(false) @map("is_mandatory")
+  parentFsLineId  String? @map("parent_fs_line_id") // note_item links to parent fs_line_item
 
   firm             Firm                        @relation(fields: [firmId], references: [id], onDelete: Cascade)
   parent           MethodologyFsLine?          @relation("FsLineHierarchy", fields: [parentFsLineId], references: [id], onDelete: SetNull)
@@ -2806,15 +2815,15 @@ model DocumentTemplate {
   // Word skeleton (header/footer) at generation time. `kind` flips
   // the UI between the two modes; `skeletonId` picks which firm
   // skeleton to stitch the body into.
-  kind          String  @default("email") // email | document
-  skeletonId    String? @map("skeleton_id")
+  kind               String  @default("email") // email | document
+  skeletonId         String? @map("skeleton_id")
   /// Document Generator permission gate. Values: 'None' (default — no
   /// gating), 'Preparer' (engagement must be signed off as Preparer
   /// at minimum), 'Reviewer' (Reviewer or RI sign-off required), 'RI'
   /// (RI sign-off required). Enforced in the send / download routes;
   /// when the gate fails the modal shows a "Permission to Send not
   /// Ready" popup instead of running the generator.
-  sendPermission String  @default("None") @map("send_permission")
+  sendPermission     String  @default("None") @map("send_permission")
   /// Optional sectionKey suffix the send-permission gate looks up.
   /// Null = engagement-level sign-offs (sectionKey '__signoffs'). A
   /// value like 'rmm', 'materiality', 'par' appends to give
@@ -2826,7 +2835,7 @@ model DocumentTemplate {
   // Optional hand-picked sample context for admin preview — lets an
   // admin freeze a preview against a known dataset rather than always
   // running against live engagement data.
-  sampleContext Json?   @map("sample_context")
+  sampleContext      Json?   @map("sample_context")
 
   firm     Firm                  @relation(fields: [firmId], references: [id])
   skeleton FirmDocumentSkeleton? @relation(fields: [skeletonId], references: [id], onDelete: SetNull)
@@ -2882,22 +2891,22 @@ model PortalDocument {
 /// the magic-link URL /specialist-review/<token>, reads the schedule,
 /// writes comments, and picks Accept or Reject.
 model ScheduleSpecialistReview {
-  id            String   @id @default(cuid())
-  firmId        String   @map("firm_id")
-  engagementId  String   @map("engagement_id")
-  scheduleKey   String   @map("schedule_key")
+  id            String    @id @default(cuid())
+  firmId        String    @map("firm_id")
+  engagementId  String    @map("engagement_id")
+  scheduleKey   String    @map("schedule_key")
   role          String
-  assigneeName  String   @map("assignee_name")
-  assigneeEmail String   @map("assignee_email")
-  status        String   @default("pending") // pending | accepted | rejected
+  assigneeName  String    @map("assignee_name")
+  assigneeEmail String    @map("assignee_email")
+  status        String    @default("pending") // pending | accepted | rejected
   comments      String?
-  token         String   @unique
-  sentById      String?  @map("sent_by_id")
-  sentByName    String?  @map("sent_by_name")
-  sentAt        DateTime @default(now()) @map("sent_at")
+  token         String    @unique
+  sentById      String?   @map("sent_by_id")
+  sentByName    String?   @map("sent_by_name")
+  sentAt        DateTime  @default(now()) @map("sent_at")
   decidedAt     DateTime? @map("decided_at")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
   @@index([engagementId])
   @@index([engagementId, scheduleKey])
@@ -3307,11 +3316,11 @@ model SampleItemMarker {
 // ─── Audit Points (Review Points, Management, Representation, RI Matters) ───
 
 model AuditPoint {
-  id           String @id @default(uuid())
-  engagementId String @map("engagement_id")
-  pointType    String @map("point_type") // review_point | management | representation | ri_matter
-  chatNumber   Int    @map("chat_number")
-  status       String @default("new") // new | open | closed | committed | cancelled
+  id           String  @id @default(uuid())
+  engagementId String  @map("engagement_id")
+  pointType    String  @map("point_type") // review_point | management | representation | ri_matter
+  chatNumber   Int     @map("chat_number")
+  status       String  @default("new") // new | open | closed | committed | cancelled
   // Traffic-light colour set by the user. null = no colour picked.
   // Kept as a free-text string rather than an enum so firms can add
   // their own tones later without a migration. Canonical values the
@@ -3533,4 +3542,202 @@ model AuditMeeting {
 
   @@index([engagementId])
   @@map("audit_meetings")
+}
+
+// ─── G3Q Performance Dashboard ─────────────────────────────────────────
+// All data backing the AQT lead's Performance Dashboard. Each model is
+// firm-scoped. The dashboard *derives* headline KPIs from these tables —
+// nothing is hard-coded. Empty tables produce "no data yet" panels.
+
+// One row per audit-quality monitoring activity (cold/hot/spot/thematic
+// file review, EQR process review, technical consultation, FS pre-issuance
+// review, ethical compliance review).
+model PerfMonitoringActivity {
+  id                        String    @id @default(uuid())
+  firmId                    String    @map("firm_id")
+  activityType              String    @map("activity_type") // cold | hot | spot | thematic | eqr | consultation | preissuance | ethical
+  engagementName            String?   @map("engagement_name") // free text — links to engagementId optional
+  engagementId              String?   @map("engagement_id")
+  responsibleIndividualName String?   @map("ri_name")
+  managerName               String?   @map("manager_name")
+  reviewerName              String?   @map("reviewer_name")
+  plannedDate               DateTime? @map("planned_date")
+  startedDate               DateTime? @map("started_date")
+  completedDate             DateTime? @map("completed_date")
+  status                    String    @default("planned") // planned | in_progress | complete | overdue | cancelled
+  outcomeRating             String?   @map("outcome_rating") // good | limited_improvements | improvements_required | significant_improvements
+  qualityScore              Int?      @map("quality_score") // 0-100
+  findingsCount             Int       @default(0) @map("findings_count")
+  notes                     String?   @db.Text
+  createdById               String?   @map("created_by_id")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  firm     Firm          @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  findings PerfFinding[]
+
+  @@index([firmId, activityType])
+  @@index([firmId, status])
+  @@map("perf_monitoring_activities")
+}
+
+// A finding raised from a monitoring activity. Root-cause category is
+// chosen post-RCA. RCA closure rate = closed / total over period.
+model PerfFinding {
+  id                String    @id @default(uuid())
+  firmId            String    @map("firm_id")
+  activityId        String?   @map("activity_id")
+  title             String
+  description       String?   @db.Text
+  rootCauseCategory String?   @map("root_cause_category") // process | methodology | supervision | data_ipe | resourcing | other
+  severity          String    @default("medium") // low | medium | high | critical
+  raisedDate        DateTime  @default(now()) @map("raised_date")
+  rcaCompletedDate  DateTime? @map("rca_completed_date")
+  closedDate        DateTime? @map("closed_date")
+  status            String    @default("open") // open | rca_in_progress | rca_complete | closed
+  notes             String?   @db.Text
+  createdById       String?   @map("created_by_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  firm         Firm                    @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  activity     PerfMonitoringActivity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  remediations PerfRemediation[]
+
+  @@index([firmId, status])
+  @@index([firmId, rootCauseCategory])
+  @@map("perf_findings")
+}
+
+// Remediation actions linked to a finding. Effectiveness is set when the
+// firm re-tests after implementation (Jul/Jan reporting cycle).
+model PerfRemediation {
+  id           String    @id @default(uuid())
+  firmId       String    @map("firm_id")
+  findingId    String    @map("finding_id")
+  description  String    @db.Text
+  ownerName    String?   @map("owner_name")
+  dueDate      DateTime? @map("due_date")
+  status       String    @default("not_started") // not_started | in_progress | implemented | retested | overdue
+  retestedDate DateTime? @map("retested_date")
+  effective    Boolean? // true | false | null (not yet retested)
+  notes        String?   @db.Text
+  createdById  String?   @map("created_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  firm    Firm        @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  finding PerfFinding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+
+  @@index([firmId, status])
+  @@map("perf_remediations")
+}
+
+// Critical Success Factor tracker — one row per CSF defined in the AQMP.
+model PerfCsf {
+  id            String    @id @default(uuid())
+  firmId        String    @map("firm_id")
+  pillar        String // goodwill | governance | growth | quality
+  subComponent  String    @map("sub_component") // free text — e.g. "Branding", "People", "Risks"
+  name          String
+  targetMetric  String?   @map("target_metric")
+  currentMetric String?   @map("current_metric")
+  rag           String    @default("grey") // green | amber | red | grey
+  ownerName     String?   @map("owner_name")
+  reviewedDate  DateTime? @map("reviewed_date")
+  notes         String?   @db.Text
+  isActive      Boolean   @default(true) @map("is_active")
+  sortOrder     Int       @default(0) @map("sort_order")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@index([firmId, pillar])
+  @@map("perf_csfs")
+}
+
+// People metric snapshot — captured each period (e.g. Jul/Jan).
+model PerfPeopleSnapshot {
+  id                       String   @id @default(uuid())
+  firmId                   String   @map("firm_id")
+  periodLabel              String   @map("period_label")
+  periodEnd                DateTime @map("period_end")
+  trainingEffectivenessPct Float?   @map("training_effectiveness_pct")
+  staffUtilisationPct      Float?   @map("staff_utilisation_pct")
+  cultureSurveyScore       Float?   @map("culture_survey_score") // 0-5
+  attritionPct             Float?   @map("attrition_pct")
+  notes                    String?  @db.Text
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, periodLabel])
+  @@index([firmId, periodEnd])
+  @@map("perf_people_snapshots")
+}
+
+// Annual G3Q activity schedule (the Gantt). One row per planned activity
+// per month per year — the firm seeds the year's plan, then updates status.
+model PerfActivitySchedule {
+  id            String    @id @default(uuid())
+  firmId        String    @map("firm_id")
+  year          Int
+  monthIndex    Int       @map("month_index") // 0-11
+  activityName  String    @map("activity_name")
+  status        String    @default("planned") // planned | on_track | at_risk | overdue | done
+  ownerName     String?   @map("owner_name")
+  dueDate       DateTime? @map("due_date")
+  completedDate DateTime? @map("completed_date")
+  notes         String?   @db.Text
+  sortOrder     Int       @default(0) @map("sort_order")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, year, monthIndex, activityName])
+  @@index([firmId, year])
+  @@map("perf_activity_schedule")
+}
+
+// ISQM(UK)1 evidence per quality objective.
+model PerfIsqmEvidence {
+  id            String    @id @default(uuid())
+  firmId        String    @map("firm_id")
+  objective     String // governance_leadership | ethics | acceptance_continuance | engagement_performance | resources | information_communication | monitoring_remediation | risk_assessment
+  evidenceCount Int       @default(0) @map("evidence_count")
+  targetCount   Int       @default(0) @map("target_count")
+  rag           String    @default("grey") // green | amber | red | grey — manual override of the auto-derived RAG
+  ragManual     Boolean   @default(false) @map("rag_manual")
+  notes         String?   @db.Text
+  reviewedDate  DateTime? @map("reviewed_date")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, objective])
+  @@map("perf_isqm_evidence")
+}
+
+// Optional manual pillar score override + strapline for the dashboard
+// pillar cards. If `manualScore` is null, the dashboard auto-derives the
+// score from CSF RAG + monitoring activity completion.
+model PerfPillarScore {
+  id           String    @id @default(uuid())
+  firmId       String    @map("firm_id")
+  pillar       String // goodwill | governance | growth | quality
+  manualScore  Int?      @map("manual_score") // 0-100
+  strapline    String?
+  reviewedDate DateTime? @map("reviewed_date")
+  notes        String?   @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  firm Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+
+  @@unique([firmId, pillar])
+  @@map("perf_pillar_scores")
 }
