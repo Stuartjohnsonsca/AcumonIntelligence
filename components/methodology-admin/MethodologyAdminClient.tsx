@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, Search } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, Search, Gauge } from 'lucide-react';
 
 const tiles = [
   {
@@ -75,6 +75,14 @@ const tiles = [
     icon: Users,
     color: 'bg-rose-50 border-rose-200 hover:bg-rose-100',
     iconColor: 'text-rose-600',
+  },
+  {
+    title: 'Performance Dashboard',
+    description: 'AQT management view of audit team performance against the G3Q operational model — quality monitoring, RCA, remediation, CSFs and ISQM1 readiness',
+    href: '/methodology-admin/performance-dashboard',
+    icon: Gauge,
+    color: 'bg-lime-50 border-lime-200 hover:bg-lime-100',
+    iconColor: 'text-lime-600',
   },
   {
     title: 'Error Log',
