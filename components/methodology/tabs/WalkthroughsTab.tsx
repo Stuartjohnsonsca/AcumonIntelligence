@@ -181,11 +181,25 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
 
   function toggleOverallSignOff(role: 'reviewer' | 'ri') {
     const current = overallSignOffs[role];
-    const updated = { ...overallSignOffs, [role]: current ? undefined : { name: 'Current User', at: new Date().toISOString() } };
-    setOverallSignOffs(updated);
+    // Build the next state explicitly (no `undefined` values — they
+    // get dropped by JSON.stringify and combined with the server's
+    // default *merge* PUT semantics that meant un-signing a role
+    // never actually cleared it on the server).
+    const next: typeof overallSignOffs = {};
+    if (role === 'reviewer') {
+      if (!current) next.reviewer = { name: 'Current User', at: new Date().toISOString() };
+      if (overallSignOffs.ri) next.ri = overallSignOffs.ri;
+    } else {
+      if (overallSignOffs.reviewer) next.reviewer = overallSignOffs.reviewer;
+      if (!current) next.ri = { name: 'Current User', at: new Date().toISOString() };
+    }
+    setOverallSignOffs(next);
     fetch(`/api/engagements/${engagementId}/permanent-file`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sectionKey: 'walkthrough_overall_signoffs', data: updated }),
+      // replace:true replaces the section wholesale, so an absent key
+      // in the new payload IS the unsigned state. Without this the
+      // server merges and stale keys linger.
+      body: JSON.stringify({ sectionKey: 'walkthrough_overall_signoffs', data: next, replace: true }),
     }).then(() => {
       // Tell EngagementTabs to re-pull tab-bar sign-off dots so the
       // walkthrough overall sign-off shows up on the tab label
