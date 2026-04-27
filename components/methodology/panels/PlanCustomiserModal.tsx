@@ -25,7 +25,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { X, Loader2, Plus, Check, Ban, Trash2, Save } from 'lucide-react';
+import { X, Loader2, Plus, Check, Ban, Trash2, Save, Edit2, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface FsLineOption {
@@ -53,9 +53,23 @@ interface CustomTest {
   testTypeCode: string;
   assertions: string[];
   framework: string;
+  // Display Results — controls how this test's results are rendered
+  // when the auditor opens it from the Audit Plan. Mirrors the
+  // outputFormat field on firm-wide tests (methodology_test).
+  outputFormat?: string;
   createdBy: { id: string; name: string };
   createdAt: string;
 }
+
+// Display Results options shown in the dropdown. Codes match the
+// outputFormat field on the methodology_test model so a custom test
+// renders identically to a firm-wide test of the same shape.
+const OUTPUT_FORMAT_OPTIONS: { value: string; label: string; description: string }[] = [
+  { value: 'three_section_no_sampling', label: 'Three-section (no sampling)', description: 'Standard test workspace: population, work performed, conclusion' },
+  { value: 'three_section_sampling',     label: 'Three-section (with sampling)', description: 'Standard workspace + sampling section for selecting items' },
+  { value: 'document_summary',           label: 'Document summary', description: 'Single-document review with AI-extracted summary' },
+  { value: 'spreadsheet',                label: 'Spreadsheet', description: 'Free-form spreadsheet workspace with formula support' },
+];
 
 interface Override {
   status: 'na';
@@ -110,13 +124,39 @@ export function PlanCustomiserModal({
   const [naCategory, setNaCategory] = useState(NA_REASON_CATEGORIES[0]);
   const [naReason, setNaReason] = useState('');
 
-  // Add-custom form state
+  // Add/edit form state. editingId !== null means we're editing an
+  // existing custom test rather than creating a new one — same form
+  // either way, just a different submit handler.
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newAssertions, setNewAssertions] = useState<string[]>([]);
   const [newFramework, setNewFramework] = useState('IFRS');
   const [newTestTypeCode, setNewTestTypeCode] = useState('team_action');
+  const [newOutputFormat, setNewOutputFormat] = useState<string>('three_section_no_sampling');
+
+  function resetForm() {
+    setShowAddForm(false);
+    setEditingId(null);
+    setNewName('');
+    setNewDesc('');
+    setNewAssertions([]);
+    setNewFramework('IFRS');
+    setNewTestTypeCode('team_action');
+    setNewOutputFormat('three_section_no_sampling');
+  }
+
+  function startEdit(t: CustomTest) {
+    setEditingId(t.id);
+    setNewName(t.name);
+    setNewDesc(t.description || '');
+    setNewAssertions(Array.isArray(t.assertions) ? t.assertions : []);
+    setNewFramework(t.framework || 'IFRS');
+    setNewTestTypeCode(t.testTypeCode || 'team_action');
+    setNewOutputFormat(t.outputFormat || 'three_section_no_sampling');
+    setShowAddForm(true);
+  }
 
   useEffect(() => {
     async function load() {
@@ -193,31 +233,47 @@ export function PlanCustomiserModal({
     await post({ action: 'clear_na', testId, fsLineId });
   }
 
-  async function addCustom() {
+  async function saveCustom() {
     if (!newName.trim()) {
       setError('Test name is required');
       return;
     }
+    const payload = {
+      name: newName.trim(),
+      description: newDesc.trim(),
+      fsLineId,
+      fsLineName,
+      testTypeCode: newTestTypeCode,
+      assertions: newAssertions,
+      framework: newFramework,
+      outputFormat: newOutputFormat,
+    };
+    const ok = editingId
+      ? await post({ action: 'update_custom', id: editingId, patch: payload })
+      : await post({ action: 'add_custom', customTest: payload });
+    if (ok) resetForm();
+  }
+
+  // Quick-add: drop a fresh spreadsheet test in with sensible defaults.
+  // The user spec called out a "simple option" for adding a blank
+  // spreadsheet — they can edit name/description/etc. via the per-row
+  // Edit button afterwards, but the Add Blank Spreadsheet button is
+  // a single click for the common case.
+  async function addBlankSpreadsheet() {
     const ok = await post({
       action: 'add_custom',
       customTest: {
-        name: newName.trim(),
-        description: newDesc.trim(),
+        name: 'Blank Spreadsheet',
+        description: 'Bespoke working paper — free-form spreadsheet',
         fsLineId,
         fsLineName,
-        testTypeCode: newTestTypeCode,
-        assertions: newAssertions,
-        framework: newFramework,
+        testTypeCode: 'team_action',
+        assertions: [],
+        framework: 'ALL',
+        outputFormat: 'spreadsheet',
       },
     });
-    if (ok) {
-      setShowAddForm(false);
-      setNewName('');
-      setNewDesc('');
-      setNewAssertions([]);
-      setNewFramework('IFRS');
-      setNewTestTypeCode('team_action');
-    }
+    if (ok) resetForm();
   }
 
   async function removeCustom(id: string) {
@@ -331,12 +387,29 @@ export function PlanCustomiserModal({
                   <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
                     Engagement-Specific Custom Tests ({customTestsForLine.length})
                   </h3>
-                  <Button size="sm" onClick={() => setShowAddForm(v => !v)} disabled={saving}>
-                    <Plus className="h-3 w-3 mr-1" /> Add Custom Test
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    {/* Add Blank Spreadsheet — single-click quick-add for
+                        the common "I just want a working paper" case.
+                        Skips the form entirely. */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void addBlankSpreadsheet()}
+                      disabled={saving}
+                      title="Create a blank spreadsheet workspace for this FS Line"
+                    >
+                      <Table className="h-3 w-3 mr-1" /> Add Blank Spreadsheet
+                    </Button>
+                    <Button size="sm" onClick={() => { resetForm(); setShowAddForm(true); }} disabled={saving}>
+                      <Plus className="h-3 w-3 mr-1" /> Add Custom Test
+                    </Button>
+                  </div>
                 </div>
                 {showAddForm && (
                   <div className="border border-blue-200 bg-blue-50/40 rounded p-3 mb-2 space-y-2">
+                    <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide">
+                      {editingId ? 'Edit custom test' : 'New custom test'}
+                    </div>
                     <input
                       type="text"
                       value={newName}
@@ -373,6 +446,24 @@ export function PlanCustomiserModal({
                         <option value="ALL">All</option>
                       </select>
                     </div>
+                    {/* Display Results dropdown — picks the test's
+                        outputFormat, which controls how the workspace
+                        renders when the auditor opens the test. */}
+                    <div className="flex flex-col gap-1 text-[10px]">
+                      <label className="text-slate-600 font-medium">Display Results</label>
+                      <select
+                        value={newOutputFormat}
+                        onChange={e => setNewOutputFormat(e.target.value)}
+                        className="text-xs border border-slate-300 rounded px-2 py-1"
+                      >
+                        {OUTPUT_FORMAT_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      <span className="text-[9px] text-slate-400 italic">
+                        {OUTPUT_FORMAT_OPTIONS.find(o => o.value === newOutputFormat)?.description}
+                      </span>
+                    </div>
                     <div className="flex flex-wrap items-center gap-1 text-[10px]">
                       <span className="text-slate-600 mr-1">Assertions:</span>
                       {assertionOptions.map(a => {
@@ -390,12 +481,12 @@ export function PlanCustomiserModal({
                       })}
                     </div>
                     <div className="flex items-center justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setShowAddForm(false)} disabled={saving}>
+                      <Button size="sm" variant="outline" onClick={resetForm} disabled={saving}>
                         Cancel
                       </Button>
-                      <Button size="sm" onClick={addCustom} disabled={saving || !newName.trim()}>
+                      <Button size="sm" onClick={() => void saveCustom()} disabled={saving || !newName.trim()}>
                         {saving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Save className="h-3 w-3 mr-1" />}
-                        Save
+                        {editingId ? 'Save changes' : 'Save'}
                       </Button>
                     </div>
                   </div>
@@ -404,10 +495,13 @@ export function PlanCustomiserModal({
                   <p className="text-xs text-slate-400 italic">No custom tests yet.</p>
                 ) : customTestsForLine.length > 0 ? (
                   <div className="border border-slate-200 rounded overflow-hidden">
-                    {customTestsForLine.map(t => (
+                    {customTestsForLine.map(t => {
+                      const fmtLabel = OUTPUT_FORMAT_OPTIONS.find(o => o.value === t.outputFormat)?.label || 'Three-section';
+                      const isEditing = editingId === t.id;
+                      return (
                       <div
                         key={t.id}
-                        className="grid grid-cols-[1fr_80px_60px] gap-x-2 px-3 py-2 border-b border-slate-100 last:border-b-0 bg-white"
+                        className={`grid grid-cols-[1fr_120px_80px_80px] gap-x-2 px-3 py-2 border-b border-slate-100 last:border-b-0 ${isEditing ? 'bg-blue-50/60' : 'bg-white'}`}
                       >
                         <div className="min-w-0">
                           <div className="text-xs font-medium text-slate-800 truncate">{t.name}</div>
@@ -418,19 +512,29 @@ export function PlanCustomiserModal({
                             Created by {t.createdBy.name} · {new Date(t.createdAt).toLocaleDateString('en-GB')}
                           </div>
                         </div>
+                        <div className="text-[10px] text-slate-500 self-center truncate" title={fmtLabel}>{fmtLabel}</div>
                         <div className="text-[10px] text-slate-500 self-center truncate">{t.testTypeCode}</div>
-                        <div className="self-center text-right">
+                        <div className="self-center text-right flex items-center gap-1 justify-end">
                           <button
-                            onClick={() => removeCustom(t.id)}
+                            onClick={() => startEdit(t)}
                             disabled={saving}
-                            className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                            className="text-blue-500 hover:text-blue-700 disabled:opacity-50 p-1"
+                            title="Edit"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => void removeCustom(t.id)}
+                            disabled={saving}
+                            className="text-red-500 hover:text-red-700 disabled:opacity-50 p-1"
                             title="Remove"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>

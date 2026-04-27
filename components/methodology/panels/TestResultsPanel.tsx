@@ -736,37 +736,123 @@ function SpreadsheetOutput({ engagementId, executionId, data, onSave, savedData 
   const [dirty, setDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
+  // Collect every numeric value inside a rectangular range like A1:B10.
+  // Used by SUM/AVERAGE/MIN/MAX/COUNT/etc. so they all support multi-
+  // column ranges, not just single columns.
+  function collectRange(c1: number, r1: number, c2: number, r2: number): number[] {
+    const out: number[] = [];
+    const lo = (a: number, b: number) => Math.min(a, b);
+    const hi = (a: number, b: number) => Math.max(a, b);
+    for (let r = lo(r1, r2); r <= hi(r1, r2) && r < rows.length; r++) {
+      for (let c = lo(c1, c2); c <= hi(c1, c2) && c < columns.length; c++) {
+        const raw = rows[r]?.[c];
+        if (raw == null || String(raw).trim() === '') continue;
+        const n = parseFloat(String(raw));
+        if (Number.isFinite(n)) out.push(n);
+      }
+    }
+    return out;
+  }
+  function collectRangeAll(c1: number, r1: number, c2: number, r2: number): string[] {
+    const out: string[] = [];
+    const lo = (a: number, b: number) => Math.min(a, b);
+    const hi = (a: number, b: number) => Math.max(a, b);
+    for (let r = lo(r1, r2); r <= hi(r1, r2) && r < rows.length; r++) {
+      for (let c = lo(c1, c2); c <= hi(c1, c2) && c < columns.length; c++) {
+        out.push(String(rows[r]?.[c] ?? ''));
+      }
+    }
+    return out;
+  }
+
   function evaluateFormula(formula: string): string {
     if (!formula.startsWith('=')) return formula;
-    const expr = formula.substring(1);
+    const expr = formula.substring(1).trim();
     try {
-      // SUM(A1:A10)
-      const sumMatch = expr.match(/^SUM\(([A-Z])(\d+):([A-Z])(\d+)\)$/i);
-      if (sumMatch) {
-        const col = sumMatch[1].toUpperCase().charCodeAt(0) - 65;
-        const r1 = parseInt(sumMatch[2]) - 1;
-        const r2 = parseInt(sumMatch[4]) - 1;
-        let total = 0;
-        for (let r = r1; r <= r2 && r < rows.length; r++) {
-          total += parseFloat(rows[r]?.[col] || '0') || 0;
-        }
-        return total.toString();
+      // Range function: SUM/AVERAGE/AVG/MIN/MAX/COUNT/COUNTA on rect range.
+      // Single regex covers the common shape "FN(A1:B10)".
+      const rangeMatch = expr.match(/^(SUM|AVERAGE|AVG|MIN|MAX|COUNT|COUNTA)\(([A-Z])(\d+):([A-Z])(\d+)\)$/i);
+      if (rangeMatch) {
+        const fn = rangeMatch[1].toUpperCase();
+        const c1 = rangeMatch[2].toUpperCase().charCodeAt(0) - 65;
+        const r1 = parseInt(rangeMatch[3]) - 1;
+        const c2 = rangeMatch[4].toUpperCase().charCodeAt(0) - 65;
+        const r2 = parseInt(rangeMatch[5]) - 1;
+        if (fn === 'COUNTA') return String(collectRangeAll(c1, r1, c2, r2).filter(v => v.trim() !== '').length);
+        const nums = collectRange(c1, r1, c2, r2);
+        if (fn === 'SUM')     return String(nums.reduce((a, b) => a + b, 0));
+        if (fn === 'AVERAGE' || fn === 'AVG') return nums.length ? String(nums.reduce((a, b) => a + b, 0) / nums.length) : '0';
+        if (fn === 'MIN')     return nums.length ? String(Math.min(...nums)) : '0';
+        if (fn === 'MAX')     return nums.length ? String(Math.max(...nums)) : '0';
+        if (fn === 'COUNT')   return String(nums.length);
       }
-      // SUMIF(range, criteria, sum_range)
-      const sumifMatch = expr.match(/^SUMIF\(([A-Z])(\d+):([A-Z])(\d+)\s*,\s*"([^"]+)"\s*,\s*([A-Z])(\d+):([A-Z])(\d+)\)$/i);
+      // SUMIF(range, criteria, sum_range) — range and sum_range can now
+      // be the same range (sum_range omitted, like the spreadsheet
+      // standard). Criteria can be quoted text or a >X / <X comparator.
+      const sumifMatch = expr.match(/^SUMIF\(([A-Z])(\d+):([A-Z])(\d+)\s*,\s*"?([^",)]+)"?\s*(?:,\s*([A-Z])(\d+):([A-Z])(\d+))?\)$/i);
       if (sumifMatch) {
         const critCol = sumifMatch[1].toUpperCase().charCodeAt(0) - 65;
         const cr1 = parseInt(sumifMatch[2]) - 1;
         const cr2 = parseInt(sumifMatch[4]) - 1;
-        const criteria = sumifMatch[5];
-        const sumCol = sumifMatch[6].toUpperCase().charCodeAt(0) - 65;
+        const criteria = sumifMatch[5].trim();
+        const sumCol = sumifMatch[6] ? sumifMatch[6].toUpperCase().charCodeAt(0) - 65 : critCol;
+        const compMatch = criteria.match(/^(>|<|>=|<=|=|!=)\s*(-?\d+(?:\.\d+)?)$/);
         let total = 0;
         for (let r = cr1; r <= cr2 && r < rows.length; r++) {
-          if ((rows[r]?.[critCol] || '').toLowerCase().includes(criteria.toLowerCase())) {
-            total += parseFloat(rows[r]?.[sumCol] || '0') || 0;
+          const cellVal = String(rows[r]?.[critCol] ?? '');
+          let matches = false;
+          if (compMatch) {
+            const op = compMatch[1];
+            const target = parseFloat(compMatch[2]);
+            const num = parseFloat(cellVal);
+            if (Number.isFinite(num)) {
+              matches = op === '>' ? num > target : op === '<' ? num < target : op === '>=' ? num >= target : op === '<=' ? num <= target : op === '=' ? num === target : num !== target;
+            }
+          } else {
+            matches = cellVal.toLowerCase().includes(criteria.toLowerCase());
           }
+          if (matches) total += parseFloat(rows[r]?.[sumCol] || '0') || 0;
         }
         return total.toString();
+      }
+      // COUNTIF(range, criteria) — same criteria semantics as SUMIF.
+      const countifMatch = expr.match(/^COUNTIF\(([A-Z])(\d+):([A-Z])(\d+)\s*,\s*"?([^",)]+)"?\)$/i);
+      if (countifMatch) {
+        const col = countifMatch[1].toUpperCase().charCodeAt(0) - 65;
+        const r1 = parseInt(countifMatch[2]) - 1;
+        const r2 = parseInt(countifMatch[4]) - 1;
+        const criteria = countifMatch[5].trim();
+        const compMatch = criteria.match(/^(>|<|>=|<=|=|!=)\s*(-?\d+(?:\.\d+)?)$/);
+        let count = 0;
+        for (let r = r1; r <= r2 && r < rows.length; r++) {
+          const cellVal = String(rows[r]?.[col] ?? '');
+          if (compMatch) {
+            const op = compMatch[1]; const target = parseFloat(compMatch[2]); const num = parseFloat(cellVal);
+            if (!Number.isFinite(num)) continue;
+            const ok = op === '>' ? num > target : op === '<' ? num < target : op === '>=' ? num >= target : op === '<=' ? num <= target : op === '=' ? num === target : num !== target;
+            if (ok) count++;
+          } else if (cellVal.toLowerCase().includes(criteria.toLowerCase())) {
+            count++;
+          }
+        }
+        return String(count);
+      }
+      // ROUND(value, digits)
+      const roundMatch = expr.match(/^ROUND\((.+),\s*(-?\d+)\)$/i);
+      if (roundMatch) {
+        const inner = String(evaluateFormula('=' + roundMatch[1]));
+        const n = parseFloat(inner);
+        const d = parseInt(roundMatch[2]);
+        if (!Number.isFinite(n)) return inner;
+        const factor = Math.pow(10, d);
+        return String(Math.round(n * factor) / factor);
+      }
+      // ABS(value)
+      const absMatch = expr.match(/^ABS\((.+)\)$/i);
+      if (absMatch) {
+        const inner = String(evaluateFormula('=' + absMatch[1]));
+        const n = parseFloat(inner);
+        return Number.isFinite(n) ? String(Math.abs(n)) : inner;
       }
       // IF(condition, true, false)
       const ifMatch = expr.match(/^IF\(([^,]+),\s*([^,]+),\s*([^)]+)\)$/i);
@@ -785,7 +871,8 @@ function SpreadsheetOutput({ engagementId, executionId, data, onSave, savedData 
           return result ? trueVal : falseVal;
         }
       }
-      // Cell reference arithmetic
+      // Cell reference arithmetic — fallthrough for plain expressions
+      // like =A1+B2*2 or =(A1-A2)/A3.
       let resolved = expr.replace(/([A-Z])(\d+)/gi, (_, col, row) => {
         const c = col.toUpperCase().charCodeAt(0) - 65;
         const r = parseInt(row) - 1;
@@ -821,6 +908,26 @@ function SpreadsheetOutput({ engagementId, executionId, data, onSave, savedData 
     setRows(prev => prev.map(r => [...r, '']));
     setDirty(true);
   }
+  function deleteRow(idx: number) {
+    if (rows.length <= 1) return; // keep at least one row so the grid never collapses
+    setRows(prev => prev.filter((_, i) => i !== idx));
+    setDirty(true);
+  }
+  function deleteCol(idx: number) {
+    if (columns.length <= 1) return;
+    setColumns(prev => prev.filter((_, i) => i !== idx));
+    setRows(prev => prev.map(r => r.filter((_, i) => i !== idx)));
+    setDirty(true);
+  }
+  function renameCol(idx: number, name: string) {
+    setColumns(prev => prev.map((c, i) => i === idx ? name : c));
+    setDirty(true);
+  }
+  // Clear-cell handler. Bound to Delete/Backspace when the cell isn't
+  // actively being typed in (i.e. focused but not in edit mode).
+  function clearCell(r: number, c: number) {
+    updateCell(r, c, '');
+  }
 
   async function handleSave() {
     if (!onSave) return;
@@ -847,9 +954,24 @@ function SpreadsheetOutput({ engagementId, executionId, data, onSave, savedData 
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-1 items-center">
+      <div className="flex gap-1 items-center flex-wrap">
         <button onClick={addRow} className="text-[9px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Row</button>
         <button onClick={addCol} className="text-[9px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Column</button>
+        {/* Inline formula hint so users discover what's available
+            without leaving the panel. Listed in roughly the order
+            people reach for them. */}
+        <span
+          className="text-[9px] text-slate-400 ml-2 cursor-help"
+          title={[
+            'Formulas: =SUM(A1:A10), =AVERAGE(A1:A10) / =AVG(...), =MIN(A1:A10), =MAX(A1:A10),',
+            '=COUNT(A1:A10), =COUNTA(A1:B10), =COUNTIF(A1:A10, ">100"),',
+            '=SUMIF(A1:A10, "category", B1:B10),',
+            '=ROUND(A1, 2), =ABS(A1), =IF(A1>10, "over", "ok"),',
+            'Cell math: =A1+B2*2, =(A1-A2)/A3',
+          ].join('\n')}
+        >
+          ƒ Formulas (hover for help)
+        </span>
         {onSave && (
           <>
             <button onClick={handleSave} disabled={!dirty} className={`text-[9px] px-2 py-0.5 rounded ml-auto ${
@@ -861,19 +983,41 @@ function SpreadsheetOutput({ engagementId, executionId, data, onSave, savedData 
           </>
         )}
       </div>
-      <div className="border rounded overflow-auto max-h-[400px]">
+      <div className="border rounded overflow-auto max-h-[480px]">
         <table className="text-[10px] border-collapse">
-          <thead className="sticky top-0">
+          <thead className="sticky top-0 z-10">
             <tr className="bg-slate-100">
               <th className="border border-slate-200 px-2 py-1 w-8 text-slate-400">#</th>
               {columns.map((col, ci) => (
-                <th key={ci} className="border border-slate-200 px-2 py-1 min-w-[80px] text-slate-600 font-semibold">{col}</th>
+                <th
+                  key={ci}
+                  className="border border-slate-200 px-1 py-1 min-w-[80px] text-slate-600 font-semibold group relative"
+                >
+                  <div className="flex items-center gap-1">
+                    {/* Editable header — type to rename the column.
+                        Backspace/Delete on an empty header is the
+                        usual way to clear it before relabeling. */}
+                    <input
+                      value={col}
+                      onChange={e => renameCol(ci, e.target.value)}
+                      className="w-full bg-transparent text-center text-[10px] font-semibold outline-none"
+                    />
+                    {columns.length > 1 && (
+                      <button
+                        onClick={() => deleteCol(ci)}
+                        className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity"
+                        title={`Delete column ${col}`}
+                      >×</button>
+                    )}
+                  </div>
+                </th>
               ))}
+              <th className="border border-slate-200 w-6 bg-slate-100" />
             </tr>
           </thead>
           <tbody>
             {rows.map((row, ri) => (
-              <tr key={ri}>
+              <tr key={ri} className="group">
                 <td className="border border-slate-200 px-2 py-0.5 text-slate-400 text-center bg-slate-50">{ri + 1}</td>
                 {columns.map((_, ci) => (
                   <td key={ci} className="border border-slate-200 p-0">
@@ -883,10 +1027,28 @@ function SpreadsheetOutput({ engagementId, executionId, data, onSave, savedData 
                       onChange={e => updateCell(ri, ci, e.target.value)}
                       onFocus={() => setEditCell({ r: ri, c: ci })}
                       onBlur={handleCellBlur}
+                      onKeyDown={(e) => {
+                        // Delete / Backspace on a focused-but-empty
+                        // cell clears it instantly. Lets the user
+                        // wipe stale data without a double-click.
+                        if ((e.key === 'Delete' || e.key === 'Backspace') && (rows[ri]?.[ci] || '') === '') {
+                          e.preventDefault();
+                          clearCell(ri, ci);
+                        }
+                      }}
                       className="w-full px-1.5 py-0.5 text-[10px] border-0 focus:outline-none focus:bg-blue-50"
                     />
                   </td>
                 ))}
+                <td className="border border-slate-200 w-6 text-center bg-slate-50/50">
+                  {rows.length > 1 && (
+                    <button
+                      onClick={() => deleteRow(ri)}
+                      className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-[10px] transition-opacity"
+                      title={`Delete row ${ri + 1}`}
+                    >×</button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

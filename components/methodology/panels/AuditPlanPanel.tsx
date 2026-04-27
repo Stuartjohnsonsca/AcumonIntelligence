@@ -707,6 +707,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           significantRisk: false,
           flow: null,
           category: 'Normal',
+          // Forward outputFormat so the audit plan render picks the
+          // right workspace (spreadsheet, document_summary, etc.)
+          // when the auditor opens this custom test. Without this
+          // every custom test fell through to the default
+          // three-section workspace regardless of what the Plan
+          // Customiser dropdown said.
+          outputFormat: (ct as any).outputFormat || null,
         } as any,
         fsLineId: ct.fsLineId,
       });
