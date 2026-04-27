@@ -96,6 +96,19 @@ const TAB_ENDPOINTS: Record<string, string> = {
   'rmm': 'rmm',
 };
 
+// Tabs whose tab-bar dots should reflect a per-engagement
+// permanent-file section instead of the standard ${ep}?meta=signoffs
+// endpoint. Use this for tabs that store overall sign-off in their
+// own PF section (walkthroughs / communication / etc.). The data
+// shape is { reviewer?: { at | timestamp }, partner?: {...}, ri?: {...} }
+// — 'ri' aliases 'partner' for legacy data.
+const TAB_SIGNOFF_PF_SECTIONS: Record<string, string> = {
+  // Sub-process and per-step sign-offs already live in PF sections of
+  // their own; the OVERALL sign-off lives in this section and is
+  // what the tab-bar dot should reflect.
+  walkthroughs: 'walkthrough_overall_signoffs',
+};
+
 // Map tab key → schedule config key (used in audit type → schedule mapping).
 //
 // Every tab declared in TABS must also have an entry here — otherwise it's
@@ -332,8 +345,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   // Fetch sign-off status for all tabs to show Reviewer/RI dots
   const loadTabSignOffs = useCallback(async () => {
     const statuses: Record<string, TabSignOffStatus> = {};
-    await Promise.all(
-      Object.entries(TAB_ENDPOINTS).map(async ([tabKey, ep]) => {
+    await Promise.all([
+      // Standard pattern — tab has a dedicated endpoint exposing
+      // ?meta=signoffs returning { signOffs: { reviewer/partner }, fieldMeta }.
+      ...Object.entries(TAB_ENDPOINTS).map(async ([tabKey, ep]) => {
         try {
           const res = await fetch(`/api/engagements/${engagement.id}/${ep}?meta=signoffs`);
           if (!res.ok) return;
@@ -360,8 +375,29 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             partner: partnerTs ? (isStaleByTimestamp(partnerTs) ? 'stale' : 'signed') : 'none',
           };
         } catch { /* ignore */ }
-      })
-    );
+      }),
+      // PF-section pattern — tabs that store their OVERALL sign-off
+      // inside an AuditPermanentFile section keyed by sectionKey.
+      // Walkthroughs uses this; the data shape is
+      //   { reviewer?: { at }, partner?: { at }, ri?: { at } }
+      // where 'ri' is the legacy alias for 'partner'. No fieldMeta
+      // is available so staleness can't be detected here — a sign-
+      // off lands as 'signed' until cleared.
+      ...Object.entries(TAB_SIGNOFF_PF_SECTIONS).map(async ([tabKey, section]) => {
+        try {
+          const res = await fetch(`/api/engagements/${engagement.id}/permanent-file?section=${encodeURIComponent(section)}`);
+          if (!res.ok) return;
+          const json = await res.json();
+          const so = (json?.data || {}) as { reviewer?: { at?: string; timestamp?: string }; partner?: { at?: string; timestamp?: string }; ri?: { at?: string; timestamp?: string } };
+          const reviewerTs = so.reviewer?.at || so.reviewer?.timestamp || so.partner?.at || so.partner?.timestamp || so.ri?.at || so.ri?.timestamp;
+          const partnerTs = so.partner?.at || so.partner?.timestamp || so.ri?.at || so.ri?.timestamp;
+          statuses[tabKey] = {
+            reviewer: reviewerTs ? 'signed' : 'none',
+            partner: partnerTs ? 'signed' : 'none',
+          };
+        } catch { /* ignore */ }
+      }),
+    ]);
     setTabSignOffs(statuses);
   }, [engagement.id]);
 
@@ -369,6 +405,16 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
   // Re-fetch tab sign-offs when switching tabs (to pick up changes made inside SignOffHeader)
   useEffect(() => { loadTabSignOffs(); }, [activeTab, loadTabSignOffs]);
+
+  // Cross-tab sign-off refresh — listens for custom events that
+  // child tabs dispatch when they mutate their sign-off state. This
+  // keeps the tab-bar dots in sync without each tab needing to know
+  // about EngagementTabs internals.
+  useEffect(() => {
+    const handler = () => { void loadTabSignOffs(); };
+    window.addEventListener('engagement:signoffs-changed', handler);
+    return () => window.removeEventListener('engagement:signoffs-changed', handler);
+  }, [loadTabSignOffs]);
 
   /**
    * Apply a fresh SignOffs payload (as returned by the tab's POST endpoint)

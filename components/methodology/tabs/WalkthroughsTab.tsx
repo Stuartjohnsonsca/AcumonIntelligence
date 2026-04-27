@@ -186,6 +186,11 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
     fetch(`/api/engagements/${engagementId}/permanent-file`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sectionKey: 'walkthrough_overall_signoffs', data: updated }),
+    }).then(() => {
+      // Tell EngagementTabs to re-pull tab-bar sign-off dots so the
+      // walkthrough overall sign-off shows up on the tab label
+      // immediately, without needing to switch tabs.
+      try { window.dispatchEvent(new CustomEvent('engagement:signoffs-changed')); } catch {}
     }).catch(() => {});
   }
 
