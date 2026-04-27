@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
   Calendar,
   CheckCircle2,
   ClipboardCheck,
+  Database,
   GraduationCap,
   Loader2,
   Megaphone,
@@ -14,6 +15,7 @@ import {
   Save,
   Search,
   ShieldCheck,
+  Sparkles,
   Target,
   Trash2,
   X,
@@ -165,6 +167,46 @@ function useApi<T extends Row>(endpoint: string, options?: { putOnly?: boolean }
 }
 
 /* ------------------------------------------------------------------ */
+/* Lightweight fetch hook for dropdown lookups (users, engagements)    */
+/* ------------------------------------------------------------------ */
+
+type FirmUser = { id: string; name: string; email: string; jobTitle: string | null; isActive: boolean };
+type FirmEngagement = {
+  id: string;
+  auditType: string;
+  status: string;
+  client: { id: string; clientName: string };
+  period: { id: string; endDate: string };
+};
+
+function useUsers() {
+  const [users, setUsers] = useState<FirmUser[]>([]);
+  useEffect(() => {
+    fetch('/api/users')
+      .then(r => r.ok ? r.json() : [])
+      .then((data) => setUsers((Array.isArray(data) ? data : []).filter((u: FirmUser) => u.isActive !== false)))
+      .catch(() => setUsers([]));
+  }, []);
+  return users;
+}
+
+function useEngagements() {
+  const [engagements, setEngagements] = useState<FirmEngagement[]>([]);
+  useEffect(() => {
+    fetch('/api/engagements?limit=200')
+      .then(r => r.ok ? r.json() : { engagements: [] })
+      .then((data) => setEngagements(data?.engagements || []))
+      .catch(() => setEngagements([]));
+  }, []);
+  return engagements;
+}
+
+function engagementLabel(e: FirmEngagement): string {
+  const period = e.period?.endDate ? new Date(e.period.endDate).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : '';
+  return `${e.client?.clientName || 'Unknown'} — ${e.auditType}${period ? ` · ${period}` : ''}`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Small primitives                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -185,7 +227,7 @@ const btnPrimary = 'inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-blue-6
 const btnSecondary = 'inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-white border border-slate-200 rounded-md hover:bg-slate-50';
 const btnDanger = 'inline-flex items-center gap-1 text-xs px-2 py-1 text-rose-600 hover:bg-rose-50 rounded';
 
-function Toolbar({ onAdd, addLabel, onRefresh, error, refreshing }: { onAdd?: () => void; addLabel?: string; onRefresh: () => void; error: string | null; refreshing: boolean }) {
+function Toolbar({ onAdd, addLabel, onRefresh, error, refreshing, extra }: { onAdd?: () => void; addLabel?: string; onRefresh: () => void; error: string | null; refreshing: boolean; extra?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
       <div className="flex-1">
@@ -196,6 +238,7 @@ function Toolbar({ onAdd, addLabel, onRefresh, error, refreshing }: { onAdd?: ()
         )}
       </div>
       <div className="flex items-center gap-2">
+        {extra}
         <button onClick={onRefresh} className={btnSecondary} disabled={refreshing}>
           {refreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Refresh
         </button>
@@ -226,16 +269,58 @@ function ConfirmInline({ onConfirm, onCancel }: { onConfirm: () => void; onCance
 }
 
 /* ------------------------------------------------------------------ */
+/* Reusable user / engagement select inputs                            */
+/* ------------------------------------------------------------------ */
+
+function UserSelect({ users, value, onChange, placeholder }: { users: FirmUser[]; value: string | null | undefined; onChange: (name: string | null) => void; placeholder?: string }) {
+  // value here is the *name* string (free-text legacy + name-based modelling)
+  return (
+    <select className={inputCls} value={value || ''} onChange={(e) => onChange(e.target.value || null)}>
+      <option value="">{placeholder || '— select —'}</option>
+      {users.map(u => (
+        <option key={u.id} value={u.name}>{u.name}{u.jobTitle ? ` · ${u.jobTitle}` : ''}</option>
+      ))}
+    </select>
+  );
+}
+
+function EngagementSelect({ engagements, valueId, valueName, onChange, placeholder }: { engagements: FirmEngagement[]; valueId: string | null | undefined; valueName: string | null | undefined; onChange: (id: string | null, name: string | null) => void; placeholder?: string }) {
+  // We keep both id and name in sync — name is denormalised onto the row for display when an engagement is later archived.
+  return (
+    <select
+      className={inputCls}
+      value={valueId || ''}
+      onChange={(e) => {
+        const id = e.target.value || null;
+        const eng = engagements.find(x => x.id === id);
+        onChange(id, eng ? engagementLabel(eng) : (id ? valueName ?? null : null));
+      }}
+    >
+      <option value="">{placeholder || '— select engagement —'}</option>
+      {engagements.map(e => (
+        <option key={e.id} value={e.id}>{engagementLabel(e)}</option>
+      ))}
+      {/* If valueId references something not in the (capped) list, surface its name as a stub */}
+      {valueId && !engagements.find(x => x.id === valueId) && valueName ? (
+        <option value={valueId}>{valueName} (archived)</option>
+      ) : null}
+    </select>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Tab: Monitoring activities                                          */
 /* ------------------------------------------------------------------ */
 
 type MonitoringRow = Row & {
   activityType: string;
   engagementName: string | null;
+  engagementId: string | null;
   responsibleIndividualName: string | null;
   managerName: string | null;
   reviewerName: string | null;
   plannedDate: string | null;
+  startedDate: string | null;
   completedDate: string | null;
   status: string;
   outcomeRating: string | null;
@@ -244,18 +329,73 @@ type MonitoringRow = Row & {
   notes: string | null;
 };
 
+function MonitoringForm({ value, onChange, users, engagements }: { value: Partial<MonitoringRow>; onChange: (v: Partial<MonitoringRow>) => void; users: FirmUser[]; engagements: FirmEngagement[] }) {
+  const set = (patch: Partial<MonitoringRow>) => onChange({ ...value, ...patch });
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="Activity type" required>
+          <select className={inputCls} value={value.activityType || 'cold'} onChange={(e) => set({ activityType: e.target.value })}>
+            {ACTIVITY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </Field>
+        <div className="md:col-span-2">
+          <Field label="Engagement">
+            <EngagementSelect engagements={engagements} valueId={value.engagementId} valueName={value.engagementName} onChange={(id, name) => set({ engagementId: id, engagementName: name })} />
+          </Field>
+        </div>
+        <Field label="Status">
+          <select className={inputCls} value={value.status || 'planned'} onChange={(e) => set({ status: e.target.value })}>
+            {ACTIVITY_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+          </select>
+        </Field>
+        <Field label="Responsible Individual (RI)">
+          <UserSelect users={users} value={value.responsibleIndividualName} onChange={(n) => set({ responsibleIndividualName: n })} placeholder="— select RI —" />
+        </Field>
+        <Field label="Manager">
+          <UserSelect users={users} value={value.managerName} onChange={(n) => set({ managerName: n })} placeholder="— select manager —" />
+        </Field>
+        <Field label="Reviewer">
+          <UserSelect users={users} value={value.reviewerName} onChange={(n) => set({ reviewerName: n })} placeholder="— select reviewer —" />
+        </Field>
+        <Field label="Planned date">
+          <input type="date" className={inputCls} value={isoDate(value.plannedDate)} onChange={(e) => set({ plannedDate: e.target.value || null })} />
+        </Field>
+        <Field label="Started date">
+          <input type="date" className={inputCls} value={isoDate(value.startedDate)} onChange={(e) => set({ startedDate: e.target.value || null })} />
+        </Field>
+        <Field label="Completed date">
+          <input type="date" className={inputCls} value={isoDate(value.completedDate)} onChange={(e) => set({ completedDate: e.target.value || null })} />
+        </Field>
+        <Field label="Outcome rating">
+          <select className={inputCls} value={value.outcomeRating || ''} onChange={(e) => set({ outcomeRating: e.target.value || null })}>
+            {OUTCOMES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Quality score (0-100)" hint="Used to compute Audit Quality Score KPI">
+          <input type="number" min={0} max={100} className={inputCls} value={value.qualityScore ?? ''} onChange={(e) => set({ qualityScore: e.target.value ? Number(e.target.value) : null })} />
+        </Field>
+        <Field label="Findings count">
+          <input type="number" min={0} className={inputCls} value={value.findingsCount ?? 0} onChange={(e) => set({ findingsCount: Number(e.target.value) || 0 })} />
+        </Field>
+      </div>
+      <Field label="Notes">
+        <textarea className={inputCls} rows={2} value={value.notes || ''} onChange={(e) => set({ notes: e.target.value })} />
+      </Field>
+    </div>
+  );
+}
+
 function MonitoringTab() {
   const api = useApi<MonitoringRow>('/api/methodology-admin/performance-dashboard/monitoring-activities');
+  const users = useUsers();
+  const engagements = useEngagements();
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Partial<MonitoringRow>>({ activityType: 'cold', status: 'planned' });
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Partial<MonitoringRow>>({});
 
-  function startEdit(row: MonitoringRow) {
-    setEditId(row.id);
-    setEditDraft({ ...row });
-  }
   async function save() {
     const ok = await api.create(draft);
     if (ok) { setDraft({ activityType: 'cold', status: 'planned' }); setAdding(false); }
@@ -271,52 +411,9 @@ function MonitoringTab() {
       <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add monitoring activity" />
 
       {adding && (
-        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Activity type" required>
-              <select className={inputCls} value={draft.activityType || ''} onChange={(e) => setDraft({ ...draft, activityType: e.target.value })}>
-                {ACTIVITY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
-            </Field>
-            <Field label="Engagement name">
-              <input className={inputCls} value={draft.engagementName || ''} onChange={(e) => setDraft({ ...draft, engagementName: e.target.value })} placeholder="e.g. ABC Ltd 2026 audit" />
-            </Field>
-            <Field label="Status">
-              <select className={inputCls} value={draft.status || 'planned'} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
-                {ACTIVITY_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-              </select>
-            </Field>
-            <Field label="Responsible Individual (RI)">
-              <input className={inputCls} value={draft.responsibleIndividualName || ''} onChange={(e) => setDraft({ ...draft, responsibleIndividualName: e.target.value })} />
-            </Field>
-            <Field label="Manager">
-              <input className={inputCls} value={draft.managerName || ''} onChange={(e) => setDraft({ ...draft, managerName: e.target.value })} />
-            </Field>
-            <Field label="Reviewer">
-              <input className={inputCls} value={draft.reviewerName || ''} onChange={(e) => setDraft({ ...draft, reviewerName: e.target.value })} />
-            </Field>
-            <Field label="Planned date">
-              <input type="date" className={inputCls} value={isoDate(draft.plannedDate)} onChange={(e) => setDraft({ ...draft, plannedDate: e.target.value || null })} />
-            </Field>
-            <Field label="Completed date">
-              <input type="date" className={inputCls} value={isoDate(draft.completedDate)} onChange={(e) => setDraft({ ...draft, completedDate: e.target.value || null })} />
-            </Field>
-            <Field label="Outcome rating">
-              <select className={inputCls} value={draft.outcomeRating || ''} onChange={(e) => setDraft({ ...draft, outcomeRating: e.target.value || null })}>
-                {OUTCOMES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </Field>
-            <Field label="Quality score (0-100)" hint="Used to compute Audit Quality Score KPI">
-              <input type="number" min={0} max={100} className={inputCls} value={draft.qualityScore ?? ''} onChange={(e) => setDraft({ ...draft, qualityScore: e.target.value ? Number(e.target.value) : null })} />
-            </Field>
-            <Field label="Findings count">
-              <input type="number" min={0} className={inputCls} value={draft.findingsCount ?? 0} onChange={(e) => setDraft({ ...draft, findingsCount: Number(e.target.value) || 0 })} />
-            </Field>
-          </div>
-          <Field label="Notes">
-            <textarea className={inputCls} rows={2} value={draft.notes || ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
-          </Field>
-          <div className="flex justify-end gap-2">
+        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
+          <MonitoringForm value={draft} onChange={setDraft} users={users} engagements={engagements} />
+          <div className="flex justify-end gap-2 mt-3">
             <button onClick={() => { setAdding(false); setDraft({ activityType: 'cold', status: 'planned' }); }} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
             <button onClick={save} className={btnPrimary}><Save className="h-3 w-3" /> Save activity</button>
           </div>
@@ -341,39 +438,9 @@ function MonitoringTab() {
               </tr>
             </thead>
             <tbody>
-              {api.items.map(row => {
-                const isEditing = editId === row.id;
-                if (isEditing) {
-                  return (
-                    <tr key={row.id} className="bg-blue-50/30 border-b border-slate-100">
-                      <td className="px-2 py-1.5">
-                        <select className={inputCls} value={editDraft.activityType || row.activityType} onChange={(e) => setEditDraft({ ...editDraft, activityType: e.target.value })}>
-                          {ACTIVITY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                        </select>
-                        <input className={`${inputCls} mt-1`} placeholder="Engagement" value={editDraft.engagementName ?? row.engagementName ?? ''} onChange={(e) => setEditDraft({ ...editDraft, engagementName: e.target.value })} />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <input className={inputCls} placeholder="RI" value={editDraft.responsibleIndividualName ?? row.responsibleIndividualName ?? ''} onChange={(e) => setEditDraft({ ...editDraft, responsibleIndividualName: e.target.value })} />
-                        <input className={`${inputCls} mt-1`} placeholder="Manager" value={editDraft.managerName ?? row.managerName ?? ''} onChange={(e) => setEditDraft({ ...editDraft, managerName: e.target.value })} />
-                      </td>
-                      <td className="px-2 py-1.5"><input type="date" className={inputCls} value={isoDate(editDraft.plannedDate ?? row.plannedDate)} onChange={(e) => setEditDraft({ ...editDraft, plannedDate: e.target.value || null })} /></td>
-                      <td className="px-2 py-1.5"><input type="date" className={inputCls} value={isoDate(editDraft.completedDate ?? row.completedDate)} onChange={(e) => setEditDraft({ ...editDraft, completedDate: e.target.value || null })} /></td>
-                      <td className="px-2 py-1.5">
-                        <select className={inputCls} value={editDraft.status ?? row.status} onChange={(e) => setEditDraft({ ...editDraft, status: e.target.value })}>
-                          {ACTIVITY_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-2 py-1.5"><input type="number" min={0} max={100} className={inputCls} value={editDraft.qualityScore ?? row.qualityScore ?? ''} onChange={(e) => setEditDraft({ ...editDraft, qualityScore: e.target.value ? Number(e.target.value) : null })} /></td>
-                      <td className="px-2 py-1.5"><input type="number" min={0} className={inputCls} value={editDraft.findingsCount ?? row.findingsCount} onChange={(e) => setEditDraft({ ...editDraft, findingsCount: Number(e.target.value) || 0 })} /></td>
-                      <td className="px-2 py-1.5 text-right">
-                        <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /></button>
-                        <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary + ' ml-1'}><X className="h-3 w-3" /></button>
-                      </td>
-                    </tr>
-                  );
-                }
-                return (
-                  <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+              {api.items.map(row => (
+                <Fragment key={row.id}>
+                  <tr className="border-b border-slate-100 hover:bg-slate-50/50">
                     <td className="px-3 py-2">
                       <div className="font-medium text-slate-700">{ACTIVITY_TYPES.find(t => t.value === row.activityType)?.label || row.activityType}</div>
                       {row.engagementName && <div className="text-[11px] text-slate-500">{row.engagementName}</div>}
@@ -392,14 +459,25 @@ function MonitoringTab() {
                         <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
                       ) : (
                         <>
-                          <button onClick={() => startEdit(row)} className="text-blue-600 hover:underline text-[11px] mr-2">Edit</button>
+                          <button onClick={() => { setEditId(row.id === editId ? null : row.id); setEditDraft(row.id === editId ? {} : { ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">{editId === row.id ? 'Close' : 'Edit'}</button>
                           <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
                         </>
                       )}
                     </td>
                   </tr>
-                );
-              })}
+                  {editId === row.id && (
+                    <tr key={`${row.id}-edit`} className="bg-blue-50/30">
+                      <td colSpan={8} className="p-4">
+                        <MonitoringForm value={editDraft} onChange={setEditDraft} users={users} engagements={engagements} />
+                        <div className="flex justify-end gap-2 mt-3">
+                          <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+                          <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /> Save changes</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
             </tbody>
           </table>
         </div>
@@ -422,7 +500,61 @@ type FindingRow = Row & {
   rcaCompletedDate: string | null;
   closedDate: string | null;
   status: string;
+  notes: string | null;
 };
+
+function FindingForm({ value, onChange, activities }: { value: Partial<FindingRow>; onChange: (v: Partial<FindingRow>) => void; activities: MonitoringRow[] }) {
+  const set = (patch: Partial<FindingRow>) => onChange({ ...value, ...patch });
+  return (
+    <div className="space-y-3">
+      <Field label="Title" required>
+        <input className={inputCls} value={value.title || ''} onChange={(e) => set({ title: e.target.value })} placeholder="Short summary of the finding" />
+      </Field>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="Linked monitoring activity">
+          <select className={inputCls} value={value.activityId || ''} onChange={(e) => set({ activityId: e.target.value || null })}>
+            <option value="">— none —</option>
+            {activities.map(a => (
+              <option key={a.id} value={a.id}>
+                {ACTIVITY_TYPES.find(t => t.value === a.activityType)?.label || a.activityType} — {a.engagementName || a.id.slice(0, 8)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Severity">
+          <select className={inputCls} value={value.severity || 'medium'} onChange={(e) => set({ severity: e.target.value })}>
+            {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </Field>
+        <Field label="Status">
+          <select className={inputCls} value={value.status || 'open'} onChange={(e) => set({ status: e.target.value })}>
+            {FINDING_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+          </select>
+        </Field>
+        <Field label="Root cause category" hint="Set after RCA">
+          <select className={inputCls} value={value.rootCauseCategory || ''} onChange={(e) => set({ rootCauseCategory: e.target.value || null })}>
+            {ROOT_CAUSES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Raised date">
+          <input type="date" className={inputCls} value={isoDate(value.raisedDate)} onChange={(e) => set({ raisedDate: e.target.value })} />
+        </Field>
+        <Field label="RCA completed">
+          <input type="date" className={inputCls} value={isoDate(value.rcaCompletedDate)} onChange={(e) => set({ rcaCompletedDate: e.target.value || null })} />
+        </Field>
+        <Field label="Closed date">
+          <input type="date" className={inputCls} value={isoDate(value.closedDate)} onChange={(e) => set({ closedDate: e.target.value || null })} />
+        </Field>
+      </div>
+      <Field label="Description">
+        <textarea className={inputCls} rows={3} value={value.description || ''} onChange={(e) => set({ description: e.target.value })} />
+      </Field>
+      <Field label="Notes / RCA detail">
+        <textarea className={inputCls} rows={3} value={value.notes || ''} onChange={(e) => set({ notes: e.target.value })} placeholder="Why did this happen? What process / supervision / data weakness sits behind it?" />
+      </Field>
+    </div>
+  );
+}
 
 function FindingsTab() {
   const api = useApi<FindingRow>('/api/methodology-admin/performance-dashboard/findings');
@@ -448,52 +580,11 @@ function FindingsTab() {
       <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add finding" />
 
       {adding && (
-        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
-          <Field label="Title" required>
-            <input className={inputCls} value={draft.title || ''} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="Short summary of the finding" />
-          </Field>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Linked monitoring activity">
-              <select className={inputCls} value={draft.activityId || ''} onChange={(e) => setDraft({ ...draft, activityId: e.target.value || null })}>
-                <option value="">— none —</option>
-                {activitiesApi.items.map(a => (
-                  <option key={a.id} value={a.id}>
-                    {ACTIVITY_TYPES.find(t => t.value === a.activityType)?.label || a.activityType} — {a.engagementName || a.id.slice(0, 8)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Severity">
-              <select className={inputCls} value={draft.severity || 'medium'} onChange={(e) => setDraft({ ...draft, severity: e.target.value })}>
-                {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Field>
-            <Field label="Status">
-              <select className={inputCls} value={draft.status || 'open'} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
-                {FINDING_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-              </select>
-            </Field>
-            <Field label="Root cause category" hint="Set after RCA">
-              <select className={inputCls} value={draft.rootCauseCategory || ''} onChange={(e) => setDraft({ ...draft, rootCauseCategory: e.target.value || null })}>
-                {ROOT_CAUSES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-              </select>
-            </Field>
-            <Field label="Raised date">
-              <input type="date" className={inputCls} value={isoDate(draft.raisedDate)} onChange={(e) => setDraft({ ...draft, raisedDate: e.target.value })} />
-            </Field>
-            <Field label="RCA completed">
-              <input type="date" className={inputCls} value={isoDate(draft.rcaCompletedDate)} onChange={(e) => setDraft({ ...draft, rcaCompletedDate: e.target.value || null })} />
-            </Field>
-            <Field label="Closed date">
-              <input type="date" className={inputCls} value={isoDate(draft.closedDate)} onChange={(e) => setDraft({ ...draft, closedDate: e.target.value || null })} />
-            </Field>
-          </div>
-          <Field label="Description">
-            <textarea className={inputCls} rows={3} value={draft.description || ''} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
-          </Field>
-          <div className="flex justify-end gap-2">
+        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
+          <FindingForm value={draft} onChange={setDraft} activities={activitiesApi.items} />
+          <div className="flex justify-end gap-2 mt-3">
             <button onClick={() => setAdding(false)} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
-            <button onClick={save} className={btnPrimary}><Save className="h-3 w-3" /> Save finding</button>
+            <button onClick={save} className={btnPrimary} disabled={!draft.title}><Save className="h-3 w-3" /> Save finding</button>
           </div>
         </div>
       )}
@@ -514,36 +605,9 @@ function FindingsTab() {
               </tr>
             </thead>
             <tbody>
-              {api.items.map(row => {
-                if (editId === row.id) {
-                  return (
-                    <tr key={row.id} className="bg-blue-50/30 border-b border-slate-100">
-                      <td className="px-2 py-1.5"><input className={inputCls} value={editDraft.title ?? row.title} onChange={(e) => setEditDraft({ ...editDraft, title: e.target.value })} /></td>
-                      <td className="px-2 py-1.5">
-                        <select className={inputCls} value={editDraft.rootCauseCategory ?? row.rootCauseCategory ?? ''} onChange={(e) => setEditDraft({ ...editDraft, rootCauseCategory: e.target.value || null })}>
-                          {ROOT_CAUSES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <select className={inputCls} value={editDraft.severity ?? row.severity} onChange={(e) => setEditDraft({ ...editDraft, severity: e.target.value })}>
-                          {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-2 py-1.5"><input type="date" className={inputCls} value={isoDate(editDraft.raisedDate ?? row.raisedDate)} onChange={(e) => setEditDraft({ ...editDraft, raisedDate: e.target.value })} /></td>
-                      <td className="px-2 py-1.5">
-                        <select className={inputCls} value={editDraft.status ?? row.status} onChange={(e) => setEditDraft({ ...editDraft, status: e.target.value })}>
-                          {FINDING_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-2 py-1.5 text-right">
-                        <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /></button>
-                        <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary + ' ml-1'}><X className="h-3 w-3" /></button>
-                      </td>
-                    </tr>
-                  );
-                }
-                return (
-                  <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+              {api.items.map(row => (
+                <Fragment key={row.id}>
+                  <tr className="border-b border-slate-100 hover:bg-slate-50/50">
                     <td className="px-3 py-2">
                       <div className="font-medium text-slate-700">{row.title}</div>
                       {row.description && <div className="text-[11px] text-slate-500 line-clamp-2">{row.description}</div>}
@@ -557,14 +621,25 @@ function FindingsTab() {
                         <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
                       ) : (
                         <>
-                          <button onClick={() => { setEditId(row.id); setEditDraft({ ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">Edit</button>
+                          <button onClick={() => { setEditId(row.id === editId ? null : row.id); setEditDraft(row.id === editId ? {} : { ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">{editId === row.id ? 'Close' : 'Edit'}</button>
                           <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
                         </>
                       )}
                     </td>
                   </tr>
-                );
-              })}
+                  {editId === row.id && (
+                    <tr key={`${row.id}-edit`} className="bg-blue-50/30">
+                      <td colSpan={6} className="p-4">
+                        <FindingForm value={editDraft} onChange={setEditDraft} activities={activitiesApi.items} />
+                        <div className="flex justify-end gap-2 mt-3">
+                          <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+                          <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /> Save changes</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
             </tbody>
           </table>
         </div>
@@ -585,12 +660,57 @@ type RemediationRow = Row & {
   status: string;
   retestedDate: string | null;
   effective: boolean | null;
+  notes: string | null;
   finding?: { id: string; title: string };
 };
+
+function RemediationForm({ value, onChange, findings, users, isEdit }: { value: Partial<RemediationRow>; onChange: (v: Partial<RemediationRow>) => void; findings: FindingRow[]; users: FirmUser[]; isEdit?: boolean }) {
+  const set = (patch: Partial<RemediationRow>) => onChange({ ...value, ...patch });
+  return (
+    <div className="space-y-3">
+      <Field label="Linked finding" required>
+        <select className={inputCls} value={value.findingId || ''} onChange={(e) => set({ findingId: e.target.value })} disabled={isEdit}>
+          <option value="">— select a finding —</option>
+          {findings.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}
+        </select>
+      </Field>
+      <Field label="Action description" required>
+        <textarea className={inputCls} rows={2} value={value.description || ''} onChange={(e) => set({ description: e.target.value })} placeholder="What will change to prevent reoccurrence" />
+      </Field>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="Owner">
+          <UserSelect users={users} value={value.ownerName} onChange={(n) => set({ ownerName: n })} placeholder="— select owner —" />
+        </Field>
+        <Field label="Due date">
+          <input type="date" className={inputCls} value={isoDate(value.dueDate)} onChange={(e) => set({ dueDate: e.target.value || null })} />
+        </Field>
+        <Field label="Status">
+          <select className={inputCls} value={value.status || 'not_started'} onChange={(e) => set({ status: e.target.value })}>
+            {REMEDIATION_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+          </select>
+        </Field>
+        <Field label="Re-tested date">
+          <input type="date" className={inputCls} value={isoDate(value.retestedDate)} onChange={(e) => set({ retestedDate: e.target.value || null })} />
+        </Field>
+        <Field label="Effective at re-test">
+          <select className={inputCls} value={value.effective === null || value.effective === undefined ? '' : String(value.effective)} onChange={(e) => set({ effective: e.target.value === '' ? null : e.target.value === 'true' })}>
+            <option value="">— not yet re-tested —</option>
+            <option value="true">Yes — issue did not reoccur</option>
+            <option value="false">No — issue reoccurred</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="Notes">
+        <textarea className={inputCls} rows={2} value={value.notes || ''} onChange={(e) => set({ notes: e.target.value })} />
+      </Field>
+    </div>
+  );
+}
 
 function RemediationsTab() {
   const api = useApi<RemediationRow>('/api/methodology-admin/performance-dashboard/remediations');
   const findingsApi = useApi<FindingRow>('/api/methodology-admin/performance-dashboard/findings');
+  const users = useUsers();
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Partial<RemediationRow>>({ status: 'not_started' });
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -600,6 +720,11 @@ function RemediationsTab() {
   async function save() {
     const ok = await api.create(draft);
     if (ok) { setDraft({ status: 'not_started' }); setAdding(false); }
+  }
+  async function saveEdit() {
+    if (!editId) return;
+    const ok = await api.update({ ...editDraft, id: editId });
+    if (ok) { setEditId(null); setEditDraft({}); }
   }
 
   return (
@@ -613,40 +738,9 @@ function RemediationsTab() {
       )}
 
       {adding && (
-        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
-          <Field label="Linked finding" required>
-            <select className={inputCls} value={draft.findingId || ''} onChange={(e) => setDraft({ ...draft, findingId: e.target.value })}>
-              <option value="">— select a finding —</option>
-              {findingsApi.items.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}
-            </select>
-          </Field>
-          <Field label="Action description" required>
-            <textarea className={inputCls} rows={2} value={draft.description || ''} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="What will change to prevent reoccurrence" />
-          </Field>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Owner">
-              <input className={inputCls} value={draft.ownerName || ''} onChange={(e) => setDraft({ ...draft, ownerName: e.target.value })} />
-            </Field>
-            <Field label="Due date">
-              <input type="date" className={inputCls} value={isoDate(draft.dueDate)} onChange={(e) => setDraft({ ...draft, dueDate: e.target.value || null })} />
-            </Field>
-            <Field label="Status">
-              <select className={inputCls} value={draft.status || 'not_started'} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
-                {REMEDIATION_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-              </select>
-            </Field>
-            <Field label="Re-tested date">
-              <input type="date" className={inputCls} value={isoDate(draft.retestedDate)} onChange={(e) => setDraft({ ...draft, retestedDate: e.target.value || null })} />
-            </Field>
-            <Field label="Effective at re-test">
-              <select className={inputCls} value={draft.effective === null || draft.effective === undefined ? '' : String(draft.effective)} onChange={(e) => setDraft({ ...draft, effective: e.target.value === '' ? null : e.target.value === 'true' })}>
-                <option value="">— not yet re-tested —</option>
-                <option value="true">Yes — issue did not reoccur</option>
-                <option value="false">No — issue reoccurred</option>
-              </select>
-            </Field>
-          </div>
-          <div className="flex justify-end gap-2">
+        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
+          <RemediationForm value={draft} onChange={setDraft} findings={findingsApi.items} users={users} />
+          <div className="flex justify-end gap-2 mt-3">
             <button onClick={() => setAdding(false)} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
             <button onClick={save} className={btnPrimary} disabled={!draft.findingId || !draft.description}><Save className="h-3 w-3" /> Save remediation</button>
           </div>
@@ -669,34 +763,9 @@ function RemediationsTab() {
               </tr>
             </thead>
             <tbody>
-              {api.items.map(row => {
-                if (editId === row.id) {
-                  return (
-                    <tr key={row.id} className="bg-blue-50/30 border-b border-slate-100">
-                      <td className="px-2 py-1.5"><textarea className={inputCls} rows={2} value={editDraft.description ?? row.description} onChange={(e) => setEditDraft({ ...editDraft, description: e.target.value })} /></td>
-                      <td className="px-2 py-1.5"><input className={inputCls} value={editDraft.ownerName ?? row.ownerName ?? ''} onChange={(e) => setEditDraft({ ...editDraft, ownerName: e.target.value })} /></td>
-                      <td className="px-2 py-1.5"><input type="date" className={inputCls} value={isoDate(editDraft.dueDate ?? row.dueDate)} onChange={(e) => setEditDraft({ ...editDraft, dueDate: e.target.value || null })} /></td>
-                      <td className="px-2 py-1.5">
-                        <select className={inputCls} value={editDraft.status ?? row.status} onChange={(e) => setEditDraft({ ...editDraft, status: e.target.value })}>
-                          {REMEDIATION_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <select className={inputCls} value={editDraft.effective === undefined ? (row.effective === null ? '' : String(row.effective)) : (editDraft.effective === null ? '' : String(editDraft.effective))} onChange={(e) => setEditDraft({ ...editDraft, effective: e.target.value === '' ? null : e.target.value === 'true' })}>
-                          <option value="">—</option>
-                          <option value="true">Effective</option>
-                          <option value="false">Not effective</option>
-                        </select>
-                      </td>
-                      <td className="px-2 py-1.5 text-right">
-                        <button onClick={async () => { const ok = await api.update({ ...editDraft, id: editId }); if (ok) { setEditId(null); setEditDraft({}); } }} className={btnPrimary}><Save className="h-3 w-3" /></button>
-                        <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary + ' ml-1'}><X className="h-3 w-3" /></button>
-                      </td>
-                    </tr>
-                  );
-                }
-                return (
-                  <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+              {api.items.map(row => (
+                <Fragment key={row.id}>
+                  <tr className="border-b border-slate-100 hover:bg-slate-50/50">
                     <td className="px-3 py-2">
                       <div className="text-slate-700">{row.description}</div>
                       {row.finding && <div className="text-[11px] text-slate-500">→ {row.finding.title}</div>}
@@ -714,14 +783,25 @@ function RemediationsTab() {
                         <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
                       ) : (
                         <>
-                          <button onClick={() => { setEditId(row.id); setEditDraft({ ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">Edit</button>
+                          <button onClick={() => { setEditId(row.id === editId ? null : row.id); setEditDraft(row.id === editId ? {} : { ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">{editId === row.id ? 'Close' : 'Edit'}</button>
                           <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
                         </>
                       )}
                     </td>
                   </tr>
-                );
-              })}
+                  {editId === row.id && (
+                    <tr key={`${row.id}-edit`} className="bg-blue-50/30">
+                      <td colSpan={6} className="p-4">
+                        <RemediationForm value={editDraft} onChange={setEditDraft} findings={findingsApi.items} users={users} isEdit />
+                        <div className="flex justify-end gap-2 mt-3">
+                          <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+                          <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /> Save changes</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
             </tbody>
           </table>
         </div>
@@ -743,11 +823,62 @@ type CsfRow = Row & {
   rag: string;
   ownerName: string | null;
   reviewedDate: string | null;
+  notes: string | null;
   isActive: boolean;
 };
 
+function CsfForm({ value, onChange, users }: { value: Partial<CsfRow>; onChange: (v: Partial<CsfRow>) => void; users: FirmUser[] }) {
+  const set = (patch: Partial<CsfRow>) => onChange({ ...value, ...patch });
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="Pillar" required>
+          <select className={inputCls} value={value.pillar || 'goodwill'} onChange={(e) => set({ pillar: e.target.value })}>
+            {PILLARS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Sub-component" required hint="e.g. Branding, Industry, People, Risks">
+          <input className={inputCls} value={value.subComponent || ''} onChange={(e) => set({ subComponent: e.target.value })} />
+        </Field>
+        <Field label="RAG">
+          <select className={inputCls} value={value.rag || 'grey'} onChange={(e) => set({ rag: e.target.value })}>
+            {RAGS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="CSF name" required>
+        <input className={inputCls} value={value.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Avg revenue/hr at threshold" />
+      </Field>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="Target metric">
+          <input className={inputCls} value={value.targetMetric || ''} onChange={(e) => set({ targetMetric: e.target.value })} placeholder="e.g. £140/hr" />
+        </Field>
+        <Field label="Current metric">
+          <input className={inputCls} value={value.currentMetric || ''} onChange={(e) => set({ currentMetric: e.target.value })} placeholder="e.g. £128/hr" />
+        </Field>
+        <Field label="Owner">
+          <UserSelect users={users} value={value.ownerName} onChange={(n) => set({ ownerName: n })} placeholder="— select owner —" />
+        </Field>
+        <Field label="Reviewed date">
+          <input type="date" className={inputCls} value={isoDate(value.reviewedDate)} onChange={(e) => set({ reviewedDate: e.target.value || null })} />
+        </Field>
+        <Field label="Active">
+          <select className={inputCls} value={value.isActive === false ? 'false' : 'true'} onChange={(e) => set({ isActive: e.target.value === 'true' })}>
+            <option value="true">Active</option>
+            <option value="false">Inactive (hidden from dashboard)</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="Notes">
+        <textarea className={inputCls} rows={2} value={value.notes || ''} onChange={(e) => set({ notes: e.target.value })} />
+      </Field>
+    </div>
+  );
+}
+
 function CsfsTab() {
   const api = useApi<CsfRow>('/api/methodology-admin/performance-dashboard/csfs');
+  const users = useUsers();
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Partial<CsfRow>>({ pillar: 'goodwill', rag: 'grey', isActive: true });
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -757,6 +888,11 @@ function CsfsTab() {
   async function save() {
     const ok = await api.create(draft);
     if (ok) { setDraft({ pillar: draft.pillar, rag: 'grey', isActive: true }); setAdding(false); }
+  }
+  async function saveEdit() {
+    if (!editId) return;
+    const ok = await api.update({ ...editDraft, id: editId });
+    if (ok) { setEditId(null); setEditDraft({}); }
   }
 
   const grouped = useMemo(() => {
@@ -770,37 +906,9 @@ function CsfsTab() {
       <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add CSF" />
 
       {adding && (
-        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Pillar" required>
-              <select className={inputCls} value={draft.pillar || 'goodwill'} onChange={(e) => setDraft({ ...draft, pillar: e.target.value })}>
-                {PILLARS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-            </Field>
-            <Field label="Sub-component" required hint="e.g. Branding, Industry, People, Risks">
-              <input className={inputCls} value={draft.subComponent || ''} onChange={(e) => setDraft({ ...draft, subComponent: e.target.value })} />
-            </Field>
-            <Field label="RAG">
-              <select className={inputCls} value={draft.rag || 'grey'} onChange={(e) => setDraft({ ...draft, rag: e.target.value })}>
-                {RAGS.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </Field>
-          </div>
-          <Field label="CSF name" required>
-            <input className={inputCls} value={draft.name || ''} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Avg revenue/hr at threshold" />
-          </Field>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Target metric">
-              <input className={inputCls} value={draft.targetMetric || ''} onChange={(e) => setDraft({ ...draft, targetMetric: e.target.value })} placeholder="e.g. £140/hr" />
-            </Field>
-            <Field label="Current metric">
-              <input className={inputCls} value={draft.currentMetric || ''} onChange={(e) => setDraft({ ...draft, currentMetric: e.target.value })} placeholder="e.g. £128/hr" />
-            </Field>
-            <Field label="Owner">
-              <input className={inputCls} value={draft.ownerName || ''} onChange={(e) => setDraft({ ...draft, ownerName: e.target.value })} />
-            </Field>
-          </div>
-          <div className="flex justify-end gap-2">
+        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
+          <CsfForm value={draft} onChange={setDraft} users={users} />
+          <div className="flex justify-end gap-2 mt-3">
             <button onClick={() => setAdding(false)} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
             <button onClick={save} className={btnPrimary} disabled={!draft.subComponent || !draft.name}><Save className="h-3 w-3" /> Save CSF</button>
           </div>
@@ -808,7 +916,7 @@ function CsfsTab() {
       )}
 
       {api.items.length === 0 && !api.loading ? (
-        <p className="text-sm text-slate-400 italic text-center py-8">No CSFs configured yet.</p>
+        <p className="text-sm text-slate-400 italic text-center py-8">No CSFs configured yet — try the &quot;Seed G3Q defaults&quot; button at the top of this page.</p>
       ) : (
         <div className="space-y-4">
           {PILLARS.map(p => {
@@ -832,46 +940,39 @@ function CsfsTab() {
                     </thead>
                     <tbody>
                       {list.map(row => {
-                        if (editId === row.id) {
-                          return (
-                            <tr key={row.id} className="bg-blue-50/30 border-b border-slate-100">
-                              <td className="px-2 py-1.5"><input className={inputCls} value={editDraft.subComponent ?? row.subComponent} onChange={(e) => setEditDraft({ ...editDraft, subComponent: e.target.value })} /></td>
-                              <td className="px-2 py-1.5"><input className={inputCls} value={editDraft.name ?? row.name} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} /></td>
-                              <td className="px-2 py-1.5"><input className={inputCls} value={editDraft.targetMetric ?? row.targetMetric ?? ''} onChange={(e) => setEditDraft({ ...editDraft, targetMetric: e.target.value })} /></td>
-                              <td className="px-2 py-1.5"><input className={inputCls} value={editDraft.currentMetric ?? row.currentMetric ?? ''} onChange={(e) => setEditDraft({ ...editDraft, currentMetric: e.target.value })} /></td>
-                              <td className="px-2 py-1.5">
-                                <select className={inputCls} value={editDraft.rag ?? row.rag} onChange={(e) => setEditDraft({ ...editDraft, rag: e.target.value })}>
-                                  {RAGS.map(r => <option key={r} value={r}>{r}</option>)}
-                                </select>
-                              </td>
-                              <td className="px-2 py-1.5"><input className={inputCls} value={editDraft.ownerName ?? row.ownerName ?? ''} onChange={(e) => setEditDraft({ ...editDraft, ownerName: e.target.value })} /></td>
-                              <td className="px-2 py-1.5 text-right">
-                                <button onClick={async () => { const ok = await api.update({ ...editDraft, id: editId }); if (ok) { setEditId(null); setEditDraft({}); } }} className={btnPrimary}><Save className="h-3 w-3" /></button>
-                                <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary + ' ml-1'}><X className="h-3 w-3" /></button>
-                              </td>
-                            </tr>
-                          );
-                        }
                         const ragColor = row.rag === 'green' ? 'bg-emerald-500' : row.rag === 'amber' ? 'bg-amber-500' : row.rag === 'red' ? 'bg-rose-500' : 'bg-slate-400';
                         return (
-                          <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                            <td className="px-3 py-2 text-slate-600">{row.subComponent}</td>
-                            <td className="px-2 py-2 text-slate-700 font-medium">{row.name}</td>
-                            <td className="px-2 py-2 text-slate-600">{row.targetMetric || '—'}</td>
-                            <td className="px-2 py-2 text-slate-600">{row.currentMetric || '—'}</td>
-                            <td className="px-2 py-2"><span className="inline-flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${ragColor}`} /> {row.rag}</span></td>
-                            <td className="px-2 py-2 text-slate-600">{row.ownerName || '—'}</td>
-                            <td className="px-2 py-2 text-right">
-                              {confirmId === row.id ? (
-                                <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
-                              ) : (
-                                <>
-                                  <button onClick={() => { setEditId(row.id); setEditDraft({ ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">Edit</button>
-                                  <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
-                                </>
-                              )}
-                            </td>
-                          </tr>
+                          <Fragment key={row.id}>
+                            <tr className={`border-b border-slate-100 hover:bg-slate-50/50 ${!row.isActive ? 'opacity-60' : ''}`}>
+                              <td className="px-3 py-2 text-slate-600">{row.subComponent}</td>
+                              <td className="px-2 py-2 text-slate-700 font-medium">{row.name}</td>
+                              <td className="px-2 py-2 text-slate-600">{row.targetMetric || '—'}</td>
+                              <td className="px-2 py-2 text-slate-600">{row.currentMetric || '—'}</td>
+                              <td className="px-2 py-2"><span className="inline-flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${ragColor}`} /> {row.rag}</span></td>
+                              <td className="px-2 py-2 text-slate-600">{row.ownerName || '—'}</td>
+                              <td className="px-2 py-2 text-right">
+                                {confirmId === row.id ? (
+                                  <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
+                                ) : (
+                                  <>
+                                    <button onClick={() => { setEditId(row.id === editId ? null : row.id); setEditDraft(row.id === editId ? {} : { ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">{editId === row.id ? 'Close' : 'Edit'}</button>
+                                    <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                            {editId === row.id && (
+                              <tr key={`${row.id}-edit`} className="bg-blue-50/30">
+                                <td colSpan={7} className="p-4">
+                                  <CsfForm value={editDraft} onChange={setEditDraft} users={users} />
+                                  <div className="flex justify-end gap-2 mt-3">
+                                    <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+                                    <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /> Save changes</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
                         );
                       })}
                     </tbody>
@@ -897,17 +998,56 @@ type PeopleRow = Row & {
   staffUtilisationPct: number | null;
   cultureSurveyScore: number | null;
   attritionPct: number | null;
+  notes: string | null;
 };
+
+function PeopleForm({ value, onChange }: { value: Partial<PeopleRow>; onChange: (v: Partial<PeopleRow>) => void }) {
+  const set = (patch: Partial<PeopleRow>) => onChange({ ...value, ...patch });
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="Period label" required hint="e.g. Jul 2026, H1 2026">
+          <input className={inputCls} value={value.periodLabel || ''} onChange={(e) => set({ periodLabel: e.target.value })} />
+        </Field>
+        <Field label="Period end date" required>
+          <input type="date" className={inputCls} value={isoDate(value.periodEnd)} onChange={(e) => set({ periodEnd: e.target.value })} />
+        </Field>
+        <Field label="Training effectiveness %">
+          <input type="number" min={0} max={100} step={0.1} className={inputCls} value={value.trainingEffectivenessPct ?? ''} onChange={(e) => set({ trainingEffectivenessPct: e.target.value ? Number(e.target.value) : null })} />
+        </Field>
+        <Field label="Staff utilisation %">
+          <input type="number" min={0} max={100} step={0.1} className={inputCls} value={value.staffUtilisationPct ?? ''} onChange={(e) => set({ staffUtilisationPct: e.target.value ? Number(e.target.value) : null })} />
+        </Field>
+        <Field label="Culture survey score (0-5)">
+          <input type="number" min={0} max={5} step={0.1} className={inputCls} value={value.cultureSurveyScore ?? ''} onChange={(e) => set({ cultureSurveyScore: e.target.value ? Number(e.target.value) : null })} />
+        </Field>
+        <Field label="Annualised attrition %">
+          <input type="number" min={0} max={100} step={0.1} className={inputCls} value={value.attritionPct ?? ''} onChange={(e) => set({ attritionPct: e.target.value ? Number(e.target.value) : null })} />
+        </Field>
+      </div>
+      <Field label="Notes">
+        <textarea className={inputCls} rows={2} value={value.notes || ''} onChange={(e) => set({ notes: e.target.value })} />
+      </Field>
+    </div>
+  );
+}
 
 function PeopleTab() {
   const api = useApi<PeopleRow>('/api/methodology-admin/performance-dashboard/people-snapshots');
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Partial<PeopleRow>>({});
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Partial<PeopleRow>>({});
 
   async function save() {
     const ok = await api.create(draft);
     if (ok) { setDraft({}); setAdding(false); }
+  }
+  async function saveEdit() {
+    if (!editId) return;
+    const ok = await api.update({ ...editDraft, id: editId });
+    if (ok) { setEditId(null); setEditDraft({}); }
   }
 
   return (
@@ -915,28 +1055,9 @@ function PeopleTab() {
       <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add snapshot" />
 
       {adding && (
-        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Period label" required hint="e.g. Jul 2026, H1 2026">
-              <input className={inputCls} value={draft.periodLabel || ''} onChange={(e) => setDraft({ ...draft, periodLabel: e.target.value })} />
-            </Field>
-            <Field label="Period end date" required>
-              <input type="date" className={inputCls} value={isoDate(draft.periodEnd)} onChange={(e) => setDraft({ ...draft, periodEnd: e.target.value })} />
-            </Field>
-            <Field label="Training effectiveness %">
-              <input type="number" min={0} max={100} step={0.1} className={inputCls} value={draft.trainingEffectivenessPct ?? ''} onChange={(e) => setDraft({ ...draft, trainingEffectivenessPct: e.target.value ? Number(e.target.value) : null })} />
-            </Field>
-            <Field label="Staff utilisation %">
-              <input type="number" min={0} max={100} step={0.1} className={inputCls} value={draft.staffUtilisationPct ?? ''} onChange={(e) => setDraft({ ...draft, staffUtilisationPct: e.target.value ? Number(e.target.value) : null })} />
-            </Field>
-            <Field label="Culture survey score (0-5)">
-              <input type="number" min={0} max={5} step={0.1} className={inputCls} value={draft.cultureSurveyScore ?? ''} onChange={(e) => setDraft({ ...draft, cultureSurveyScore: e.target.value ? Number(e.target.value) : null })} />
-            </Field>
-            <Field label="Annualised attrition %">
-              <input type="number" min={0} max={100} step={0.1} className={inputCls} value={draft.attritionPct ?? ''} onChange={(e) => setDraft({ ...draft, attritionPct: e.target.value ? Number(e.target.value) : null })} />
-            </Field>
-          </div>
-          <div className="flex justify-end gap-2">
+        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
+          <PeopleForm value={draft} onChange={setDraft} />
+          <div className="flex justify-end gap-2 mt-3">
             <button onClick={() => setAdding(false)} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
             <button onClick={save} className={btnPrimary} disabled={!draft.periodLabel || !draft.periodEnd}><Save className="h-3 w-3" /> Save snapshot</button>
           </div>
@@ -955,25 +1076,41 @@ function PeopleTab() {
                 <th className="px-2 py-2 text-center w-24">Utilisation</th>
                 <th className="px-2 py-2 text-center w-24">Culture /5</th>
                 <th className="px-2 py-2 text-center w-24">Attrition</th>
-                <th className="px-2 py-2 text-right w-20"></th>
+                <th className="px-2 py-2 text-right w-32"></th>
               </tr>
             </thead>
             <tbody>
               {api.items.map(row => (
-                <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                  <td className="px-3 py-2 text-slate-700 font-medium">{row.periodLabel} <span className="text-[10px] text-slate-400 ml-1">({new Date(row.periodEnd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })})</span></td>
-                  <td className="px-2 py-2 text-center">{row.trainingEffectivenessPct !== null ? `${row.trainingEffectivenessPct}%` : '—'}</td>
-                  <td className="px-2 py-2 text-center">{row.staffUtilisationPct !== null ? `${row.staffUtilisationPct}%` : '—'}</td>
-                  <td className="px-2 py-2 text-center">{row.cultureSurveyScore !== null ? row.cultureSurveyScore : '—'}</td>
-                  <td className="px-2 py-2 text-center">{row.attritionPct !== null ? `${row.attritionPct}%` : '—'}</td>
-                  <td className="px-2 py-2 text-right">
-                    {confirmId === row.id ? (
-                      <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
-                    ) : (
-                      <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
-                    )}
-                  </td>
-                </tr>
+                <Fragment key={row.id}>
+                  <tr className="border-b border-slate-100 hover:bg-slate-50/50">
+                    <td className="px-3 py-2 text-slate-700 font-medium">{row.periodLabel} <span className="text-[10px] text-slate-400 ml-1">({new Date(row.periodEnd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })})</span></td>
+                    <td className="px-2 py-2 text-center">{row.trainingEffectivenessPct !== null ? `${row.trainingEffectivenessPct}%` : '—'}</td>
+                    <td className="px-2 py-2 text-center">{row.staffUtilisationPct !== null ? `${row.staffUtilisationPct}%` : '—'}</td>
+                    <td className="px-2 py-2 text-center">{row.cultureSurveyScore !== null ? row.cultureSurveyScore : '—'}</td>
+                    <td className="px-2 py-2 text-center">{row.attritionPct !== null ? `${row.attritionPct}%` : '—'}</td>
+                    <td className="px-2 py-2 text-right">
+                      {confirmId === row.id ? (
+                        <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
+                      ) : (
+                        <>
+                          <button onClick={() => { setEditId(row.id === editId ? null : row.id); setEditDraft(row.id === editId ? {} : { ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">{editId === row.id ? 'Close' : 'Edit'}</button>
+                          <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                  {editId === row.id && (
+                    <tr key={`${row.id}-edit`} className="bg-blue-50/30">
+                      <td colSpan={6} className="p-4">
+                        <PeopleForm value={editDraft} onChange={setEditDraft} />
+                        <div className="flex justify-end gap-2 mt-3">
+                          <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+                          <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /> Save changes</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -999,14 +1136,22 @@ type ScheduleRow = Row & {
 
 function ScheduleTab() {
   const api = useApi<ScheduleRow>('/api/methodology-admin/performance-dashboard/activity-schedule');
+  const users = useUsers();
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Partial<ScheduleRow>>({ year, monthIndex: 0, status: 'planned' });
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Partial<ScheduleRow>>({});
 
   async function save() {
     const ok = await api.create({ ...draft, year });
     if (ok) { setDraft({ year, monthIndex: 0, status: 'planned' }); setAdding(false); }
+  }
+  async function saveEdit() {
+    if (!editId) return;
+    const ok = await api.update({ ...editDraft, id: editId });
+    if (ok) { setEditId(null); setEditDraft({}); }
   }
 
   const yearItems = api.items.filter(i => i.year === year);
@@ -1046,7 +1191,7 @@ function ScheduleTab() {
               </select>
             </Field>
             <Field label="Owner">
-              <input className={inputCls} value={draft.ownerName || ''} onChange={(e) => setDraft({ ...draft, ownerName: e.target.value })} />
+              <UserSelect users={users} value={draft.ownerName} onChange={(n) => setDraft({ ...draft, ownerName: n })} placeholder="— select owner —" />
             </Field>
             <Field label="Due date">
               <input type="date" className={inputCls} value={isoDate(draft.dueDate)} onChange={(e) => setDraft({ ...draft, dueDate: e.target.value || null })} />
@@ -1063,7 +1208,7 @@ function ScheduleTab() {
       )}
 
       {yearItems.length === 0 && !api.loading ? (
-        <p className="text-sm text-slate-400 italic text-center py-8">No scheduled activities for {year} yet.</p>
+        <p className="text-sm text-slate-400 italic text-center py-8">No scheduled activities for {year} yet — try the &quot;Seed G3Q defaults&quot; button at the top of this page.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {MONTH_NAMES.map((m, i) => {
@@ -1076,6 +1221,27 @@ function ScheduleTab() {
                     <p className="text-[11px] text-slate-300 italic text-center py-2">No activities</p>
                   ) : list.map(it => {
                     const dot = it.status === 'done' ? 'bg-emerald-500' : it.status === 'on_track' ? 'bg-blue-500' : it.status === 'at_risk' ? 'bg-amber-500' : it.status === 'overdue' ? 'bg-rose-500' : 'bg-slate-400';
+                    if (editId === it.id) {
+                      return (
+                        <div key={it.id} className="space-y-2 p-2 bg-blue-50/40 rounded">
+                          <input className={inputCls} value={editDraft.activityName ?? it.activityName} onChange={(e) => setEditDraft({ ...editDraft, activityName: e.target.value })} />
+                          <div className="grid grid-cols-2 gap-2">
+                            <select className={inputCls} value={editDraft.status ?? it.status} onChange={(e) => setEditDraft({ ...editDraft, status: e.target.value })}>
+                              {SCHEDULE_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+                            </select>
+                            <UserSelect users={users} value={editDraft.ownerName ?? it.ownerName} onChange={(n) => setEditDraft({ ...editDraft, ownerName: n })} placeholder="Owner" />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <input type="date" className={inputCls} value={isoDate(editDraft.dueDate ?? it.dueDate)} onChange={(e) => setEditDraft({ ...editDraft, dueDate: e.target.value || null })} placeholder="Due" />
+                            <input type="date" className={inputCls} value={isoDate(editDraft.completedDate ?? it.completedDate)} onChange={(e) => setEditDraft({ ...editDraft, completedDate: e.target.value || null })} placeholder="Completed" />
+                          </div>
+                          <div className="flex justify-end gap-1">
+                            <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary}><X className="h-3 w-3" /></button>
+                            <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /> Save</button>
+                          </div>
+                        </div>
+                      );
+                    }
                     return (
                       <div key={it.id} className="flex items-start gap-2 text-[11px] group">
                         <span className={`mt-1 h-1.5 w-1.5 rounded-full flex-shrink-0 ${dot}`} />
@@ -1089,7 +1255,10 @@ function ScheduleTab() {
                             <button onClick={() => setConfirmId(null)} className="text-[10px] px-1 py-0.5 bg-white border rounded">×</button>
                           </div>
                         ) : (
-                          <button onClick={() => setConfirmId(it.id)} className="text-slate-300 hover:text-rose-600 opacity-0 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button>
+                          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5">
+                            <button onClick={() => { setEditId(it.id); setEditDraft({ ...it }); }} className="text-blue-500 hover:text-blue-700 text-[10px]">edit</button>
+                            <button onClick={() => setConfirmId(it.id)} className="text-slate-300 hover:text-rose-600"><Trash2 className="h-3 w-3" /></button>
+                          </div>
                         )}
                       </div>
                     );
@@ -1239,7 +1408,7 @@ function PillarsTab() {
     <div>
       <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} />
       <p className="text-xs text-slate-500 mb-3">
-        By default each pillar score is auto-derived from CSF RAG mix. Override with a manual score (0-100) and a custom strapline if you want to publish a different headline.
+        By default each pillar score is auto-derived from CSF RAG mix (with monitoring + RCA blended into the Quality pillar). Override with a manual score (0-100) and a custom strapline if you want to publish a different headline.
       </p>
       <div className="space-y-2">
         {PILLARS.map(p => {
@@ -1269,6 +1438,63 @@ function PillarsTab() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Seed banner — populates standard G3Q content                        */
+/* ------------------------------------------------------------------ */
+
+function SeedBanner({ onSeeded }: { onSeeded: () => void }) {
+  const [seeding, setSeeding] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [year, setYear] = useState<number>(new Date().getFullYear());
+
+  async function seed() {
+    setSeeding(true);
+    setResult(null);
+    try {
+      const res = await fetch('/api/methodology-admin/performance-dashboard/seed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Seed failed');
+      setResult(`Created: ${json.csfsCreated} CSFs · ${json.scheduleCreated} schedule rows · ${json.isqmCreated} ISQM objectives · ${json.pillarsCreated} pillars (${json.csfsSkipped + json.scheduleSkipped + json.isqmSkipped + json.pillarsSkipped} skipped as duplicates)`);
+      onSeeded();
+    } catch (e) {
+      setResult(e instanceof Error ? e.message : 'Seed failed');
+    } finally {
+      setSeeding(false);
+    }
+  }
+
+  return (
+    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 mb-6">
+      <div className="flex items-start gap-3">
+        <Database className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+        <div className="flex-1">
+          <h3 className="text-sm font-semibold text-slate-900 mb-1">Seed standard G3Q defaults</h3>
+          <p className="text-xs text-slate-600 mb-3">
+            Pre-populates CSFs (40+ items across all four pillars), the annual activity schedule (60+ items mirroring slide 22 of the G3Q deck), the eight ISQM(UK)1 quality objectives and pillar straplines. Idempotent — re-running skips anything that already exists.
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-[11px] text-slate-500 inline-flex items-center gap-1">
+              Schedule year
+              <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="text-xs border border-slate-200 rounded px-2 py-1 bg-white">
+                {[year - 1, year, year + 1].map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </label>
+            <button onClick={seed} disabled={seeding} className={btnPrimary}>
+              {seeding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {seeding ? 'Seeding…' : 'Seed G3Q defaults'}
+            </button>
+            {result && <span className="text-[11px] text-slate-600">{result}</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Container                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -1276,9 +1502,12 @@ export function PerformanceDashboardAdminClient() {
   const search = useSearchParams();
   const initialTab = (search.get('tab') as TabKey | null) || 'monitoring';
   const [tab, setTab] = useState<TabKey>(TABS.some(t => t.key === initialTab) ? initialTab : 'monitoring');
+  const [seedBump, setSeedBump] = useState(0);
 
   return (
     <div className="space-y-4">
+      <SeedBanner onSeeded={() => setSeedBump(b => b + 1)} />
+
       <div className="border-b border-slate-200">
         <nav className="flex flex-wrap gap-1 -mb-px">
           {TABS.map(t => {
@@ -1301,7 +1530,7 @@ export function PerformanceDashboardAdminClient() {
         </nav>
       </div>
 
-      <div className="pt-2">
+      <div className="pt-2" key={`${tab}-${seedBump}`}>
         {tab === 'monitoring' && <MonitoringTab />}
         {tab === 'findings' && <FindingsTab />}
         {tab === 'remediations' && <RemediationsTab />}

@@ -292,6 +292,13 @@ export function PerformanceDashboardClient() {
 
   useEffect(() => { load(); }, []);
 
+  // Refresh every 90s — keeps the AQT lead's view current as the team updates
+  // monitoring activities / findings / remediations across the day.
+  useEffect(() => {
+    const id = setInterval(() => { load(); }, 90_000);
+    return () => clearInterval(id);
+  }, []);
+
   /* ---------------- Derived metrics ---------------- */
   const headlineKpis = useMemo(() => {
     if (!data) return null;
@@ -324,6 +331,23 @@ export function PerformanceDashboardClient() {
 
   const pillarPerformance = useMemo(() => {
     if (!data) return null;
+
+    // For the Quality pillar specifically we blend operational evidence
+    // (monitoring completion, RCA closure, remediation effectiveness) with
+    // any CSFs the firm has tagged to the pillar. Non-Quality pillars use
+    // CSF RAG mix only — that's where their measurable evidence lives.
+    const monitoringPlanned = data.monitoringActivities.length;
+    const monitoringComplete = data.monitoringActivities.filter(a => a.status === 'complete').length;
+    const monitoringPct = monitoringPlanned ? (monitoringComplete / monitoringPlanned) * 100 : null;
+
+    const totalFindings = data.findings.length;
+    const rcaClosed = data.findings.filter(f => f.rcaCompletedDate || f.status === 'rca_complete' || f.status === 'closed').length;
+    const rcaPct = totalFindings ? (rcaClosed / totalFindings) * 100 : null;
+
+    const reTested = data.remediations.filter(r => r.effective !== null);
+    const effective = reTested.filter(r => r.effective === true).length;
+    const remediationPct = reTested.length ? (effective / reTested.length) * 100 : null;
+
     return (['goodwill', 'governance', 'growth', 'quality'] as const).map((pillar) => {
       const override = data.pillarScores.find(p => p.pillar === pillar);
       const pillarCsfs = data.csfs.filter(c => c.pillar === pillar && c.isActive);
@@ -331,13 +355,30 @@ export function PerformanceDashboardClient() {
         acc[c.rag] = (acc[c.rag] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
-      // Auto-derive: green=100, amber=60, red=20, grey ignored (out of total active)
+      // CSF auto-derive: green=100, amber=60, red=20, grey ignored
       const scoredCsfs = pillarCsfs.filter(c => c.rag !== 'grey');
-      const autoScore = scoredCsfs.length
+      const csfScore = scoredCsfs.length
         ? Math.round(scoredCsfs.reduce((s, c) => s + (c.rag === 'green' ? 100 : c.rag === 'amber' ? 60 : 20), 0) / scoredCsfs.length)
         : null;
+
+      let autoScore: number | null = csfScore;
+
+      // Quality pillar — blend CSF / monitoring / RCA / remediation equally
+      // across whichever signals have data. If no signals, autoScore stays null.
+      if (pillar === 'quality') {
+        const signals: number[] = [];
+        if (csfScore !== null) signals.push(csfScore);
+        if (monitoringPct !== null) signals.push(monitoringPct);
+        if (rcaPct !== null) signals.push(rcaPct);
+        if (remediationPct !== null) signals.push(remediationPct);
+        autoScore = signals.length ? Math.round(signals.reduce((a, b) => a + b, 0) / signals.length) : null;
+      }
+
       const score = override?.manualScore ?? autoScore;
       const strapline = override?.strapline || PILLAR_META[pillar].defaultStrapline;
+
+      // Sub-components: CSFs grouped by sub-component, plus synthetic
+      // operational sub-components for the Quality pillar.
       const subComponents = Array.from(new Set(pillarCsfs.map(c => c.subComponent))).map(sc => {
         const csfsInSub = pillarCsfs.filter(c => c.subComponent === sc);
         const worst: Rag = csfsInSub.some(c => c.rag === 'red') ? 'red' :
@@ -345,6 +386,19 @@ export function PerformanceDashboardClient() {
                           csfsInSub.every(c => c.rag === 'green') && csfsInSub.length ? 'green' : 'grey';
         return { name: sc, rag: worst, csfCount: csfsInSub.length };
       });
+
+      if (pillar === 'quality') {
+        if (monitoringPct !== null && !subComponents.some(s => s.name === 'Monitoring plan')) {
+          subComponents.push({ name: 'Monitoring plan', rag: ragFromPct(monitoringPct), csfCount: 0 });
+        }
+        if (rcaPct !== null && !subComponents.some(s => s.name === 'Root cause analysis')) {
+          subComponents.push({ name: 'Root cause analysis', rag: ragFromPct(rcaPct), csfCount: 0 });
+        }
+        if (remediationPct !== null && !subComponents.some(s => s.name === 'Remediation')) {
+          subComponents.push({ name: 'Remediation', rag: ragFromPct(remediationPct), csfCount: 0 });
+        }
+      }
+
       return { pillar, name: PILLAR_META[pillar].name, score, strapline, subComponents, ragCounts };
     });
   }, [data]);
@@ -557,7 +611,7 @@ export function PerformanceDashboardClient() {
                         <span className={`mt-1 h-1.5 w-1.5 rounded-full flex-shrink-0 ${RAG_DOT[c.rag]}`} />
                         <div className="flex-1 min-w-0">
                           <div className="text-[11px] font-medium text-slate-700">{c.name}</div>
-                          <div className="text-[10px] text-slate-500 leading-tight">{c.csfCount} CSF{c.csfCount === 1 ? '' : 's'}</div>
+                          <div className="text-[10px] text-slate-500 leading-tight">{c.csfCount === 0 ? 'operational signal' : `${c.csfCount} CSF${c.csfCount === 1 ? '' : 's'}`}</div>
                         </div>
                       </div>
                     ))}
