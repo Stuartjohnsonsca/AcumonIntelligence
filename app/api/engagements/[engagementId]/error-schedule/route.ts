@@ -19,6 +19,10 @@ const META_SECTION = 'error_schedule_meta';
 type ErrorMetaEntry = {
   signOffs?: { preparer?: SignOff; reviewer?: SignOff; ri?: SignOff };
   sourceLocation?: string | null;
+  /** Set when this row is part of a multi-line error journal — every
+   *  line in the journal shares the same id. The Reason text-box on
+   *  the panel is rendered once per journal (not once per line). */
+  journalGroupId?: string;
 };
 type SignOff = { userId: string; userName: string; at: string };
 type ErrorMeta = Record<string, ErrorMetaEntry>;
@@ -155,6 +159,73 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     });
 
     return NextResponse.json({ committed: created.count });
+  }
+
+  // create_journal — multi-line error journal. Creates several
+  // AuditErrorSchedule rows in one go, stamps each with a shared
+  // journalGroupId in the meta blob, and writes the supplied reason
+  // to every row's `explanation` column so a reviewer can read the
+  // narrative wherever they look. Validates Dr === Cr (within
+  // rounding tolerance) before creating; rejects imbalanced
+  // journals with 422 so the UI can show the user *why* the save
+  // was blocked.
+  if (body.action === 'create_journal') {
+    type JournalLine = {
+      fsLine: string; fsLineId?: string | null; accountCode?: string | null;
+      description: string; amount: number; drCr: 'Dr' | 'Cr';
+      errorType?: string; isFraud?: boolean;
+    };
+    const { lines, reason, sourceLocation } = body as { lines: JournalLine[]; reason?: string; sourceLocation?: string | null };
+    if (!Array.isArray(lines) || lines.length < 2) {
+      return NextResponse.json({ error: 'A journal must have at least two lines (use the single-row create for one-sided errors)' }, { status: 400 });
+    }
+    let drTotal = 0, crTotal = 0;
+    for (const l of lines) {
+      const amt = Math.abs(Number(l.amount) || 0);
+      if (amt <= 0) return NextResponse.json({ error: 'Every line must have a positive amount' }, { status: 400 });
+      if (!l.fsLine || !l.description) return NextResponse.json({ error: 'Every line needs FS Line and description' }, { status: 400 });
+      if (l.drCr === 'Dr') drTotal += amt; else crTotal += amt;
+    }
+    if (Math.abs(drTotal - crTotal) >= 0.005) {
+      return NextResponse.json({
+        error: `Journal does not balance. Dr ${drTotal.toFixed(2)} vs Cr ${crTotal.toFixed(2)} — out by ${Math.abs(drTotal - crTotal).toFixed(2)}.`,
+      }, { status: 422 });
+    }
+
+    const journalGroupId = `j_${crypto.randomUUID()}`;
+    const created = [];
+    for (const l of lines) {
+      const amt = Math.abs(Number(l.amount) || 0);
+      const row = await prisma.auditErrorSchedule.create({
+        data: {
+          engagementId,
+          fsLine: l.fsLine,
+          accountCode: l.accountCode || null,
+          description: l.description,
+          errorAmount: l.drCr === 'Cr' ? -amt : amt,
+          errorType: l.errorType || 'factual',
+          explanation: reason || null,
+          isFraud: !!l.isFraud,
+          committedBy: session.user.id,
+          committedByName: session.user.name || session.user.email || '',
+          committedAt: new Date(),
+        },
+      });
+      created.push(row);
+    }
+    // Stamp every line with the same journalGroupId + the journal-
+    // level source link in the meta blob.
+    const meta = await readMeta(engagementId);
+    for (const row of created) {
+      meta[row.id] = {
+        ...(meta[row.id] || {}),
+        journalGroupId,
+        ...(sourceLocation ? { sourceLocation: String(sourceLocation) } : {}),
+      } as any;
+    }
+    await writeMeta(engagementId, meta);
+
+    return NextResponse.json({ ok: true, journalGroupId, created: created.length });
   }
 
   // Sign-off / unsignoff / set reason / set resolution actions —

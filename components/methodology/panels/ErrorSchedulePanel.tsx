@@ -57,8 +57,17 @@ interface ErrorEntry {
 }
 
 interface SignOff { userId: string; userName: string; at: string; }
-interface ErrorMetaEntry { signOffs?: { preparer?: SignOff; reviewer?: SignOff; ri?: SignOff }; sourceLocation?: string | null; }
+interface ErrorMetaEntry { signOffs?: { preparer?: SignOff; reviewer?: SignOff; ri?: SignOff }; sourceLocation?: string | null; journalGroupId?: string }
 type ErrorMeta = Record<string, ErrorMetaEntry>;
+
+interface JournalLineDraft {
+  uid: string;       // local-only key for React reconciliation
+  fsLine: string;
+  accountCode: string;
+  description: string;
+  amount: string;
+  drCr: 'Dr' | 'Cr';
+}
 
 interface FsLineLite { id: string; name: string; fsCategory: string; }
 
@@ -98,6 +107,13 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
   const [busy, setBusy] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  // Multi-line journal form. Independent from the single-line Add
+  // form so each can be open without trampling the other's draft.
+  const [showJournal, setShowJournal] = useState(false);
+  const [jLines, setJLines] = useState<JournalLineDraft[]>([]);
+  const [jReason, setJReason] = useState('');
+  const [jError, setJError] = useState<string | null>(null);
+  const [jSaving, setJSaving] = useState(false);
   // Send-to-client modal: lets the auditor pick a subset of unadjusted
   // errors and post them to the client portal as a single approval
   // request. The client receives a checkbox list; whichever they tick
@@ -255,6 +271,81 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
     setAAmount(''); setADrCr('Dr'); setAType('factual'); setAIsFraud(false);
   }
 
+  // Journal-form helpers. Each line gets a stable uid for React, and
+  // the form auto-seeds a Dr + Cr pair when first opened so the user
+  // doesn't immediately have to click "Add line".
+  function blankJournalLine(drCr: 'Dr' | 'Cr' = 'Dr'): JournalLineDraft {
+    return { uid: `l_${Math.random().toString(36).slice(2, 9)}`, fsLine: '', accountCode: '', description: '', amount: '', drCr };
+  }
+  function openJournalForm() {
+    setJLines([blankJournalLine('Dr'), blankJournalLine('Cr')]);
+    setJReason('');
+    setJError(null);
+    setShowJournal(true);
+  }
+  function closeJournalForm() {
+    setShowJournal(false); setJLines([]); setJReason(''); setJError(null);
+  }
+  function updateJLine(uid: string, patch: Partial<JournalLineDraft>) {
+    setJLines(prev => prev.map(l => l.uid === uid ? { ...l, ...patch } : l));
+  }
+  function addJLine() { setJLines(prev => [...prev, blankJournalLine('Dr')]); }
+  function removeJLine(uid: string) { setJLines(prev => prev.filter(l => l.uid !== uid)); }
+
+  // Live Dr/Cr totals + balance flag for the journal form. Used by
+  // the running-total strip and the disabled state on the Save
+  // button.
+  const jTotals = useMemo(() => {
+    let dr = 0, cr = 0;
+    for (const l of jLines) {
+      const amt = Math.abs(Number(l.amount) || 0);
+      if (l.drCr === 'Dr') dr += amt; else cr += amt;
+    }
+    return { dr, cr, balanced: jLines.length >= 2 && Math.abs(dr - cr) < 0.005 && dr > 0 };
+  }, [jLines]);
+
+  async function saveJournal() {
+    setJError(null);
+    if (jLines.length < 2) { setJError('A journal needs at least two lines'); return; }
+    if (!jTotals.balanced) {
+      setJError(`Journal does not balance — Dr ${jTotals.dr.toFixed(2)} vs Cr ${jTotals.cr.toFixed(2)}. Save is blocked until totals match exactly.`);
+      return;
+    }
+    for (const l of jLines) {
+      if (!l.fsLine.trim()) { setJError('Every line needs an FS Line'); return; }
+      if (!l.description.trim()) { setJError('Every line needs a description'); return; }
+      if (!Number.isFinite(Number(l.amount)) || Number(l.amount) <= 0) { setJError('Every line needs a positive amount'); return; }
+    }
+    setJSaving(true);
+    try {
+      const navLoc = getCurrentLocation();
+      const url = typeof window !== 'undefined' ? window.location.href : undefined;
+      const sourceLocation = navLoc ? encodeNavReference(navLoc, url) : (url ?? null);
+      const res = await fetch(`/api/engagements/${engagementId}/error-schedule`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_journal',
+          reason: jReason.trim() || null,
+          sourceLocation,
+          lines: jLines.map(l => ({
+            fsLine: l.fsLine.trim(),
+            accountCode: l.accountCode.trim() || null,
+            description: l.description.trim(),
+            amount: Number(l.amount),
+            drCr: l.drCr,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setJError(data?.error || 'Save failed');
+        return;
+      }
+      await load();
+      closeJournalForm();
+    } finally { setJSaving(false); }
+  }
+
   async function createError() {
     const amount = Number(aAmount);
     if (!aFsLineName.trim() && !aFsLineId) { setAddError('FS Line is required'); return; }
@@ -383,6 +474,9 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
         <div className="ml-auto flex items-center gap-1.5">
           <Button onClick={() => setShowAdd(s => !s)} size="sm" variant="outline" className="h-7 text-[10px]">
             <Plus className="h-3 w-3 mr-1" /> Add new
+          </Button>
+          <Button onClick={openJournalForm} size="sm" variant="outline" className="h-7 text-[10px]" title="Add a multi-line balanced journal">
+            <Plus className="h-3 w-3 mr-1" /> Add journal
           </Button>
           {/* Send to client — only enabled when there's at least one
               unadjusted error to ask about. Disabled state explains
@@ -520,6 +614,114 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
       <div className="text-[10px] text-slate-400">
         CT {fmt(clearlyTrivial) || '0.00'} · PM {fmt(performanceMateriality) || '0.00'} · Materiality {fmt(materiality) || '0.00'}
       </div>
+
+      {/* Multi-line journal modal — Save is gated on the totals
+          balancing exactly (per spec). The running totals strip at
+          the bottom of the modal mirrors the top-of-tab strip so the
+          user sees imbalance the moment they enter unbalanced
+          numbers. */}
+      {showJournal && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={() => !jSaving && closeJournalForm()}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Add error journal</h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">Two or more lines that share a reason and a balance check (Dr = Cr).</p>
+              </div>
+              <button onClick={closeJournalForm} disabled={jSaving} className="text-slate-400 hover:text-slate-600">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-4 py-3 space-y-2 overflow-y-auto">
+              <div className="grid grid-cols-12 gap-1.5 text-[10px] uppercase tracking-wide text-slate-500 font-semibold px-1">
+                <div className="col-span-3">FS Line</div>
+                <div className="col-span-2">Account</div>
+                <div className="col-span-3">Description</div>
+                <div className="col-span-2 text-right">Amount</div>
+                <div className="col-span-1 text-center">Dr/Cr</div>
+                <div className="col-span-1"></div>
+              </div>
+              {jLines.map(l => (
+                <div key={l.uid} className="grid grid-cols-12 gap-1.5 items-center">
+                  <input
+                    list="error-schedule-fs-lines"
+                    value={l.fsLine}
+                    onChange={e => updateJLine(l.uid, { fsLine: e.target.value })}
+                    placeholder="FS Line"
+                    className="col-span-3 text-xs px-2 py-1 border border-slate-300 rounded"
+                  />
+                  <input
+                    value={l.accountCode}
+                    onChange={e => updateJLine(l.uid, { accountCode: e.target.value })}
+                    placeholder="Code"
+                    className="col-span-2 text-xs px-2 py-1 border border-slate-300 rounded font-mono"
+                  />
+                  <input
+                    value={l.description}
+                    onChange={e => updateJLine(l.uid, { description: e.target.value })}
+                    placeholder="Line description"
+                    className="col-span-3 text-xs px-2 py-1 border border-slate-300 rounded"
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={l.amount}
+                    onChange={e => updateJLine(l.uid, { amount: e.target.value })}
+                    placeholder="0.00"
+                    className="col-span-2 text-xs px-2 py-1 border border-slate-300 rounded text-right tabular-nums"
+                  />
+                  <select
+                    value={l.drCr}
+                    onChange={e => updateJLine(l.uid, { drCr: e.target.value as 'Dr' | 'Cr' })}
+                    className="col-span-1 text-xs px-1.5 py-1 border border-slate-300 rounded"
+                  >
+                    <option value="Dr">Dr</option>
+                    <option value="Cr">Cr</option>
+                  </select>
+                  <button
+                    onClick={() => removeJLine(l.uid)}
+                    disabled={jLines.length <= 1}
+                    className="col-span-1 text-red-400 hover:text-red-600 disabled:opacity-30 flex justify-center"
+                    title="Remove line"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              <div className="flex items-center justify-between pt-1">
+                <Button onClick={addJLine} size="sm" variant="outline" className="h-7 text-[10px]">
+                  <Plus className="h-3 w-3 mr-1" /> Add line
+                </Button>
+                <div className={`text-[11px] inline-flex items-center gap-3 px-3 py-1 rounded border ${jTotals.balanced ? 'bg-green-50 border-green-300 text-green-700' : 'bg-red-50 border-red-300 text-red-700'}`}>
+                  <span className="font-mono tabular-nums">Dr <strong>{fmt(jTotals.dr) || '0.00'}</strong></span>
+                  <span className="font-mono tabular-nums">Cr <strong>{fmt(jTotals.cr) || '0.00'}</strong></span>
+                  {jTotals.balanced
+                    ? <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Balanced</span>
+                    : <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Out by {fmt(Math.abs(jTotals.dr - jTotals.cr)) || '0.00'}</span>}
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-slate-600 mb-1">Reason for journal</label>
+                <textarea
+                  value={jReason}
+                  onChange={e => setJReason(e.target.value)}
+                  rows={2}
+                  placeholder="Why was this misstatement booked? (shown to all reviewers)"
+                  className="w-full text-xs border border-slate-200 rounded px-2 py-1.5"
+                />
+              </div>
+              {jError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">{jError}</div>}
+            </div>
+            <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={closeJournalForm} disabled={jSaving}>Cancel</Button>
+              <Button size="sm" onClick={() => void saveJournal()} disabled={jSaving || !jTotals.balanced}>
+                {jSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Save className="h-3 w-3 mr-1" />}
+                Save journal
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Send-to-client modal */}
       {showSendModal && (() => {
@@ -676,6 +878,7 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
                     amount={amount}
                     so={so}
                     sourceDecoded={sourceDecoded}
+                    journalGroupId={meta[e.id]?.journalGroupId || null}
                     busy={busy === e.id}
                     onSignOff={(role) => void toggleSignOff(e.id, role)}
                     onSetReason={(r) => void setReason(e.id, r)}
@@ -743,6 +946,7 @@ interface RowFragmentProps {
   amount: number;
   so: { preparer?: SignOff; reviewer?: SignOff; ri?: SignOff };
   sourceDecoded: { loc: { tab: string; subTab?: string; label?: string }; url: string | null } | null;
+  journalGroupId: string | null;
   busy: boolean;
   onSignOff: (role: 'preparer' | 'reviewer' | 'ri') => void;
   onSetReason: (reason: string) => void;
@@ -750,7 +954,7 @@ interface RowFragmentProps {
   onDelete: () => void;
 }
 
-function RowFragment({ err, idx, codeOrLine, isFraud, isAdjusted, showSplit, isPL, isDr, amount, so, sourceDecoded, busy, onSignOff, onSetReason, onSetResolution, onDelete }: RowFragmentProps) {
+function RowFragment({ err, idx, codeOrLine, isFraud, isAdjusted, showSplit, isPL, isDr, amount, so, sourceDecoded, journalGroupId, busy, onSignOff, onSetReason, onSetResolution, onDelete }: RowFragmentProps) {
   const [reasonDraft, setReasonDraft] = useState(err.explanation || '');
   // Sync local draft whenever the underlying explanation changes
   // server-side (e.g. another user edited).
@@ -775,7 +979,21 @@ function RowFragment({ err, idx, codeOrLine, isFraud, isAdjusted, showSplit, isP
         </td>
         <td className="px-2 py-1.5 text-slate-700 max-w-[260px]">
           <div className="truncate" title={err.description}>{err.description}</div>
-          {isFraud && <span className="text-[9px] text-red-600 font-semibold inline-flex items-center gap-0.5"><AlertOctagon className="h-2.5 w-2.5" />Fraud</span>}
+          <div className="flex items-center gap-1 mt-0.5">
+            {isFraud && <span className="text-[9px] text-red-600 font-semibold inline-flex items-center gap-0.5"><AlertOctagon className="h-2.5 w-2.5" />Fraud</span>}
+            {/* Journal badge — visible when this row is part of a
+                multi-line error journal. The same id appears on every
+                line in the journal so a reviewer can spot which rows
+                offset each other. Truncated for compactness. */}
+            {journalGroupId && (
+              <span
+                className="text-[9px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1 py-0 rounded font-mono"
+                title={`Part of journal ${journalGroupId}`}
+              >
+                Journal · {journalGroupId.slice(2, 7)}
+              </span>
+            )}
+          </div>
         </td>
         <td className="px-2 py-1.5 text-center">
           <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
