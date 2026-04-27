@@ -48,6 +48,11 @@ const SECTIONS = [
   // displayed because filtering matches section-by-section.
   { key: 'ri_matters', label: 'Senior Reviewer Queries' },
   { key: 'review_points', label: 'Review Queries' },
+  // Error approvals from the Error Schedule "Send to client" flow.
+  // The first chat message carries an errorApprovalsRequest payload —
+  // this section's renderer shows checkbox list + a single Submit
+  // that posts back JSON {approvedErrorIds: [...]}.
+  { key: 'error_approvals', label: 'Audit Adjustments to Approve' },
   { key: 'walkthroughs', label: 'Walkthrough Documentation' },
   { key: 'calculations', label: 'Financial Calculations' },
   { key: 'evidence', label: 'Evidence' },
@@ -98,6 +103,11 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [responses, setResponses] = useState<Record<string, string>>({});
   const [responseFiles, setResponseFiles] = useState<Record<string, File[]>>({});
+  // Per-request set of approved error IDs for the error_approvals
+  // section. Held in component state until the client clicks Submit,
+  // at which point it's serialised into `responses[item.id]` as JSON
+  // and posted by the standard handleSubmitItem flow.
+  const [approvalChecks, setApprovalChecks] = useState<Record<string, Set<string>>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successes, setSuccesses] = useState<Set<string>>(new Set());
@@ -361,6 +371,100 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
                               ))}
                             </div>
                           )}
+                          {/* Error-approvals: render a checkbox list of
+                              the auditor's misstatements + a Submit
+                              that posts back JSON. The standard
+                              textarea / file-attach UI doesn't apply
+                              here. */}
+                          {item.section === 'error_approvals' ? (() => {
+                            const firstChat = item.chatHistory?.[0] as any;
+                            const approvalItems: Array<{ errorId: string; fsLine: string; accountCode: string | null; description: string; errorAmount: number; errorType: string }> =
+                              Array.isArray(firstChat?.errorApprovalsRequest?.items) ? firstChat.errorApprovalsRequest.items : [];
+                            const checked = approvalChecks[item.id] || new Set<string>();
+                            const toggle = (id: string) => {
+                              setApprovalChecks(prev => {
+                                const next: Record<string, Set<string>> = { ...prev };
+                                const s = new Set(next[item.id] || []);
+                                if (s.has(id)) s.delete(id); else s.add(id);
+                                next[item.id] = s;
+                                return next;
+                              });
+                            };
+                            const allTicked = approvalItems.length > 0 && approvalItems.every(a => checked.has(a.errorId));
+                            const setAll = (on: boolean) => {
+                              setApprovalChecks(prev => ({
+                                ...prev,
+                                [item.id]: on ? new Set(approvalItems.map(a => a.errorId)) : new Set(),
+                              }));
+                            };
+                            const fmtAmt = (n: number) => Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            return (
+                              <div className="space-y-2">
+                                {approvalItems.length === 0 ? (
+                                  <div className="text-xs text-slate-400 italic">No items to approve.</div>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="text-slate-600">Tick the items you accept and have adjusted.</span>
+                                      <button
+                                        onClick={() => setAll(!allTicked)}
+                                        className="text-blue-600 hover:underline"
+                                      >{allTicked ? 'Untick all' : 'Tick all'}</button>
+                                    </div>
+                                    <div className="border border-slate-200 rounded divide-y divide-slate-100 bg-white">
+                                      {approvalItems.map(a => {
+                                        const isChecked = checked.has(a.errorId);
+                                        const isDr = a.errorAmount >= 0;
+                                        return (
+                                          <label key={a.errorId} className={`flex items-start gap-2 px-3 py-2 cursor-pointer ${isChecked ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}>
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={() => toggle(a.errorId)}
+                                              className="mt-0.5"
+                                            />
+                                            <div className="flex-1 min-w-0">
+                                              <div className="text-xs text-slate-700 truncate">
+                                                <span className="font-medium">{a.fsLine}</span>
+                                                {a.accountCode && <span className="text-slate-400 font-mono ml-1">· {a.accountCode}</span>}
+                                              </div>
+                                              <div className="text-[11px] text-slate-500">{a.description}</div>
+                                            </div>
+                                            <div className="text-right text-xs font-mono tabular-nums whitespace-nowrap">
+                                              {isDr ? `Dr ${fmtAmt(a.errorAmount)}` : `Cr ${fmtAmt(a.errorAmount)}`}
+                                            </div>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                    <div className="flex items-center justify-end gap-2">
+                                      <span className="text-[11px] text-slate-500">{checked.size}/{approvalItems.length} ticked</span>
+                                      <button
+                                        onClick={async () => {
+                                          // Pack approved IDs into the response field; the server
+                                          // /api/portal/requests POST handler walks them and marks
+                                          // each error resolution='in_tb'. Empty selection still
+                                          // posts so the client can confirm "I accept none".
+                                          const approvedErrorIds = Array.from(checked);
+                                          const payload = JSON.stringify({ approvedErrorIds, decidedAt: new Date().toISOString() });
+                                          setResponses(prev => ({ ...prev, [item.id]: payload }));
+                                          // Wait one tick so the responses state lands before
+                                          // handleSubmitItem reads it.
+                                          await Promise.resolve();
+                                          await handleSubmitItem({ ...item, } as any);
+                                        }}
+                                        disabled={submitting[item.id]}
+                                        className="px-4 py-2 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors flex items-center gap-1"
+                                      >
+                                        {submitting[item.id] ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                                        Submit response
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })() : (
                           <div className="flex gap-2">
                             <div className="flex-1">
                               <PasteAwareTextarea
@@ -398,6 +502,7 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
                               Submit
                             </button>
                           </div>
+                          )}
                           {errors[item.id] && (
                             <p className="text-xs text-red-500 mt-1">{errors[item.id]}</p>
                           )}

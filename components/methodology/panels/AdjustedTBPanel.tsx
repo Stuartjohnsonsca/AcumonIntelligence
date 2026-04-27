@@ -28,7 +28,7 @@ function f(n: number): string {
 }
 
 interface TBRow { id: string; accountCode: string; description: string; fsStatement: string | null; fsLevel: string | null; fsNoteLevel: string | null; currentYear: number | null; priorYear: number | null; }
-interface ErrEntry { id: string; fsLine: string; accountCode: string | null; errorAmount: number; errorType: string; }
+interface ErrEntry { id: string; fsLine: string; accountCode: string | null; errorAmount: number; errorType: string; resolution: string | null; }
 /**
  * An adjustment row. `fsLineId` is captured the first time the user
  * enters a "new" account code (one that isn't in the imported TB). The
@@ -104,7 +104,14 @@ export function AdjustedTBPanel({ engagementId }: { engagementId: string }) {
 
   const adjByAccount = useMemo(() => {
     const m = new Map<string, number>();
-    for (const e of errors) { if (e.accountCode) m.set(e.accountCode, (m.get(e.accountCode) || 0) + e.errorAmount); }
+    // Per spec: only ADJUSTED errors (resolution='in_tb') flow into
+    // the Adjusted column on the Adj TB. Unadjusted errors stay on
+    // the Error Schedule waiting on the client to approve them via
+    // the portal (Send to Client → error_approvals flow).
+    for (const e of errors) {
+      if (e.resolution !== 'in_tb') continue;
+      if (e.accountCode) m.set(e.accountCode, (m.get(e.accountCode) || 0) + e.errorAmount);
+    }
     for (const a of manualAdjs) { m.set(a.accountCode, (m.get(a.accountCode) || 0) + a.dr - a.cr); }
     return m;
   }, [errors, manualAdjs]);

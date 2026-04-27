@@ -106,6 +106,38 @@ export async function POST(req: Request) {
       },
     });
 
+    // Error-approvals flow: when the section is 'error_approvals' the
+    // client UI submits a JSON-encoded {approvedErrorIds: [...]} as
+    // the response. Walk those ids and mark each error
+    // resolution='in_tb' (= adjusted) so the Adj TB picks them up.
+    // Errors the client didn't tick stay unadjusted. Robust against
+    // mixed payload formats — accept either a plain JSON list or the
+    // structured envelope.
+    if (request.section === 'error_approvals' && updated.engagementId) {
+      try {
+        const parsed = JSON.parse(response);
+        const ids: string[] = Array.isArray(parsed?.approvedErrorIds)
+          ? parsed.approvedErrorIds
+          : Array.isArray(parsed) ? parsed : [];
+        if (ids.length > 0) {
+          // Scope by engagementId so a malformed/forged payload can't
+          // touch errors on another engagement.
+          await prisma.auditErrorSchedule.updateMany({
+            where: { engagementId: updated.engagementId, id: { in: ids } },
+            data: {
+              resolution: 'in_tb',
+              resolvedByName: respondedByName || 'Portal User',
+              resolvedAt: new Date(),
+            },
+          });
+        }
+      } catch (err) {
+        console.error('[error_approvals] failed to mark adjusted:', err);
+        // Don't fail the response submission — the auditor can mark
+        // adjusted manually if the payload was malformed.
+      }
+    }
+
     // Fire "On Portal Response" trigger
     if (updated.engagementId) {
       const eng = await prisma.auditEngagement.findUnique({
