@@ -78,6 +78,30 @@ interface SummaryRow {
   conclusionId: string | null;
   executionId: string | null;
   riSignedByName: string | null;
+  // Marks rows that don't yet have an execution (Audit Plan tests
+  // expected from /audit-plan/expected-tests) and rows that come from
+  // the Prior Period checklist (planning items). Used to render a
+  // neutral-grey "Pending" or "Planning" pill in the status column.
+  category: 'execution' | 'pending_audit_plan' | 'planning';
+}
+
+interface ExpectedTest {
+  testName: string;
+  testTypeCode: string;
+  fsLine: string;
+  fsLineId: string;
+  accountCode: string | null;
+  isIngest: boolean;
+  outputFormat: string | null;
+}
+
+interface PlanningItem {
+  /** Stable key, e.g. 'pp_engagement_letter'. */
+  key: string;
+  /** Human-readable label that lands in the testDescription column. */
+  label: string;
+  /** 'green' when complete, 'orange' when partial, 'pending' otherwise. */
+  progress: Dot;
 }
 
 const DOT_BG: Record<Dot, string> = {
@@ -157,6 +181,8 @@ function resultFromConclusion(
 export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props) {
   const [executions, setExecutions] = useState<TestExecution[]>([]);
   const [conclusions, setConclusions] = useState<TestConclusion[]>([]);
+  const [expectedTests, setExpectedTests] = useState<ExpectedTest[]>([]);
+  const [planningItems, setPlanningItems] = useState<PlanningItem[]>([]);
   const [performanceMateriality, setPerformanceMateriality] = useState(0);
   const [clearlyTrivial, setClearlyTrivial] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -164,10 +190,12 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [execRes, concRes, matRes] = await Promise.all([
+      const [execRes, concRes, matRes, expectedRes, ppRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/test-execution?lite=true`),
         fetch(`/api/engagements/${engagementId}/test-conclusions`),
         fetch(`/api/engagements/${engagementId}/materiality`),
+        fetch(`/api/engagements/${engagementId}/audit-plan/expected-tests`),
+        fetch(`/api/engagements/${engagementId}/prior-period`),
       ]);
       if (execRes.ok) {
         const data = await execRes.json();
@@ -184,6 +212,42 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
         const m = data?.data || {};
         setPerformanceMateriality(Number(m?.materiality?.performanceMateriality ?? m?.performanceMateriality ?? 0) || 0);
         setClearlyTrivial(Number(m?.materiality?.clearlyTrivial ?? m?.clearlyTrivial ?? 0) || 0);
+      }
+      if (expectedRes.ok) {
+        const data = await expectedRes.json();
+        setExpectedTests(Array.isArray(data?.tests) ? data.tests : []);
+      }
+      // Planning items — derived from the Prior Period checklist. Each
+      // required doc is treated as a one-off "planning test": linked
+      // documentId → in-progress (orange); linked + reviewed for the
+      // reviewable docs → completed (green); nothing linked → pending.
+      // Reviewable docs that have AI review points are graded by
+      // whether all 3 sign-off roles have signed every point.
+      if (ppRes.ok) {
+        const data = await ppRes.json();
+        const docStatus: Array<{ key: string; label: string; documentId?: string }> = Array.isArray(data?.docStatus) ? data.docStatus : [];
+        const points: Record<string, Array<{ signOffs?: { operator?: any; reviewer?: any; partner?: any } }>> = data?.points || {};
+        const REVIEWABLE = new Set(['pp_letter_of_comment', 'pp_letter_of_representation', 'pp_financial_statements']);
+        const items: PlanningItem[] = docStatus.map(d => {
+          if (!d.documentId) return { key: d.key, label: d.label, progress: 'pending' as Dot };
+          if (!REVIEWABLE.has(d.key)) return { key: d.key, label: d.label, progress: 'green' as Dot };
+          const pts = points[d.key];
+          if (!Array.isArray(pts) || pts.length === 0) return { key: d.key, label: d.label, progress: 'orange' as Dot };
+          const allSigned = pts.every(p => p.signOffs?.operator && p.signOffs?.reviewer && p.signOffs?.partner);
+          return { key: d.key, label: d.label, progress: allSigned ? ('green' as Dot) : ('orange' as Dot) };
+        });
+        // Opening-balance check ("agreeing prior year TB to accounts")
+        // — counted as a planning test that's complete when opening-
+        // balance rows are loaded. Without explicit sign-off data here
+        // we'd otherwise have no row for this item at all, which the
+        // user explicitly called out as the example.
+        const obRows = Array.isArray(data?.openingBalances) ? data.openingBalances : [];
+        items.push({
+          key: 'pp_opening_balances',
+          label: 'Agree prior year TB to accounts (opening balances)',
+          progress: obRows.length > 0 ? 'green' : 'pending',
+        });
+        setPlanningItems(items);
       }
     } finally { setLoading(false); }
   }, [engagementId]);
@@ -216,6 +280,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
         conclusionId: conc?.id || null,
         executionId: e.id,
         riSignedByName: conc?.riSignedByName || null,
+        category: 'execution',
       });
     }
     // Conclusions that don't have a matching execution (rare — happens
@@ -238,6 +303,54 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
         conclusionId: c.id,
         executionId: null,
         riSignedByName: c.riSignedByName,
+        category: 'execution',
+      });
+    }
+    // Audit Plan tests with no execution yet — surface as pending rows
+    // so the user sees coverage gaps, not just executed tests.
+    // Ingest tests are excluded (they're data-prep, not auditable).
+    // Dedupe by (testDescription + fsLine) against rows already in
+    // `out`, since an executed test wins and shouldn't double up.
+    for (const et of expectedTests) {
+      if (et.isIngest) continue;
+      const alreadyShown = out.some(r => r.testDescription.toLowerCase() === et.testName.toLowerCase() && (r.fsLine || '').toLowerCase() === et.fsLine.toLowerCase());
+      if (alreadyShown) continue;
+      out.push({
+        key: `expected:${et.fsLineId}:${et.testName}`,
+        testDescription: et.testName,
+        fsLine: et.fsLine,
+        accountCode: et.accountCode,
+        progress: 'pending',
+        result: 'pending',
+        durationMs: null,
+        totalErrors: 0,
+        status: 'pending',
+        conclusionId: null,
+        executionId: null,
+        riSignedByName: null,
+        category: 'pending_audit_plan',
+      });
+    }
+    // Planning items — Prior Period checklist + opening balances. Slot
+    // alongside audit-plan tests so the user sees the whole engagement
+    // coverage picture in one table.
+    for (const p of planningItems) {
+      out.push({
+        key: `planning:${p.key}`,
+        testDescription: p.label,
+        fsLine: 'Planning',
+        accountCode: null,
+        progress: p.progress,
+        // Planning items don't carry numeric results / extrapolated
+        // errors — Result mirrors Progress (green when complete).
+        result: p.progress === 'green' ? 'green' : 'pending',
+        durationMs: null,
+        totalErrors: 0,
+        status: p.progress === 'green' ? 'complete' : 'pending',
+        conclusionId: null,
+        executionId: null,
+        riSignedByName: null,
+        category: 'planning',
       });
     }
     // Sort: failures first (red progress / red result), then
@@ -258,7 +371,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
       return (a.testDescription || '').localeCompare(b.testDescription || '');
     });
     return out;
-  }, [executions, conclusions, performanceMateriality, clearlyTrivial]);
+  }, [executions, conclusions, expectedTests, planningItems, performanceMateriality, clearlyTrivial]);
 
   async function handleRISignOff(conclusionId: string, isUnsign: boolean) {
     try {
