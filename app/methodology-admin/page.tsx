@@ -1,8 +1,6 @@
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { MethodologyAdminClient } from '@/components/methodology-admin/MethodologyAdminClient';
-import { HowToButton } from '@/components/howto/HowToButton';
-import { HowToOverlay } from '@/components/howto/HowToOverlay';
 
 export default async function MethodologyAdminPage() {
   const session = await auth();
@@ -22,8 +20,6 @@ export default async function MethodologyAdminPage() {
         <p className="text-slate-600 mt-1">Manage audit methodology settings and templates</p>
       </div>
       <MethodologyAdminClient />
-      <HowToButton />
-      <HowToOverlay />
     </div>
   );
 }

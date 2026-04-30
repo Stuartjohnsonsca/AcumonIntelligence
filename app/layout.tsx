@@ -7,6 +7,7 @@ import { AuthProvider } from '@/components/AuthProvider';
 import { BackgroundTaskProvider } from '@/components/BackgroundTaskProvider';
 import { Toaster } from '@/components/ui/toaster';
 import { KeyboardShortcutProvider } from '@/components/ui/KeyboardShortcutProvider';
+import { HowToGlobalMount } from '@/components/howto/HowToGlobalMount';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -36,6 +37,7 @@ export default function RootLayout({
             <main className="flex-1">{children}</main>
             <PortalFooterHider />
           </div>
+          <HowToGlobalMount />
           <Toaster />
           </KeyboardShortcutProvider>
           </BackgroundTaskProvider>

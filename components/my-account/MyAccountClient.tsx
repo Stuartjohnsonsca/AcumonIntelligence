@@ -41,7 +41,7 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
             <span className="text-sm font-medium text-blue-800">Super Administrator access</span>
           </div>
           <Button asChild size="sm" className="bg-blue-600 hover:bg-blue-700">
-            <Link href="/my-account/admin">Administration Panel</Link>
+            <Link href="/my-account/admin" data-howto-id="myaccount.administration-panel">Administration Panel</Link>
           </Button>
         </div>
       )}
@@ -53,7 +53,7 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
             <span className="text-sm font-medium text-emerald-800">Methodology Administrator</span>
           </div>
           <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-700">
-            <Link href="/methodology-admin">Methodology Admin</Link>
+            <Link href="/methodology-admin" data-howto-id="myaccount.methodology-admin">Methodology Admin</Link>
           </Button>
         </div>
       )}
@@ -65,7 +65,7 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
             <span className="text-sm font-medium text-indigo-800">Resource Management</span>
           </div>
           <Button asChild size="sm" className="bg-indigo-600 hover:bg-indigo-700">
-            <Link href="/my-account/resource-management">Manage Resources</Link>
+            <Link href="/my-account/resource-management" data-howto-id="myaccount.resource-management">Manage Resources</Link>
           </Button>
         </div>
       )}
@@ -76,7 +76,7 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
           <span className="text-sm font-medium text-slate-700">Keyboard Shortcuts Reference</span>
         </div>
         <Button asChild size="sm" variant="outline">
-          <Link href="/my-account/keyboard-shortcuts">View Shortcuts</Link>
+          <Link href="/my-account/keyboard-shortcuts" data-howto-id="myaccount.keyboard-shortcuts">View Shortcuts</Link>
         </Button>
       </div>
 

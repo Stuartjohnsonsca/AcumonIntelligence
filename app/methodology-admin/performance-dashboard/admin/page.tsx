@@ -2,8 +2,6 @@ import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { BackButton } from '@/components/methodology-admin/BackButton';
 import { PerformanceDashboardAdminClient } from '@/components/methodology-admin/PerformanceDashboardAdminClient';
-import { HowToButton } from '@/components/howto/HowToButton';
-import { HowToOverlay } from '@/components/howto/HowToOverlay';
 
 export default async function PerformanceDashboardAdminPage() {
   const session = await auth();
@@ -25,8 +23,6 @@ export default async function PerformanceDashboardAdminPage() {
         </p>
       </div>
       <PerformanceDashboardAdminClient />
-      <HowToButton />
-      <HowToOverlay />
     </div>
   );
 }

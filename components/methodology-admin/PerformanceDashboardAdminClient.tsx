@@ -426,7 +426,7 @@ function MonitoringTab() {
       {api.items.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No monitoring activities logged yet.</p>
       ) : (
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div data-howto-id="pa.monitoring.list" className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-[10px] text-slate-500 uppercase font-semibold">
@@ -595,7 +595,7 @@ function FindingsTab() {
       {api.items.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No findings recorded yet.</p>
       ) : (
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div data-howto-id="pa.findings.list" className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-[10px] text-slate-500 uppercase font-semibold">
@@ -753,7 +753,7 @@ function RemediationsTab() {
       {api.items.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No remediations recorded yet.</p>
       ) : (
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div data-howto-id="pa.remediations.list" className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-[10px] text-slate-500 uppercase font-semibold">
@@ -921,7 +921,7 @@ function CsfsTab() {
       {api.items.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No CSFs configured yet — try the &quot;Seed G3Q defaults&quot; button at the top of this page.</p>
       ) : (
-        <div className="space-y-4">
+        <div data-howto-id="pa.csfs.list" className="space-y-4">
           {PILLARS.map(p => {
             const list = grouped[p.value] || [];
             if (!list.length) return null;
@@ -1070,7 +1070,7 @@ function PeopleTab() {
       {api.items.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No people snapshots recorded yet.</p>
       ) : (
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div data-howto-id="pa.people.list" className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-[10px] text-slate-500 uppercase font-semibold">
@@ -1213,7 +1213,7 @@ function ScheduleTab() {
       {yearItems.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No scheduled activities for {year} yet — try the &quot;Seed G3Q defaults&quot; button at the top of this page.</p>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div data-howto-id="pa.schedule.list" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {MONTH_NAMES.map((m, i) => {
             const list = yearItems.filter(it => it.monthIndex === i);
             return (
@@ -1625,7 +1625,7 @@ function AiToolsSubTab() {
       {api.items.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No AI tools registered yet — register every tool used in audit work to maintain a defensible position.</p>
       ) : (
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div data-howto-id="pa.ai.tools.list" className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-[10px] text-slate-500 uppercase font-semibold">
@@ -1759,7 +1759,7 @@ function AiUsageSubTab() {
       {api.items.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No AI-assisted decisions logged yet.</p>
       ) : (
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div data-howto-id="pa.ai.usage.list" className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-[10px] text-slate-500 uppercase font-semibold">
@@ -1868,7 +1868,7 @@ function AiValidationsSubTab() {
       {api.items.length === 0 && !api.loading ? (
         <p className="text-sm text-slate-400 italic text-center py-8">No validation tests recorded yet.</p>
       ) : (
-        <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div data-howto-id="pa.ai.validations.list" className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr className="text-[10px] text-slate-500 uppercase font-semibold">

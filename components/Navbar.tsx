@@ -111,6 +111,7 @@ export function Navbar() {
           <div className="hidden lg:flex items-center space-x-1">
             <Link
               href="/about"
+              data-howto-id="nav.about"
               className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
             >
               About
@@ -124,6 +125,7 @@ export function Navbar() {
             >
               <button
                 onClick={() => setAuditOpen(!auditOpen)}
+                data-howto-id="nav.audit"
                 className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
               >
                 <span>Audit</span>
@@ -152,7 +154,7 @@ export function Navbar() {
                     {/* Quality Management is NOT an audit type — it's a
                          separate methodology product. Kept as a fixed
                          link below the dynamic audit-type list. */}
-                    <Link href="/tools/methodology/quality-management" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Quality Management</Link>
+                    <Link href="/tools/methodology/quality-management" data-howto-id="nav.audit.quality-management" onClick={() => setAuditOpen(false)} className="block w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors">Quality Management</Link>
                     <div className="border-t border-slate-100 mt-1 pt-1 relative group/tools">
                       <button className="w-full text-left px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center justify-between">
                         Tools
@@ -184,6 +186,7 @@ export function Navbar() {
             >
               <button
                 onClick={() => setAssuranceOpen(!assuranceOpen)}
+                data-howto-id="nav.assurance"
                 className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
               >
                 <span>Assurance</span>
@@ -194,18 +197,21 @@ export function Navbar() {
                   <div className="bg-white rounded-lg shadow-lg border border-slate-200 py-1">
                     <button
                       onClick={() => { setAssuranceOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/assurance'); } else { router.push('/tools/assurance'); } }}
+                      data-howto-id="nav.assurance.hub"
                       className="w-full text-left px-4 py-2.5 text-sm font-semibold text-blue-600 hover:bg-blue-50 transition-colors border-b border-slate-100"
                     >
                       Assurance Hub
                     </button>
                     <button
                       onClick={() => { setAssuranceOpen(false); if (!isAuthenticated) { router.push('/login?redirect=/tools/risk'); } else { router.push('/tools/risk'); } }}
+                      data-howto-id="nav.assurance.risk"
                       className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
                     >
                       Risk
                     </button>
                     <button
                       onClick={() => { setAssuranceOpen(false); if (!isAuthenticated) { router.push('/login?callbackUrl=/tools/risk-forum'); } else { router.push('/tools/risk-forum'); } }}
+                      data-howto-id="nav.assurance.risk-forum"
                       className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors"
                     >
                       Risk Forum
@@ -238,6 +244,7 @@ export function Navbar() {
             >
               <button
                 onClick={() => setFinancialOpen(!financialOpen)}
+                data-howto-id="nav.financial"
                 className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
               >
                 <span>Financial Accounts</span>
@@ -286,6 +293,7 @@ export function Navbar() {
             {isAuthenticated && (
               <Link
                 href="/tools/resource-planning"
+                data-howto-id="nav.resources"
                 className="px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
               >
                 Resources
@@ -304,6 +312,7 @@ export function Navbar() {
               >
                 <button
                   onClick={() => setSessionsOpen(!sessionsOpen)}
+                  data-howto-id="nav.sessions"
                   className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
                 >
                   <Layers className="h-4 w-4" />
@@ -346,6 +355,7 @@ export function Navbar() {
 
             <Link
               href="/my-account"
+              data-howto-id="nav.my-account"
               className="relative px-4 py-2 text-sm font-medium text-slate-700 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
             >
               My Account

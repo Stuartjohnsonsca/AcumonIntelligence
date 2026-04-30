@@ -88,7 +88,7 @@ export default async function ValidationRulesPage() {
   } catch { /* tolerant — keep defaults */ }
 
   return (
-    <div className="container mx-auto px-4 py-10 max-w-5xl">
+    <div data-howto-id="page.validation-rules.body" className="container mx-auto px-4 py-10 max-w-5xl">
       <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Validation Rules</h1>

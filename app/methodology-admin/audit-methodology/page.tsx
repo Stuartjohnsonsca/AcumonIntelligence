@@ -15,7 +15,7 @@ export default async function AuditMethodologyPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-10 max-w-6xl">
+    <div data-howto-id="page.audit-methodology.body" className="container mx-auto px-4 py-10 max-w-6xl">
       <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Audit Methodology</h1>

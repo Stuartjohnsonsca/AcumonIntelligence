@@ -155,10 +155,13 @@ export function HowToOverlay() {
   }, [currentStep, dotPos.visible, tour?.paused]);
 
   // If the current step is on a different page than we're on, navigate.
+  // Steps on the synthetic 'global' page (e.g. navbar elements) live on
+  // every page, so we never navigate for them.
   useEffect(() => {
     if (!currentStep || tour?.paused) return;
     const expectedUrl = HOWTO_PAGES[currentStep.page]?.url;
-    if (expectedUrl && pathname !== expectedUrl) {
+    if (!expectedUrl || expectedUrl === '*') return;
+    if (pathname !== expectedUrl) {
       router.push(expectedUrl);
     }
   }, [currentStep, pathname, router, tour?.paused]);
@@ -198,7 +201,8 @@ export function HowToOverlay() {
 
   const totalSteps = tour.steps.length;
   const stepNum = tour.index + 1;
-  const onCurrentPage = HOWTO_PAGES[currentStep.page]?.url === pathname;
+  const stepUrl = HOWTO_PAGES[currentStep.page]?.url;
+  const onCurrentPage = stepUrl === '*' || stepUrl === pathname;
 
   return (
     <>

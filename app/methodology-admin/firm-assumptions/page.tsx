@@ -62,7 +62,7 @@ export default async function FirmAssumptionsPage() {
   const initialIndependenceRefreshRules = await getFirmIndependenceRefreshRules(firmId);
 
   return (
-    <div className="container mx-auto px-4 py-10 max-w-6xl">
+    <div data-howto-id="page.firm-assumptions.body" className="container mx-auto px-4 py-10 max-w-6xl">
       <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Firm Wide Assumptions</h1>

@@ -3,6 +3,25 @@
 import Link from 'next/link';
 import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, Search, Gauge } from 'lucide-react';
 
+// Map href → registry howto-id so the global guide can point at any tile.
+// Keep these in sync with HOWTO_ELEMENTS in lib/howto/registry.ts.
+const HOWTO_BY_HREF: Record<string, string> = {
+  '/methodology-admin/firm-assumptions':       'tile.firm-assumptions',
+  '/methodology-admin/validation-rules':       'tile.validation-rules',
+  '/methodology-admin/independence-questions': 'tile.independence-questions',
+  '/methodology-admin/specialist-roles':       'tile.specialist-roles',
+  '/methodology-admin/tb-ai-corpus':           'tile.tb-ai-corpus',
+  '/methodology-admin/audit-methodology':      'tile.audit-methodology',
+  '/methodology-admin/technical-guidance':     'tile.technical-guidance',
+  '/methodology-admin/file-review':            'tile.file-review',
+  '/methodology-admin/user-performance':       'tile.user-performance',
+  '/methodology-admin/performance-dashboard':  'tile.performance-dashboard',
+  '/methodology-admin/error-log':              'tile.error-log',
+  '/methodology-admin/portal-searches':        'tile.portal-searches',
+  '/methodology-admin/template-documents':     'tile.template-documents',
+  '/methodology-admin/internal-communication': 'tile.internal-communication',
+};
+
 const tiles = [
   {
     title: 'Firm Wide Assumptions',
@@ -125,7 +144,7 @@ export function MethodologyAdminClient() {
         <Link
           key={tile.href}
           href={tile.href}
-          data-howto-id={tile.href === '/methodology-admin/performance-dashboard' ? 'tile.performance-dashboard' : undefined}
+          data-howto-id={HOWTO_BY_HREF[tile.href]}
           className={`block p-6 rounded-lg border transition-colors ${tile.color}`}
         >
           <tile.icon className={`h-8 w-8 ${tile.iconColor} mb-3`} />
