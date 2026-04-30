@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
+  Bot,
   Calendar,
   CheckCircle2,
   ClipboardCheck,
@@ -19,6 +20,7 @@ import {
   Target,
   Trash2,
   X,
+  XCircle,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -34,6 +36,7 @@ const TABS = [
   { key: 'schedule',    label: 'Activity schedule',     icon: Calendar },
   { key: 'isqm',        label: 'ISQM(UK)1 evidence',    icon: Target },
   { key: 'pillars',     label: 'Pillar overrides',      icon: Target },
+  { key: 'ai',          label: 'AI Reliance',           icon: Bot },
 ] as const;
 
 type TabKey = typeof TABS[number]['key'];
@@ -1438,6 +1441,504 @@ function PillarsTab() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Tab: AI Reliance — registry / usage / validations                   */
+/* ------------------------------------------------------------------ */
+
+const AI_AREAS = [
+  { value: '',                  label: '— not categorised —' },
+  { value: 'revenue',           label: 'Revenue testing' },
+  { value: 'je_testing',        label: 'Journal entry testing' },
+  { value: 'risk_assessment',   label: 'Risk assessment / planning' },
+  { value: 'controls',          label: 'Controls testing' },
+  { value: 'analytics',         label: 'Analytics / sampling' },
+  { value: 'documentation',     label: 'Documentation drafting' },
+  { value: 'research',          label: 'Technical research' },
+  { value: 'other',             label: 'Other' },
+];
+const AI_RISK = ['low', 'medium', 'high', 'critical'];
+const AI_VAL_STATUS = ['pending', 'validated', 'under_review', 'withdrawn'];
+const AI_DECISIONS = [
+  { value: 'accepted',   label: 'Accepted as-is' },
+  { value: 'partial',    label: 'Accepted with adjustment' },
+  { value: 'overridden', label: 'Overridden by reviewer' },
+  { value: 'rejected',   label: 'Rejected outright' },
+];
+const AI_MATERIALITY = ['low', 'medium', 'high', 'critical'];
+const AI_TEST_TYPES = [
+  { value: 'accuracy',   label: 'Accuracy / golden-set comparison' },
+  { value: 'bias',       label: 'Bias / fairness' },
+  { value: 'regression', label: 'Regression (vs prior version)' },
+  { value: 'edge_case',  label: 'Edge-case stress test' },
+  { value: 'drift',      label: 'Drift detection' },
+  { value: 'golden_set', label: 'Golden-set replay' },
+  { value: 'other',      label: 'Other' },
+];
+const AI_RESULTS = ['pass', 'fail', 'partial'];
+
+type AiToolRow = Row & {
+  name: string;
+  vendor: string | null;
+  modelVersion: string | null;
+  auditArea: string | null;
+  scopeOfUse: string | null;
+  riskRating: string;
+  ownerName: string | null;
+  validationStatus: string;
+  lastValidatedDate: string | null;
+  nextValidationDue: string | null;
+  approvedForUse: boolean;
+  approvedByName: string | null;
+  approvedDate: string | null;
+  humanInLoop: boolean;
+  notes: string | null;
+  isActive: boolean;
+  _count?: { usage: number; validations: number };
+};
+
+type AiUsageRow = Row & {
+  toolId: string;
+  engagementName: string | null;
+  engagementId: string | null;
+  usedDate: string;
+  reviewerName: string | null;
+  outputDecision: string;
+  materiality: string;
+  notes: string | null;
+  tool?: { id: string; name: string; riskRating: string };
+};
+
+type AiValidationRow = Row & {
+  toolId: string;
+  testDate: string;
+  testType: string;
+  result: string;
+  performedBy: string | null;
+  sampleSize: number | null;
+  accuracyPct: number | null;
+  evidenceUrl: string | null;
+  notes: string | null;
+  tool?: { id: string; name: string };
+};
+
+function AiToolForm({ value, onChange, users }: { value: Partial<AiToolRow>; onChange: (v: Partial<AiToolRow>) => void; users: FirmUser[] }) {
+  const set = (patch: Partial<AiToolRow>) => onChange({ ...value, ...patch });
+  return (
+    <div className="space-y-3">
+      <Field label="Tool name" required hint="e.g. Journal entry risk scoring (Together AI Llama 3.3)">
+        <input className={inputCls} value={value.name || ''} onChange={(e) => set({ name: e.target.value })} />
+      </Field>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Field label="Vendor / provider">
+          <input className={inputCls} value={value.vendor || ''} onChange={(e) => set({ vendor: e.target.value })} placeholder="e.g. Together AI" />
+        </Field>
+        <Field label="Model / version">
+          <input className={inputCls} value={value.modelVersion || ''} onChange={(e) => set({ modelVersion: e.target.value })} placeholder="e.g. Llama-3.3-70B-Instruct" />
+        </Field>
+        <Field label="Audit area">
+          <select className={inputCls} value={value.auditArea || ''} onChange={(e) => set({ auditArea: e.target.value || null })}>
+            {AI_AREAS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Risk rating" required>
+          <select className={inputCls} value={value.riskRating || 'medium'} onChange={(e) => set({ riskRating: e.target.value })}>
+            {AI_RISK.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </Field>
+        <Field label="Owner">
+          <UserSelect users={users} value={value.ownerName} onChange={(n) => set({ ownerName: n })} placeholder="— select owner —" />
+        </Field>
+        <Field label="Validation status">
+          <select className={inputCls} value={value.validationStatus || 'pending'} onChange={(e) => set({ validationStatus: e.target.value })}>
+            {AI_VAL_STATUS.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+          </select>
+        </Field>
+        <Field label="Last validated date">
+          <input type="date" className={inputCls} value={isoDate(value.lastValidatedDate)} onChange={(e) => set({ lastValidatedDate: e.target.value || null })} />
+        </Field>
+        <Field label="Next validation due" hint="Defensible cadence: 12 months max for high/critical">
+          <input type="date" className={inputCls} value={isoDate(value.nextValidationDue)} onChange={(e) => set({ nextValidationDue: e.target.value || null })} />
+        </Field>
+        <Field label="Approved for production use">
+          <select className={inputCls} value={value.approvedForUse ? 'true' : 'false'} onChange={(e) => set({ approvedForUse: e.target.value === 'true' })}>
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </Field>
+        <Field label="Approved by">
+          <UserSelect users={users} value={value.approvedByName} onChange={(n) => set({ approvedByName: n })} placeholder="— select approver —" />
+        </Field>
+        <Field label="Approval date">
+          <input type="date" className={inputCls} value={isoDate(value.approvedDate)} onChange={(e) => set({ approvedDate: e.target.value || null })} />
+        </Field>
+        <Field label="Human-in-the-loop required">
+          <select className={inputCls} value={value.humanInLoop === false ? 'false' : 'true'} onChange={(e) => set({ humanInLoop: e.target.value === 'true' })}>
+            <option value="true">Yes — every output must be human-reviewed</option>
+            <option value="false">No — sampling-based oversight only</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="Scope of use" hint="What the tool is permitted to do — and what it is not allowed to do unsupervised">
+        <textarea className={inputCls} rows={3} value={value.scopeOfUse || ''} onChange={(e) => set({ scopeOfUse: e.target.value })} />
+      </Field>
+      <Field label="Notes">
+        <textarea className={inputCls} rows={2} value={value.notes || ''} onChange={(e) => set({ notes: e.target.value })} />
+      </Field>
+    </div>
+  );
+}
+
+function AiToolsSubTab() {
+  const api = useApi<AiToolRow>('/api/methodology-admin/performance-dashboard/ai-tools');
+  const users = useUsers();
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<Partial<AiToolRow>>({ riskRating: 'medium', validationStatus: 'pending', humanInLoop: true, isActive: true });
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Partial<AiToolRow>>({});
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  async function save() {
+    const ok = await api.create(draft);
+    if (ok) { setDraft({ riskRating: 'medium', validationStatus: 'pending', humanInLoop: true, isActive: true }); setAdding(false); }
+  }
+  async function saveEdit() {
+    if (!editId) return;
+    const ok = await api.update({ ...editDraft, id: editId });
+    if (ok) { setEditId(null); setEditDraft({}); }
+  }
+
+  const today = new Date();
+
+  return (
+    <div>
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Register AI tool" />
+
+      {adding && (
+        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
+          <AiToolForm value={draft} onChange={setDraft} users={users} />
+          <div className="flex justify-end gap-2 mt-3">
+            <button onClick={() => setAdding(false)} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+            <button onClick={save} className={btnPrimary} disabled={!draft.name}><Save className="h-3 w-3" /> Register tool</button>
+          </div>
+        </div>
+      )}
+
+      {api.items.length === 0 && !api.loading ? (
+        <p className="text-sm text-slate-400 italic text-center py-8">No AI tools registered yet — register every tool used in audit work to maintain a defensible position.</p>
+      ) : (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr className="text-[10px] text-slate-500 uppercase font-semibold">
+                <th className="px-3 py-2 text-left">Tool</th>
+                <th className="px-2 py-2 text-left w-32">Audit area</th>
+                <th className="px-2 py-2 text-left w-20">Risk</th>
+                <th className="px-2 py-2 text-left w-28">Validation</th>
+                <th className="px-2 py-2 text-left w-24">Last tested</th>
+                <th className="px-2 py-2 text-left w-24">Next due</th>
+                <th className="px-2 py-2 text-center w-20">Approved</th>
+                <th className="px-2 py-2 text-center w-20">HITL</th>
+                <th className="px-2 py-2 text-right w-32"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {api.items.map(row => {
+                const overdue = row.nextValidationDue && new Date(row.nextValidationDue) < today;
+                const riskCls = row.riskRating === 'critical' ? 'bg-rose-100 text-rose-700' : row.riskRating === 'high' ? 'bg-amber-100 text-amber-700' : row.riskRating === 'medium' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700';
+                const valCls = row.validationStatus === 'validated' ? 'bg-emerald-100 text-emerald-700' : row.validationStatus === 'withdrawn' ? 'bg-slate-200 text-slate-600' : row.validationStatus === 'under_review' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500';
+                return (
+                  <Fragment key={row.id}>
+                    <tr className={`border-b border-slate-100 hover:bg-slate-50/50 ${!row.isActive ? 'opacity-60' : ''}`}>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-slate-700">{row.name}</div>
+                        {(row.vendor || row.modelVersion) && <div className="text-[11px] text-slate-500">{[row.vendor, row.modelVersion].filter(Boolean).join(' · ')}</div>}
+                        <div className="text-[10px] text-slate-400 mt-0.5">{row._count?.usage ?? 0} uses · {row._count?.validations ?? 0} tests</div>
+                      </td>
+                      <td className="px-2 py-2 text-slate-600">{AI_AREAS.find(a => a.value === row.auditArea)?.label || '—'}</td>
+                      <td className="px-2 py-2"><span className={`text-[10px] px-1.5 py-0.5 rounded-full ${riskCls}`}>{row.riskRating}</span></td>
+                      <td className="px-2 py-2"><span className={`text-[10px] px-1.5 py-0.5 rounded-full ${valCls}`}>{row.validationStatus.replace('_', ' ')}</span></td>
+                      <td className="px-2 py-2 text-slate-600">{row.lastValidatedDate ? new Date(row.lastValidatedDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</td>
+                      <td className={`px-2 py-2 ${overdue ? 'text-rose-600 font-semibold' : 'text-slate-600'}`}>{row.nextValidationDue ? new Date(row.nextValidationDue).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}{overdue ? ' (overdue)' : ''}</td>
+                      <td className="px-2 py-2 text-center">{row.approvedForUse ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mx-auto" /> : <XCircle className="h-4 w-4 text-rose-400 mx-auto" />}</td>
+                      <td className="px-2 py-2 text-center">{row.humanInLoop ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mx-auto" /> : <span className="text-amber-600 text-[10px]">sampling</span>}</td>
+                      <td className="px-2 py-2 text-right">
+                        {confirmId === row.id ? (
+                          <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
+                        ) : (
+                          <>
+                            <button onClick={() => { setEditId(row.id === editId ? null : row.id); setEditDraft(row.id === editId ? {} : { ...row }); }} className="text-blue-600 hover:underline text-[11px] mr-2">{editId === row.id ? 'Close' : 'Edit'}</button>
+                            <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                    {editId === row.id && (
+                      <tr className="bg-blue-50/30">
+                        <td colSpan={9} className="p-4">
+                          <AiToolForm value={editDraft} onChange={setEditDraft} users={users} />
+                          <div className="flex justify-end gap-2 mt-3">
+                            <button onClick={() => { setEditId(null); setEditDraft({}); }} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+                            <button onClick={saveEdit} className={btnPrimary}><Save className="h-3 w-3" /> Save changes</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AiUsageSubTab() {
+  const api = useApi<AiUsageRow>('/api/methodology-admin/performance-dashboard/ai-usage');
+  const toolsApi = useApi<AiToolRow>('/api/methodology-admin/performance-dashboard/ai-tools');
+  const users = useUsers();
+  const engagements = useEngagements();
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<Partial<AiUsageRow>>({ outputDecision: 'accepted', materiality: 'medium' });
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  async function save() {
+    const ok = await api.create(draft);
+    if (ok) { setDraft({ outputDecision: 'accepted', materiality: 'medium' }); setAdding(false); }
+  }
+
+  return (
+    <div>
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Log AI usage" />
+
+      {toolsApi.items.length === 0 && !toolsApi.loading && (
+        <div className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+          You need at least one registered AI tool before you can log usage. Switch to the Tool registry sub-tab first.
+        </div>
+      )}
+
+      {adding && (
+        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="AI tool" required>
+              <select className={inputCls} value={draft.toolId || ''} onChange={(e) => setDraft({ ...draft, toolId: e.target.value })}>
+                <option value="">— select tool —</option>
+                {toolsApi.items.filter(t => t.isActive).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Engagement">
+              <EngagementSelect engagements={engagements} valueId={draft.engagementId} valueName={draft.engagementName} onChange={(id, name) => setDraft({ ...draft, engagementId: id, engagementName: name })} />
+            </Field>
+            <Field label="Used date">
+              <input type="date" className={inputCls} value={isoDate(draft.usedDate)} onChange={(e) => setDraft({ ...draft, usedDate: e.target.value })} />
+            </Field>
+            <Field label="Reviewer (human-in-the-loop)" required>
+              <UserSelect users={users} value={draft.reviewerName} onChange={(n) => setDraft({ ...draft, reviewerName: n })} placeholder="— select reviewer —" />
+            </Field>
+            <Field label="Output decision" required hint="The audit-trail evidence that a human engaged">
+              <select className={inputCls} value={draft.outputDecision || 'accepted'} onChange={(e) => setDraft({ ...draft, outputDecision: e.target.value })}>
+                {AI_DECISIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Materiality of decision">
+              <select className={inputCls} value={draft.materiality || 'medium'} onChange={(e) => setDraft({ ...draft, materiality: e.target.value })}>
+                {AI_MATERIALITY.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field label="Notes" hint="What the AI said, what the reviewer concluded, why an override was made if applicable">
+            <textarea className={inputCls} rows={3} value={draft.notes || ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setAdding(false)} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+            <button onClick={save} className={btnPrimary} disabled={!draft.toolId || !draft.outputDecision}><Save className="h-3 w-3" /> Log usage</button>
+          </div>
+        </div>
+      )}
+
+      {api.items.length === 0 && !api.loading ? (
+        <p className="text-sm text-slate-400 italic text-center py-8">No AI-assisted decisions logged yet.</p>
+      ) : (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr className="text-[10px] text-slate-500 uppercase font-semibold">
+                <th className="px-3 py-2 text-left">Date / Tool</th>
+                <th className="px-2 py-2 text-left">Engagement</th>
+                <th className="px-2 py-2 text-left w-28">Reviewer</th>
+                <th className="px-2 py-2 text-left w-32">Decision</th>
+                <th className="px-2 py-2 text-left w-20">Materiality</th>
+                <th className="px-2 py-2 text-right w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {api.items.map(row => {
+                const decisionCls = row.outputDecision === 'accepted' ? 'bg-emerald-100 text-emerald-700' : row.outputDecision === 'overridden' ? 'bg-amber-100 text-amber-700' : row.outputDecision === 'partial' ? 'bg-blue-100 text-blue-700' : 'bg-rose-100 text-rose-700';
+                return (
+                  <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                    <td className="px-3 py-2">
+                      <div className="text-slate-600">{new Date(row.usedDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}</div>
+                      <div className="text-[11px] text-slate-500">{row.tool?.name || row.toolId.slice(0, 8)}</div>
+                    </td>
+                    <td className="px-2 py-2 text-slate-600">{row.engagementName || '—'}</td>
+                    <td className="px-2 py-2 text-slate-600">{row.reviewerName || '—'}</td>
+                    <td className="px-2 py-2"><span className={`text-[10px] px-1.5 py-0.5 rounded-full ${decisionCls}`}>{AI_DECISIONS.find(d => d.value === row.outputDecision)?.label || row.outputDecision}</span></td>
+                    <td className="px-2 py-2 text-slate-600">{row.materiality}</td>
+                    <td className="px-2 py-2 text-right">
+                      {confirmId === row.id ? (
+                        <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
+                      ) : (
+                        <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AiValidationsSubTab() {
+  const api = useApi<AiValidationRow>('/api/methodology-admin/performance-dashboard/ai-validations');
+  const toolsApi = useApi<AiToolRow>('/api/methodology-admin/performance-dashboard/ai-tools');
+  const users = useUsers();
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<Partial<AiValidationRow>>({ testType: 'accuracy', result: 'pass' });
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  async function save() {
+    const ok = await api.create(draft);
+    if (ok) { setDraft({ testType: 'accuracy', result: 'pass' }); setAdding(false); toolsApi.load(); }
+  }
+
+  return (
+    <div>
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Log validation test" />
+
+      {adding && (
+        <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Field label="AI tool" required>
+              <select className={inputCls} value={draft.toolId || ''} onChange={(e) => setDraft({ ...draft, toolId: e.target.value })}>
+                <option value="">— select tool —</option>
+                {toolsApi.items.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Test date" required>
+              <input type="date" className={inputCls} value={isoDate(draft.testDate)} onChange={(e) => setDraft({ ...draft, testDate: e.target.value })} />
+            </Field>
+            <Field label="Test type" required>
+              <select className={inputCls} value={draft.testType || 'accuracy'} onChange={(e) => setDraft({ ...draft, testType: e.target.value })}>
+                {AI_TEST_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Result" required>
+              <select className={inputCls} value={draft.result || 'pass'} onChange={(e) => setDraft({ ...draft, result: e.target.value })}>
+                {AI_RESULTS.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field label="Performed by">
+              <UserSelect users={users} value={draft.performedBy} onChange={(n) => setDraft({ ...draft, performedBy: n })} placeholder="— select tester —" />
+            </Field>
+            <Field label="Sample size">
+              <input type="number" min={0} className={inputCls} value={draft.sampleSize ?? ''} onChange={(e) => setDraft({ ...draft, sampleSize: e.target.value ? Number(e.target.value) : null })} />
+            </Field>
+            <Field label="Accuracy %" hint="Where applicable (golden-set runs)">
+              <input type="number" min={0} max={100} step={0.1} className={inputCls} value={draft.accuracyPct ?? ''} onChange={(e) => setDraft({ ...draft, accuracyPct: e.target.value ? Number(e.target.value) : null })} />
+            </Field>
+            <Field label="Evidence URL">
+              <input type="url" className={inputCls} value={draft.evidenceUrl || ''} onChange={(e) => setDraft({ ...draft, evidenceUrl: e.target.value })} placeholder="link to test evidence / report" />
+            </Field>
+          </div>
+          <Field label="Notes">
+            <textarea className={inputCls} rows={3} value={draft.notes || ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
+          </Field>
+          <div className="text-[11px] text-slate-500 italic">A passing test will set the tool&apos;s validation status to &quot;validated&quot; and update the last-validated date.</div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setAdding(false)} className={btnSecondary}><X className="h-3 w-3" /> Cancel</button>
+            <button onClick={save} className={btnPrimary} disabled={!draft.toolId}><Save className="h-3 w-3" /> Log validation</button>
+          </div>
+        </div>
+      )}
+
+      {api.items.length === 0 && !api.loading ? (
+        <p className="text-sm text-slate-400 italic text-center py-8">No validation tests recorded yet.</p>
+      ) : (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr className="text-[10px] text-slate-500 uppercase font-semibold">
+                <th className="px-3 py-2 text-left w-24">Date</th>
+                <th className="px-3 py-2 text-left">Tool</th>
+                <th className="px-2 py-2 text-left w-32">Test type</th>
+                <th className="px-2 py-2 text-left w-20">Result</th>
+                <th className="px-2 py-2 text-center w-20">Sample</th>
+                <th className="px-2 py-2 text-center w-20">Accuracy</th>
+                <th className="px-2 py-2 text-left w-28">Performed by</th>
+                <th className="px-2 py-2 text-right w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {api.items.map(row => {
+                const resultCls = row.result === 'pass' ? 'bg-emerald-100 text-emerald-700' : row.result === 'fail' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700';
+                return (
+                  <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                    <td className="px-3 py-2 text-slate-600">{new Date(row.testDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.tool?.name || row.toolId.slice(0, 8)}</td>
+                    <td className="px-2 py-2 text-slate-600">{AI_TEST_TYPES.find(t => t.value === row.testType)?.label || row.testType}</td>
+                    <td className="px-2 py-2"><span className={`text-[10px] px-1.5 py-0.5 rounded-full ${resultCls}`}>{row.result}</span></td>
+                    <td className="px-2 py-2 text-center text-slate-600">{row.sampleSize ?? '—'}</td>
+                    <td className="px-2 py-2 text-center text-slate-600">{row.accuracyPct !== null ? `${row.accuracyPct}%` : '—'}</td>
+                    <td className="px-2 py-2 text-slate-600">{row.performedBy || '—'}</td>
+                    <td className="px-2 py-2 text-right">
+                      {confirmId === row.id ? (
+                        <ConfirmInline onConfirm={async () => { await api.remove(row.id); setConfirmId(null); }} onCancel={() => setConfirmId(null)} />
+                      ) : (
+                        <button onClick={() => setConfirmId(row.id)} className={btnDanger}><Trash2 className="h-3 w-3" /></button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AiReliancesTab() {
+  const [sub, setSub] = useState<'tools' | 'usage' | 'validations'>('tools');
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3 border border-slate-200 rounded-lg p-1 bg-slate-50 w-fit">
+        {[
+          { key: 'tools' as const,       label: 'Tool registry' },
+          { key: 'usage' as const,       label: 'Usage log' },
+          { key: 'validations' as const, label: 'Validation tests' },
+        ].map(t => (
+          <button
+            key={t.key}
+            onClick={() => setSub(t.key)}
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors ${sub === t.key ? 'bg-white shadow-sm border border-slate-200 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {sub === 'tools' && <AiToolsSubTab />}
+      {sub === 'usage' && <AiUsageSubTab />}
+      {sub === 'validations' && <AiValidationsSubTab />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Seed banner — populates standard G3Q content                        */
 /* ------------------------------------------------------------------ */
 
@@ -1539,6 +2040,7 @@ export function PerformanceDashboardAdminClient() {
         {tab === 'schedule' && <ScheduleTab />}
         {tab === 'isqm' && <IsqmTab />}
         {tab === 'pillars' && <PillarsTab />}
+        {tab === 'ai' && <AiReliancesTab />}
       </div>
     </div>
   );

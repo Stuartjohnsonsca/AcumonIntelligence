@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   Award,
   BarChart3,
+  Bot,
   Calendar,
   CheckCircle2,
   ClipboardCheck,
@@ -30,6 +31,7 @@ import {
   TrendingDown,
   TrendingUp,
   Users,
+  XCircle,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -128,6 +130,40 @@ type PillarScore = {
   strapline: string | null;
 };
 
+type AiTool = {
+  id: string;
+  name: string;
+  vendor: string | null;
+  modelVersion: string | null;
+  auditArea: string | null;
+  riskRating: string;
+  ownerName: string | null;
+  validationStatus: string;
+  lastValidatedDate: string | null;
+  nextValidationDue: string | null;
+  approvedForUse: boolean;
+  humanInLoop: boolean;
+  isActive: boolean;
+};
+
+type AiUsage = {
+  id: string;
+  toolId: string;
+  usedDate: string;
+  reviewerName: string | null;
+  outputDecision: string;
+  materiality: string;
+};
+
+type AiValidation = {
+  id: string;
+  toolId: string;
+  testDate: string;
+  testType: string;
+  result: string;
+  accuracyPct: number | null;
+};
+
 type Summary = {
   monitoringActivities: MonitoringActivity[];
   findings: Finding[];
@@ -137,6 +173,9 @@ type Summary = {
   activitySchedule: ScheduleItem[];
   isqmEvidence: IsqmEvidence[];
   pillarScores: PillarScore[];
+  aiTools: AiTool[];
+  aiUsage: AiUsage[];
+  aiValidations: AiValidation[];
 };
 
 /* ------------------------------------------------------------------ */
@@ -493,6 +532,79 @@ export function PerformanceDashboardClient() {
   }, [data]);
 
   const overdueActivities = monitoringSummary.reduce((s, a) => s + a.overdue, 0);
+
+  /* ---------------- AI Reliance Defensibility ---------------- */
+  // The defensibility score is a weighted blend of four regulator-meaningful
+  // measures. Each component is a 0-100 percentage; missing data drops out
+  // of the average rather than scoring zero, so a partly-populated registry
+  // doesn't unfairly tank the score.
+  //
+  //  1. Validation currency  — % of active high/critical risk tools with a
+  //     validation test in the last 12 months. The first thing a regulator
+  //     asks: "did you test these tools?"
+  //  2. Approval coverage   — % of active tools that are explicitly
+  //     approved for production use (with named approver). Demonstrates
+  //     gating, not informal adoption.
+  //  3. Human review evidence — proportion of logged AI uses where the
+  //     reviewer engaged (any decision other than "accepted"). Healthy band
+  //     5–25%; treated as 100 inside that band, scaled outside.
+  //  4. Test pass rate      — % of validation tests in the last 12 months
+  //     that passed. Demonstrates the tools actually work.
+  const aiDefensibility = useMemo(() => {
+    if (!data) return null;
+    const activeTools = data.aiTools.filter(t => t.isActive);
+    if (activeTools.length === 0) return null;
+
+    const now = Date.now();
+    const yearAgo = now - 365 * 24 * 60 * 60 * 1000;
+
+    // 1. Validation currency for high/critical tools
+    const sensitiveTools = activeTools.filter(t => t.riskRating === 'high' || t.riskRating === 'critical');
+    const sensitiveValidated = sensitiveTools.filter(t => t.lastValidatedDate && new Date(t.lastValidatedDate).getTime() >= yearAgo).length;
+    const validationCurrencyPct = sensitiveTools.length ? (sensitiveValidated / sensitiveTools.length) * 100 : null;
+
+    // 2. Approval coverage
+    const approved = activeTools.filter(t => t.approvedForUse).length;
+    const approvalCoveragePct = (approved / activeTools.length) * 100;
+
+    // 3. Human review evidence
+    const recentUsage = data.aiUsage.filter(u => new Date(u.usedDate).getTime() >= yearAgo);
+    let reviewEvidencePct: number | null = null;
+    if (recentUsage.length >= 5) {
+      const overrideCount = recentUsage.filter(u => u.outputDecision !== 'accepted').length;
+      const overrideRate = (overrideCount / recentUsage.length) * 100;
+      // Healthy band 5-25 → 100. Outside the band, scale linearly.
+      if (overrideRate >= 5 && overrideRate <= 25) reviewEvidencePct = 100;
+      else if (overrideRate < 5) reviewEvidencePct = (overrideRate / 5) * 100;
+      else reviewEvidencePct = Math.max(0, 100 - ((overrideRate - 25) * 2));
+    }
+
+    // 4. Test pass rate
+    const recentTests = data.aiValidations.filter(v => new Date(v.testDate).getTime() >= yearAgo);
+    const testPassRatePct = recentTests.length ? (recentTests.filter(v => v.result === 'pass').length / recentTests.length) * 100 : null;
+
+    const components = [validationCurrencyPct, approvalCoveragePct, reviewEvidencePct, testPassRatePct].filter((v): v is number => v !== null);
+    const score = components.length ? Math.round(components.reduce((a, b) => a + b, 0) / components.length) : null;
+
+    // Tool-level overdue count
+    const today = new Date();
+    const overdueTools = activeTools.filter(t => t.nextValidationDue && new Date(t.nextValidationDue) < today).length;
+    const unapprovedHighRisk = activeTools.filter(t => !t.approvedForUse && (t.riskRating === 'high' || t.riskRating === 'critical')).length;
+
+    return {
+      score,
+      validationCurrencyPct: validationCurrencyPct === null ? null : Math.round(validationCurrencyPct),
+      approvalCoveragePct: Math.round(approvalCoveragePct),
+      reviewEvidencePct: reviewEvidencePct === null ? null : Math.round(reviewEvidencePct),
+      testPassRatePct: testPassRatePct === null ? null : Math.round(testPassRatePct),
+      activeToolsCount: activeTools.length,
+      sensitiveToolsCount: sensitiveTools.length,
+      recentUsageCount: recentUsage.length,
+      recentTestsCount: recentTests.length,
+      overdueTools,
+      unapprovedHighRisk,
+    };
+  }, [data]);
 
   /* ---------------- Render ---------------- */
 
@@ -1052,6 +1164,143 @@ export function PerformanceDashboardClient() {
               ))}
             </div>
           </Card>
+        )}
+      </section>
+
+      {/* ------------------------------------------------------------ */}
+      {/* AI Reliance Defensibility                                     */}
+      {/* ------------------------------------------------------------ */}
+      <section>
+        <SectionHeader
+          icon={Bot}
+          title="AI Reliance Defensibility"
+          subtitle="Regulator-facing evidence that the firm's use of AI is registered, validated, and human-supervised — aligned to ISQM(UK)1 and ISA 220 (Revised) on automated tools and techniques"
+          right={
+            <Link
+              href="/methodology-admin/performance-dashboard/admin?tab=ai"
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+            >
+              Manage AI register <ArrowUpRight className="h-3 w-3" />
+            </Link>
+          }
+        />
+        {!aiDefensibility ? (
+          <EmptyState
+            icon={Bot}
+            message="No AI tools registered yet — the regulator-defensible position starts with a complete AI tool registry."
+            ctaLabel="Register AI tools"
+            ctaHref="/methodology-admin/performance-dashboard/admin?tab=ai"
+          />
+        ) : (
+          <div className="space-y-4">
+            {/* Headline + four sub-scores */}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              {(() => {
+                const rag = ragFromPct(aiDefensibility.score);
+                const hasScore = aiDefensibility.score !== null;
+                return (
+                  <Card className={`${hasScore ? RAG_BG[rag] : 'bg-slate-50 border-slate-200'} border-l-4 md:col-span-1`}>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Bot className={`h-3.5 w-3.5 ${hasScore ? RAG_TEXT[rag] : 'text-slate-400'}`} />
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Defensibility</span>
+                    </div>
+                    {hasScore ? (
+                      <>
+                        <div className="flex items-baseline gap-1">
+                          <span className={`text-3xl font-bold ${RAG_TEXT[rag]}`}>{aiDefensibility.score}</span>
+                          <span className="text-sm text-slate-500">/100</span>
+                        </div>
+                        <ProgressBar pct={aiDefensibility.score as number} rag={rag} />
+                      </>
+                    ) : (
+                      <span className="text-sm text-slate-400 italic">No data yet</span>
+                    )}
+                    <p className="text-[11px] text-slate-500 mt-2">Composite score across the four defensibility components</p>
+                  </Card>
+                );
+              })()}
+
+              {[
+                { label: 'Validation currency', value: aiDefensibility.validationCurrencyPct, sub: `${aiDefensibility.sensitiveToolsCount} high/critical tool${aiDefensibility.sensitiveToolsCount === 1 ? '' : 's'}`, hint: 'Tools tested in last 12 months' },
+                { label: 'Approval coverage', value: aiDefensibility.approvalCoveragePct, sub: `${aiDefensibility.activeToolsCount} active tools`, hint: 'Tools formally approved for use' },
+                { label: 'Human review evidence', value: aiDefensibility.reviewEvidencePct, sub: `${aiDefensibility.recentUsageCount} uses logged (12m)`, hint: 'Healthy override band 5–25%' },
+                { label: 'Test pass rate', value: aiDefensibility.testPassRatePct, sub: `${aiDefensibility.recentTestsCount} tests (12m)`, hint: 'Validation tests passed' },
+              ].map((m) => {
+                const rag = ragFromPct(m.value);
+                const hasValue = m.value !== null;
+                return (
+                  <Card key={m.label} className={hasValue ? RAG_BG[rag] : 'bg-slate-50 border-slate-200'}>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">{m.label}</div>
+                    {hasValue ? (
+                      <>
+                        <div className={`text-2xl font-bold ${RAG_TEXT[rag]}`}>{m.value}%</div>
+                        <ProgressBar pct={m.value as number} rag={rag} />
+                      </>
+                    ) : (
+                      <div className="text-sm text-slate-400 italic">No data yet</div>
+                    )}
+                    <p className="text-[11px] text-slate-500 mt-1">{m.sub}</p>
+                    <p className="text-[10px] text-slate-400">{m.hint}</p>
+                  </Card>
+                );
+              })}
+            </div>
+
+            {/* Action flags */}
+            {(aiDefensibility.overdueTools > 0 || aiDefensibility.unapprovedHighRisk > 0) && (
+              <Card className="bg-amber-50 border-amber-200">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs text-amber-800 space-y-0.5">
+                    {aiDefensibility.overdueTools > 0 && (
+                      <div><strong>{aiDefensibility.overdueTools}</strong> tool{aiDefensibility.overdueTools === 1 ? ' has' : 's have'} an overdue validation date — log a validation test or revise the cadence.</div>
+                    )}
+                    {aiDefensibility.unapprovedHighRisk > 0 && (
+                      <div><strong>{aiDefensibility.unapprovedHighRisk}</strong> high/critical-risk tool{aiDefensibility.unapprovedHighRisk === 1 ? ' is' : 's are'} not formally approved for production — withdraw from use or complete approval.</div>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* Tool registry summary */}
+            <Card className="p-0 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-500 uppercase font-semibold">
+                    <th className="px-3 py-2 text-left">Tool</th>
+                    <th className="px-2 py-2 text-left w-24">Risk</th>
+                    <th className="px-2 py-2 text-left w-28">Validation</th>
+                    <th className="px-2 py-2 text-left w-24">Last tested</th>
+                    <th className="px-2 py-2 text-left w-24">Next due</th>
+                    <th className="px-2 py-2 text-center w-20">Approved</th>
+                    <th className="px-2 py-2 text-center w-20">HITL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data!.aiTools.filter(t => t.isActive).map(t => {
+                    const overdue = t.nextValidationDue && new Date(t.nextValidationDue) < new Date();
+                    const riskCls = t.riskRating === 'critical' ? 'bg-rose-100 text-rose-700' : t.riskRating === 'high' ? 'bg-amber-100 text-amber-700' : t.riskRating === 'medium' ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-700';
+                    const valCls = t.validationStatus === 'validated' ? 'bg-emerald-100 text-emerald-700' : t.validationStatus === 'withdrawn' ? 'bg-slate-200 text-slate-600' : t.validationStatus === 'under_review' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500';
+                    return (
+                      <tr key={t.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                        <td className="px-3 py-2">
+                          <div className="font-medium text-slate-700">{t.name}</div>
+                          {(t.vendor || t.modelVersion) && <div className="text-[11px] text-slate-500">{[t.vendor, t.modelVersion].filter(Boolean).join(' · ')}</div>}
+                        </td>
+                        <td className="px-2 py-2"><span className={`text-[10px] px-1.5 py-0.5 rounded-full ${riskCls}`}>{t.riskRating}</span></td>
+                        <td className="px-2 py-2"><span className={`text-[10px] px-1.5 py-0.5 rounded-full ${valCls}`}>{t.validationStatus.replace('_', ' ')}</span></td>
+                        <td className="px-2 py-2 text-slate-600">{t.lastValidatedDate ? new Date(t.lastValidatedDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</td>
+                        <td className={`px-2 py-2 ${overdue ? 'text-rose-600 font-semibold' : 'text-slate-600'}`}>{t.nextValidationDue ? new Date(t.nextValidationDue).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</td>
+                        <td className="px-2 py-2 text-center">{t.approvedForUse ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mx-auto" /> : <XCircle className="h-4 w-4 text-rose-400 mx-auto" />}</td>
+                        <td className="px-2 py-2 text-center">{t.humanInLoop ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mx-auto" /> : <span className="text-amber-600 text-[10px]">sampling</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          </div>
         )}
       </section>
 

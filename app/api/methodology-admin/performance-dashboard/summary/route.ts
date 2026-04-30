@@ -21,6 +21,9 @@ export async function GET() {
     activitySchedule,
     isqmEvidence,
     pillarScores,
+    aiTools,
+    aiUsage,
+    aiValidations,
   ] = await Promise.all([
     prisma.perfMonitoringActivity.findMany({ where: { firmId }, orderBy: [{ plannedDate: 'desc' }, { createdAt: 'desc' }] }),
     prisma.perfFinding.findMany({ where: { firmId }, orderBy: [{ raisedDate: 'desc' }] }),
@@ -30,6 +33,9 @@ export async function GET() {
     prisma.perfActivitySchedule.findMany({ where: { firmId }, orderBy: [{ year: 'asc' }, { monthIndex: 'asc' }, { sortOrder: 'asc' }] }),
     prisma.perfIsqmEvidence.findMany({ where: { firmId } }),
     prisma.perfPillarScore.findMany({ where: { firmId } }),
+    prisma.perfAiTool.findMany({ where: { firmId }, orderBy: [{ riskRating: 'desc' }, { name: 'asc' }] }),
+    prisma.perfAiUsage.findMany({ where: { firmId }, orderBy: [{ usedDate: 'desc' }], take: 1000 }),
+    prisma.perfAiValidation.findMany({ where: { firmId }, orderBy: [{ testDate: 'desc' }] }),
   ]);
 
   return NextResponse.json({
@@ -41,5 +47,8 @@ export async function GET() {
     activitySchedule,
     isqmEvidence,
     pillarScores,
+    aiTools,
+    aiUsage,
+    aiValidations,
   });
 }

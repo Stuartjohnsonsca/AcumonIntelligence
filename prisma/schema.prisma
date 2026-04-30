@@ -100,6 +100,9 @@ model Firm {
   perfActivitySchedule      PerfActivitySchedule[]
   perfIsqmEvidence          PerfIsqmEvidence[]
   perfPillarScores          PerfPillarScore[]
+  perfAiTools               PerfAiTool[]
+  perfAiUsage               PerfAiUsage[]
+  perfAiValidations         PerfAiValidation[]
 
   @@map("firms")
 }
@@ -3740,4 +3743,90 @@ model PerfPillarScore {
 
   @@unique([firmId, pillar])
   @@map("perf_pillar_scores")
+}
+
+// ─── AI Reliance Defensibility ────────────────────────────────────────
+// Three tables backing the AQT lead's regulatory-defensible position on
+// AI use across the audit practice (FRC supervisory expectations under
+// ISQM(UK)1 / ISA 220 (Revised) on the use of automated tools and
+// techniques): (1) every AI tool the firm uses is registered with scope,
+// risk, owner, and validation status; (2) every significant use is
+// logged with the human-review decision so override rate can be
+// evidenced; (3) validation tests are recorded so the firm can show
+// each tool was tested before approval and re-tested on a defined
+// cadence.
+
+model PerfAiTool {
+  id                String    @id @default(uuid())
+  firmId            String    @map("firm_id")
+  name              String // e.g. "Journal entry risk scoring (Together AI Llama 3.3)"
+  vendor            String?
+  modelVersion      String?   @map("model_version")
+  auditArea         String?   @map("audit_area") // revenue | je_testing | risk_assessment | controls | analytics | documentation | research | other
+  scopeOfUse        String?   @map("scope_of_use") @db.Text
+  riskRating        String    @default("medium") @map("risk_rating") // low | medium | high | critical
+  ownerName         String?   @map("owner_name")
+  validationStatus  String    @default("pending") @map("validation_status") // pending | validated | under_review | withdrawn
+  lastValidatedDate DateTime? @map("last_validated_date")
+  nextValidationDue DateTime? @map("next_validation_due")
+  approvedForUse    Boolean   @default(false) @map("approved_for_use")
+  approvedByName    String?   @map("approved_by_name")
+  approvedDate      DateTime? @map("approved_date")
+  humanInLoop       Boolean   @default(true) @map("human_in_loop")
+  notes             String?   @db.Text
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  firm        Firm               @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  usage       PerfAiUsage[]
+  validations PerfAiValidation[]
+
+  @@index([firmId, isActive])
+  @@index([firmId, riskRating])
+  @@map("perf_ai_tools")
+}
+
+model PerfAiUsage {
+  id             String   @id @default(uuid())
+  firmId         String   @map("firm_id")
+  toolId         String   @map("tool_id")
+  engagementName String?  @map("engagement_name")
+  engagementId   String?  @map("engagement_id")
+  usedDate       DateTime @default(now()) @map("used_date")
+  reviewerName   String?  @map("reviewer_name")
+  outputDecision String   @map("output_decision") // accepted | overridden | partial | rejected
+  materiality    String   @default("medium") // low | medium | high | critical
+  notes          String?  @db.Text
+  createdById    String?  @map("created_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  firm Firm       @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  tool PerfAiTool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@index([firmId, toolId])
+  @@index([firmId, usedDate])
+  @@map("perf_ai_usage")
+}
+
+model PerfAiValidation {
+  id          String   @id @default(uuid())
+  firmId      String   @map("firm_id")
+  toolId      String   @map("tool_id")
+  testDate    DateTime @default(now()) @map("test_date")
+  testType    String   @map("test_type") // accuracy | bias | regression | edge_case | drift | golden_set | other
+  result      String // pass | fail | partial
+  performedBy String?  @map("performed_by")
+  sampleSize  Int?     @map("sample_size")
+  accuracyPct Float?   @map("accuracy_pct")
+  evidenceUrl String?  @map("evidence_url")
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  firm Firm       @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  tool PerfAiTool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@index([firmId, toolId])
+  @@index([firmId, testDate])
+  @@map("perf_ai_validations")
 }
