@@ -18,6 +18,31 @@ export function HowToButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Collect every data-howto-id currently visible in the viewport. Sent
+   * to the LLM so it knows what's literally on screen — without this it
+   * tends to plan walkthroughs from the site root even when the user is
+   * already deep in a feature.
+   */
+  function collectVisibleHowtoIds(): string[] {
+    if (typeof document === 'undefined') return [];
+    const nodes = Array.from(document.querySelectorAll<HTMLElement>('[data-howto-id]'));
+    const visible: string[] = [];
+    const seen = new Set<string>();
+    for (const el of nodes) {
+      const id = el.getAttribute('data-howto-id');
+      if (!id || seen.has(id)) continue;
+      const rect = el.getBoundingClientRect();
+      // Element is in DOM AND has non-zero size (i.e. not in a closed
+      // dropdown or behind display:none). We don't filter by viewport
+      // position — the dot can scroll the page to reach it.
+      if (rect.width === 0 || rect.height === 0) continue;
+      seen.add(id);
+      visible.push(id);
+    }
+    return visible;
+  }
+
   async function ask(q: string) {
     if (!q.trim()) return;
     setLoading(true);
@@ -29,13 +54,15 @@ export function HowToButton() {
         body: JSON.stringify({
           question: q.trim(),
           currentUrl: typeof window !== 'undefined' ? window.location.pathname : '',
+          visibleHowtoIds: collectVisibleHowtoIds(),
         }),
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
       const steps = json?.steps;
       if (!Array.isArray(steps) || steps.length === 0) {
-        setError("I couldn't map that question to the screens I know about. Try rephrasing, or check the suggestions below.");
+        const debug = json?.debug ? ` (${json.debug})` : '';
+        setError(`I couldn't map that question to a walkthrough I know how to give${debug}. Try rephrasing — e.g. "where do I…?" or "how do I add a…?"`);
         return;
       }
       startHowToTour(q.trim(), steps);

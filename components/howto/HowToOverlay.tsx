@@ -113,16 +113,32 @@ export function HowToOverlay() {
     const onResize = () => positionDot();
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onResize);
-    // Wait for newly-mounted elements (tab switches, conditional renders).
-    const t1 = setTimeout(positionDot, 50);
-    const t2 = setTimeout(positionDot, 250);
-    const t3 = setTimeout(positionDot, 800);
+
+    // Wait for newly-mounted elements (tab switches, conditional renders,
+    // dropdowns opening). The first three timeouts handle the common case
+    // (synchronous render or near-immediate React update). The longer
+    // ones handle slower data-fetch-then-render paths.
+    const timeouts = [50, 200, 500, 1000, 2000, 3500].map((ms) =>
+      setTimeout(positionDot, ms),
+    );
+
+    // MutationObserver — fires whenever the DOM changes anywhere in the
+    // document. Catches the cases timeouts miss (e.g. user opens an
+    // accordion 4 seconds after the step lands). We only attach while
+    // a step is active, and we re-position on every mutation.
+    const observer = new MutationObserver(() => positionDot());
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-howto-id', 'class', 'style', 'hidden'],
+    });
+
     return () => {
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
+      timeouts.forEach(clearTimeout);
+      observer.disconnect();
     };
   }, [currentStep, positionDot, pathname]);
 
@@ -279,21 +295,27 @@ export function HowToOverlay() {
         <div className="px-3 py-3 space-y-2">
           <div className="text-[11px] text-slate-500 italic line-clamp-1">&ldquo;{tour.question}&rdquo;</div>
 
-          {missing ? (
-            <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1.5">
-              Couldn&apos;t find the highlighted element on this page — it may be inside a collapsed panel or tab. Reveal it manually, then press Next.
-            </div>
-          ) : !onCurrentPage ? (
+          {!onCurrentPage ? (
             <div className="text-xs text-slate-600">
               Taking you to <strong>{HOWTO_PAGES[currentStep.page]?.title}</strong>…
             </div>
           ) : (
             <>
+              {/* Always show the narration so the user gets the instruction
+                  even when the dot can't land — they may be able to act on
+                  the words alone. */}
               <div className="text-sm text-slate-800 leading-snug">{currentStep.narration}</div>
-              <div className="flex items-start gap-1.5 text-[11px] text-yellow-900 bg-yellow-50 rounded px-2 py-1">
-                <MousePointerClick className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                <span>Click where the dot is pointing — your click will register and the tour advances automatically.</span>
-              </div>
+              {missing ? (
+                <div className="flex items-start gap-1.5 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                  <MousePointerClick className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                  <span>The highlighted element isn&apos;t visible right now — it may be inside a collapsed panel, tab, or dropdown. Open it manually, or press <strong>Skip</strong> to move on.</span>
+                </div>
+              ) : (
+                <div className="flex items-start gap-1.5 text-[11px] text-yellow-900 bg-yellow-50 rounded px-2 py-1">
+                  <MousePointerClick className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                  <span>Click where the dot is pointing — your click will register and the tour advances automatically.</span>
+                </div>
+              )}
             </>
           )}
 
@@ -306,10 +328,14 @@ export function HowToOverlay() {
             </button>
             <button
               onClick={next}
-              className="inline-flex items-center gap-1 text-xs px-2.5 py-1 bg-white border border-yellow-300 hover:bg-yellow-50 text-yellow-900 rounded font-medium"
-              title="Skip this step"
+              className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded font-medium ${
+                missing
+                  ? 'bg-yellow-400 hover:bg-yellow-500 text-yellow-900'
+                  : 'bg-white border border-yellow-300 hover:bg-yellow-50 text-yellow-900'
+              }`}
+              title={missing ? 'Move on to the next step' : 'Skip this step'}
             >
-              {stepNum === totalSteps ? 'Finish' : 'Skip'}
+              {stepNum === totalSteps ? 'Finish' : missing ? 'Next' : 'Skip'}
               <ChevronRight className="h-3 w-3" />
             </button>
           </div>
