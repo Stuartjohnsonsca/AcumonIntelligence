@@ -79,7 +79,7 @@ export default async function AuditTypesPage() {
   const masterSchedules = (masterRow?.data as any)?.schedules || DEFAULT_MASTER_SCHEDULES;
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-5xl">
+    <div data-howto-id="page.audit-methodology-audit-types.body" className="container mx-auto px-4 py-8 max-w-5xl">
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Audit Type Configuration</h1>

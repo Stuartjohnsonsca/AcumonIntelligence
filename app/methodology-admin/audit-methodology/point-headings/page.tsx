@@ -21,7 +21,7 @@ export default async function PointHeadingsPage() {
   ]);
 
   return (
-    <div className="container mx-auto px-4 py-10 max-w-4xl">
+    <div data-howto-id="page.audit-methodology-point-headings.body" className="container mx-auto px-4 py-10 max-w-4xl">
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Point Headings</h1>

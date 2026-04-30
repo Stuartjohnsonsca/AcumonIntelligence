@@ -326,10 +326,12 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
       <div className="flex items-center justify-between">
         <div className="flex gap-2">
           <button onClick={() => setView('list')}
+            data-howto-id="amt.fs-lines.tab-list"
             className={`px-3 py-1.5 text-sm rounded-lg border ${view === 'list' ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
             FS Lines
           </button>
           <button onClick={() => setView('matrix')}
+            data-howto-id="amt.fs-lines.tab-matrix"
             className={`px-3 py-1.5 text-sm rounded-lg border ${view === 'matrix' ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
             Industry Mapping
           </button>
@@ -342,6 +344,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 <Download className="h-3.5 w-3.5" /> Template
               </button>
               <button onClick={() => fsLineFileRef.current?.click()} disabled={uploading}
+                data-howto-id="amt.fs-lines.upload"
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                 <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading...' : 'Upload'}
               </button>
@@ -354,6 +357,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 <option value="Charities">Charities</option>
               </select>
               <button onClick={populateFromTaxonomy} disabled={populating}
+                data-howto-id="amt.fs-lines.populate-taxonomy"
                 className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50">
                 {populating ? 'Populating...' : 'Populate from Taxonomy'}
               </button>
@@ -362,7 +366,7 @@ export function FsLinesClient({ firmId, initialFsLines, initialIndustries }: Pro
                 title="Manage the firm-wide FS Level + FS Statement option lists">
                 <Settings className="h-3.5 w-3.5" /> Manage options
               </button>
-              <button onClick={() => { setShowAdd(true); loadTaxonomyItems(); }} className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              <button onClick={() => { setShowAdd(true); loadTaxonomyItems(); }} data-howto-id="amt.fs-lines.add" className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                 + Add from Taxonomy
               </button>
             </>

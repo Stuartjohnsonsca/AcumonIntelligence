@@ -70,7 +70,7 @@ export default async function TestActionsPage() {
   }));
 
   return (
-    <div className="container mx-auto px-4 py-10 max-w-6xl">
+    <div data-howto-id="page.audit-methodology-test-actions.body" className="container mx-auto px-4 py-10 max-w-6xl">
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <TestActionsClient
         initialActions={actions}

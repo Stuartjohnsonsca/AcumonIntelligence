@@ -442,9 +442,10 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   return (
     <div className="space-y-4">
       {/* Top tabs */}
-      <div className="flex border-b border-slate-200">
+      <div data-howto-id="amt.test-bank.subtabs" className="flex border-b border-slate-200">
         {(['test-allocations', 'test-bank', 'test-actions', 'grid-view'] as TopTab[]).map(tab => (
           <button key={tab} onClick={() => setTopTab(tab)}
+            data-howto-id={`amt.test-bank.subtab.${tab}`}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
             {tab === 'test-allocations' ? 'Test Allocations' : tab === 'test-bank' ? 'Test Bank' : tab === 'test-actions' ? 'Test Actions' : 'Grid View'}
           </button>

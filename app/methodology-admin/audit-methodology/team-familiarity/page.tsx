@@ -11,7 +11,7 @@ export default async function TeamFamiliarityPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-7xl">
+    <div data-howto-id="page.audit-methodology-team-familiarity.body" className="container mx-auto px-4 py-8 max-w-7xl">
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Team Familiarity</h1>

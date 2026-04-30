@@ -68,7 +68,7 @@ export default async function QuestionnaireActionsPage() {
   ];
 
   return (
-    <div className="container mx-auto px-4 py-10 max-w-7xl">
+    <div data-howto-id="page.audit-methodology-questionnaire-actions.body" className="container mx-auto px-4 py-10 max-w-7xl">
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <QuestionnaireActionsClient
         questionnaires={questionnaires}

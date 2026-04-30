@@ -86,6 +86,20 @@ const tiles = [
   },
 ];
 
+// Map tile href → registry howto-id so the global guide can point at any tile.
+const HOWTO_BY_HREF: Record<string, string> = {
+  '/methodology-admin/audit-methodology/audit-types':            'tile.audit-methodology.audit-types',
+  '/methodology-admin/audit-methodology/fs-lines':               'tile.audit-methodology.fs-lines',
+  '/methodology-admin/audit-methodology/tools':                  'tile.audit-methodology.tools',
+  '/methodology-admin/audit-methodology/industries':             'tile.audit-methodology.industries',
+  '/methodology-admin/audit-methodology/test-bank':              'tile.audit-methodology.test-bank',
+  '/methodology-admin/audit-methodology/schedules':              'tile.audit-methodology.schedules',
+  '/methodology-admin/audit-methodology/test-actions':           'tile.audit-methodology.test-actions',
+  '/methodology-admin/audit-methodology/questionnaire-actions':  'tile.audit-methodology.questionnaire-actions',
+  '/methodology-admin/audit-methodology/point-headings':         'tile.audit-methodology.point-headings',
+  '/methodology-admin/audit-methodology/team-familiarity':       'tile.audit-methodology.team-familiarity',
+};
+
 export function AuditMethodologyClient() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -93,6 +107,7 @@ export function AuditMethodologyClient() {
         <Link
           key={tile.href}
           href={tile.href}
+          data-howto-id={HOWTO_BY_HREF[tile.href]}
           className={`block p-6 rounded-lg border transition-colors ${tile.color}`}
         >
           <tile.icon className={`h-8 w-8 ${tile.iconColor} mb-3`} />

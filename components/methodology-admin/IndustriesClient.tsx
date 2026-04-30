@@ -107,7 +107,7 @@ export function IndustriesClient({ firmId, initialIndustries }: Props) {
               className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <Button onClick={handleAdd} disabled={adding} size="sm" className="bg-blue-600 hover:bg-blue-700">
+          <Button onClick={handleAdd} disabled={adding} size="sm" className="bg-blue-600 hover:bg-blue-700" data-howto-id="amt.industries.add">
             {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
             Add
           </Button>

@@ -597,7 +597,7 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
           <h3 className="text-sm font-semibold text-slate-700">
             {TEMPLATE_TYPES.find((t) => t.key === activeTemplateType)?.label} ({activeAuditType === 'ALL' ? 'All Types' : activeAuditType.replace('_', ' ')})
           </h3>
-          <Button onClick={handleSave} disabled={saving} size="sm" className="bg-blue-600 hover:bg-blue-700">
+          <Button onClick={handleSave} disabled={saving} size="sm" className="bg-blue-600 hover:bg-blue-700" data-howto-id="amt.schedules.save">
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
             {saved ? 'Saved' : 'Save'}
           </Button>
@@ -637,7 +637,7 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
               className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
             />
-            <Button onClick={handleAdd} size="sm" variant="outline">
+            <Button onClick={handleAdd} size="sm" variant="outline" data-howto-id="amt.schedules.add-question">
               <Plus className="h-4 w-4 mr-1" /> Add
             </Button>
           </div>

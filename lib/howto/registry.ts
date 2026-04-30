@@ -91,6 +91,71 @@ export const HOWTO_PAGES: Record<HowToPageKey, HowToPage> = {
     title: 'Audit Methodology',
     description: 'Tools, industries, test bank, and schedules. Hub for audit types, FS lines, point headings, questionnaire actions, schedules, team familiarity, test actions, test bank.',
   },
+  'audit-methodology-audit-types': {
+    url: '/methodology-admin/audit-methodology/audit-types',
+    title: 'Audit Types',
+    description: 'Configure accounting frameworks and schedule selection per audit type (SME, PIE, Group, etc.).',
+  },
+  'audit-methodology-fs-lines': {
+    url: '/methodology-admin/audit-methodology/fs-lines',
+    title: 'FS Lines',
+    description: 'Define financial-statement line items and map them to industries.',
+  },
+  'audit-methodology-industries': {
+    url: '/methodology-admin/audit-methodology/industries',
+    title: 'Industries',
+    description: 'Manage industry definitions for test bank categorisation.',
+  },
+  'audit-methodology-point-headings': {
+    url: '/methodology-admin/audit-methodology/point-headings',
+    title: 'Point Headings',
+    description: 'Heading categories for Management & Representation Letters.',
+  },
+  'audit-methodology-questionnaire-actions': {
+    url: '/methodology-admin/audit-methodology/questionnaire-actions',
+    title: 'Questionnaire Actions',
+    description: 'Map action triggers to questionnaire questions across audit types.',
+  },
+  'audit-methodology-schedules': {
+    url: '/methodology-admin/audit-methodology/schedules',
+    title: 'Schedule Templates',
+    description: 'Edit default templates for audit schedules — pick a schedule from the dropdown, add or edit questions, save.',
+  },
+  'audit-methodology-team-familiarity': {
+    url: '/methodology-admin/audit-methodology/team-familiarity',
+    title: 'Team Familiarity',
+    description: 'Track team tenure on clients and enforce RI familiarity rotation limits.',
+  },
+  'audit-methodology-test-actions': {
+    url: '/methodology-admin/audit-methodology/test-actions',
+    title: 'Test Actions',
+    description: 'Reusable test action steps assigned to tests across the Test Bank.',
+  },
+  'audit-methodology-test-bank': {
+    url: '/methodology-admin/audit-methodology/test-bank',
+    title: 'Test Bank',
+    description: 'Manage audit tests, allocations, and test actions. Sub-tabs: Test Allocations, Test Bank, Test Actions, Grid View.',
+  },
+  'audit-methodology-tools': {
+    url: '/methodology-admin/audit-methodology/tools',
+    title: 'Tool Settings',
+    description: 'Configure method availability per tool and audit type.',
+  },
+
+  // ─── Engagement workspace ──────────────────────────────────────────
+  // The per-engagement screen the user lands on after picking a client +
+  // period. Renders one of several audit-type variants (SME, PIE, Group,
+  // etc.), all of which share the same tab strip via EngagementTabs.
+  // The 'engagement' page key is a synthetic alias — different audit
+  // types live at different URLs (e.g. /tools/methodology/pie-audit) but
+  // share the same workspace component, so we use '*' to keep the
+  // overlay from forcing navigation. The user must already be inside
+  // an engagement for these elements to be reachable.
+  'engagement': {
+    url: '*',
+    title: 'Engagement workspace',
+    description: 'The per-engagement workspace that opens once a user has selected a client and period for any audit type (SME, PIE, Group, Controls). Tab strip: Opening, Prior Period, Permanent, Ethics, Continuance / New Client, TBCYvPY, Materiality, PAR, Walkthroughs, RMM, Documents, Outstanding, Portal, Communication. Persistent action bar at the top with Review Points, Management Letter Points, RI Matters, Audit Plan, Completion Checklist.',
+  },
   'technical-guidance': {
     url: '/methodology-admin/technical-guidance',
     title: 'Audit Technical Guidance',
@@ -611,6 +676,368 @@ export const HOWTO_ELEMENTS: Record<string, HowToElement> = {
   'page.internal-communication.body': {
     page: 'internal-communication',
     description: 'The Internal Communication screen — email templates for the audit team.',
+  },
+
+  // ─── Audit Methodology hub tiles ────────────────────────────────────
+  'tile.audit-methodology.audit-types': {
+    page: 'audit-methodology',
+    label: 'Audit Types',
+    description: 'Audit Methodology hub tile: Audit Types — accounting frameworks and per-stage schedules.',
+  },
+  'tile.audit-methodology.fs-lines': {
+    page: 'audit-methodology',
+    label: 'FS Lines',
+    description: 'Audit Methodology hub tile: FS Lines — financial-statement line item definitions.',
+  },
+  'tile.audit-methodology.industries': {
+    page: 'audit-methodology',
+    label: 'Industries',
+    description: 'Audit Methodology hub tile: Industries.',
+  },
+  'tile.audit-methodology.point-headings': {
+    page: 'audit-methodology',
+    label: 'Point Headings',
+    description: 'Audit Methodology hub tile: Point Headings — Management & Representation Letter heading categories.',
+  },
+  'tile.audit-methodology.questionnaire-actions': {
+    page: 'audit-methodology',
+    label: 'Questionnaire Actions',
+    description: 'Audit Methodology hub tile: Questionnaire Actions.',
+  },
+  'tile.audit-methodology.schedules': {
+    page: 'audit-methodology',
+    label: 'Schedule Templates',
+    description: 'Audit Methodology hub tile: Schedule Templates — default content for each schedule.',
+  },
+  'tile.audit-methodology.team-familiarity': {
+    page: 'audit-methodology',
+    label: 'Team Familiarity',
+    description: 'Audit Methodology hub tile: Team Familiarity — RI rotation tracking.',
+  },
+  'tile.audit-methodology.test-actions': {
+    page: 'audit-methodology',
+    label: 'Test Actions',
+    description: 'Audit Methodology hub tile: Test Actions — reusable action steps.',
+  },
+  'tile.audit-methodology.test-bank': {
+    page: 'audit-methodology',
+    label: 'Test Bank',
+    description: 'Audit Methodology hub tile: Test Bank — firm-wide audit tests library.',
+  },
+  'tile.audit-methodology.tools': {
+    page: 'audit-methodology',
+    label: 'Tool Settings',
+    description: 'Audit Methodology hub tile: Tool Settings — method availability per tool/audit type.',
+  },
+
+  // ─── Audit Methodology sub-tool page bodies ─────────────────────────
+  'page.audit-methodology-audit-types.body': {
+    page: 'audit-methodology-audit-types',
+    description: 'The Audit Types screen — pick a stage (Planning / Fieldwork / Completion) to manage which schedules apply per audit type, drag to reorder.',
+  },
+  'page.audit-methodology-fs-lines.body': {
+    page: 'audit-methodology-fs-lines',
+    description: 'The FS Lines screen — list or matrix view of financial-statement lines by industry. Use Add FS Line / Import / view toggle.',
+  },
+  'page.audit-methodology-industries.body': {
+    page: 'audit-methodology-industries',
+    description: 'The Industries screen — add industry name + code, delete entries with the bin icon.',
+  },
+  'page.audit-methodology-point-headings.body': {
+    page: 'audit-methodology-point-headings',
+    description: 'The Point Headings screen — two-column view (Management Letter / Representation Letter). Type a heading, click +, then Save.',
+  },
+  'page.audit-methodology-questionnaire-actions.body': {
+    page: 'audit-methodology-questionnaire-actions',
+    description: 'The Questionnaire Actions screen — pick a questionnaire from the dropdown, then map action triggers to its questions.',
+  },
+  'page.audit-methodology-schedules.body': {
+    page: 'audit-methodology-schedules',
+    description: 'The Schedule Templates screen — pick a schedule from the dropdown, add or edit its default questions.',
+  },
+  'page.audit-methodology-team-familiarity.body': {
+    page: 'audit-methodology-team-familiarity',
+    description: 'The Team Familiarity screen — Rebuild Table refreshes from engagement history; Save Limits sets RI rotation thresholds.',
+  },
+  'page.audit-methodology-test-actions.body': {
+    page: 'audit-methodology-test-actions',
+    description: 'The Test Actions screen — Add Action creates a new reusable step. Pipeline Actions Catalog at the bottom.',
+  },
+  'page.audit-methodology-test-bank.body': {
+    page: 'audit-methodology-test-bank',
+    description: 'The Test Bank screen — sub-tabs Test Allocations / Test Bank / Test Actions / Grid View. Add Test creates new tests; Import / Export buttons.',
+  },
+  'page.audit-methodology-tools.body': {
+    page: 'audit-methodology-tools',
+    description: 'The Tool Settings screen — pick an audit type tab, then configure method availability per tool, then Save Settings.',
+  },
+
+  // ─── Audit Methodology sub-tool primary actions ─────────────────────
+  'amt.fs-lines.add': {
+    page: 'audit-methodology-fs-lines',
+    label: 'Add from Taxonomy',
+    description: 'Button: Add a new FS line by picking from the taxonomy. Visible in FS Lines list view.',
+  },
+  'amt.fs-lines.tab-list': {
+    page: 'audit-methodology-fs-lines',
+    label: 'FS Lines',
+    description: 'Tab toggle: switch to FS Lines list view (vs Industry Mapping matrix).',
+  },
+  'amt.fs-lines.tab-matrix': {
+    page: 'audit-methodology-fs-lines',
+    label: 'Industry Mapping',
+    description: 'Tab toggle: switch to Industry Mapping matrix view (vs FS Lines list).',
+  },
+  'amt.fs-lines.upload': {
+    page: 'audit-methodology-fs-lines',
+    label: 'Upload',
+    description: 'Button: Upload an Excel file of FS lines (use the Template button next to it for the format).',
+  },
+  'amt.fs-lines.populate-taxonomy': {
+    page: 'audit-methodology-fs-lines',
+    label: 'Populate from Taxonomy',
+    description: 'Button: Populate FS lines from the selected accounting framework taxonomy (FRS 102 / IFRS / FRS 101 / Charities).',
+  },
+  'amt.industries.add': {
+    page: 'audit-methodology-industries',
+    label: 'Add',
+    description: 'Button: Add a new industry (after entering name and code).',
+  },
+  'amt.point-headings.save': {
+    page: 'audit-methodology-point-headings',
+    label: 'Save',
+    description: 'Button: Save point heading changes.',
+  },
+  'amt.questionnaire-actions.questionnaire-select': {
+    page: 'audit-methodology-questionnaire-actions',
+    description: 'Dropdown to pick which questionnaire to edit action mappings for.',
+  },
+  'amt.questionnaire-actions.save': {
+    page: 'audit-methodology-questionnaire-actions',
+    label: 'Save Mappings',
+    description: 'Button: Save questionnaire-to-action mappings.',
+  },
+  'amt.schedules.add-question': {
+    page: 'audit-methodology-schedules',
+    label: 'Add',
+    description: 'Button: Add a new item/question to the currently-selected schedule template (after typing the question text).',
+  },
+  'amt.schedules.save': {
+    page: 'audit-methodology-schedules',
+    label: 'Save',
+    description: 'Button: Save schedule template changes.',
+  },
+  'amt.team-familiarity.rebuild': {
+    page: 'audit-methodology-team-familiarity',
+    label: 'Rebuild Table',
+    description: 'Button: Rebuild the Team Familiarity table from engagement history.',
+  },
+  'amt.team-familiarity.save-limits': {
+    page: 'audit-methodology-team-familiarity',
+    label: 'Save Limits',
+    description: 'Button: Save the RI familiarity rotation limits.',
+  },
+  'amt.test-actions.add': {
+    page: 'audit-methodology-test-actions',
+    label: 'Add Action',
+    description: 'Button: Add a new test action.',
+  },
+  'amt.test-actions.save': {
+    page: 'audit-methodology-test-actions',
+    label: 'Save',
+    description: 'Button: Save test action changes.',
+  },
+  'amt.test-bank.subtabs': {
+    page: 'audit-methodology-test-bank',
+    description: 'Sub-tab strip: Test Allocations / Test Bank / Test Actions / Grid View.',
+  },
+  'amt.test-bank.subtab.test-allocations': {
+    page: 'audit-methodology-test-bank',
+    label: 'Test Allocations',
+    description: 'Test Bank sub-tab: Test Allocations — assign tests to industry / FS line combinations.',
+  },
+  'amt.test-bank.subtab.test-bank': {
+    page: 'audit-methodology-test-bank',
+    label: 'Test Bank',
+    description: 'Test Bank sub-tab: Test Bank — the master library of audit tests.',
+  },
+  'amt.test-bank.subtab.test-actions': {
+    page: 'audit-methodology-test-bank',
+    label: 'Test Actions',
+    description: 'Test Bank sub-tab: Test Actions — link reusable action steps to tests.',
+  },
+  'amt.test-bank.subtab.grid-view': {
+    page: 'audit-methodology-test-bank',
+    label: 'Grid View',
+    description: 'Test Bank sub-tab: Grid View — pivoted matrix of tests by attribute.',
+  },
+  'amt.test-bank.add': {
+    page: 'audit-methodology-test-bank',
+    label: 'Add Test',
+    description: 'Button: Add a new test to the test bank.',
+  },
+  'amt.test-bank.import': {
+    page: 'audit-methodology-test-bank',
+    label: 'Import Tests',
+    description: 'Button: Import tests from a file.',
+  },
+  'amt.tools.audit-type-tabs': {
+    page: 'audit-methodology-tools',
+    description: 'Audit-type tabs (SME / PIE / Group / etc.) — pick the audit type whose tool settings to edit.',
+  },
+  'amt.tools.save': {
+    page: 'audit-methodology-tools',
+    label: 'Save Settings',
+    description: 'Button: Save tool method availability settings.',
+  },
+
+  // ─── Engagement workspace — tab strip ───────────────────────────────
+  'eng.tab.opening': {
+    page: 'engagement',
+    label: 'Opening',
+    description: 'Engagement tab: Opening — engagement details, Start Audit button. Always the first stop.',
+  },
+  'eng.tab.prior-period': {
+    page: 'engagement',
+    label: 'Prior Period',
+    description: 'Engagement tab: Prior Period — prior audit findings and follow-up items.',
+  },
+  'eng.tab.permanent-file': {
+    page: 'engagement',
+    label: 'Permanent',
+    description: 'Engagement tab: Permanent File — client permanent file questionnaire.',
+  },
+  'eng.tab.ethics': {
+    page: 'engagement',
+    label: 'Ethics',
+    description: 'Engagement tab: Ethics — independence and ethics questions.',
+  },
+  'eng.tab.continuance': {
+    page: 'engagement',
+    label: 'Continuance',
+    description: 'Engagement tab: Continuance — continuance assessment for existing clients.',
+  },
+  'eng.tab.new-client': {
+    page: 'engagement',
+    label: 'New Client Take-On',
+    description: 'Engagement tab: New Client Take-On — first-time client acceptance procedures.',
+  },
+  'eng.tab.tb': {
+    page: 'engagement',
+    label: 'TBCYvPY',
+    description: 'Engagement tab: Trial Balance — current year vs prior year analysis.',
+  },
+  'eng.tab.materiality': {
+    page: 'engagement',
+    label: 'Materiality',
+    description: 'Engagement tab: Materiality — overall materiality, performance materiality, trivial threshold.',
+  },
+  'eng.tab.par': {
+    page: 'engagement',
+    label: 'PAR',
+    description: 'Engagement tab: PAR — preliminary analytical review.',
+  },
+  'eng.tab.walkthroughs': {
+    page: 'engagement',
+    label: 'Walkthroughs',
+    description: 'Engagement tab: Walkthroughs — process walkthroughs (Sales, Purchase, custom). Sub-tabs per process.',
+  },
+  'eng.tab.rmm': {
+    page: 'engagement',
+    label: 'Identifying & Assessing RMM',
+    description: 'Engagement tab: RMM — risks of material misstatement at FS-line / assertion level. Send Planning Letter button lives here.',
+  },
+  'eng.tab.documents': {
+    page: 'engagement',
+    label: 'Documents',
+    description: 'Engagement tab: Documents — document repository / audit file.',
+  },
+  'eng.tab.outstanding': {
+    page: 'engagement',
+    label: 'Outstanding',
+    description: 'Engagement tab: Outstanding — items the team or the client still has to complete.',
+  },
+  'eng.tab.portal': {
+    page: 'engagement',
+    label: 'Portal',
+    description: 'Engagement tab: Portal — client portal settings and messages.',
+  },
+  'eng.tab.communication': {
+    page: 'engagement',
+    label: 'Communication',
+    description: 'Engagement tab: Communication — board minutes, management representation letters, communications log.',
+  },
+
+  // ─── Engagement workspace — global action bar ───────────────────────
+  'eng.action.add-review-point': {
+    page: 'engagement',
+    label: 'Review Points',
+    description: 'Top action bar button: open the Review Points panel — raise or close partner / reviewer points.',
+  },
+  'eng.action.add-management-point': {
+    page: 'engagement',
+    label: 'Management',
+    description: 'Top action bar button: open the Management Letter Points panel — capture points to raise with management.',
+  },
+  'eng.action.add-representation-point': {
+    page: 'engagement',
+    label: 'Representation',
+    description: 'Top action bar button: open the Representation Letter Points panel — points to include in the management representation letter.',
+  },
+  'eng.action.add-ri-matter': {
+    page: 'engagement',
+    label: 'RI Matters',
+    description: 'Top action bar button: open the RI Matters panel — matters for the Responsible Individual.',
+  },
+  'eng.action.open-audit-plan': {
+    page: 'engagement',
+    label: 'Audit Plan',
+    description: 'Top action bar button: open the Audit Plan in a split-screen view alongside the current tab.',
+  },
+  'eng.action.open-completion': {
+    page: 'engagement',
+    label: 'Completion Checklist',
+    description: 'Top action bar button: open the Completion Checklist (only visible once the audit plan has been created).',
+  },
+  'eng.action.schedule-specialist-review': {
+    page: 'engagement',
+    description: 'Sign-off header control: send the current schedule for specialist review (Ethics Partner / MRLO / Management Board / ACP / custom). Visible after the Reviewer signs off.',
+  },
+
+  // ─── Engagement workspace — page body / tab content ─────────────────
+  'page.engagement.body': {
+    page: 'engagement',
+    description: 'The current tab content area of the engagement workspace. Whatever tab is active renders inside this container.',
+  },
+  'eng.tab-strip': {
+    page: 'engagement',
+    description: 'The full engagement tab strip — scrollable on small screens. Each tab shows sign-off dots when applicable.',
+  },
+
+  // ─── Engagement workspace — high-value per-tab actions ──────────────
+  'eng.tab.opening.start-audit': {
+    page: 'engagement',
+    label: 'Start Audit',
+    description: 'Opening tab button: Start Audit — moves the engagement from pre-start to active and gates on Independence.',
+  },
+  'eng.tab.rmm.send-planning-letter': {
+    page: 'engagement',
+    label: 'Send Planning Letter',
+    description: 'RMM tab button: send the Planning Letter — issues the RMM summary to the client and posts it to the portal.',
+  },
+  'eng.tab.rmm.import-from-tb': {
+    page: 'engagement',
+    label: 'Import from TB',
+    description: 'RMM tab button: populate RMM rows from the trial balance.',
+  },
+  'eng.tab.rmm.add-row': {
+    page: 'engagement',
+    label: 'Add Row',
+    description: 'RMM tab button: manually add a risk/control row.',
+  },
+  'eng.tab.outstanding.commit-item': {
+    page: 'engagement',
+    description: 'Outstanding tab: each item has a Commit button to mark it as addressed.',
   },
 
   // ─── Top-level tools — page-level anchors only ──────────────────────

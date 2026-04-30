@@ -785,7 +785,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     <div>
       {/* Persistent action buttons */}
       <div className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-t-lg">
-        <button onClick={() => setOpenPanel('review_point')} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition-colors">
+        <button onClick={() => setOpenPanel('review_point')} data-howto-id="eng.action.add-review-point" className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition-colors">
           Review Point
           {/* Mirror of the RI Matters dots: red = outstanding (new+open),
               green = closed. Both shown when > 0; hidden when zero so
@@ -801,7 +801,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             </span>
           )}
         </button>
-        <button onClick={() => setOpenPanel('representation')} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors">
+        <button onClick={() => setOpenPanel('representation')} data-howto-id="eng.action.add-representation-point" className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded hover:bg-purple-100 transition-colors">
           Representation
           {repCounts && repCounts.outstanding > 0 && (
             <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-red-600 text-white text-[9px] font-bold leading-none">
@@ -814,7 +814,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             </span>
           )}
         </button>
-        <button onClick={() => setOpenPanel('management')} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100 transition-colors">
+        <button onClick={() => setOpenPanel('management')} data-howto-id="eng.action.add-management-point" className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100 transition-colors">
           Management
           {mgtCounts && mgtCounts.outstanding > 0 && (
             <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-red-600 text-white text-[9px] font-bold leading-none">
@@ -827,7 +827,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             </span>
           )}
         </button>
-        <button onClick={() => setOpenPanel('ri_matter')} className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition-colors">
+        <button onClick={() => setOpenPanel('ri_matter')} data-howto-id="eng.action.add-ri-matter" className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition-colors">
           RI Matters
           {/* Count dots: red = outstanding (new + open), green = closed.
               Both shown when both > 0; hidden when zero so the button
@@ -860,6 +860,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 }
               }}
               disabled={showAuditPlan}
+              data-howto-id="eng.action.open-audit-plan"
               className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
                 showAuditPlan
                   ? 'bg-slate-200 text-slate-400 cursor-default'
@@ -878,6 +879,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 setShowAuditPlan(false);
               }}
               disabled={!planCreated || showCompletion}
+              data-howto-id="eng.action.open-completion"
               className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
                 !planCreated || showCompletion
                   ? 'bg-slate-200 text-slate-400 cursor-default'
@@ -1063,7 +1065,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       ) : (
         <>
           {/* Normal horizontal tab bar */}
-          <div className="border-x border-slate-200 bg-white overflow-x-auto">
+          <div data-howto-id="eng.tab-strip" className="border-x border-slate-200 bg-white overflow-x-auto">
             <nav className="flex -mb-px" aria-label="Engagement tabs">
               {visibleTabs.map(tab => {
                 const isActive = activeTab === tab.key;
@@ -1073,6 +1075,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                   <button
                     key={tab.key}
                     onClick={() => switchTab(tab.key)}
+                    data-howto-id={`eng.tab.${tab.key}`}
                     className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors flex items-center gap-1.5 ${
                       isActive
                         ? 'border-blue-500 text-blue-600'
@@ -1115,7 +1118,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           </div>
 
           {/* Tab Content */}
-          <div className="bg-white rounded-b-lg border border-t-0 border-slate-200 min-h-[500px]">
+          <div data-howto-id="page.engagement.body" className="bg-white rounded-b-lg border border-t-0 border-slate-200 min-h-[500px]">
             <div className="p-4">
               {/* Pre-start Start-Audit banner — unmissable, sits above the
                   Opening tab content so the button doesn't get buried below
@@ -1135,6 +1138,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                     <button
                       onClick={handleStartAudit}
                       disabled={starting || !hasRI}
+                      data-howto-id="eng.tab.opening.start-audit"
                       className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 text-sm font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                       title={!hasRI ? 'Assign an RI / Partner to the team first' : 'Start the audit'}
                     >

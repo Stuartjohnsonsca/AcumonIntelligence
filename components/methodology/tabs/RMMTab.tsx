@@ -914,6 +914,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
             </button>
           </div>
           <button onClick={viewMode === 'fs_line' ? populateData : importFromTB} disabled={importingTB || populating}
+            data-howto-id="eng.tab.rmm.import-from-tb"
             className="text-xs px-3 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 disabled:opacity-50">
             {(importingTB || populating) ? 'Importing...' : viewMode === 'fs_line' ? '📥 Import Data' : '📥 Import from TB'}
           </button>
@@ -974,6 +975,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
           <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
             <button
               onClick={() => setPlanningLetterMode('send')}
+              data-howto-id="eng.tab.rmm.send-planning-letter"
               title="Send the Planning Letter to Informed Management contacts + post to the Client Portal"
               className="text-xs px-3 py-1 bg-white text-blue-600 rounded-md shadow-sm font-medium hover:bg-blue-50 flex items-center gap-1"
             >📮 Send Planning Letter</button>
@@ -1009,7 +1011,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               {populating ? 'Populating...' : 'Populate from Previous'}
             </button>
           )}
-          <button onClick={addRow} className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
+          <button onClick={addRow} data-howto-id="eng.tab.rmm.add-row" className="text-xs px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Add Row</button>
         </div>
       </div>
 
