@@ -637,12 +637,14 @@ export function PerformanceDashboardClient() {
           <button
             onClick={load}
             disabled={loading}
+            data-howto-id="pd.toolbar.refresh"
             className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-white border border-slate-200 rounded-md hover:bg-slate-50"
           >
             <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
           <Link
             href="/methodology-admin/performance-dashboard/admin"
+            data-howto-id="pd.toolbar.manage-data"
             className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-slate-900 text-white rounded-md hover:bg-slate-800"
           >
             <Settings className="h-3 w-3" /> Manage data
@@ -653,7 +655,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* Headline KPIs                                                 */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.headline-kpis">
         <SectionHeader icon={LineChart} title="Headline KPIs" subtitle="Quality at the centre — the four metrics the AQT lead reports to the Management Board" />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {headlineKpis?.map((k) => {
@@ -689,7 +691,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* G3Q Pillar performance                                        */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.pillars">
         <SectionHeader
           icon={Target}
           title="G3Q Pillar Performance"
@@ -740,7 +742,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* Quality monitoring activities                                 */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.monitoring">
         <SectionHeader
           icon={ClipboardCheck}
           title="Quality Monitoring Activities"
@@ -820,7 +822,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* Team performance matrix                                       */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.team">
         <SectionHeader
           icon={Users}
           title="Team Performance"
@@ -889,7 +891,7 @@ export function PerformanceDashboardClient() {
       {/* RCA + Remediation                                             */}
       {/* ------------------------------------------------------------ */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div>
+        <div data-howto-id="pd.section.rca">
           <SectionHeader
             icon={Search}
             title="Root Cause Analysis"
@@ -933,7 +935,7 @@ export function PerformanceDashboardClient() {
           )}
         </div>
 
-        <div>
+        <div data-howto-id="pd.section.remediation">
           <SectionHeader
             icon={ShieldCheck}
             title="Remediation Tracker"
@@ -991,7 +993,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* CSF Tracker                                                   */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.csfs">
         <SectionHeader
           icon={Megaphone}
           title="Critical Success Factors"
@@ -1050,7 +1052,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* People metrics                                                */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.people">
         <SectionHeader
           icon={GraduationCap}
           title="Training & People"
@@ -1104,7 +1106,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* Annual activity calendar                                      */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.schedule">
         <SectionHeader
           icon={Calendar}
           title="Annual Activity Schedule"
@@ -1170,7 +1172,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* AI Reliance Defensibility                                     */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.ai-reliance">
         <SectionHeader
           icon={Bot}
           title="AI Reliance Defensibility"
@@ -1307,7 +1309,7 @@ export function PerformanceDashboardClient() {
       {/* ------------------------------------------------------------ */}
       {/* ISQM1 readiness                                               */}
       {/* ------------------------------------------------------------ */}
-      <section>
+      <section data-howto-id="pd.section.isqm">
         <SectionHeader
           icon={Target}
           title="ISQM(UK)1 Readiness"

@@ -125,6 +125,7 @@ export function MethodologyAdminClient() {
         <Link
           key={tile.href}
           href={tile.href}
+          data-howto-id={tile.href === '/methodology-admin/performance-dashboard' ? 'tile.performance-dashboard' : undefined}
           className={`block p-6 rounded-lg border transition-colors ${tile.color}`}
         >
           <tile.icon className={`h-8 w-8 ${tile.iconColor} mb-3`} />

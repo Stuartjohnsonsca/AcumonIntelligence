@@ -230,7 +230,7 @@ const btnPrimary = 'inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-blue-6
 const btnSecondary = 'inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-white border border-slate-200 rounded-md hover:bg-slate-50';
 const btnDanger = 'inline-flex items-center gap-1 text-xs px-2 py-1 text-rose-600 hover:bg-rose-50 rounded';
 
-function Toolbar({ onAdd, addLabel, onRefresh, error, refreshing, extra }: { onAdd?: () => void; addLabel?: string; onRefresh: () => void; error: string | null; refreshing: boolean; extra?: React.ReactNode }) {
+function Toolbar({ onAdd, addLabel, addHowtoId, onRefresh, error, refreshing, extra }: { onAdd?: () => void; addLabel?: string; addHowtoId?: string; onRefresh: () => void; error: string | null; refreshing: boolean; extra?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
       <div className="flex-1">
@@ -246,7 +246,7 @@ function Toolbar({ onAdd, addLabel, onRefresh, error, refreshing, extra }: { onA
           {refreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Refresh
         </button>
         {onAdd && (
-          <button onClick={onAdd} className={btnPrimary}>
+          <button onClick={onAdd} data-howto-id={addHowtoId} className={btnPrimary}>
             <Plus className="h-3 w-3" /> {addLabel || 'Add'}
           </button>
         )}
@@ -411,7 +411,7 @@ function MonitoringTab() {
 
   return (
     <div>
-      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add monitoring activity" />
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add monitoring activity" addHowtoId="pa.monitoring.add" />
 
       {adding && (
         <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
@@ -580,7 +580,7 @@ function FindingsTab() {
 
   return (
     <div>
-      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add finding" />
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add finding" addHowtoId="pa.findings.add" />
 
       {adding && (
         <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
@@ -732,7 +732,7 @@ function RemediationsTab() {
 
   return (
     <div>
-      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add remediation" />
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add remediation" addHowtoId="pa.remediations.add" />
 
       {findingsApi.items.length === 0 && !findingsApi.loading && (
         <div className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
@@ -906,7 +906,7 @@ function CsfsTab() {
 
   return (
     <div>
-      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add CSF" />
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add CSF" addHowtoId="pa.csfs.add" />
 
       {adding && (
         <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
@@ -1055,7 +1055,7 @@ function PeopleTab() {
 
   return (
     <div>
-      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add snapshot" />
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Add snapshot" addHowtoId="pa.people.add" />
 
       {adding && (
         <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
@@ -1173,7 +1173,7 @@ function ScheduleTab() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={api.load} className={btnSecondary} disabled={api.loading}>{api.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Refresh</button>
-          <button onClick={() => setAdding(true)} className={btnPrimary}><Plus className="h-3 w-3" /> Add scheduled activity</button>
+          <button onClick={() => setAdding(true)} data-howto-id="pa.schedule.add" className={btnPrimary}><Plus className="h-3 w-3" /> Add scheduled activity</button>
         </div>
       </div>
 
@@ -1610,7 +1610,7 @@ function AiToolsSubTab() {
 
   return (
     <div>
-      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Register AI tool" />
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Register AI tool" addHowtoId="pa.ai.tools.add" />
 
       {adding && (
         <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4">
@@ -1709,7 +1709,7 @@ function AiUsageSubTab() {
 
   return (
     <div>
-      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Log AI usage" />
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Log AI usage" addHowtoId="pa.ai.usage.add" />
 
       {toolsApi.items.length === 0 && !toolsApi.loading && (
         <div className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
@@ -1817,7 +1817,7 @@ function AiValidationsSubTab() {
 
   return (
     <div>
-      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Log validation test" />
+      <Toolbar onRefresh={api.load} error={api.error} refreshing={api.loading} onAdd={() => setAdding(true)} addLabel="Log validation test" addHowtoId="pa.ai.validations.add" />
 
       {adding && (
         <div className="mb-4 border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
@@ -1925,6 +1925,7 @@ function AiReliancesTab() {
           <button
             key={t.key}
             onClick={() => setSub(t.key)}
+            data-howto-id={`pa.ai.subtab.${t.key}`}
             className={`text-xs px-3 py-1.5 rounded-md transition-colors ${sub === t.key ? 'bg-white shadow-sm border border-slate-200 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
           >
             {t.label}
@@ -1968,7 +1969,7 @@ function SeedBanner({ onSeeded }: { onSeeded: () => void }) {
   }
 
   return (
-    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 mb-6">
+    <div data-howto-id="pa.seed-banner" className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 mb-6">
       <div className="flex items-start gap-3">
         <Database className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
         <div className="flex-1">
@@ -2018,6 +2019,7 @@ export function PerformanceDashboardAdminClient() {
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
+                data-howto-id={`pa.tab.${t.key}`}
                 className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
                   active
                     ? 'border-blue-600 text-blue-700'
